@@ -37,9 +37,9 @@ type Usage struct {
 }
 
 type Client struct {
-	apiKey   string
-	baseURL  string
-	model    string
+	apiKey     string
+	baseURL    string
+	model      string
 	httpClient *http.Client
 }
 
