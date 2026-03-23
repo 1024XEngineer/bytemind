@@ -1,0 +1,70 @@
+package claudecode
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+)
+
+// 1. 核心模块：单体 Agent，拥有所有底层系统工具
+type ClaudeAgent struct {
+	Model   LLM
+	Tools   []Tool
+	Context []Message
+}
+
+func NewClaudeAgent() *ClaudeAgent {
+	return &ClaudeAgent{
+		Model: InitClaudeModel(),
+		Tools: []Tool{ReadFile{}, EditFile{}, RunBash{}},
+		// 初始化读取全局系统规范
+		Context: []Message{{Role: "system", Content: ReadFile("CLAUDE.md")}},
+	}
+}
+
+// 2. 调用逻辑：接管标准输入与全局 ReAct 循环
+func (c *ClaudeAgent) Run(userPrompt string) error {
+	// 读取管道流式输入 (例如：tail -f error.log | claude -p "分析异常")
+	stat, _ := os.Stdin.Stat()
+	if (stat.Mode() & os.ModeCharDevice) == 0 {
+		scanner := bufio.NewScanner(os.Stdin)
+		var stdinContext string
+		for scanner.Scan() {
+			stdinContext += scanner.Text() + "\n"
+		}
+		userPrompt = fmt.Sprintf("Stdin Context: %s\nUser: %s", stdinContext, userPrompt)
+	}
+
+	c.Context = append(c.Context, Message{Role: "user", Content: userPrompt})
+
+	// 核心：全局 ReAct 循环
+	for {
+		// 模型基于当前所有上下文，决定下一步 (Thought + Action)
+		response := c.Model.Generate(c.Context, c.Tools)
+
+		if response.IsTaskComplete {
+			fmt.Println("任务完成:", response.FinalAnswer)
+			return nil
+		}
+
+		toolCall := response.ToolCall
+
+		// 核心拦截机制：如果是破坏性/写入型操作，阻塞并要求终端确认
+		if toolCall.RequiresApproval() {
+			if !c.requestTerminalApproval(toolCall) {
+				return fmt.Errorf("操作被用户拒绝终止")
+			}
+		}
+
+		// 执行工具 (Action) 并将结果写回上下文 (Observation)
+		result := ExecuteTool(toolCall)
+		c.Context = append(c.Context, Message{Role: "observation", Content: result})
+	}
+}
+
+func (c *ClaudeAgent) requestTerminalApproval(t ToolCall) bool {
+	fmt.Printf("Claude 申请执行: %s. 允许吗? [Y/n]: ", t.Command)
+	var input string
+	fmt.Scanln(&input)
+	return input == "Y" || input == "y" || input == ""
+}

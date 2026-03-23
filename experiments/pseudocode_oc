@@ -1,0 +1,104 @@
+package opencode
+
+import (
+	"fmt"
+	"strings"
+)
+
+// 1. 核心模块：面向接口的 Agent 定义
+type Agent interface {
+	Run(task string, ctx *SharedContext) (result string, err error)
+	GetRole() string
+}
+
+// 共享的工程上下文，包含 AST 语法树信息等
+type SharedContext struct {
+	TokenUsage int
+	History    []Message
+	ASTMap     map[string]SyntaxTree
+}
+
+// 主控编排器 (Orchestrator)
+type OpenCodeSystem struct {
+	Agents    map[string]Agent
+	Context   *SharedContext
+	MaxTokens int
+}
+
+func NewOpenCodeSystem() *OpenCodeSystem {
+	return &OpenCodeSystem{
+		Agents: map[string]Agent{
+			"Plan":    &PlanAgent{ReadOnly: true},
+			"Build":   &BuildAgent{MaxReActSteps: 5}, // 限制了局部 ReAct 的深度
+			"Explore": &ExploreAgent{UseLSP: true},
+		},
+		Context:   &SharedContext{},
+		MaxTokens: 100000,
+	}
+}
+
+// 2. 调用逻辑：宏观调度与并发守护
+func (o *OpenCodeSystem) ProcessRequest(userInput string) {
+	// 并发守护：监控长上下文，防止处理大量日志或长代码时 Token 爆炸
+	if o.Context.TokenUsage > int(float64(o.MaxTokens)*0.9) {
+		go o.triggerCompaction() // 异步压缩上下文
+	}
+
+	var activeAgent Agent
+	var task string
+
+	// 宏观路由：显式指令解析 (如 @explore 查找异常检测算法的接口定义)
+	if strings.HasPrefix(userInput, "@explore") {
+		activeAgent = o.Agents["Explore"]
+		task = strings.TrimPrefix(userInput, "@explore ")
+	} else if strings.Contains(userInput, "架构分析") {
+		activeAgent = o.Agents["Plan"]
+		task = userInput
+	} else {
+		// 默认交给全权执行的 Build Agent
+		activeAgent = o.Agents["Build"]
+		task = userInput
+	}
+
+	// 移交控制权给具体的 Agent 执行
+	result, err := activeAgent.Run(task, o.Context)
+	if err != nil {
+		fmt.Printf("[%s Agent] 执行失败: %v\n", activeAgent.GetRole(), err)
+	} else {
+		fmt.Printf("[%s Agent] 完成: %s\n", activeAgent.GetRole(), result)
+	}
+}
+
+// --- 证明 OpenCode 未排除 ReAct 的关键部分 ---
+
+type BuildAgent struct {
+	MaxReActSteps int
+}
+
+func (b *BuildAgent) GetRole() string { return "Build" }
+
+func (b *BuildAgent) Run(task string, ctx *SharedContext) (string, error) {
+	// 微观局部 ReAct 循环：Build Agent 在自己权限范围内进行 ReAct
+	step := 0
+	for step < b.MaxReActSteps {
+		thought, action := GenerateSubStep(task, ctx)
+
+		if action.IsDone {
+			return "代码修改并测试通过", nil
+		}
+
+		// 只能调用受限工具，如 EditFile, RunTest (如果是流式数据模块重构，通常在此处跑单测)
+		observation := ExecuteRestrictedTool(action)
+		ctx.History = append(ctx.History, Message{Role: "system", Content: observation})
+
+		step++
+	}
+	return "", fmt.Errorf("超出最大局部执行步数，请求人类或 General Agent 介入")
+}
+
+func (o *OpenCodeSystem) triggerCompaction() {
+	// 独立的 LLM 调用，在后台将冗长历史压缩为摘要
+	summary := CompressHistory(o.Context.History)
+	o.Context.History = []Message{{Role: "system", Content: summary}}
+	o.Context.TokenUsage = CalculateTokens(summary)
+}
