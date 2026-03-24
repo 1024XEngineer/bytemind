@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>番茄钟工作台</title>
+  <style>
+    :root {
+      --bg: #f6efe6;
+      --panel: rgba(255,255,255,0.82);
+      --text: #1f2937;
+      --accent: #d35400;
+      --accent-2: #ffb36b;
+      --shadow: 0 18px 50px rgba(90, 54, 20, 0.16);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      color: var(--text);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at top, rgba(255, 196, 122, 0.55), transparent 35%),
+        linear-gradient(135deg, #fff7ed, #f6efe6 50%, #f5e6d3);
+      padding: 24px;
+    }
+    .app {
+      width: min(100%, 960px);
+      background: var(--panel);
+      backdrop-filter: blur(10px);
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .hero {
+      padding: 32px;
+      background: linear-gradient(135deg, rgba(211,84,0,0.92), rgba(255,179,107,0.9));
+      color: #fff;
+    }
+    .hero h1 { margin: 0 0 8px; font-size: clamp(28px, 5vw, 48px); }
+    .hero p { margin: 0; opacity: 0.92; }
+    .content {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 24px;
+      padding: 28px;
+    }
+    .timer {
+      display: grid;
+      gap: 20px;
+      align-items: start;
+    }
+    .clock {
+      aspect-ratio: 1;
+      width: min(100%, 340px);
+      margin: 0 auto;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: conic-gradient(var(--accent) 0deg, var(--accent-2) 0deg, #f3d4b3 0deg);
+      box-shadow: inset 0 0 0 16px rgba(255,255,255,0.7);
+      position: relative;
+    }
+    .clock::after {
+      content: "";
+      position: absolute;
+      inset: 18px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.92);
+    }
+    .time {
+      position: relative;
+      z-index: 1;
+      font-size: clamp(42px, 8vw, 74px);
+      font-weight: 700;
+      letter-spacing: 2px;
+    }
+    .mode {
+      position: relative;
+      z-index: 1;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      font-size: 12px;
+      text-align: center;
+      color: #9a3412;
+    }
+    .actions, .presets { display: flex; flex-wrap: wrap; gap: 12px; }
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 18px;
+      font-size: 15px;
+      cursor: pointer;
+      transition: transform .18s ease, opacity .18s ease;
+    }
+    button:hover { transform: translateY(-1px); }
+    .primary { background: var(--accent); color: white; }
+    .ghost { background: #fff1e6; color: #9a3412; }
+    .side {
+      background: rgba(255,255,255,0.78);
+      border-radius: 24px;
+      padding: 20px;
+      display: grid;
+      gap: 18px;
+      align-content: start;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .card {
+      background: #fff8f2;
+      border-radius: 18px;
+      padding: 14px;
+    }
+    .card strong { display: block; font-size: 28px; margin-top: 6px; }
+    input[type="number"] {
+      width: 100%;
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid #edd1b0;
+      font-size: 15px;
+      background: #fffdfa;
+    }
+    .muted { color: #7c6a58; font-size: 14px; line-height: 1.6; }
+    @media (max-width: 760px) {
+      .content { grid-template-columns: 1fr; }
+      .clock { width: min(100%, 280px); }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="hero">
+      <h1>番茄钟工作台</h1>
+      <p>专注 25 分钟，休息 5 分钟。一个文件就能直接打开使用。</p>
+    </section>
+    <section class="content">
+      <div class="timer">
+        <div class="clock" id="clock">
+          <div>
+            <div class="mode" id="modeLabel">Focus</div>
+            <div class="time" id="timeDisplay">25:00</div>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="primary" id="startBtn">开始</button>
+          <button class="ghost" id="pauseBtn">暂停</button>
+          <button class="ghost" id="resetBtn">重置</button>
+          <button class="ghost" id="switchBtn">切换专注/休息</button>
+        </div>
+        <div class="presets">
+          <button class="ghost preset" data-focus="25" data-break="5">经典 25/5</button>
+          <button class="ghost preset" data-focus="50" data-break="10">深度 50/10</button>
+          <button class="ghost preset" data-focus="15" data-break="3">冲刺 15/3</button>
+        </div>
+      </div>
+      <aside class="side">
+        <div>
+          <label for="focusMinutes">专注时长（分钟）</label>
+          <input id="focusMinutes" type="number" min="1" value="25" />
+        </div>
+        <div>
+          <label for="breakMinutes">休息时长（分钟）</label>
+          <input id="breakMinutes" type="number" min="1" value="5" />
+        </div>
+        <div class="stats">
+          <div class="card">
+            今日完成
+            <strong id="completedCount">0</strong>
+          </div>
+          <div class="card">
+            当前状态
+            <strong id="statusText">专注中</strong>
+          </div>
+        </div>
+        <div class="muted">
+          生成请求：我想做一个番茄钟网页
+        </div>
+      </aside>
+    </section>
+  </main>
+  <script>
+    const pageTitle = "番茄钟工作台";
+    const timeDisplay = document.getElementById('timeDisplay');
+    const modeLabel = document.getElementById('modeLabel');
+    const completedCount = document.getElementById('completedCount');
+    const statusText = document.getElementById('statusText');
+    const focusInput = document.getElementById('focusMinutes');
+    const breakInput = document.getElementById('breakMinutes');
+    const clock = document.getElementById('clock');
+
+    let timer = null;
+    let isFocus = true;
+    let remainingSeconds = 25 * 60;
+    let completed = 0;
+
+    function currentDuration() {
+      return (isFocus ? Number(focusInput.value) : Number(breakInput.value)) * 60;
+    }
+
+    function render() {
+      const total = Math.max(currentDuration(), 1);
+      const minutes = String(Math.floor(remainingSeconds / 60)).padStart(2, '0');
+      const seconds = String(remainingSeconds % 60).padStart(2, '0');
+      const progress = ((total - remainingSeconds) / total) * 360;
+      timeDisplay.textContent = minutes + ':' + seconds;
+      modeLabel.textContent = isFocus ? 'Focus' : 'Break';
+      statusText.textContent = isFocus ? '专注中' : '休息中';
+      clock.style.background = 'conic-gradient(var(--accent) ' + progress + 'deg, var(--accent-2) ' + progress + 'deg, #f3d4b3 0deg)';
+      document.title = minutes + ':' + seconds + ' - ' + pageTitle;
+    }
+
+    function resetTimer() {
+      remainingSeconds = currentDuration();
+      render();
+    }
+
+    function completeCycle() {
+      if (isFocus) {
+        completed += 1;
+        completedCount.textContent = String(completed);
+      }
+      isFocus = !isFocus;
+      resetTimer();
+      render();
+    }
+
+    function startTimer() {
+      if (timer) return;
+      timer = setInterval(() => {
+        if (remainingSeconds > 0) {
+          remainingSeconds -= 1;
+          render();
+          return;
+        }
+        completeCycle();
+      }, 1000);
+    }
+
+    function pauseTimer() {
+      clearInterval(timer);
+      timer = null;
+    }
+
+    document.getElementById('startBtn').addEventListener('click', startTimer);
+    document.getElementById('pauseBtn').addEventListener('click', pauseTimer);
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      pauseTimer();
+      resetTimer();
+    });
+    document.getElementById('switchBtn').addEventListener('click', () => {
+      pauseTimer();
+      isFocus = !isFocus;
+      resetTimer();
+    });
+    focusInput.addEventListener('change', () => { pauseTimer(); if (isFocus) resetTimer(); });
+    breakInput.addEventListener('change', () => { pauseTimer(); if (!isFocus) resetTimer(); });
+    document.querySelectorAll('.preset').forEach((button) => {
+      button.addEventListener('click', () => {
+        focusInput.value = button.dataset.focus;
+        breakInput.value = button.dataset.break;
+        pauseTimer();
+        resetTimer();
+      });
+    });
+
+    resetTimer();
+  </script>
+</body>
+</html>

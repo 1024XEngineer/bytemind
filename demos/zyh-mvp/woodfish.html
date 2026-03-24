@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wood Fish</title>
+  <style>
+    :root { --bg:#120f0c; --panel:#221b16; --accent:#d6a85f; --accent2:#f5d49a; --text:#f8f1e7; --muted:#c0aa8c; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; font-family:Segoe UI,sans-serif; background:radial-gradient(circle at top,#36291f,#120f0c 70%%); color:var(--text); display:grid; place-items:center; padding:24px; }
+    .app { width:min(720px,100%%); background:rgba(34,27,22,.94); border:1px solid rgba(245,212,154,.16); border-radius:30px; padding:30px; box-shadow:0 24px 60px rgba(0,0,0,.4); text-align:center; }
+    h1 { margin:0; font-size:42px; }
+    p { color:var(--muted); }
+    .counter { font-size:60px; font-weight:700; margin:18px 0; color:var(--accent2); }
+    .fish-wrap { position:relative; min-height:320px; display:grid; place-items:center; }
+    .woodfish { width:min(280px,70vw); aspect-ratio:1; border-radius:50%% 50%% 44%% 44%%; border:0; cursor:pointer; background:radial-gradient(circle at 30%% 30%%,#7c5231,#5f3f27 48%%,#392515 100%%); box-shadow:inset -12px -18px 28px rgba(0,0,0,.22), inset 14px 16px 26px rgba(255,214,154,.08), 0 18px 30px rgba(0,0,0,.3); color:#ffeccc; font-size:22px; font-weight:700; letter-spacing:2px; transition:transform .08s ease, box-shadow .12s ease; }
+    .woodfish:active { transform:scale(.97); }
+    .merit { position:absolute; color:var(--accent2); font-weight:700; opacity:0; animation:float 1.1s ease forwards; pointer-events:none; }
+    .actions { display:flex; justify-content:center; gap:12px; margin-top:14px; }
+    .ghost { background:#3a2b1f; color:var(--accent2); border:0; border-radius:999px; padding:12px 18px; cursor:pointer; }
+    @keyframes float { 0%% { transform:translateY(0); opacity:0; } 20%% { opacity:1; } 100%% { transform:translateY(-90px); opacity:0; } }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <h1>Wood Fish</h1>
+    <p>Click the wooden fish to count your knocks. The count is saved for today.</p>
+    <div class="counter" id="count">0</div>
+    <div class="fish-wrap" id="fishWrap">
+      <button class="woodfish" id="woodfishBtn">KNOCK</button>
+    </div>
+    <div class="actions">
+      <button class="ghost" id="resetBtn">Reset today</button>
+    </div>
+  </main>
+  <script>
+    const key = 'forgecli.woodfish.' + new Date().toISOString().slice(0, 10);
+    const countEl = document.getElementById('count');
+    const fishWrap = document.getElementById('fishWrap');
+    let count = Number(localStorage.getItem(key) || '0');
+    countEl.textContent = String(count);
+    let audioContext;
+    function playTone() {
+      audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+      const osc = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(420, audioContext.currentTime);
+      gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.18, audioContext.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.22);
+      osc.connect(gain);
+      gain.connect(audioContext.destination);
+      osc.start();
+      osc.stop(audioContext.currentTime + 0.24);
+    }
+    function floatMerit() {
+      const tip = document.createElement('div');
+      tip.className = 'merit';
+      tip.textContent = '+1 merit';
+      tip.style.left = (50 + (Math.random() * 24 - 12)) + '%';
+      tip.style.top = '48%';
+      fishWrap.appendChild(tip);
+      setTimeout(() => tip.remove(), 1100);
+    }
+    function knock() {
+      count += 1;
+      countEl.textContent = String(count);
+      localStorage.setItem(key, String(count));
+      floatMerit();
+      playTone();
+    }
+    document.getElementById('woodfishBtn').addEventListener('click', knock);
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      count = 0;
+      countEl.textContent = '0';
+      localStorage.setItem(key, '0');
+    });
+  </script>
+</body>
+</html>

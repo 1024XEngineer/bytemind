@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>贪吃蛇小游戏</title>
+  <style>
+    :root { --bg:#0f172a; --panel:#111827; --grid:#1f2937; --snake:#22c55e; --head:#16a34a; --food:#ef4444; --text:#e5e7eb; --muted:#94a3b8; --accent:#38bdf8; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; font-family:"Segoe UI","PingFang SC",sans-serif; background:radial-gradient(circle at top,#1e293b,#020617 70%%); color:var(--text); display:grid; place-items:center; padding:24px; }
+    .app { width:min(100%%,980px); display:grid; grid-template-columns:320px 1fr; gap:22px; }
+    .panel { background:rgba(17,24,39,.92); border:1px solid rgba(148,163,184,.18); border-radius:24px; box-shadow:0 22px 50px rgba(0,0,0,.35); }
+    .sidebar { padding:24px; }
+    h1 { margin:0 0 10px; font-size:34px; }
+    p { color:var(--muted); line-height:1.7; }
+    .stats { display:grid; grid-template-columns:repeat(2,1fr); gap:12px; margin:18px 0; }
+    .stat { background:#0b1220; border-radius:18px; padding:14px; }
+    .stat strong { display:block; font-size:28px; margin-top:6px; }
+    .actions { display:flex; gap:12px; flex-wrap:wrap; margin:18px 0; }
+    button { border:0; border-radius:999px; padding:12px 18px; cursor:pointer; background:#1e293b; color:var(--text); }
+    .primary { background:var(--accent); color:#082f49; font-weight:700; }
+    .tips { margin-top:20px; padding-top:16px; border-top:1px solid rgba(148,163,184,.18); }
+    .canvas-wrap { padding:18px; display:grid; place-items:center; }
+    canvas {
+      background: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px), #020617;
+      background-size: 24px 24px;
+      border-radius:18px;
+      max-width:100%%;
+      box-shadow: inset 0 0 0 1px rgba(148,163,184,.12);
+    }
+    .overlay { position:absolute; inset:0; display:grid; place-items:center; background:rgba(2,6,23,.72); border-radius:18px; text-align:center; padding:24px; }
+    .stage { position:relative; }
+    .hidden { display:none; }
+    @media (max-width: 860px) { .app { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="panel sidebar">
+      <h1>贪吃蛇</h1>
+      <p>方向键或 WASD 控制移动。吃到红点加分，撞墙或撞到自己就会结束。</p>
+      <div class="stats">
+        <div class="stat">分数<strong id="score">0</strong></div>
+        <div class="stat">长度<strong id="length">3</strong></div>
+      </div>
+      <div class="actions">
+        <button class="primary" id="startBtn">开始</button>
+        <button id="pauseBtn">暂停</button>
+        <button id="resetBtn">重开</button>
+      </div>
+      <div class="tips">
+        <p>小技巧：不要总贴着边走，尽量给自己留下回旋空间。</p>
+      </div>
+    </section>
+    <section class="panel canvas-wrap">
+      <div class="stage">
+        <canvas id="game" width="576" height="576"></canvas>
+        <div class="overlay" id="overlay">
+          <div>
+            <h2 id="overlayTitle">准备开始</h2>
+            <p id="overlayText">点击开始按钮，或者按空格启动。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const lengthEl = document.getElementById('length');
+    const overlay = document.getElementById('overlay');
+    const overlayTitle = document.getElementById('overlayTitle');
+    const overlayText = document.getElementById('overlayText');
+    const grid = 24;
+    const cells = canvas.width / grid;
+    let snake;
+    let food;
+    let dir;
+    let nextDir;
+    let timer = null;
+    let score = 0;
+    let running = false;
+    let paused = false;
+
+    function resetGame() {
+      snake = [{x: 8, y: 12}, {x: 7, y: 12}, {x: 6, y: 12}];
+      dir = {x: 1, y: 0};
+      nextDir = {x: 1, y: 0};
+      score = 0;
+      running = false;
+      paused = false;
+      food = spawnFood();
+      scoreEl.textContent = '0';
+      lengthEl.textContent = String(snake.length);
+      showOverlay('准备开始', '点击开始按钮，或者按空格启动。');
+      draw();
+    }
+
+    function spawnFood() {
+      while (true) {
+        const candidate = { x: Math.floor(Math.random() * cells), y: Math.floor(Math.random() * cells) };
+        if (!snake.some((part) => part.x === candidate.x && part.y === candidate.y)) {
+          return candidate;
+        }
+      }
+    }
+
+    function showOverlay(title, text) {
+      overlayTitle.textContent = title;
+      overlayText.textContent = text;
+      overlay.classList.remove('hidden');
+    }
+
+    function hideOverlay() {
+      overlay.classList.add('hidden');
+    }
+
+    function setDirection(x, y) {
+      if (x === -dir.x && y === -dir.y) {
+        return;
+      }
+      nextDir = {x, y};
+    }
+
+    function step() {
+      dir = nextDir;
+      const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+      const hitWall = head.x < 0 || head.y < 0 || head.x >= cells || head.y >= cells;
+      const hitSelf = snake.some((part) => part.x === head.x && part.y === head.y);
+      if (hitWall || hitSelf) {
+        stopGame();
+        showOverlay('游戏结束', '最终得分：' + score + '，按开始或空格重新来一局。');
+        return;
+      }
+      snake.unshift(head);
+      if (head.x === food.x && head.y === food.y) {
+        score += 10;
+        food = spawnFood();
+      } else {
+        snake.pop();
+      }
+      scoreEl.textContent = String(score);
+      lengthEl.textContent = String(snake.length);
+      draw();
+    }
+
+    function roundRect(x, y, width, height, radius) {
+      const r = Math.min(radius, width / 2, height / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + width, y, x + width, y + height, r);
+      ctx.arcTo(x + width, y + height, x, y + height, r);
+      ctx.arcTo(x, y + height, x, y, r);
+      ctx.arcTo(x, y, x + width, y, r);
+      ctx.closePath();
+    }
+
+    function drawCell(x, y, color, radius) {
+      ctx.fillStyle = color.trim();
+      const px = x * grid + 2;
+      const py = y * grid + 2;
+      const size = grid - 4;
+      roundRect(px, py, size, size, radius);
+      ctx.fill();
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawCell(food.x, food.y, getComputedStyle(document.documentElement).getPropertyValue('--food'), 999);
+      snake.forEach((part, index) => drawCell(part.x, part.y, index === 0 ? getComputedStyle(document.documentElement).getPropertyValue('--head') : getComputedStyle(document.documentElement).getPropertyValue('--snake'), 8));
+    }
+
+    function startGame() {
+      if (running && !paused) {
+        return;
+      }
+      if (!running) {
+        running = true;
+        hideOverlay();
+      }
+      paused = false;
+      clearInterval(timer);
+      timer = setInterval(step, 120);
+    }
+
+    function pauseGame() {
+      if (!running) {
+        return;
+      }
+      paused = !paused;
+      if (paused) {
+        clearInterval(timer);
+        showOverlay('已暂停', '点击暂停按钮或按空格继续。');
+        return;
+      }
+      hideOverlay();
+      timer = setInterval(step, 120);
+    }
+
+    function stopGame() {
+      running = false;
+      paused = false;
+      clearInterval(timer);
+      timer = null;
+    }
+
+    document.getElementById('startBtn').addEventListener('click', () => {
+      if (!running) {
+        resetGame();
+      }
+      startGame();
+    });
+    document.getElementById('pauseBtn').addEventListener('click', pauseGame);
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      stopGame();
+      resetGame();
+    });
+    window.addEventListener('keydown', (event) => {
+      const key = event.key.toLowerCase();
+      if (key === 'arrowup' || key === 'w') setDirection(0, -1);
+      if (key === 'arrowdown' || key === 's') setDirection(0, 1);
+      if (key === 'arrowleft' || key === 'a') setDirection(-1, 0);
+      if (key === 'arrowright' || key === 'd') setDirection(1, 0);
+      if (key === ' ') {
+        event.preventDefault();
+        if (!running) {
+          resetGame();
+          startGame();
+        } else {
+          pauseGame();
+        }
+      }
+    });
+    resetGame();
+  </script>
+</body>
+</html>

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>贪吃蛇小游戏</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><i class="fas fa-gamepad"></i> 贪吃蛇小游戏</h1>
+            <p class="subtitle">使用方向键控制蛇的移动，吃到食物变长，不要撞到墙壁或自己！</p>
+        </header>
+
+        <div class="game-area">
+            <div class="game-info">
+                <div class="score-board">
+                    <div class="score-item">
+                        <span class="score-label"><i class="fas fa-apple-alt"></i> 分数</span>
+                        <span id="score" class="score-value">0</span>
+                    </div>
+                    <div class="score-item">
+                        <span class="score-label"><i class="fas fa-tachometer-alt"></i> 速度</span>
+                        <span id="speed" class="score-value">1</span>
+                    </div>
+                    <div class="score-item">
+                        <span class="score-label"><i class="fas fa-ruler"></i> 长度</span>
+                        <span id="length" class="score-value">3</span>
+                    </div>
+                </div>
+                
+                <div class="controls">
+                    <button id="startBtn" class="btn btn-start">
+                        <i class="fas fa-play"></i> 开始游戏
+                    </button>
+                    <button id="pauseBtn" class="btn btn-pause" disabled>
+                        <i class="fas fa-pause"></i> 暂停
+                    </button>
+                    <button id="restartBtn" class="btn btn-restart">
+                        <i class="fas fa-redo"></i> 重新开始
+                    </button>
+                    <button id="helpBtn" class="btn btn-help">
+                        <i class="fas fa-question-circle"></i> 帮助
+                    </button>
+                </div>
+                
+                <div class="instructions">
+                    <h3><i class="fas fa-info-circle"></i> 游戏说明</h3>
+                    <ul>
+                        <li><i class="fas fa-arrow-up"></i> <i class="fas fa-arrow-down"></i> <i class="fas fa-arrow-left"></i> <i class="fas fa-arrow-right"></i> 使用方向键控制蛇的移动</li>
+                        <li><i class="fas fa-apple-alt"></i> 吃到红色食物增加分数和长度</li>
+                        <li><i class="fas fa-skull-crossbones"></i> 不要撞到墙壁或自己的身体</li>
+                        <li><i class="fas fa-tachometer-alt"></i> 每得10分游戏速度会增加</li>
+                        <li><i class="fas fa-space-shuttle"></i> 按空格键可以暂停/继续游戏</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="game-container">
+                <canvas id="gameCanvas" width="600" height="600"></canvas>
+                <div id="gameOver" class="game-over">
+                    <h2>游戏结束！</h2>
+                    <p>最终得分: <span id="finalScore">0</span></p>
+                    <button id="playAgainBtn" class="btn btn-start">
+                        <i class="fas fa-play"></i> 再玩一次
+                    </button>
+                </div>
+                <div id="welcome" class="welcome">
+                    <h2>欢迎来到贪吃蛇游戏！</h2>
+                    <p>准备好开始游戏了吗？</p>
+                    <button id="welcomeStartBtn" class="btn btn-start">
+                        <i class="fas fa-play"></i> 开始游戏
+                    </button>
+                </div>
+            </div>
+            
+            <div class="keyboard-controls">
+                <h3><i class="fas fa-keyboard"></i> 键盘控制</h3>
+                <div class="keys">
+                    <div class="key-row">
+                        <div class="key key-up"><i class="fas fa-arrow-up"></i></div>
+                    </div>
+                    <div class="key-row">
+                        <div class="key key-left"><i class="fas fa-arrow-left"></i></div>
+                        <div class="key key-down"><i class="fas fa-arrow-down"></i></div>
+                        <div class="key key-right"><i class="fas fa-arrow-right"></i></div>
+                    </div>
+                    <div class="key-row">
+                        <div class="key key-space">空格键 - 暂停/继续</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <footer>
+            <p>贪吃蛇游戏 &copy; 2023 | 使用HTML5 Canvas制作</p>
+            <p class="hint">提示：游戏难度会随着分数增加而提高，挑战你的最高分吧！</p>
+        </footer>
+    </div>
+
+    <!-- 帮助模态框 -->
+    <div id="helpModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fas fa-question-circle"></i> 游戏帮助</h2>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="help-section">
+                    <h3><i class="fas fa-gamepad"></i> 游戏目标</h3>
+                    <p>控制蛇在游戏区域内移动，吃到食物（红色方块）来增加长度和分数。避免撞到墙壁或自己的身体。</p>
+                </div>
+                <div class="help-section">
+                    <h3><i class="fas fa-keyboard"></i> 控制方式</h3>
+                    <ul>
+                        <li><strong>方向键上</strong> - 向上移动</li>
+                        <li><strong>方向键下</strong> - 向下移动</li>
+                        <li><strong>方向键左</strong> - 向左移动</li>
+                        <li><strong>方向键右</strong> - 向右移动</li>
+                        <li><strong>空格键</strong> - 暂停/继续游戏</li>
+                    </ul>
+                </div>
+                <div class="help-section">
+                    <h3><i class="fas fa-star"></i> 游戏规则</h3>
+                    <ul>
+                        <li>每吃到一个食物得10分</li>
+                        <li>蛇的长度每增加1节</li>
+                        <li>每获得100分，游戏速度提升一级</li>
+                        <li>撞到墙壁或自己的身体游戏结束</li>
+                    </ul>
+                </div>
+                <div class="help-section">
+                    <h3><i class="fas fa-lightbulb"></i> 游戏技巧</h3>
+                    <ul>
+                        <li>尽量让蛇保持直线移动，这样更容易控制</li>
+                        <li>预判食物的位置，提前规划路线</li>
+                        <li>高速时避免急转弯，容易撞到自己</li>
+                        <li>尝试让蛇的身体填满整个游戏区域</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+</html>
