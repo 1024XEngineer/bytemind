@@ -1,0 +1,18 @@
+{
+  "id": "cb4d58ff64cf8a5d",
+  "workspace": "C:\\Users\\纪\\Desktop\\opencode",
+  "messages": [
+    {
+      "role": "user",
+      "content": "读取 testproject 目录下的 go.mod 文件",
+      "time": "2026-03-24T22:22:11.4665608+08:00"
+    },
+    {
+      "role": "assistant",
+      "content": "工具调用: read_file({\"path\": \"testproject/go.mod\"})",
+      "time": "2026-03-24T22:22:15.0386845+08:00"
+    }
+  ],
+  "created_at": "2026-03-24T22:22:11.4645163+08:00",
+  "updated_at": "2026-03-24T22:22:15.0386845+08:00"
+}

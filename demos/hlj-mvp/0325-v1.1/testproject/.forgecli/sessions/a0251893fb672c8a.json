@@ -1,0 +1,18 @@
+{
+  "id": "a0251893fb672c8a",
+  "workspace": "C:\\Users\\纪\\Desktop\\opencode\\testproject",
+  "messages": [
+    {
+      "role": "user",
+      "content": "搜索包含 test 的文件",
+      "time": "2026-03-24T21:55:23.3814338+08:00"
+    },
+    {
+      "role": "assistant",
+      "content": "工具调用: list_files({})",
+      "time": "2026-03-24T21:55:26.7405521+08:00"
+    }
+  ],
+  "created_at": "2026-03-24T21:55:23.3814338+08:00",
+  "updated_at": "2026-03-24T21:55:26.7405521+08:00"
+}
