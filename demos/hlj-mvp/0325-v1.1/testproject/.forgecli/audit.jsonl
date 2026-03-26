@@ -1,2 +1,0 @@
-{"session_id":"d7523d0ffedd8115","timestamp":"2026-03-25T11:15:00.3656136+08:00","action":"manual_command","target":"echo smoke-test","approved":true,"success":true,"details":"exit=0 duration=17ms timeout=false"}
-{"session_id":"ad66fa25687773b1","timestamp":"2026-03-25T11:16:42.1897511+08:00","action":"manual_command","target":"echo smoke-test","approved":true,"success":true,"details":"exit=0 duration=15ms timeout=false"}
