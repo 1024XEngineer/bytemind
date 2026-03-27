@@ -16,6 +16,7 @@ import (
 	"bytemind/internal/config"
 	"bytemind/internal/provider"
 	"bytemind/internal/session"
+	"bytemind/internal/skills"
 	"bytemind/internal/tools"
 )
 
@@ -35,10 +36,13 @@ type slashCommand struct {
 
 var slashCommands = []slashCommand{
 	{Name: "/help", Usage: "/help", Description: "Show available commands"},
+	{Name: "/skill-author", Usage: "/skill-author", Description: "Create or edit project-local skills"},
+	{Name: "/skills", Usage: "/skills", Description: "List project-local skills"},
 	{Name: "/session", Usage: "/session", Description: "Show the current session"},
 	{Name: "/sessions", Usage: "/sessions [limit]", Description: "List recent sessions"},
 	{Name: "/resume", Usage: "/resume <id>", Description: "Resume a recent session by id or prefix"},
 	{Name: "/new", Usage: "/new", Description: "Start a new session in the current workspace"},
+	{Name: "/clear-skill", Usage: "/clear-skill", Description: "Clear the active project skill"},
 	{Name: "/quit", Usage: "/quit", Description: "Exit the CLI"},
 }
 
@@ -81,6 +85,7 @@ func runOneShot(args []string, stdin io.Reader, stdout, stderr io.Writer) error 
 	configPath := fs.String("config", "", "Path to config file")
 	model := fs.String("model", "", "Override model name")
 	sessionID := fs.String("session", "", "Reuse an existing session")
+	skillName := fs.String("skill", "", "Use a project-local skill from skills/<name>/SKILL.md")
 	prompt := fs.String("prompt", "", "Prompt to send")
 	streamOverride := fs.String("stream", "", "Override streaming: true or false")
 	workspaceOverride := fs.String("workspace", "", "Workspace to operate on; defaults to current directory")
@@ -101,8 +106,15 @@ func runOneShot(args []string, stdin io.Reader, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(*skillName) != "" {
+		skill := app.Skill(*skillName)
+		if skill == nil {
+			return fmt.Errorf("skill not found: %s", strings.TrimSpace(*skillName))
+		}
+		sess.ActiveSkill = skill.Name
+	}
 
-	_, err = app.RunPrompt(context.Background(), sess, *prompt, stdout)
+	_, err = app.RunPromptWithSkill(context.Background(), sess, *prompt, strings.TrimSpace(*skillName), stdout)
 	return err
 }
 
@@ -165,6 +177,10 @@ func bootstrap(configPath, modelOverride, sessionID, streamOverride, workspaceOv
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	skillManager := skills.NewManager(workspace)
+	if err := skillManager.Load(); err != nil {
+		return nil, nil, nil, err
+	}
 
 	runner := agent.NewRunner(agent.Options{
 		Workspace: workspace,
@@ -172,6 +188,7 @@ func bootstrap(configPath, modelOverride, sessionID, streamOverride, workspaceOv
 		Client:    client,
 		Store:     store,
 		Registry:  tools.DefaultRegistry(),
+		Skills:    skillManager,
 		Stdin:     stdin,
 		Stdout:    stdout,
 	})
@@ -190,6 +207,9 @@ func handleSlashCommand(stdout io.Writer, store *session.Store, current *session
 		return current, true, true, nil
 	case "/help":
 		printHelp(stdout)
+		return current, false, true, nil
+	case "/skill-author":
+		fmt.Fprintln(stdout, "Use /skill-author in the TUI, or run with -skill skill-author.")
 		return current, false, true, nil
 	case "/session":
 		printCurrentSession(stdout, current)
@@ -376,9 +396,9 @@ func sameWorkspace(a, b string) bool {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "go run ./cmd/bytemind chat [-config path] [-model name] [-session id] [-stream true|false] [-workspace path] [-max-iterations n]")
-	fmt.Fprintln(w, "go run ./cmd/bytemind tui [-config path] [-model name] [-session id] [-stream true|false] [-workspace path] [-max-iterations n]")
-	fmt.Fprintln(w, "go run ./cmd/bytemind run -prompt \"task\" [-config path] [-model name] [-session id] [-stream true|false] [-max-iterations n]")
+	fmt.Fprintln(w, "go run ./cmd/bytemind chat [-config path] [-model name] [-session id] [-skill name] [-stream true|false] [-workspace path] [-max-iterations n]")
+	fmt.Fprintln(w, "go run ./cmd/bytemind tui [-config path] [-model name] [-session id] [-skill name] [-stream true|false] [-workspace path] [-max-iterations n]")
+	fmt.Fprintln(w, "go run ./cmd/bytemind run -prompt \"task\" [-config path] [-model name] [-session id] [-skill name] [-stream true|false] [-max-iterations n]")
 }
 
 func printCommandSuggestions(w io.Writer, input string, suggestions []string) {
