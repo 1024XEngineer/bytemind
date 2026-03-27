@@ -21,13 +21,12 @@ type PlanItem struct {
 }
 
 type Session struct {
-	ID          string        `json:"id"`
-	Workspace   string        `json:"workspace"`
-	CreatedAt   time.Time     `json:"created_at"`
-	UpdatedAt   time.Time     `json:"updated_at"`
-	Messages    []llm.Message `json:"messages"`
-	Plan        []PlanItem    `json:"plan,omitempty"`
-	ActiveSkill string        `json:"active_skill,omitempty"`
+	ID        string        `json:"id"`
+	Workspace string        `json:"workspace"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
+	Messages  []llm.Message `json:"messages"`
+	Plan      []PlanItem    `json:"plan,omitempty"`
 }
 
 type Store struct {

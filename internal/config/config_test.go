@@ -118,53 +118,6 @@ func TestLoadRejectsUnsupportedProviderType(t *testing.T) {
 	}
 }
 
-func TestLoadAcceptsDeepSeekProviderAlias(t *testing.T) {
-	workspace := t.TempDir()
-	configPath := filepath.Join(workspace, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{
-  "provider": {
-    "type": "deepseek",
-    "model": "deepseek-chat",
-    "api_key": "test-key"
-  }
-}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := Load(workspace, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Provider.Type != "deepseek" {
-		t.Fatalf("expected provider type deepseek, got %q", cfg.Provider.Type)
-	}
-	if cfg.Provider.BaseURL != "https://api.deepseek.com" {
-		t.Fatalf("expected default deepseek base url, got %q", cfg.Provider.BaseURL)
-	}
-}
-
-func TestLoadAppliesAnthropicDefaultBaseURLWhenOmitted(t *testing.T) {
-	workspace := t.TempDir()
-	configPath := filepath.Join(workspace, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{
-  "provider": {
-    "type": "anthropic",
-    "model": "claude-sonnet",
-    "api_key": "test-key"
-  }
-}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := Load(workspace, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Provider.BaseURL != "https://api.anthropic.com" {
-		t.Fatalf("expected default anthropic base url, got %q", cfg.Provider.BaseURL)
-	}
-}
-
 func TestLoadNormalizesRelativeSessionDir(t *testing.T) {
 	workspace := t.TempDir()
 	configPath := filepath.Join(workspace, "config.json")

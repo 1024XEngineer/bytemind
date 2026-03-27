@@ -37,21 +37,6 @@ func TestNewClientReturnsOpenAICompatibleForOpenAIAlias(t *testing.T) {
 	}
 }
 
-func TestNewClientReturnsOpenAICompatibleForDeepSeekAlias(t *testing.T) {
-	client, err := NewClient(config.ProviderConfig{
-		Type:    "deepseek",
-		BaseURL: "https://api.deepseek.com",
-		APIKey:  "test-key",
-		Model:   "deepseek-chat",
-	})
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if _, ok := client.(*OpenAICompatible); !ok {
-		t.Fatalf("expected *OpenAICompatible, got %T", client)
-	}
-}
-
 func TestNewClientReturnsAnthropic(t *testing.T) {
 	client, err := NewClient(config.ProviderConfig{
 		Type:             "anthropic",

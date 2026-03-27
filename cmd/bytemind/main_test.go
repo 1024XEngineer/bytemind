@@ -248,57 +248,6 @@ func TestBootstrapCreatesSessionInWorkspace(t *testing.T) {
 	}
 }
 
-func TestBootstrapLoadsWorkspaceSkills(t *testing.T) {
-	workspace := t.TempDir()
-	t.Chdir(workspace)
-	writeTestConfig(t, workspace, map[string]any{
-		"provider": map[string]any{
-			"type":     "openai-compatible",
-			"base_url": "https://api.openai.com/v1",
-			"model":    "gpt-5.4-mini",
-			"api_key":  "test-key",
-		},
-		"stream": false,
-	})
-	skillDir := filepath.Join(workspace, "skills", "review")
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("name: review\ndescription: review code\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	runner, _, _, err := bootstrap("", "", "", "", "", 0, strings.NewReader(""), &bytes.Buffer{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runner.Skill("review") == nil {
-		t.Fatal("expected bootstrap to load workspace skills")
-	}
-}
-
-func TestBootstrapExposesBuiltinSkillAuthor(t *testing.T) {
-	workspace := t.TempDir()
-	t.Chdir(workspace)
-	writeTestConfig(t, workspace, map[string]any{
-		"provider": map[string]any{
-			"type":     "openai-compatible",
-			"base_url": "https://api.openai.com/v1",
-			"model":    "gpt-5.4-mini",
-			"api_key":  "test-key",
-		},
-		"stream": false,
-	})
-
-	runner, _, _, err := bootstrap("", "", "", "", "", 0, strings.NewReader(""), &bytes.Buffer{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runner.Skill("skill-author") == nil {
-		t.Fatal("expected builtin skill-author to be available")
-	}
-}
-
 func TestRunOneShotRejectsMissingPrompt(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -336,30 +285,6 @@ func TestRunOneShotAcceptsTrailingPromptText(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Task complete.") {
 		t.Fatalf("expected final answer in stdout, got %q", stdout.String())
-	}
-}
-
-func TestRunOneShotRejectsUnknownSkill(t *testing.T) {
-	workspace := t.TempDir()
-	t.Chdir(workspace)
-	writeTestConfig(t, workspace, map[string]any{
-		"provider": map[string]any{
-			"type":     "openai-compatible",
-			"base_url": "https://api.openai.com/v1",
-			"model":    "gpt-5.4-mini",
-			"api_key":  "test-key",
-		},
-		"stream": false,
-	})
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	err := runOneShot([]string{"-skill", "review", "-prompt", "inspect repo"}, strings.NewReader(""), &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected unknown skill error")
-	}
-	if !strings.Contains(err.Error(), "skill not found") {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

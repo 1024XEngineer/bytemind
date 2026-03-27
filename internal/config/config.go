@@ -127,7 +127,7 @@ func applyEnv(cfg *Config) {
 
 func normalize(workspace string, cfg *Config) error {
 	cfg.Provider.Type = normalizeProviderType(cfg.Provider.Type)
-	if shouldUseProviderDefaultBaseURL(cfg.Provider) {
+	if cfg.Provider.BaseURL == "" {
 		cfg.Provider.BaseURL = defaultBaseURL(cfg.Provider.Type)
 	}
 	if strings.TrimSpace(cfg.Provider.BaseURL) == "" {
@@ -146,7 +146,7 @@ func normalize(workspace string, cfg *Config) error {
 		cfg.MaxIterations = 32
 	}
 	if !isSupportedProviderType(cfg.Provider.Type) {
-		return errors.New("provider.type must be one of openai-compatible, openai, deepseek, anthropic")
+		return errors.New("provider.type must be one of openai-compatible, openai, anthropic")
 	}
 	switch cfg.ApprovalPolicy {
 	case "", "on-request":
@@ -171,8 +171,6 @@ func normalizeProviderType(value string) string {
 			return "openai"
 		}
 		return "openai-compatible"
-	case "deepseek":
-		return "deepseek"
 	case "anthropic":
 		return "anthropic"
 	default:
@@ -182,7 +180,7 @@ func normalizeProviderType(value string) string {
 
 func isSupportedProviderType(value string) bool {
 	switch value {
-	case "openai-compatible", "openai", "deepseek", "anthropic":
+	case "openai-compatible", "openai", "anthropic":
 		return true
 	default:
 		return false
@@ -191,21 +189,9 @@ func isSupportedProviderType(value string) bool {
 
 func defaultBaseURL(providerType string) string {
 	switch normalizeProviderType(providerType) {
-	case "deepseek":
-		return "https://api.deepseek.com"
 	case "anthropic":
 		return "https://api.anthropic.com"
 	default:
 		return "https://api.openai.com/v1"
 	}
-}
-
-func shouldUseProviderDefaultBaseURL(provider ProviderConfig) bool {
-	if strings.TrimSpace(provider.BaseURL) == "" {
-		return true
-	}
-	if provider.Type == "openai-compatible" || provider.Type == "openai" {
-		return false
-	}
-	return strings.TrimSpace(provider.BaseURL) == defaultBaseURL("openai-compatible")
 }

@@ -17,7 +17,7 @@ func NewClient(cfg config.ProviderConfig) (llm.Client, error) {
 	}
 
 	switch cfg.Type {
-	case "openai-compatible", "openai", "deepseek":
+	case "openai-compatible", "openai":
 		return NewOpenAICompatible(clientCfg), nil
 	case "anthropic":
 		return NewAnthropic(clientCfg), nil

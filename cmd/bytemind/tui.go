@@ -2,10 +2,8 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"bytemind/internal/config"
 	"bytemind/internal/tui"
@@ -18,7 +16,6 @@ func runTUI(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	configPath := fs.String("config", "", "Path to config file")
 	model := fs.String("model", "", "Override model name")
 	sessionID := fs.String("session", "", "Resume an existing session")
-	skillName := fs.String("skill", "", "Activate a project-local skill from skills/<name>/SKILL.md")
 	streamOverride := fs.String("stream", "", "Override streaming: true or false")
 	workspaceOverride := fs.String("workspace", "", "Workspace to operate on; defaults to current directory")
 	maxIterations := fs.Int("max-iterations", 0, "Override execution budget for this run")
@@ -52,16 +49,6 @@ func runTUI(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	if *maxIterations > 0 {
 		cfg.MaxIterations = *maxIterations
-	}
-	if strings.TrimSpace(*skillName) != "" {
-		skill := app.Skill(*skillName)
-		if skill == nil {
-			return fmt.Errorf("skill not found: %s", strings.TrimSpace(*skillName))
-		}
-		sess.ActiveSkill = skill.Name
-		if err := store.Save(sess); err != nil {
-			return err
-		}
 	}
 
 	return tui.Run(tui.Options{
