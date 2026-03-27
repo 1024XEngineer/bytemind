@@ -1044,7 +1044,7 @@ func renderChatCard(item chatEntry, width int) string {
 		border = chatSystemStyle
 	}
 	head := lipgloss.JoinHorizontal(lipgloss.Left, title.Render(item.Title), mutedStyle.Render("  "+item.Status))
-	body := lipgloss.NewStyle().Width(width).Render(formatChatBody(item))
+	body := lipgloss.NewStyle().Width(width).Render(formatChatBody(item, width))
 	return border.Width(width + 2).Render(lipgloss.JoinVertical(lipgloss.Left, head, body))
 }
 
@@ -1065,12 +1065,12 @@ func renderModal(width, height int, modal string) string {
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
 }
 
-func formatChatBody(item chatEntry) string {
+func formatChatBody(item chatEntry, width int) string {
 	text := strings.ReplaceAll(item.Body, "\r\n", "\n")
 	if item.Kind != "assistant" {
 		return strings.TrimRight(text, "\n")
 	}
-	return strings.TrimRight(tidyAssistantSpacing(text), "\n")
+	return strings.TrimRight(renderAssistantBody(tidyAssistantSpacing(text), width), "\n")
 }
 
 func tidyAssistantSpacing(text string) string {
@@ -1129,6 +1129,137 @@ func needsLeadingBlankLine(line string) bool {
 		return true
 	}
 	return false
+}
+
+func renderAssistantBody(text string, width int) string {
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines))
+	inCodeBlock := false
+	codeLines := make([]string, 0, 8)
+
+	flushCodeBlock := func() {
+		if len(codeLines) == 0 {
+			out = append(out, codeStyle.Width(max(12, width)).Render(""))
+			return
+		}
+		out = append(out, codeStyle.Width(max(12, width)).Render(strings.Join(codeLines, "\n")))
+		codeLines = codeLines[:0]
+	}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			if inCodeBlock {
+				flushCodeBlock()
+				inCodeBlock = false
+			} else {
+				inCodeBlock = true
+			}
+			continue
+		}
+
+		if inCodeBlock {
+			codeLines = append(codeLines, line)
+			continue
+		}
+
+		switch {
+		case trimmed == "":
+			out = append(out, "")
+		case isMarkdownHeading(trimmed):
+			out = append(out, renderMarkdownHeading(trimmed))
+		case isMarkdownListItem(trimmed):
+			out = append(out, renderMarkdownListItem(line))
+		case strings.HasPrefix(trimmed, ">"):
+			out = append(out, renderMarkdownQuote(trimmed))
+		case looksLikeMarkdownTable(trimmed):
+			out = append(out, tableLineStyle.Render(trimmed))
+		default:
+			out = append(out, line)
+		}
+	}
+
+	if inCodeBlock {
+		flushCodeBlock()
+	}
+
+	return strings.Join(out, "\n")
+}
+
+func isMarkdownHeading(line string) bool {
+	return strings.HasPrefix(line, "# ") ||
+		strings.HasPrefix(line, "## ") ||
+		strings.HasPrefix(line, "### ")
+}
+
+func renderMarkdownHeading(line string) string {
+	level := 0
+	for level < len(line) && line[level] == '#' {
+		level++
+	}
+	text := strings.TrimSpace(line[level:])
+	switch level {
+	case 1:
+		return assistantHeading1Style.Render(text)
+	case 2:
+		return assistantHeading2Style.Render(text)
+	default:
+		return assistantHeading3Style.Render(text)
+	}
+}
+
+func isMarkdownListItem(line string) bool {
+	if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") {
+		return true
+	}
+	return isOrderedListItem(line)
+}
+
+func isOrderedListItem(line string) bool {
+	if len(line) < 3 {
+		return false
+	}
+	index := 0
+	for index < len(line) && line[index] >= '0' && line[index] <= '9' {
+		index++
+	}
+	return index > 0 && len(line) > index+1 && line[index] == '.' && line[index+1] == ' '
+}
+
+func renderMarkdownListItem(line string) string {
+	indentWidth := len(line) - len(strings.TrimLeft(line, " "))
+	indent := strings.Repeat(" ", indentWidth)
+	trimmed := strings.TrimSpace(line)
+	marker := ""
+	content := ""
+
+	switch {
+	case strings.HasPrefix(trimmed, "- "), strings.HasPrefix(trimmed, "* "):
+		marker = trimmed[:1]
+		content = strings.TrimSpace(trimmed[2:])
+	default:
+		for i := 0; i < len(trimmed); i++ {
+			if trimmed[i] == '.' && i+1 < len(trimmed) && trimmed[i+1] == ' ' {
+				marker = trimmed[:i+1]
+				content = strings.TrimSpace(trimmed[i+2:])
+				break
+			}
+		}
+	}
+
+	if content == "" {
+		content = trimmed
+	}
+	return indent + listMarkerStyle.Render(marker) + " " + content
+}
+
+func renderMarkdownQuote(line string) string {
+	content := strings.TrimSpace(strings.TrimPrefix(line, ">"))
+	return quoteLineStyle.Render(content)
+}
+
+func looksLikeMarkdownTable(line string) bool {
+	return strings.Count(line, "|") >= 2
 }
 
 func chatBubbleWidth(item chatEntry, width int) int {

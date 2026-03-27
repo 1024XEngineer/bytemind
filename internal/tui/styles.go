@@ -81,6 +81,32 @@ var (
 
 	cardTitleStyle = lipgloss.NewStyle().Bold(true)
 
+	assistantHeading1Style = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("#EAF6FF"))
+
+	assistantHeading2Style = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("#CDEBFF"))
+
+	assistantHeading3Style = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("#A9D8FF"))
+
+	listMarkerStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorAccent)
+
+	quoteLineStyle = lipgloss.NewStyle().
+			BorderLeft(true).
+			BorderForeground(colorMuted).
+			PaddingLeft(1).
+			Foreground(lipgloss.Color("#D7E3F1"))
+
+	tableLineStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#D7E3F1")).
+			Background(lipgloss.Color("#101923"))
+
 	chatAssistantStyle = lipgloss.NewStyle().
 				BorderLeft(true).
 				BorderForeground(colorAccent).

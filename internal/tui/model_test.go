@@ -187,7 +187,7 @@ func TestFormatChatBodyPreservesExplicitBlankLines(t *testing.T) {
 		Body: "第一段\n\n第二段",
 	}
 
-	got := formatChatBody(item)
+	got := formatChatBody(item, 80)
 	if !strings.Contains(got, "\n\n第二段") {
 		t.Fatalf("expected explicit blank line to be preserved, got %q", got)
 	}
@@ -199,8 +199,38 @@ func TestFormatChatBodySeparatesParagraphAndList(t *testing.T) {
 		Body: "这里是说明\n- 第一项\n- 第二项",
 	}
 
-	got := formatChatBody(item)
+	got := formatChatBody(item, 80)
 	if !strings.Contains(got, "这里是说明\n\n- 第一项") {
 		t.Fatalf("expected list to be separated from paragraph, got %q", got)
+	}
+}
+
+func TestFormatChatBodyRendersMarkdownHeadingWithoutHashes(t *testing.T) {
+	item := chatEntry{
+		Kind: "assistant",
+		Body: "# 一级标题\n正文",
+	}
+
+	got := formatChatBody(item, 80)
+	if strings.Contains(got, "# 一级标题") {
+		t.Fatalf("expected heading marker to be stripped, got %q", got)
+	}
+	if !strings.Contains(got, "一级标题") {
+		t.Fatalf("expected heading text to remain, got %q", got)
+	}
+}
+
+func TestFormatChatBodyRendersCodeBlockWithoutFences(t *testing.T) {
+	item := chatEntry{
+		Kind: "assistant",
+		Body: "```go\nfmt.Println(\"hi\")\n```",
+	}
+
+	got := formatChatBody(item, 80)
+	if strings.Contains(got, "```") {
+		t.Fatalf("expected code fences to be removed, got %q", got)
+	}
+	if !strings.Contains(got, "fmt.Println(\"hi\")") {
+		t.Fatalf("expected code contents to remain, got %q", got)
 	}
 }
