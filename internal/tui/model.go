@@ -12,6 +12,7 @@ import (
 	"bytemind/internal/agent"
 	"bytemind/internal/config"
 	"bytemind/internal/session"
+	"bytemind/internal/skills"
 	"bytemind/internal/tools"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -98,12 +99,15 @@ var legacyCommandItems = []commandItem{
 }
 
 var commandItems = []commandItem{
-	{Name: "/help", Usage: "/help", Description: "Open the help panel and show supported commands."},
-	{Name: "/session", Usage: "/session", Description: "Show the current session id, workspace, and update time."},
-	{Name: "/sessions", Usage: "/sessions [limit]", Description: "List recent sessions so you can resume prior work."},
-	{Name: "/resume", Usage: "/resume <id>", Description: "Resume an existing session by full id or prefix."},
-	{Name: "/new", Usage: "/new", Description: "Create a fresh session in the current workspace."},
-	{Name: "/quit", Usage: "/quit", Description: "Exit the current TUI screen."},
+	{Name: "/help", Usage: "/help", Description: "打开帮助面板，查看当前支持的命令和用法。"},
+	{Name: "/skill-author", Usage: "/skill-author", Description: "进入 skill 编撰模式，生成或改写项目技能。"},
+	{Name: "/skills", Usage: "/skills", Description: "查看项目内可用 skills 列表。"},
+	{Name: "/session", Usage: "/session", Description: "查看当前会话 ID、工作区和更新时间。"},
+	{Name: "/sessions", Usage: "/sessions [limit]", Description: "查看最近会话，便于恢复之前的上下文。"},
+	{Name: "/resume", Usage: "/resume <id>", Description: "按完整 ID 或前缀恢复一个已有会话。"},
+	{Name: "/new", Usage: "/new", Description: "在当前工作区新建一个会话。"},
+	{Name: "/clear-skill", Usage: "/clear-skill", Description: "清除当前会话已激活的 skill。"},
+	{Name: "/quit", Usage: "/quit", Description: "退出当前 TUI 界面。"},
 }
 
 type model struct {
@@ -686,6 +690,9 @@ func (m model) renderMainPanel() string {
 		connection = "LLM request path: not confirmed"
 	}
 	subtitle := mutedStyle.Render(connection + "  |  Chat only shows your prompt and the assistant reply.")
+	if skill := activeSkillName(m.sess); skill != "" {
+		subtitle = mutedStyle.Render(connection + "  |  active skill /" + skill)
+	}
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		header,
@@ -732,6 +739,7 @@ func (m model) renderHeader() string {
 		tagStyle.Render(filepath.Base(m.workspace)),
 		tagStyle.Render(m.cfg.Provider.Type),
 		tagStyle.Render(m.cfg.Provider.Model),
+		renderSkillTag(activeSkillName(m.sess)),
 		tagStyle.Render("approval:"+m.cfg.ApprovalPolicy),
 		tagStyle.Render("budget:"+strconv.Itoa(m.cfg.MaxIterations)),
 		tagStyle.Render("phase:"+state),
@@ -747,7 +755,7 @@ func (m model) renderHeader() string {
 }
 
 func (m model) renderFooter() string {
-	hint := mutedStyle.Render("Type / for commands  -  ? help  -  Ctrl+Up/Down scroll  -  Enter send  -  Ctrl+N new session  -  Ctrl+L sessions  -  Ctrl+C quit")
+	hint := mutedStyle.Render("Type / for commands  -  /skills list skills  -  ? help  -  Ctrl+Up/Down scroll  -  Enter send  -  Ctrl+N new session  -  Ctrl+L sessions  -  Ctrl+C quit")
 	inputBorder := m.inputBorderStyle().
 		Width(m.chatPanelInnerWidth()).
 		Render(m.input.View())
@@ -839,6 +847,28 @@ func (m *model) handleSlashCommand(input string) error {
 		m.appendChat(chatEntry{Kind: "assistant", Title: "AICoding", Body: m.helpText(), Status: "final"})
 		m.statusNote = "已在聊天区显示帮助说明。"
 		return nil
+	case "/skill-author":
+		m.sess.ActiveSkill = skills.BuiltinSkillAuthorName
+		if err := m.store.Save(m.sess); err != nil {
+			return err
+		}
+		m.screen = screenChat
+		m.appendChat(chatEntry{Kind: "user", Title: "You", Body: input, Status: "final"})
+		m.appendChat(chatEntry{Kind: "assistant", Title: "AICoding", Body: strings.Join([]string{
+			"已进入 skill 编撰模式。",
+			"",
+			"直接告诉我你想沉淀什么能力，我会在当前项目里帮你创建或修改 skill。",
+			"建议一起说明：目标场景、典型任务、输入输出、是否需要脚本或模板。",
+		}, "\n"), Status: "final"})
+		m.statusNote = "当前技能：/skill-author"
+		m.syncInputStyle()
+		return nil
+	case "/skills":
+		m.screen = screenChat
+		m.appendChat(chatEntry{Kind: "user", Title: "You", Body: input, Status: "final"})
+		m.appendChat(chatEntry{Kind: "assistant", Title: "AICoding", Body: m.skillsText(), Status: "final"})
+		m.statusNote = fmt.Sprintf("已加载 %d 个技能。", len(m.runner.Skills()))
+		return nil
 	case "/session":
 		m.screen = screenChat
 		m.appendChat(chatEntry{Kind: "user", Title: "You", Body: input, Status: "final"})
@@ -862,7 +892,39 @@ func (m *model) handleSlashCommand(input string) error {
 		return m.resumeSession(fields[1])
 	case "/new":
 		return m.newSession()
+	case "/clear-skill":
+		if activeSkillName(m.sess) == "" {
+			m.statusNote = "当前没有激活技能。"
+			return nil
+		}
+		cleared := m.sess.ActiveSkill
+		m.sess.ActiveSkill = ""
+		if err := m.store.Save(m.sess); err != nil {
+			m.sess.ActiveSkill = cleared
+			return err
+		}
+		m.screen = screenChat
+		m.appendChat(chatEntry{Kind: "user", Title: "You", Body: input, Status: "final"})
+		m.appendChat(chatEntry{Kind: "assistant", Title: "AICoding", Body: "已清除当前技能 /" + cleared + "。", Status: "final"})
+		m.statusNote = "已清除技能 /" + cleared + "。"
+		m.syncInputStyle()
+		return nil
 	default:
+		if skill := m.runner.Skill(fields[0]); skill != nil {
+			if len(fields) > 1 {
+				return fmt.Errorf("inline skill tasks are not supported yet; use /%s to activate it, then send your task", skill.Name)
+			}
+			m.sess.ActiveSkill = skill.Name
+			if err := m.store.Save(m.sess); err != nil {
+				return err
+			}
+			m.screen = screenChat
+			m.appendChat(chatEntry{Kind: "user", Title: "You", Body: input, Status: "final"})
+			m.appendChat(chatEntry{Kind: "assistant", Title: "AICoding", Body: fmt.Sprintf("已激活技能 /%s。\n\n%s", skill.Name, describeSkill(skill)), Status: "final"})
+			m.statusNote = "当前技能：/" + skill.Name
+			m.syncInputStyle()
+			return nil
+		}
 		return fmt.Errorf("unknown command: %s", fields[0])
 	}
 }
@@ -1167,6 +1229,7 @@ func (m model) filteredCommands() []commandItem {
 		return visibleCommandItems()
 	}
 	items := visibleCommandItems()
+	items = append(items, m.matchingSkillCommandItems(value)...)
 	result := make([]commandItem, 0, len(items))
 	for _, item := range items {
 		if strings.HasPrefix(item.Name, value) || strings.HasPrefix(item.Usage, value) {
@@ -1183,6 +1246,34 @@ func visibleCommandItems() []commandItem {
 			continue
 		}
 		items = append(items, item)
+	}
+	return items
+}
+
+func (m model) availableCommandItems() []commandItem {
+	items := visibleCommandItems()
+	items = append(items, m.matchingSkillCommandItems(strings.TrimSpace(m.input.Value()))...)
+	return items
+}
+
+func (m model) matchingSkillCommandItems(prefix string) []commandItem {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" || prefix == "/" || m.runner == nil {
+		return nil
+	}
+
+	items := make([]commandItem, 0, len(m.runner.Skills()))
+	typedSkillPrefix := strings.TrimPrefix(prefix, "/")
+	for _, skill := range m.runner.Skills() {
+		name := "/" + skill.Name
+		if typedSkillPrefix == "" || !strings.HasPrefix(skill.Name, typedSkillPrefix) {
+			continue
+		}
+		items = append(items, commandItem{
+			Name:        name,
+			Usage:       name,
+			Description: "使用技能：" + describeSkill(skill),
+		})
 	}
 	return items
 }
@@ -1237,19 +1328,24 @@ func (m model) helpText() string {
 		"Entry points",
 		"Run `go run ./cmd/bytemind chat` to start the TUI.",
 		"Run `go run ./cmd/bytemind run -prompt \"...\"` for one-shot execution.",
+		"Add `-skill <name>` to `chat`, `tui`, or `run` to use a project-local skill.",
 		"",
 		"Slash commands",
 		"/help: Show this help text.",
+		"/skill-author: Enter skill authoring mode for creating or editing project skills.",
+		"/skills: List available project-local skills.",
 		"/session: Show the current session id, workspace, and update time.",
 		"/sessions [limit]: List recent sessions.",
 		"/resume <id>: Resume an existing session by id or prefix.",
 		"/new: Create a new session in the current workspace.",
+		"/<skill>: Activate a project-local skill for this session.",
+		"/clear-skill: Clear the active skill.",
 		"/quit: Exit the TUI.",
 		"",
 		"Current layout",
 		"The startup screen shows a centered logo and input box.",
 		"The main screen is a single chat panel for user, assistant, and tool messages.",
-		"The top status bar shows workspace, provider, model, approval policy, and current state.",
+		"The top status bar shows workspace, provider, model, active skill, approval policy, and current state.",
 		"Approval requests pause the UI and wait for confirmation in a modal.",
 	}, "\n")
 }
@@ -1285,7 +1381,11 @@ func (m *model) syncInputStyle() {
 	if m.screen == screenLanding {
 		m.input.Placeholder = "Ask AICoding to inspect, change, or verify this workspace..."
 	} else {
-		m.input.Placeholder = "Continue the conversation..."
+		if skill := activeSkillName(m.sess); skill != "" {
+			m.input.Placeholder = "Continue with active skill /" + skill + "..."
+		} else {
+			m.input.Placeholder = "Continue the conversation..."
+		}
 	}
 	m.input.Prompt = "> "
 }
@@ -1347,7 +1447,49 @@ func (m model) sessionText() string {
 		fmt.Sprintf("Workspace: %s", m.sess.Workspace),
 		fmt.Sprintf("Updated: %s", m.sess.UpdatedAt.Local().Format("2006-01-02 15:04:05")),
 		fmt.Sprintf("Messages: %d", len(m.sess.Messages)),
+		fmt.Sprintf("Active skill: %s", emptySkill(activeSkillName(m.sess))),
 	}, "\n")
+}
+
+func (m model) skillsText() string {
+	skills := m.runner.Skills()
+	if len(skills) == 0 {
+		return "当前没有发现项目内 skills。\n\n请把 skill 放到 `skills/<name>/SKILL.md`。"
+	}
+	lines := []string{"项目内可用 skills："}
+	for _, skill := range skills {
+		lines = append(lines, fmt.Sprintf("- /%s: %s", skill.Name, describeSkill(skill)))
+	}
+	lines = append(lines, "", "输入 `/<skill>` 可激活某个 skill。")
+	return strings.Join(lines, "\n")
+}
+
+func describeSkill(skill *skills.Skill) string {
+	if skill == nil {
+		return "自定义项目技能"
+	}
+	return skill.DisplayDescription()
+}
+
+func renderSkillTag(skill string) string {
+	if strings.TrimSpace(skill) == "" {
+		return tagStyle.Render("skill:none")
+	}
+	return tagStyle.Render("skill:/" + strings.TrimSpace(skill))
+}
+
+func activeSkillName(sess *session.Session) string {
+	if sess == nil {
+		return ""
+	}
+	return strings.TrimSpace(sess.ActiveSkill)
+}
+
+func emptySkill(skill string) string {
+	if strings.TrimSpace(skill) == "" {
+		return "(none)"
+	}
+	return "/" + strings.TrimSpace(skill)
 }
 
 func statusGlyph(status string) string {

@@ -10,6 +10,7 @@ import (
 	"bytemind/internal/config"
 	"bytemind/internal/llm"
 	"bytemind/internal/session"
+	"bytemind/internal/skills"
 	"bytemind/internal/tools"
 )
 
@@ -32,6 +33,7 @@ type Options struct {
 	Client    llm.Client
 	Store     *session.Store
 	Registry  *tools.Registry
+	Skills    *skills.Manager
 	Observer  Observer
 	Approval  tools.ApprovalHandler
 	Stdin     io.Reader
@@ -44,6 +46,7 @@ type Runner struct {
 	client    llm.Client
 	store     *session.Store
 	registry  *tools.Registry
+	skills    *skills.Manager
 	observer  Observer
 	approval  tools.ApprovalHandler
 	stdin     io.Reader
@@ -57,6 +60,7 @@ func NewRunner(opts Options) *Runner {
 		client:    opts.Client,
 		store:     opts.Store,
 		registry:  opts.Registry,
+		skills:    opts.Skills,
 		observer:  opts.Observer,
 		approval:  opts.Approval,
 		stdin:     opts.Stdin,
@@ -73,6 +77,10 @@ func (r *Runner) SetApprovalHandler(handler tools.ApprovalHandler) {
 }
 
 func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput string, out io.Writer) (string, error) {
+	return r.RunPromptWithSkill(ctx, sess, userInput, "", out)
+}
+
+func (r *Runner) RunPromptWithSkill(ctx context.Context, sess *session.Session, userInput, skillOverride string, out io.Writer) (string, error) {
 	sess.Messages = append(sess.Messages, llm.Message{
 		Role:    "user",
 		Content: userInput,
@@ -94,7 +102,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 		messages := make([]llm.Message, 0, len(sess.Messages)+1)
 		messages = append(messages, llm.Message{
 			Role:    "system",
-			Content: systemPrompt(r.workspace, r.config.ApprovalPolicy),
+			Content: systemPrompt(r.workspace, r.config.ApprovalPolicy, r.resolveSkill(sess, skillOverride)),
 		})
 		messages = append(messages, sess.Messages...)
 
@@ -227,6 +235,60 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 		executedToolNames,
 	)
 	return r.finishWithSummary(sess, summary, out, false)
+}
+
+func (r *Runner) Skills() []*skills.Skill {
+	if err := r.reloadProjectSkills(); err != nil {
+		return nil
+	}
+	if r.skills == nil {
+		return nil
+	}
+	return r.skills.List()
+}
+
+func (r *Runner) Skill(name string) *skills.Skill {
+	if skill := skills.Builtin(name); skill != nil {
+		return skill
+	}
+	if err := r.reloadProjectSkills(); err != nil {
+		return nil
+	}
+	if r.skills == nil {
+		return nil
+	}
+	return r.skills.Get(name)
+}
+
+func (r *Runner) resolveSkill(sess *session.Session, override string) *skills.Skill {
+	if skill := skills.Builtin(override); skill != nil {
+		return skill
+	}
+	if r.skills != nil {
+		if skill := r.skills.Get(override); skill != nil {
+			return skill
+		}
+	}
+	if sess == nil {
+		return nil
+	}
+	if skill := skills.Builtin(sess.ActiveSkill); skill != nil {
+		return skill
+	}
+	if err := r.reloadProjectSkills(); err != nil {
+		return nil
+	}
+	if r.skills == nil {
+		return nil
+	}
+	return r.skills.Get(sess.ActiveSkill)
+}
+
+func (r *Runner) reloadProjectSkills() error {
+	if r.skills == nil {
+		return nil
+	}
+	return r.skills.Load()
 }
 
 func (r *Runner) completeTurn(ctx context.Context, request llm.ChatRequest, out io.Writer, streamedText *bool) (llm.Message, error) {
