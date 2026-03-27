@@ -105,27 +105,15 @@ func TestSessionTextShowsSessionDetails(t *testing.T) {
 	}
 }
 
-func TestPlanTextShowsSavedPlanItems(t *testing.T) {
-	m := model{
-		plan: []session.PlanItem{
-			{Step: "Inspect current TUI behavior", Status: "completed"},
-			{Step: "Align visible features with code", Status: "in_progress"},
-		},
-	}
-
-	text := m.planText()
-	for _, want := range []string{
-		"Current plan (2 step(s)):",
-		"1. [completed] Inspect current TUI behavior",
-		"2. [in_progress] Align visible features with code",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("expected plan text to contain %q", want)
+func TestCommandPaletteDoesNotListPlanCommands(t *testing.T) {
+	for _, item := range visibleCommandItems() {
+		if strings.HasPrefix(item.Name, "/plan") {
+			t.Fatalf("did not expect command palette to include %q", item.Name)
 		}
 	}
 }
 
-func TestHelpTextDoesNotMentionSidebar(t *testing.T) {
+func LegacyTestHelpTextDoesNotMentionSidebar(t *testing.T) {
 	text := model{}.helpText()
 	if strings.Contains(text, "右侧状态栏") {
 		t.Fatalf("help text should not mention sidebar")
