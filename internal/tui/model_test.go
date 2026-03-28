@@ -86,7 +86,7 @@ func TestHandleMouseEnablesViewportMouseForwarding(t *testing.T) {
 		t.Fatalf("expected viewport wheel delta %d, got %d", scrollStep, updated.viewport.MouseWheelDelta)
 	}
 	if updated.viewport.YOffset == 0 {
-		t.Fatalf("expected forwarded mouse event to scroll viewport")
+		t.Fatalf("expected mouse wheel to scroll viewport")
 	}
 }
 
@@ -233,56 +233,18 @@ func TestChatViewOmitsRedundantChrome(t *testing.T) {
 	for _, wanted := range []string{
 		"/ commands",
 		"Ctrl+L sessions",
-		"Mouse wheel / PgUp / PgDn scroll",
+		"Mouse wheel scroll",
 		"Ctrl+C quit",
 	} {
 		if !strings.Contains(view, wanted) {
 			t.Fatalf("expected chat view to contain %q", wanted)
 		}
 	}
+	if strings.Contains(view, "PgUp/PgDn") {
+		t.Fatalf("did not expect chat view to advertise PgUp/PgDn anymore")
+	}
 	if m.viewport.Height <= 20 {
 		t.Fatalf("expected viewport height to stay roomy after removing header/footer text, got %d", m.viewport.Height)
-	}
-}
-
-func TestPageKeysScrollViewport(t *testing.T) {
-	m := model{
-		screen: screenChat,
-		viewport: func() (vp viewport.Model) {
-			vp = viewport.New(40, 5)
-			vp.Height = 5
-			vp.SetContent(strings.Join([]string{
-				"1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
-			}, "\n"))
-			return vp
-		}(),
-	}
-
-	afterDown, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyPgDown})
-	downModel := afterDown.(model)
-	if downModel.viewport.YOffset == 0 {
-		t.Fatalf("expected pgdown to scroll viewport down")
-	}
-
-	afterUp, _ := downModel.handleKey(tea.KeyMsg{Type: tea.KeyPgUp})
-	upModel := afterUp.(model)
-	if upModel.viewport.YOffset >= downModel.viewport.YOffset {
-		t.Fatalf("expected pgup to scroll viewport up, got %d -> %d", downModel.viewport.YOffset, upModel.viewport.YOffset)
-	}
-}
-
-func TestPageKeyHelpersRecognizeCommonVariants(t *testing.T) {
-	if !isPageUpKey(tea.KeyMsg{Type: tea.KeyPgUp}) {
-		t.Fatalf("expected key type pgup to be recognized")
-	}
-	if !isPageDownKey(tea.KeyMsg{Type: tea.KeyPgDown}) {
-		t.Fatalf("expected key type pgdown to be recognized")
-	}
-	if !isPageUpKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("pgup")}) {
-		t.Fatalf("expected string pgup to be recognized")
-	}
-	if !isPageDownKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("pgdown")}) {
-		t.Fatalf("expected string pgdown to be recognized")
 	}
 }
 
@@ -439,12 +401,15 @@ func TestRenderFooterOnlyShowsInputRegion(t *testing.T) {
 	for _, wanted := range []string{
 		"/ commands",
 		"Ctrl+L sessions",
-		"Mouse wheel / PgUp / PgDn scroll",
+		"Mouse wheel scroll",
 		"Ctrl+C quit",
 	} {
 		if !strings.Contains(footer, wanted) {
 			t.Fatalf("footer should advertise %q", wanted)
 		}
+	}
+	if strings.Contains(footer, "PgUp/PgDn") {
+		t.Fatalf("footer should not advertise PgUp/PgDn anymore")
 	}
 }
 

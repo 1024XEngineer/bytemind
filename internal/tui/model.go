@@ -297,28 +297,21 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.screen == screenChat {
 		m.ensureViewportMouse()
-		var cmd tea.Cmd
-		m.viewport, cmd = m.viewport.Update(msg)
-		return m, cmd
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.viewport.LineUp(scrollStep)
+			return m, nil
+		case tea.MouseButtonWheelDown:
+			m.viewport.LineDown(scrollStep)
+			return m, nil
+		default:
+			m.ensureViewportMouse()
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
 	}
 	return m, nil
-}
-
-func viewportPageStep(height int) int {
-	if height <= 0 {
-		return scrollStep * 2
-	}
-	return max(scrollStep*2, height-1)
-}
-
-func isPageUpKey(msg tea.KeyMsg) bool {
-	key := strings.ToLower(msg.String())
-	return msg.Type == tea.KeyPgUp || key == "pgup" || key == "pageup"
-}
-
-func isPageDownKey(msg tea.KeyMsg) bool {
-	key := strings.ToLower(msg.String())
-	return msg.Type == tea.KeyPgDown || key == "pgdown" || key == "pagedown"
 }
 
 func (m *model) ensureViewportMouse() {
@@ -326,6 +319,22 @@ func (m *model) ensureViewportMouse() {
 	if m.viewport.MouseWheelDelta <= 0 {
 		m.viewport.MouseWheelDelta = scrollStep
 	}
+}
+
+func normalizeKeyName(key string) string {
+	key = strings.ToLower(strings.TrimSpace(key))
+	replacer := strings.NewReplacer(" ", "", "-", "", "_", "")
+	return replacer.Replace(key)
+}
+
+func isPageUpKey(msg tea.KeyMsg) bool {
+	key := normalizeKeyName(msg.String())
+	return msg.Type == tea.KeyPgUp || key == "pgup" || key == "pageup" || key == "prior"
+}
+
+func isPageDownKey(msg tea.KeyMsg) bool {
+	key := normalizeKeyName(msg.String())
+	return msg.Type == tea.KeyPgDown || key == "pgdn" || key == "pgdown" || key == "pagedown" || key == "next"
 }
 
 func (m *model) scrollInput(delta int) {
@@ -399,19 +408,6 @@ func (m model) mouseOverLandingInput(y int) bool {
 }
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case isPageUpKey(msg):
-		if m.screen == screenChat && !m.sessionsOpen && !m.commandOpen && !m.helpOpen {
-			m.viewport.LineUp(viewportPageStep(m.viewport.Height))
-			return m, nil
-		}
-	case isPageDownKey(msg):
-		if m.screen == screenChat && !m.sessionsOpen && !m.commandOpen && !m.helpOpen {
-			m.viewport.LineDown(viewportPageStep(m.viewport.Height))
-			return m, nil
-		}
-	}
-
 	switch msg.String() {
 	case "ctrl+c":
 		if m.approval != nil {
@@ -1043,7 +1039,7 @@ func (m model) renderLanding() string {
 }
 
 func (m model) renderFooter() string {
-	hint := mutedStyle.Width(m.chatPanelInnerWidth()).Render("/ commands  -  Ctrl+L sessions  -  Mouse wheel / PgUp / PgDn scroll  -  Ctrl+C quit")
+	hint := mutedStyle.Width(m.chatPanelInnerWidth()).Render("/ commands  -  Ctrl+L sessions  -  Mouse wheel scroll  -  Ctrl+C quit")
 	inputBorder := m.inputBorderStyle().
 		Width(m.chatPanelInnerWidth()).
 		Render(m.input.View())
