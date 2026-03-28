@@ -207,25 +207,41 @@ func TestSubmitPromptRecomputesInputWidthWhenEnteringChat(t *testing.T) {
 	}
 }
 
-func TestRenderHeaderKeepsStableHeightWithLongStatusNote(t *testing.T) {
+func TestChatViewOmitsRedundantChrome(t *testing.T) {
+	input := textarea.New()
 	m := model{
-		width:      100,
-		workspace:  "E:\\bytemind",
-		sess:       session.New("E:\\bytemind"),
-		statusNote: strings.Repeat("very long streaming status update ", 12),
-		cfg: config.Config{
-			Provider: config.ProviderConfig{
-				Type:  "openai-compatible",
-				Model: "deepseek-chat",
-			},
-			ApprovalPolicy: "on-request",
-			MaxIterations:  32,
-		},
+		screen:    screenChat,
+		width:     120,
+		height:    36,
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+		input:     input,
 	}
 
-	header := m.renderHeader()
-	if lipgloss.Height(header) != 2 {
-		t.Fatalf("expected header height to stay at 2 lines, got %d", lipgloss.Height(header))
+	m.syncLayoutForCurrentScreen()
+	view := m.View()
+
+	for _, unwanted := range []string{
+		"Conversation",
+		"Bytemind TUI",
+		"? help",
+	} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("did not expect chat view to contain %q", unwanted)
+		}
+	}
+	for _, wanted := range []string{
+		"/ commands",
+		"Ctrl+L sessions",
+		"Mouse wheel / PgUp / PgDn scroll",
+		"Ctrl+C quit",
+	} {
+		if !strings.Contains(view, wanted) {
+			t.Fatalf("expected chat view to contain %q", wanted)
+		}
+	}
+	if m.viewport.Height <= 20 {
+		t.Fatalf("expected viewport height to stay roomy after removing header/footer text, got %d", m.viewport.Height)
 	}
 }
 
@@ -401,7 +417,7 @@ func TestHelpTextOnlyMentionsSupportedEntryPoints(t *testing.T) {
 	}
 }
 
-func TestRenderFooterDoesNotAdvertiseHistory(t *testing.T) {
+func TestRenderFooterOnlyShowsInputRegion(t *testing.T) {
 	input := textarea.New()
 	m := model{
 		width: 120,
@@ -409,26 +425,26 @@ func TestRenderFooterDoesNotAdvertiseHistory(t *testing.T) {
 	}
 
 	footer := m.renderFooter()
-	if strings.Contains(footer, "Up/Down history") {
-		t.Fatalf("footer should not advertise history navigation")
+	for _, unwanted := range []string{
+		"Up/Down history",
+		"Ctrl+Up/Down scroll",
+		"? help",
+		"Enter send",
+		"Ctrl+N new session",
+	} {
+		if strings.Contains(footer, unwanted) {
+			t.Fatalf("footer should not advertise %q", unwanted)
+		}
 	}
-	if strings.Contains(footer, "Ctrl+Up/Down scroll") {
-		t.Fatalf("footer should not advertise keyboard scrolling")
-	}
-	if !strings.Contains(footer, "? help") {
-		t.Fatalf("footer should advertise help shortcut")
-	}
-	if !strings.Contains(footer, "Mouse wheel / PgUp / PgDn scroll") {
-		t.Fatalf("footer should advertise mouse and keyboard scrolling")
-	}
-	if !strings.Contains(footer, "PgUp / PgDn") {
-		t.Fatalf("footer should advertise keyboard page scrolling")
-	}
-	if !strings.Contains(footer, "Enter send") {
-		t.Fatalf("footer should advertise enter as send")
-	}
-	if strings.Contains(footer, "Alt+Enter") {
-		t.Fatalf("footer should not advertise alt+enter")
+	for _, wanted := range []string{
+		"/ commands",
+		"Ctrl+L sessions",
+		"Mouse wheel / PgUp / PgDn scroll",
+		"Ctrl+C quit",
+	} {
+		if !strings.Contains(footer, wanted) {
+			t.Fatalf("footer should advertise %q", wanted)
+		}
 	}
 }
 
@@ -570,11 +586,11 @@ func TestViewRendersCommandPaletteAsOverlaySection(t *testing.T) {
 	m.syncCommandPalette()
 
 	view := m.View()
-	if !strings.Contains(view, "Conversation") {
-		t.Fatalf("expected base chat view to remain visible, got %q", view)
-	}
 	if !strings.Contains(view, "/help") {
 		t.Fatalf("expected slash command overlay to render, got %q", view)
+	}
+	if strings.Contains(view, "Conversation") {
+		t.Fatalf("did not expect redundant conversation header in chat view")
 	}
 }
 

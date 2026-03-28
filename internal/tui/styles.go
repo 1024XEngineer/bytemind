@@ -15,32 +15,6 @@ var (
 )
 
 var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#E5EEF8"))
-
-	tagStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#D6E4F5")).
-			Background(lipgloss.Color("#172434")).
-			Padding(0, 1).
-			MarginLeft(1)
-
-	statusTagStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E6F7FF")).
-			Background(lipgloss.Color("#15303B")).
-			Padding(0, 1).
-			MarginLeft(1)
-
-	subtleBorderStyle = lipgloss.NewStyle().
-				Foreground(colorMuted).
-				BorderStyle(lipgloss.NormalBorder()).
-				BorderTop(false).
-				BorderLeft(false).
-				BorderRight(false).
-				BorderBottom(true).
-				BorderForeground(colorBorder).
-				Padding(0, 1)
-
 	panelStyle = lipgloss.NewStyle().
 			Background(colorPanel).
 			BorderStyle(lipgloss.NormalBorder()).
@@ -60,10 +34,6 @@ var (
 				BorderForeground(colorAccent).
 				Padding(0, 1).
 				Background(colorPanel)
-
-	sectionTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("#E2E8F0"))
 
 	inputStyle = lipgloss.NewStyle().
 			BorderStyle(lipgloss.NormalBorder()).

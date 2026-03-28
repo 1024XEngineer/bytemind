@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -952,7 +951,6 @@ func (m model) View() string {
 		mainPanel := panelStyle.Width(m.chatPanelWidth()).Render(m.renderMainPanel())
 		base = lipgloss.JoinVertical(
 			lipgloss.Left,
-			m.renderHeader(),
 			mainPanel,
 			m.renderFooter(),
 		)
@@ -984,34 +982,20 @@ func (m *model) syncViewportSize() {
 	if m.width == 0 || m.height == 0 {
 		return
 	}
-	headerHeight := lipgloss.Height(m.renderHeader())
 	footerHeight := lipgloss.Height(m.renderFooter())
-	bodyHeight := m.height - headerHeight - footerHeight
+	bodyHeight := m.height - footerHeight
 	if bodyHeight < 6 {
 		bodyHeight = 6
 	}
 	panelInnerWidth := m.chatPanelInnerWidth()
-	panelInnerHeight := max(4, bodyHeight-2)
-	mainHeaderHeight := 3
-	contentHeight := max(3, panelInnerHeight-mainHeaderHeight)
+	panelInnerHeight := max(4, bodyHeight-panelStyle.GetVerticalFrameSize())
+	contentHeight := max(3, panelInnerHeight)
 	m.viewport.Width = panelInnerWidth
 	m.viewport.Height = contentHeight
 }
 
 func (m model) renderMainPanel() string {
-	header := sectionTitleStyle.Render("Conversation")
-	connection := "LLM request path: ready"
-	if !m.llmConnected {
-		connection = "LLM request path: not confirmed"
-	}
-	subtitle := mutedStyle.Render(connection + "  |  Chat only shows your prompt and the assistant reply.")
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		header,
-		subtitle,
-		"",
-		m.viewport.View(),
-	)
+	return m.viewport.View()
 }
 
 func (m model) renderLanding() string {
@@ -1037,47 +1021,8 @@ func (m model) renderLanding() string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }
 
-func (m model) renderHeader() string {
-	state := "idle"
-	if m.approval != nil {
-		state = "approval"
-	} else if m.busy {
-		state = m.phase
-	}
-
-	statusValue := state
-	if m.busy {
-		statusValue = m.spinner.View() + " " + state
-	}
-
-	left := titleStyle.Render(tuiTitleLabel)
-	right := lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		tagStyle.Render(filepath.Base(m.workspace)),
-		tagStyle.Render(m.cfg.Provider.Type),
-		tagStyle.Render(m.cfg.Provider.Model),
-		tagStyle.Render("approval:"+m.cfg.ApprovalPolicy),
-		tagStyle.Render("budget:"+strconv.Itoa(m.cfg.MaxIterations)),
-		tagStyle.Render("phase:"+state),
-		tagStyle.Render("llm:"+connectionState(m.llmConnected)),
-		statusTagStyle.Render(statusValue),
-	)
-	line := lipgloss.JoinHorizontal(lipgloss.Center, left, spacer(max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right)-4)), right)
-
-	subtitleWidth := max(16, m.width-subtleBorderStyle.GetHorizontalFrameSize())
-	subtitleText := compact(
-		fmt.Sprintf("session %s | workspace %s | %s", shortID(m.sess.ID), filepath.Base(m.sess.Workspace), m.statusNote),
-		subtitleWidth,
-	)
-	subtitle := subtleBorderStyle.
-		Width(max(1, m.width)).
-		MaxHeight(1).
-		Render(subtitleText)
-	return lipgloss.JoinVertical(lipgloss.Left, line, subtitle)
-}
-
 func (m model) renderFooter() string {
-	hint := mutedStyle.Render("Type / for commands  -  ? help  -  Mouse wheel / PgUp / PgDn scroll  -  Enter send  -  Ctrl+N new session  -  Ctrl+L sessions  -  Ctrl+C quit")
+	hint := mutedStyle.Width(m.chatPanelInnerWidth()).Render("/ commands  -  Ctrl+L sessions  -  Mouse wheel / PgUp / PgDn scroll  -  Ctrl+C quit")
 	inputBorder := m.inputBorderStyle().
 		Width(m.chatPanelInnerWidth()).
 		Render(m.input.View())
@@ -1088,7 +1033,7 @@ func (m model) renderFooter() string {
 	if m.commandOpen {
 		parts = append(parts, m.renderCommandPalette())
 	}
-	parts = append(parts, inputBorder, mutedStyle.Width(m.chatPanelInnerWidth()).Render(hint))
+	parts = append(parts, inputBorder, hint)
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	return panelStyle.Width(m.chatPanelWidth()).Render(content)
 }
@@ -1896,13 +1841,6 @@ func (m *model) syncInputStyle() {
 		m.input.Placeholder = "Continue the conversation..."
 	}
 	m.input.Prompt = "> "
-}
-
-func connectionState(connected bool) string {
-	if connected {
-		return "ready"
-	}
-	return "unknown"
 }
 
 func resolveSessionID(summaries []session.Summary, prefix string) (string, error) {
