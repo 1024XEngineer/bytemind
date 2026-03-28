@@ -28,7 +28,7 @@ const (
 	commandPageSize     = 3
 	pasteSubmitGuard    = 400 * time.Millisecond
 	assistantLabel      = "Bytemind"
-	thinkingLabel       = "Bytemind thinking"
+	thinkingLabel       = "Bytemind"
 	chatTitleLabel      = "Bytemind Chat"
 	tuiTitleLabel       = "Bytemind TUI"
 )
@@ -475,10 +475,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "ctrl+l":
-		if !m.busy && m.screen == screenChat {
+		if !m.busy {
 			m.sessionsOpen = true
 		}
-		return m, nil
+		return m, m.loadSessionsCmd()
 	case "ctrl+n":
 		if !m.busy && m.screen == screenChat {
 			if err := m.newSession(); err != nil {
@@ -819,12 +819,7 @@ func (m *model) finalizeAssistantTurnForTool(toolName string) {
 	if m.streamingIndex >= 0 && m.streamingIndex < len(m.chatItems) {
 		item := &m.chatItems[m.streamingIndex]
 		if item.Kind == "assistant" {
-			if item.Status == "pending" ||
-				item.Body == m.thinkingText() ||
-				strings.TrimSpace(item.Body) == "" ||
-				(item.Status == "thinking" && strings.EqualFold(strings.TrimSpace(item.Body), "thinking")) {
-				item.Body = assistantToolIntro(toolName)
-			}
+			item.Body = assistantToolIntro(toolName)
 			item.Title = thinkingLabel
 			item.Status = "thinking"
 			m.streamingIndex = -1
@@ -1033,13 +1028,13 @@ func (m model) renderLanding() string {
 	if m.commandOpen {
 		parts = append(parts, m.renderCommandPalette(), "")
 	}
-	parts = append(parts, inputBox, "", mutedStyle.Render("Type / for supported commands, Ctrl+C to quit."))
+	parts = append(parts, inputBox, "", mutedStyle.Render("Type / for supported commands, Ctrl+L for sessions, Ctrl+C to quit."))
 	content := lipgloss.JoinVertical(lipgloss.Center, parts...)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }
 
 func (m model) renderFooter() string {
-	hint := mutedStyle.Width(m.chatPanelInnerWidth()).Render("/ commands  -  Ctrl+L sessions  -  Mouse wheel scroll  -  Ctrl+C quit")
+	hint := mutedStyle.Width(m.chatPanelInnerWidth()).Render("/ commands  -  Ctrl+L sessions  -  Ctrl+C quit")
 	inputBorder := m.inputBorderStyle().
 		Width(m.chatPanelInnerWidth()).
 		Render(m.input.View())
@@ -1679,6 +1674,25 @@ func summarizeArgs(raw string) string {
 		return "default arguments"
 	}
 	return compact(raw, 88)
+}
+
+func legacyAssistantToolIntro(toolName string) string {
+	if strings.TrimSpace(toolName) == "" {
+		return "我先查看一下相关内容。"
+	}
+	return fmt.Sprintf("我先调用 `%s` 看一下相关内容。", toolName)
+}
+
+func legacyAssistantToolFollowUp(toolName, summary, status string) string {
+	if strings.TrimSpace(summary) == "" {
+		return "我拿到工具结果了，继续整理一下。"
+	}
+	switch status {
+	case "error", "warn":
+		return fmt.Sprintf("`%s` 已返回结果，我先根据这个情况继续判断。", toolName)
+	default:
+		return fmt.Sprintf("`%s` 已经执行完了，我继续往下整理。", toolName)
+	}
 }
 
 func assistantToolIntro(toolName string) string {

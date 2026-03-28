@@ -160,6 +160,29 @@ func TestHandleMouseWheelScrollsLandingInputWhenPointerIsOverInput(t *testing.T)
 	}
 }
 
+func TestCtrlLFromLandingOpensSessions(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create session store: %v", err)
+	}
+
+	m := model{
+		screen:       screenLanding,
+		sessionLimit: defaultSessionLimit,
+		store:        store,
+	}
+
+	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlL})
+	updated := got.(model)
+
+	if !updated.sessionsOpen {
+		t.Fatalf("expected ctrl+l on landing screen to open sessions")
+	}
+	if cmd == nil {
+		t.Fatalf("expected ctrl+l on landing screen to trigger session loading")
+	}
+}
+
 func TestWindowSizeMsgUpdatesViewportDimensions(t *testing.T) {
 	input := textarea.New()
 	m := model{
@@ -233,7 +256,6 @@ func TestChatViewOmitsRedundantChrome(t *testing.T) {
 	for _, wanted := range []string{
 		"/ commands",
 		"Ctrl+L sessions",
-		"Mouse wheel scroll",
 		"Ctrl+C quit",
 	} {
 		if !strings.Contains(view, wanted) {
@@ -401,7 +423,6 @@ func TestRenderFooterOnlyShowsInputRegion(t *testing.T) {
 	for _, wanted := range []string{
 		"/ commands",
 		"Ctrl+L sessions",
-		"Mouse wheel scroll",
 		"Ctrl+C quit",
 	} {
 		if !strings.Contains(footer, wanted) {
@@ -781,7 +802,7 @@ func TestHandleAgentEventShowsToolProgressInChat(t *testing.T) {
 	}
 }
 
-func TestToolStartKeepsStreamedAssistantTurn(t *testing.T) {
+func TestToolStartReplacesStreamedAssistantTurnWithStableToolIntro(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
 			{Kind: "user", Title: "You", Body: "what project is this", Status: "final"},
@@ -799,8 +820,8 @@ func TestToolStartKeepsStreamedAssistantTurn(t *testing.T) {
 	if len(m.chatItems) != 3 {
 		t.Fatalf("expected tool start to append only tool call after streamed assistant turn, got %d items", len(m.chatItems))
 	}
-	if m.chatItems[1].Body != "let me inspect the repo structure first" || m.chatItems[1].Status != "thinking" || m.chatItems[1].Title != thinkingLabel {
-		t.Fatalf("expected streamed assistant turn to be preserved and finalized, got %+v", m.chatItems[1])
+	if m.chatItems[1].Body != "我先调用 `list_files` 看一下相关内容。" || m.chatItems[1].Status != "thinking" || m.chatItems[1].Title != thinkingLabel {
+		t.Fatalf("expected streamed assistant turn to be replaced with stable tool intro, got %+v", m.chatItems[1])
 	}
 	if !strings.Contains(m.chatItems[2].Title, "Tool Call | list_files") {
 		t.Fatalf("expected tool call entry, got %+v", m.chatItems[2])
