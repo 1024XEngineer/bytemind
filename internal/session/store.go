@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -69,7 +70,40 @@ func (s *Store) Save(session *Session) error {
 	if err := encoder.Encode(session); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(s.dir, session.ID+".json"), bytes.TrimRight(buf.Bytes(), "\n"), 0o644)
+
+	target := filepath.Join(s.dir, session.ID+".json")
+	tmp, err := os.CreateTemp(s.dir, session.ID+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(bytes.TrimRight(buf.Bytes(), "\n")); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
 }
 
 func (s *Store) Load(id string) (*Session, error) {
@@ -84,13 +118,14 @@ func (s *Store) Load(id string) (*Session, error) {
 	return &session, nil
 }
 
-func (s *Store) List(limit int) ([]Summary, error) {
+func (s *Store) List(limit int) ([]Summary, []string, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	summaries := make([]Summary, 0, len(entries))
+	warnings := make([]string, 0)
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
@@ -98,12 +133,17 @@ func (s *Store) List(limit int) ([]Summary, error) {
 
 		data, err := os.ReadFile(filepath.Join(s.dir, entry.Name()))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		if len(bytes.TrimSpace(data)) == 0 {
+			warnings = append(warnings, fmt.Sprintf("skipped corrupted session file %s: empty file", entry.Name()))
+			continue
 		}
 
 		var sess Session
 		if err := json.Unmarshal(data, &sess); err != nil {
-			return nil, err
+			warnings = append(warnings, fmt.Sprintf("skipped corrupted session file %s: invalid JSON (%v)", entry.Name(), err))
+			continue
 		}
 
 		summaries = append(summaries, Summary{
@@ -123,7 +163,7 @@ func (s *Store) List(limit int) ([]Summary, error) {
 	if limit > 0 && len(summaries) > limit {
 		summaries = summaries[:limit]
 	}
-	return summaries, nil
+	return summaries, warnings, nil
 }
 
 func newID() string {
@@ -145,11 +185,12 @@ func lastUserMessage(messages []llm.Message) string {
 
 func summarizeMessage(text string, limit int) string {
 	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
-	if limit <= 0 || len(text) <= limit {
+	runes := []rune(text)
+	if limit <= 0 || len(runes) <= limit {
 		return text
 	}
 	if limit <= 3 {
-		return text[:limit]
+		return string(runes[:limit])
 	}
-	return text[:limit-3] + "..."
+	return string(runes[:limit-3]) + "..."
 }

@@ -293,33 +293,41 @@ func printCurrentSession(w io.Writer, sess *session.Session) {
 }
 
 func printSessions(w io.Writer, store *session.Store, currentID string, limit int) error {
-	summaries, err := store.List(limit)
+	summaries, warnings, err := store.List(limit)
 	if err != nil {
 		return err
 	}
 	if len(summaries) == 0 {
 		fmt.Fprintln(w, "No saved sessions.")
-		return nil
+	} else {
+		fmt.Fprintf(w, "%srecent sessions%s\n", ansiBold, ansiReset)
+		for _, item := range summaries {
+			marker := " "
+			if item.ID == currentID {
+				marker = "*"
+			}
+			preview := item.LastUserMessage
+			if preview == "" {
+				preview = "(no user prompt yet)"
+			}
+			fmt.Fprintf(w, "%s %s  %s  %2d msgs  %s\n", marker, item.ID, item.UpdatedAt.Local().Format("2006-01-02 15:04"), item.MessageCount, preview)
+			fmt.Fprintf(w, "%s    %s%s\n", ansiGray, item.Workspace, ansiReset)
+		}
 	}
 
-	fmt.Fprintf(w, "%srecent sessions%s\n", ansiBold, ansiReset)
-	for _, item := range summaries {
-		marker := " "
-		if item.ID == currentID {
-			marker = "*"
+	if len(warnings) > 0 {
+		if len(summaries) > 0 {
+			fmt.Fprintln(w)
 		}
-		preview := item.LastUserMessage
-		if preview == "" {
-			preview = "(no user prompt yet)"
+		for _, warning := range warnings {
+			fmt.Fprintf(w, "%swarning%s %s\n", ansiDim, ansiReset, warning)
 		}
-		fmt.Fprintf(w, "%s %s  %s  %2d msgs  %s\n", marker, shortID(item.ID), item.UpdatedAt.Local().Format("2006-01-02 15:04"), item.MessageCount, preview)
-		fmt.Fprintf(w, "%s    %s%s\n", ansiGray, item.Workspace, ansiReset)
 	}
 	return nil
 }
 
 func resolveSessionID(store *session.Store, prefix string) (string, error) {
-	summaries, err := store.List(0)
+	summaries, _, err := store.List(0)
 	if err != nil {
 		return "", err
 	}
@@ -386,13 +394,6 @@ func commandNames() []string {
 		items = append(items, cmd.Name)
 	}
 	return items
-}
-
-func shortID(id string) string {
-	if len(id) <= 16 {
-		return id
-	}
-	return id[:16]
 }
 
 func resolveWorkspace(workspaceOverride string) (string, error) {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -91,5 +92,93 @@ func TestLoadUsesWorkspaceRootConfigFile(t *testing.T) {
 	}
 	if cfg.Stream {
 		t.Fatalf("expected stream false from workspace root config")
+	}
+}
+
+func TestLoadRejectsUnsupportedProviderType(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "provider": {
+    "type": "unsupported",
+    "base_url": "https://example.com",
+    "model": "test-model",
+    "api_key": "secret"
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected unsupported provider type error")
+	}
+	if !strings.Contains(err.Error(), "provider.type must be one of") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadNormalizesRelativeSessionDir(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-5.4-mini",
+    "api_key": "test-key"
+  },
+  "session_dir": "tmp/sessions"
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(workspace, "tmp", "sessions")
+	if cfg.SessionDir != want {
+		t.Fatalf("expected normalized session dir %q, got %q", want, cfg.SessionDir)
+	}
+}
+
+func TestLoadRejectsInvalidApprovalPolicy(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-5.4-mini",
+    "api_key": "test-key"
+  },
+  "approval_policy": "sometimes"
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected invalid approval policy error")
+	}
+	if !strings.Contains(err.Error(), "approval_policy must be one of") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsMalformedConfigJSON(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"provider":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected malformed json error")
+	}
+	if !strings.Contains(err.Error(), "unexpected end of JSON input") && !strings.Contains(err.Error(), "invalid character") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

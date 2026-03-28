@@ -93,11 +93,12 @@ func (RunShellTool) Run(ctx context.Context, raw json.RawMessage, execCtx *Execu
 	err := cmd.Run()
 	exitCode := 0
 	if err != nil {
+		if runCtx.Err() == context.DeadlineExceeded {
+			return "", errors.New("command timed out")
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
-		} else if runCtx.Err() == context.DeadlineExceeded {
-			return "", errors.New("command timed out")
 		} else {
 			return "", err
 		}
@@ -140,7 +141,7 @@ func promptForApproval(command, reason string, execCtx *ExecutionContext) error 
 			return err
 		}
 		if !approved {
-			return errors.New("shell command not approved")
+			return errors.New("shell command was not run because approval was denied")
 		}
 		return nil
 	}
@@ -161,7 +162,7 @@ func promptForApproval(command, reason string, execCtx *ExecutionContext) error 
 	}
 	answer := strings.ToLower(strings.TrimSpace(line))
 	if answer != "y" && answer != "yes" {
-		return errors.New("shell command not approved")
+		return errors.New("shell command was not run because approval was denied")
 	}
 	return nil
 }

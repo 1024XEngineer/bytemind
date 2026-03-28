@@ -532,13 +532,14 @@ func previewOutput(label, text string) []string {
 
 func compactWhitespace(text string, limit int) string {
 	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
-	if limit <= 0 || len(text) <= limit {
+	runes := []rune(text)
+	if limit <= 0 || len(runes) <= limit {
 		return text
 	}
 	if limit <= 3 {
-		return text[:limit]
+		return string(runes[:limit])
 	}
-	return text[:limit-3] + "..."
+	return string(runes[:limit-3]) + "..."
 }
 
 func (r *Runner) emit(event Event) {

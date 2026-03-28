@@ -70,9 +70,12 @@ func TestStoreListReturnsRecentSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	summaries, err := store.List(0)
+	summaries, warnings, err := store.List(0)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
 	}
 	if len(summaries) != 2 {
 		t.Fatalf("expected 2 summaries, got %d", len(summaries))
@@ -87,11 +90,126 @@ func TestStoreListReturnsRecentSessions(t *testing.T) {
 		t.Fatalf("expected message count 2, got %#v", summaries[0])
 	}
 
-	limited, err := store.List(1)
+	limited, warnings, err := store.List(1)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings for limited list, got %#v", warnings)
+	}
 	if len(limited) != 1 || limited[0].ID != "newer" {
 		t.Fatalf("expected limited list to keep newest summary, got %#v", limited)
+	}
+}
+
+func TestStoreListSkipsEmptySessionFiles(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sess := New(`E:\\repo`)
+	sess.ID = "valid"
+	sess.Messages = []llm.Message{{Role: "user", Content: "hello"}}
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "empty.json"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, warnings, err := store.List(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].ID != "valid" {
+		t.Fatalf("expected valid session to remain visible, got %#v", summaries)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %#v", warnings)
+	}
+	if !strings.Contains(warnings[0], "empty.json") || !strings.Contains(warnings[0], "empty file") {
+		t.Fatalf("unexpected warning: %q", warnings[0])
+	}
+}
+
+func TestStoreListSkipsInvalidJSONSessionFiles(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sess := New(`E:\\repo`)
+	sess.ID = "valid"
+	sess.Messages = []llm.Message{{Role: "user", Content: "hello"}}
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, warnings, err := store.List(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].ID != "valid" {
+		t.Fatalf("expected valid session to remain visible, got %#v", summaries)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %#v", warnings)
+	}
+	if !strings.Contains(warnings[0], "broken.json") || !strings.Contains(warnings[0], "invalid JSON") {
+		t.Fatalf("unexpected warning: %q", warnings[0])
+	}
+}
+
+func TestStoreSaveReplacesExistingSessionFile(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sess := New(`E:\\repo`)
+	sess.ID = "stable"
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	sess.Messages = append(sess.Messages, llm.Message{Role: "user", Content: "updated"})
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := store.Load(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Messages) != 1 || loaded.Messages[0].Content != "updated" {
+		t.Fatalf("expected updated session content, got %#v", loaded.Messages)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if filepath.Ext(entry.Name()) == ".tmp" {
+			t.Fatalf("expected no temp files left behind, found %s", entry.Name())
+		}
+	}
+}
+
+func TestSummarizeMessagePreservesUTF8WhenTruncating(t *testing.T) {
+	text := "\u7ee7\u7eed\u521a\u624d\u7684\u4e0a\u4e0b\u6587\uff0c\u7ed9\u6211\u5217\u4e00\u4e0b\u5f53\u524d\u4e3b MVP \u6700\u5173\u952e\u7684\u6d4b\u8bd5\u70b9"
+	got := summarizeMessage(text, 24)
+	if strings.ContainsRune(got, '\uFFFD') {
+		t.Fatalf("expected valid utf-8 preview, got %q", got)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("expected truncated preview to end with ellipsis, got %q", got)
 	}
 }

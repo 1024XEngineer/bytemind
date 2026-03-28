@@ -2,6 +2,8 @@ package tools
 
 import (
 	"bytes"
+	"context"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -34,6 +36,27 @@ func TestAssessShellCommandSplitsSegments(t *testing.T) {
 	assessment := assessShellCommand("git status && go test ./...")
 	if assessment.Risk != shellRiskApproval {
 		t.Fatalf("expected approval risk from second segment, got %#v", assessment)
+	}
+}
+
+func TestAssessShellCommandIgnoresRedirectionInsideQuotes(t *testing.T) {
+	assessment := assessShellCommand(`echo "hello > world"`)
+	if assessment.Risk != shellRiskSafe {
+		t.Fatalf("expected quoted redirection to stay safe, got %#v", assessment)
+	}
+}
+
+func TestAssessShellCommandDoesNotSplitQuotedSegments(t *testing.T) {
+	assessment := assessShellCommand(`echo "git status && go test ./..."`)
+	if assessment.Risk != shellRiskSafe {
+		t.Fatalf("expected quoted separators to stay inside one safe echo command, got %#v", assessment)
+	}
+}
+
+func TestAssessShellCommandBlocksDangerousCommandInLaterSegment(t *testing.T) {
+	assessment := assessShellCommand("git status && rm -rf .")
+	if assessment.Risk != shellRiskBlocked {
+		t.Fatalf("expected later dangerous segment to block command, got %#v", assessment)
 	}
 }
 
@@ -113,6 +136,40 @@ func TestRequireApprovalNeedsStdinWhenPrompting(t *testing.T) {
 		t.Fatal("expected missing stdin error")
 	}
 	if !strings.Contains(err.Error(), "no stdin") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRequireApprovalReturnsClearDenialMessage(t *testing.T) {
+	err := requireApproval("go test ./...", &ExecutionContext{
+		ApprovalPolicy: "on-request",
+		Stdin:          strings.NewReader("n\n"),
+		Stdout:         &bytes.Buffer{},
+	})
+	if err == nil {
+		t.Fatal("expected denial error")
+	}
+	if !strings.Contains(err.Error(), "was not run because approval was denied") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunShellToolReturnsTimeoutError(t *testing.T) {
+	tool := RunShellTool{}
+	command := "sleep 2"
+	if runtime.GOOS == "windows" {
+		command = "Start-Sleep -Seconds 2"
+	}
+	_, err := tool.Run(context.Background(), []byte(`{"command":"`+command+`","timeout_seconds":1}`), &ExecutionContext{
+		Workspace:      t.TempDir(),
+		ApprovalPolicy: "never",
+		Stdin:          strings.NewReader(""),
+		Stdout:         &bytes.Buffer{},
+	})
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
