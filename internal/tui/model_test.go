@@ -233,7 +233,6 @@ func TestChatViewOmitsRedundantChrome(t *testing.T) {
 	for _, wanted := range []string{
 		"/ commands",
 		"Ctrl+L sessions",
-		"Mouse wheel scroll",
 		"Ctrl+C quit",
 	} {
 		if !strings.Contains(view, wanted) {
@@ -401,7 +400,6 @@ func TestRenderFooterOnlyShowsInputRegion(t *testing.T) {
 	for _, wanted := range []string{
 		"/ commands",
 		"Ctrl+L sessions",
-		"Mouse wheel scroll",
 		"Ctrl+C quit",
 	} {
 		if !strings.Contains(footer, wanted) {

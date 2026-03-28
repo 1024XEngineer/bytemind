@@ -1039,7 +1039,7 @@ func (m model) renderLanding() string {
 }
 
 func (m model) renderFooter() string {
-	hint := mutedStyle.Width(m.chatPanelInnerWidth()).Render("/ commands  -  Ctrl+L sessions  -  Mouse wheel scroll  -  Ctrl+C quit")
+	hint := mutedStyle.Width(m.chatPanelInnerWidth()).Render("/ commands  -  Ctrl+L sessions  -  Ctrl+C quit")
 	inputBorder := m.inputBorderStyle().
 		Width(m.chatPanelInnerWidth()).
 		Render(m.input.View())
