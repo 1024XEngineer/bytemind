@@ -73,6 +73,8 @@ func (r *Runner) SetApprovalHandler(handler tools.ApprovalHandler) {
 }
 
 func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput string, out io.Writer) (string, error) {
+	priorMessages := append([]llm.Message(nil), sess.Messages...)
+
 	sess.Messages = append(sess.Messages, llm.Message{
 		Role:    "user",
 		Content: userInput,
@@ -101,6 +103,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 				Model:          r.config.Provider.Model,
 				MaxIterations:  r.config.MaxIterations,
 				Mode:           "build",
+				SessionSummary: summarizeSessionContext(priorMessages),
 				Plan:           append([]session.PlanItem(nil), sess.Plan...),
 			}),
 		})

@@ -22,6 +22,9 @@ var planModePromptSource string
 //go:embed prompts/block-environment.md
 var environmentPromptSource string
 
+//go:embed prompts/block-session.md
+var sessionPromptSource string
+
 //go:embed prompts/block-plan.md
 var planPromptSource string
 
@@ -33,6 +36,15 @@ var skillsPromptSource string
 
 //go:embed prompts/block-output-contract.md
 var outputContractPromptSource string
+
+//go:embed prompts/provider-openai.md
+var openAIProviderPromptSource string
+
+//go:embed prompts/provider-anthropic.md
+var anthropicProviderPromptSource string
+
+//go:embed prompts/provider-gemini.md
+var geminiProviderPromptSource string
 
 type PromptSkill struct {
 	Name        string
@@ -49,6 +61,7 @@ type PromptInput struct {
 	Mode             string
 	Platform         string
 	Now              time.Time
+	SessionSummary   string
 	Plan             []session.PlanItem
 	RepoRulesSummary string
 	Skills           []PromptSkill
@@ -60,6 +73,8 @@ func systemPrompt(input PromptInput) string {
 		strings.TrimSpace(corePromptSource),
 		strings.TrimSpace(modePrompt(input.Mode)),
 		renderEnvironmentPrompt(input),
+		renderProviderPrompt(input.ProviderType, input.Model),
+		renderSessionPrompt(input.SessionSummary),
 		renderPlanPrompt(input.Plan),
 		renderRepoRulesPrompt(input.RepoRulesSummary),
 		renderSkillsPrompt(input.Skills),
@@ -141,6 +156,14 @@ func renderPlanPrompt(plan []session.PlanItem) string {
 	return strings.ReplaceAll(strings.TrimSpace(planPromptSource), "{{PLAN_ITEMS}}", strings.Join(lines, "\n"))
 }
 
+func renderSessionPrompt(summary string) string {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return ""
+	}
+	return strings.ReplaceAll(strings.TrimSpace(sessionPromptSource), "{{SESSION_SUMMARY}}", summary)
+}
+
 func renderRepoRulesPrompt(summary string) string {
 	summary = strings.TrimSpace(summary)
 	if summary == "" {
@@ -176,6 +199,39 @@ func renderOutputContractPrompt(contract string) string {
 		return ""
 	}
 	return strings.ReplaceAll(strings.TrimSpace(outputContractPromptSource), "{{OUTPUT_CONTRACT}}", contract)
+}
+
+func renderProviderPrompt(providerType, model string) string {
+	switch promptModelFamily(providerType, model) {
+	case "anthropic":
+		return strings.TrimSpace(anthropicProviderPromptSource)
+	case "gemini":
+		return strings.TrimSpace(geminiProviderPromptSource)
+	case "openai":
+		return strings.TrimSpace(openAIProviderPromptSource)
+	default:
+		return ""
+	}
+}
+
+func promptModelFamily(providerType, model string) string {
+	providerType = strings.ToLower(strings.TrimSpace(providerType))
+	model = strings.ToLower(strings.TrimSpace(model))
+
+	switch {
+	case providerType == "anthropic", strings.Contains(model, "claude"):
+		return "anthropic"
+	case providerType == "gemini", strings.Contains(model, "gemini"):
+		return "gemini"
+	case providerType == "openai", providerType == "openai-compatible":
+		return "openai"
+	case strings.Contains(model, "gpt"), strings.Contains(model, "codex"):
+		return "openai"
+	case strings.HasPrefix(model, "o1"), strings.HasPrefix(model, "o3"), strings.HasPrefix(model, "o4"):
+		return "openai"
+	default:
+		return ""
+	}
 }
 
 func filterPromptParts(parts []string) []string {

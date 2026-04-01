@@ -31,6 +31,8 @@ The prompt files live under `internal/agent/prompts/`.
   - Planning-first mode instructions with a required final answer structure.
 - `block-environment.md`
   - Runtime context such as workspace, provider, model, date, approval policy, and iteration budget.
+- `block-session.md`
+  - Optional compressed continuity summary for resumed or ongoing sessions.
 - `block-plan.md`
   - Current structured plan, rendered from session state when present.
 - `block-repo-rules.md`
@@ -39,6 +41,12 @@ The prompt files live under `internal/agent/prompts/`.
   - Optional skill summary block.
 - `block-output-contract.md`
   - Optional structured output constraint block.
+- `provider-openai.md`
+  - Lightweight overlay for GPT/Codex and OpenAI-compatible model families.
+- `provider-anthropic.md`
+  - Lightweight overlay for Claude-family models.
+- `provider-gemini.md`
+  - Lightweight overlay for Gemini-family models.
 
 ## Assembly Model
 
@@ -49,10 +57,12 @@ Current assembly order:
 1. `core.md`
 2. mode block
 3. environment block
-4. optional plan block
-5. optional repo rules block
-6. optional skills summary block
-7. optional output contract block
+4. optional provider overlay block
+5. optional session block
+6. optional plan block
+7. optional repo rules block
+8. optional skills summary block
+9. optional output contract block
 
 The final prompt is produced by concatenating only the non-empty blocks with blank lines between them.
 
@@ -66,6 +76,7 @@ The current runner passes these fields into `PromptInput`:
 - model
 - max iterations
 - mode
+- session summary
 - session plan
 
 This means the following blocks are fully wired today:
@@ -74,7 +85,9 @@ This means the following blocks are fully wired today:
 - `mode-build.md`
 - `mode-plan.md`
 - `block-environment.md`
+- `block-session.md` when prior session messages exist
 - `block-plan.md` when `session.Plan` is non-empty
+- provider overlay block when the provider or model family matches OpenAI, Anthropic, or Gemini heuristics
 
 The following blocks are implemented in the prompt assembler but are currently optional and unused unless future runtime code supplies data:
 
@@ -109,7 +122,7 @@ Planned natural extensions:
 - repo rule discovery
   - fill `RepoRulesSummary` from AGENTS-like files or config instructions
 - session summary
-  - add a new optional `block-session.md`
+  - improve the current heuristic summary or replace it with compaction output
 - skills registry
   - fill `Skills` with name, description, and enabled state
 - structured output
@@ -124,27 +137,35 @@ This first version deliberately does not yet implement:
 - path-scoped lazy rules
 - full skill loading
 - MCP summary injection
-- session memory summaries
-- provider-specific deep prompt forks
+- session memory compaction
+- provider-specific deep prompt forks beyond lightweight overlays
 
 Those should be added only when the corresponding runtime systems exist.
 
 ## Provider Handling
 
-This version does not keep separate provider prompt files.
+This version still avoids large provider-specific prompt forks, but it now supports lightweight provider/model overlays.
 
 Reason:
 
-- the current ByteMind runtime exposes one tool surface and one execution model to all providers
-- the previous provider split did not create a meaningful behavioral difference
-- keeping two files with near-identical content adds maintenance cost without improving outcomes
+- the shared execution model still belongs in `core.md`
+- model families do show small but real behavioral differences in tool discipline and planning style
+- a thin overlay preserves those differences without copying the whole prompt three or four times
 
-For now, provider information is still exposed in the runtime context block:
+For now, provider information is exposed in the runtime context block:
 
 - `provider_type`
 - `model`
 
-If a real provider-specific behavior gap appears later, it should be introduced as a real block with real rules, not as cosmetic duplication.
+The prompt assembler then selects at most one lightweight overlay:
+
+- `provider-openai.md`
+- `provider-anthropic.md`
+- `provider-gemini.md`
+
+The selection is heuristic and based on `provider_type` plus model-family detection.
+
+If a larger provider-specific behavior gap appears later, it should become a real new block or execution-path difference, not a cosmetic full-prompt fork.
 
 ## Plan Handling
 
