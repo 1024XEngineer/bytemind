@@ -182,3 +182,68 @@ func TestLoadRejectsMalformedConfigJSON(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestLoadNormalizesProviderAlias(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "provider": {
+    "type": "deepseek",
+    "base_url": "https://api.deepseek.com/v1",
+    "model": "deepseek-chat",
+    "api_key": "test-key"
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Type != "openai-compatible" {
+		t.Fatalf("expected alias normalization to openai-compatible, got %q", cfg.Provider.Type)
+	}
+}
+
+func TestLoadTrimsProviderCompatibilityOverrides(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://example.com",
+    "api_path": "  /v1/chat/completions  ",
+    "model": "gpt-test",
+    "api_key": "test-key",
+    "auth_header": "  api-key  ",
+    "auth_scheme": "  ",
+    "extra_headers": {
+      "  x-client  ": "  bytemind  ",
+      "empty": "   "
+    }
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.APIPath != "/v1/chat/completions" {
+		t.Fatalf("expected trimmed api_path, got %q", cfg.Provider.APIPath)
+	}
+	if cfg.Provider.AuthHeader != "api-key" {
+		t.Fatalf("expected trimmed auth_header, got %q", cfg.Provider.AuthHeader)
+	}
+	if cfg.Provider.AuthScheme != "" {
+		t.Fatalf("expected empty auth_scheme after trimming, got %q", cfg.Provider.AuthScheme)
+	}
+	if got := cfg.Provider.ExtraHeaders["x-client"]; got != "bytemind" {
+		t.Fatalf("expected trimmed extra header value, got %q", got)
+	}
+	if _, ok := cfg.Provider.ExtraHeaders["empty"]; ok {
+		t.Fatalf("expected empty extra header to be removed")
+	}
+}
