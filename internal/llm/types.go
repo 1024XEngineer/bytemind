@@ -36,6 +36,7 @@ type ChatRequest struct {
 	Model       string
 	Messages    []Message
 	Tools       []ToolDefinition
+	ToolChoice  string
 	Temperature float64
 }
 

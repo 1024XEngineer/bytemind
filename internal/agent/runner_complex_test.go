@@ -286,7 +286,7 @@ func TestRunPromptUpdatePlanSyncsSessionAndEmitsPlanEvent(t *testing.T) {
 	}
 }
 
-func TestRunPromptSendsUpdatedPlanIntoNextTurnSystemPrompt(t *testing.T) {
+func TestRunPromptSystemPromptIncludesToolCatalog(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
@@ -332,9 +332,14 @@ func TestRunPromptSendsUpdatedPlanIntoNextTurnSystemPrompt(t *testing.T) {
 		t.Fatalf("expected two LLM requests, got %d", len(client.requests))
 	}
 	systemPrompt := client.requests[1].Messages[0].Content
-	for _, want := range []string{"Inspect provider", "Add tests", "in_progress"} {
+	for _, want := range []string{"[Available Tools]", "list_files", "update_plan"} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("expected second-turn system prompt to include %q, got %q", want, systemPrompt)
+		}
+	}
+	for _, notWant := range []string{"Inspect provider", "Add tests"} {
+		if strings.Contains(systemPrompt, notWant) {
+			t.Fatalf("did not expect plan state in system prompt, got %q", systemPrompt)
 		}
 	}
 }

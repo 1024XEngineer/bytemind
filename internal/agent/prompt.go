@@ -3,36 +3,37 @@ package agent
 import (
 	_ "embed"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
-
-	planpkg "bytemind/internal/plan"
 )
 
-//go:embed prompts/core.md
-var corePromptSource string
+//go:embed prompts/main.md
+var mainPromptSource string
 
-//go:embed prompts/mode-build.md
+//go:embed prompts/mode/build.md
 var buildModePromptSource string
 
-//go:embed prompts/mode-plan.md
+//go:embed prompts/mode/plan.md
 var planModePromptSource string
 
-//go:embed prompts/block-environment.md
-var environmentPromptSource string
+//go:embed prompts/max-steps.txt
+var maxStepsPromptSource string
 
-//go:embed prompts/block-plan.md
-var planPromptSource string
+//go:embed prompts/task/explore.txt
+var exploreTaskPromptSource string
 
-//go:embed prompts/block-repo-rules.md
-var repoRulesPromptSource string
+//go:embed prompts/task/compaction.txt
+var compactionTaskPromptSource string
 
-//go:embed prompts/block-skills-summary.md
-var skillsPromptSource string
+//go:embed prompts/task/summary.txt
+var summaryTaskPromptSource string
 
-//go:embed prompts/block-output-contract.md
-var outputContractPromptSource string
+//go:embed prompts/task/title.txt
+var titleTaskPromptSource string
 
 type PromptSkill struct {
 	Name        string
@@ -41,29 +42,23 @@ type PromptSkill struct {
 }
 
 type PromptInput struct {
-	Workspace        string
-	ApprovalPolicy   string
-	ProviderType     string
-	Model            string
-	MaxIterations    int
-	Mode             string
-	Platform         string
-	Now              time.Time
-	Plan             planpkg.State
-	RepoRulesSummary string
-	Skills           []PromptSkill
-	OutputContract   string
+	Workspace      string
+	ApprovalPolicy string
+	Model          string
+	Mode           string
+	Platform       string
+	Now            time.Time
+	Skills         []PromptSkill
+	Tools          []string
+	Instruction    string
 }
 
 func systemPrompt(input PromptInput) string {
 	parts := []string{
-		strings.TrimSpace(corePromptSource),
+		strings.TrimSpace(mainPromptSource),
 		strings.TrimSpace(modePrompt(input.Mode)),
-		renderEnvironmentPrompt(input),
-		renderPlanPrompt(input.Plan),
-		renderRepoRulesPrompt(input.RepoRulesSummary),
-		renderSkillsPrompt(input.Skills),
-		renderOutputContractPrompt(input.OutputContract),
+		renderSystemBlock(input),
+		renderInstructionBlock(input.Instruction),
 	}
 	return strings.Join(filterPromptParts(parts), "\n\n")
 }
@@ -77,7 +72,47 @@ func modePrompt(mode string) string {
 	}
 }
 
-func renderEnvironmentPrompt(input PromptInput) string {
+func maxStepsPrompt() string {
+	return strings.TrimSpace(maxStepsPromptSource)
+}
+
+func taskPrompt(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "explore":
+		return strings.TrimSpace(exploreTaskPromptSource)
+	case "compaction":
+		return strings.TrimSpace(compactionTaskPromptSource)
+	case "summary":
+		return strings.TrimSpace(summaryTaskPromptSource)
+	case "title":
+		return strings.TrimSpace(titleTaskPromptSource)
+	default:
+		return ""
+	}
+}
+
+func loadAGENTSInstruction(workspace string) string {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return ""
+	}
+	path := filepath.Join(workspace, "AGENTS.md")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	text := strings.TrimSpace(string(content))
+	if text == "" {
+		return ""
+	}
+	absPath, err := filepath.Abs(path)
+	if err == nil {
+		path = absPath
+	}
+	return "Instructions from: " + path + "\n" + text
+}
+
+func renderSystemBlock(input PromptInput) string {
 	now := input.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -86,11 +121,6 @@ func renderEnvironmentPrompt(input PromptInput) string {
 	platform := strings.TrimSpace(input.Platform)
 	if platform == "" {
 		platform = runtime.GOOS + "/" + runtime.GOARCH
-	}
-
-	providerType := strings.TrimSpace(input.ProviderType)
-	if providerType == "" {
-		providerType = "openai-compatible"
 	}
 
 	mode := strings.TrimSpace(input.Mode)
@@ -103,114 +133,42 @@ func renderEnvironmentPrompt(input PromptInput) string {
 		model = "unknown"
 	}
 
-	replacer := strings.NewReplacer(
-		"{{CWD}}", input.Workspace,
-		"{{WORKSPACE}}", input.Workspace,
-		"{{PLATFORM}}", platform,
-		"{{DATE}}", now.Format("2006-01-02"),
-		"{{APPROVAL_POLICY}}", input.ApprovalPolicy,
-		"{{MODE}}", mode,
-		"{{PROVIDER_TYPE}}", providerType,
-		"{{MODEL}}", model,
-		"{{MAX_ITERATIONS}}", fmt.Sprintf("%d", input.MaxIterations),
-	)
-	return replacer.Replace(strings.TrimSpace(environmentPromptSource))
+	workspace := strings.TrimSpace(input.Workspace)
+	if workspace == "" {
+		workspace = "."
+	}
+	approval := strings.TrimSpace(input.ApprovalPolicy)
+	if approval == "" {
+		approval = "never"
+	}
+	gitRepo := "no"
+	if isGitRepository(workspace) {
+		gitRepo = "yes"
+	}
+
+	lines := []string{
+		"[Runtime Context]",
+		fmt.Sprintf("workspace_root: %s", workspace),
+		fmt.Sprintf("cwd: %s", workspace),
+		fmt.Sprintf("platform: %s", platform),
+		fmt.Sprintf("date: %s", now.Format("2006-01-02")),
+		fmt.Sprintf("is_git_repo: %s", gitRepo),
+		fmt.Sprintf("model: %s", model),
+		fmt.Sprintf("mode: %s", mode),
+		fmt.Sprintf("approval_policy: %s", approval),
+		"",
+		"[Available Skills]",
+		formatSkills(input.Skills),
+		"",
+		"[Available Tools]",
+		formatTools(input.Tools),
+	}
+	return strings.Join(lines, "\n")
 }
 
-func renderPlanPrompt(state planpkg.State) string {
-	state = planpkg.NormalizeState(state)
-	if !planpkg.HasStructuredPlan(state) {
-		return ""
-	}
-
-	lines := make([]string, 0, len(state.Steps)+12)
-	if state.Goal != "" {
-		lines = append(lines, "Goal: "+state.Goal)
-	}
-	if state.Summary != "" {
-		lines = append(lines, "Summary: "+state.Summary)
-	}
-	if state.Phase != "" && state.Phase != planpkg.PhaseNone {
-		lines = append(lines, "Phase: "+string(state.Phase))
-	}
-	if len(lines) > 0 {
-		lines = append(lines, "")
-	}
-
-	completed := make([]planpkg.Step, 0, 3)
-	upcoming := make([]planpkg.Step, 0, 4)
-	var current planpkg.Step
-	var hasCurrent bool
-	for _, step := range state.Steps {
-		switch planpkg.NormalizeStepStatus(string(step.Status)) {
-		case planpkg.StepCompleted:
-			completed = append(completed, step)
-			if len(completed) > 3 {
-				completed = completed[len(completed)-3:]
-			}
-		case planpkg.StepInProgress, planpkg.StepBlocked:
-			if !hasCurrent {
-				current = step
-				hasCurrent = true
-			}
-		default:
-			if len(upcoming) < 4 {
-				upcoming = append(upcoming, step)
-			}
-		}
-	}
-	if len(completed) > 0 {
-		lines = append(lines, "Recently completed:")
-		for _, step := range completed {
-			lines = append(lines, fmt.Sprintf("- [%s] %s", step.Status, step.Title))
-		}
-		lines = append(lines, "")
-	}
-	if hasCurrent {
-		lines = append(lines, "Current step:")
-		lines = append(lines, fmt.Sprintf("- [%s] %s", current.Status, current.Title))
-		if len(current.Files) > 0 {
-			lines = append(lines, "  files: "+strings.Join(current.Files, ", "))
-		}
-		if len(current.Verify) > 0 {
-			lines = append(lines, "  verify: "+strings.Join(current.Verify, " | "))
-		}
-		if current.Risk != "" {
-			lines = append(lines, "  risk: "+string(current.Risk))
-		}
-		if current.Description != "" {
-			lines = append(lines, "  note: "+current.Description)
-		}
-		lines = append(lines, "")
-	}
-	if len(upcoming) > 0 {
-		lines = append(lines, "Upcoming:")
-		for _, step := range upcoming {
-			lines = append(lines, fmt.Sprintf("- [%s] %s", step.Status, step.Title))
-		}
-		lines = append(lines, "")
-	}
-	if state.NextAction != "" {
-		lines = append(lines, "Next Action: "+state.NextAction)
-	}
-	if state.BlockReason != "" {
-		lines = append(lines, "Blocked Reason: "+state.BlockReason)
-	}
-
-	return strings.ReplaceAll(strings.TrimSpace(planPromptSource), "{{PLAN_ITEMS}}", strings.Join(lines, "\n"))
-}
-
-func renderRepoRulesPrompt(summary string) string {
-	summary = strings.TrimSpace(summary)
-	if summary == "" {
-		return ""
-	}
-	return strings.ReplaceAll(strings.TrimSpace(repoRulesPromptSource), "{{REPO_RULES_SUMMARY}}", summary)
-}
-
-func renderSkillsPrompt(skills []PromptSkill) string {
+func formatSkills(skills []PromptSkill) string {
 	if len(skills) == 0 {
-		return ""
+		return "- none"
 	}
 
 	lines := make([]string, 0, len(skills))
@@ -223,18 +181,50 @@ func renderSkillsPrompt(skills []PromptSkill) string {
 		lines = append(lines, fmt.Sprintf("- %s: %s enabled=%t", name, description, skill.Enabled))
 	}
 	if len(lines) == 0 {
-		return ""
+		return "- none"
 	}
-
-	return strings.ReplaceAll(strings.TrimSpace(skillsPromptSource), "{{SKILLS_SUMMARY}}", strings.Join(lines, "\n"))
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
 }
 
-func renderOutputContractPrompt(contract string) string {
-	contract = strings.TrimSpace(contract)
-	if contract == "" {
+func formatTools(tools []string) string {
+	if len(tools) == 0 {
+		return "- none"
+	}
+	seen := make(map[string]struct{}, len(tools))
+	lines := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		name := strings.TrimSpace(tool)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		lines = append(lines, "- "+name)
+	}
+	if len(lines) == 0 {
+		return "- none"
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
+}
+
+func renderInstructionBlock(instruction string) string {
+	instruction = strings.TrimSpace(instruction)
+	if instruction == "" {
 		return ""
 	}
-	return strings.ReplaceAll(strings.TrimSpace(outputContractPromptSource), "{{OUTPUT_CONTRACT}}", contract)
+	return "[Instructions]\n" + instruction
+}
+
+func isGitRepository(workspace string) bool {
+	if strings.TrimSpace(workspace) == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(workspace, ".git"))
+	return err == nil
 }
 
 func filterPromptParts(parts []string) []string {

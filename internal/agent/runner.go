@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"bytemind/internal/config"
@@ -75,6 +76,9 @@ func (r *Runner) SetApprovalHandler(handler tools.ApprovalHandler) {
 
 func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput, mode string, out io.Writer) (string, error) {
 	runMode := planpkg.NormalizeMode(mode)
+	if strings.TrimSpace(mode) == "" {
+		runMode = planpkg.NormalizeMode(string(sess.Mode))
+	}
 	mode = string(runMode)
 	if sess.Mode != runMode {
 		sess.Mode = runMode
@@ -104,27 +108,47 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 	lastToolSequenceSignature := ""
 	repeatedToolSequenceCount := 0
 	executedToolNames := make([]string, 0, 16)
+	maxIterations := r.config.MaxIterations
+	if maxIterations < 1 {
+		maxIterations = 1
+	}
+	normalTools := r.registry.DefinitionsForMode(runMode)
+	instructionText := loadAGENTSInstruction(r.workspace)
+	availableTools := toolNames(normalTools)
 
-	for step := 0; step < r.config.MaxIterations; step++ {
+	for step := 0; step <= maxIterations; step++ {
+		maxStepReached := step >= maxIterations
 		messages := make([]llm.Message, 0, len(sess.Messages)+1)
 		messages = append(messages, llm.Message{
 			Role: "system",
 			Content: systemPrompt(PromptInput{
 				Workspace:      r.workspace,
 				ApprovalPolicy: r.config.ApprovalPolicy,
-				ProviderType:   r.config.Provider.Type,
 				Model:          r.config.Provider.Model,
-				MaxIterations:  r.config.MaxIterations,
 				Mode:           mode,
-				Plan:           planpkg.CloneState(sess.Plan),
+				Tools:          availableTools,
+				Instruction:    instructionText,
 			}),
 		})
+		if maxStepReached {
+			messages = append(messages, llm.Message{
+				Role:    "system",
+				Content: maxStepsPrompt(),
+			})
+		}
 		messages = append(messages, sess.Messages...)
 
+		requestTools := normalTools
+		toolChoice := "auto"
+		if maxStepReached {
+			requestTools = nil
+			toolChoice = "none"
+		}
 		request := llm.ChatRequest{
 			Model:       r.config.Provider.Model,
 			Messages:    messages,
-			Tools:       r.registry.DefinitionsForMode(runMode),
+			Tools:       requestTools,
+			ToolChoice:  toolChoice,
 			Temperature: 0.2,
 		}
 
@@ -132,6 +156,16 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 		reply, err := r.completeTurn(ctx, request, out, &streamedText)
 		if err != nil {
 			return "", err
+		}
+		if maxStepReached && len(reply.ToolCalls) > 0 {
+			reply.ToolCalls = nil
+			if strings.TrimSpace(reply.Content) == "" {
+				reply.Content = r.buildStopSummary(
+					sess,
+					fmt.Sprintf("I reached the current execution budget of %d turns before producing a final answer.", maxIterations),
+					executedToolNames,
+				)
+			}
 		}
 
 		if len(reply.ToolCalls) == 0 {
@@ -257,7 +291,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 
 	summary := r.buildStopSummary(
 		sess,
-		fmt.Sprintf("I reached the current execution budget of %d turns before producing a final answer.", r.config.MaxIterations),
+		fmt.Sprintf("I reached the current execution budget of %d turns before producing a final answer.", maxIterations),
 		executedToolNames,
 	)
 	return r.finishWithSummary(sess, summary, out, false)
@@ -583,5 +617,23 @@ func (r *Runner) emit(event Event) {
 	r.observer.HandleEvent(event)
 }
 
-
-
+func toolNames(definitions []llm.ToolDefinition) []string {
+	if len(definitions) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(definitions))
+	seen := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		name := strings.TrimSpace(definition.Function.Name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}

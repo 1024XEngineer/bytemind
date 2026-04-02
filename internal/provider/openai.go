@@ -179,9 +179,15 @@ func (c *OpenAICompatible) chatPayload(req llm.ChatRequest, stream bool) map[str
 		"messages":    req.Messages,
 		"temperature": req.Temperature,
 	}
+	toolChoice := strings.TrimSpace(req.ToolChoice)
+	if toolChoice == "" {
+		toolChoice = "auto"
+	}
 	if len(req.Tools) > 0 {
 		payload["tools"] = req.Tools
-		payload["tool_choice"] = "auto"
+		payload["tool_choice"] = toolChoice
+	} else if toolChoice == "none" {
+		payload["tool_choice"] = "none"
 	}
 	if stream {
 		payload["stream"] = true
