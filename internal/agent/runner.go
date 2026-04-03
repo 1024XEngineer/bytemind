@@ -22,6 +22,7 @@ const (
 	maxActiveSkillDescriptionChars  = 320
 	maxActiveSkillInstructionsChars = 3600
 	emptyAllowlistSentinel          = "__bytemind__no_tools__"
+	emptyReplyFallback              = "Model returned an empty response (no text and no tool calls). Retry the request or switch model if this persists."
 )
 
 const (
@@ -224,6 +225,10 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 
 		if len(reply.ToolCalls) == 0 {
 			answer := strings.TrimSpace(reply.Content)
+			if answer == "" {
+				reply.Content = emptyReplyFallback
+				answer = emptyReplyFallback
+			}
 			if runMode == planpkg.ModePlan && !planpkg.HasStructuredPlan(sess.Plan) {
 				reminder := "Plan mode requires a structured plan before finishing. Please restate the plan using update_plan."
 				if answer != "" {
@@ -249,9 +254,6 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 			})
 
 			answer = strings.TrimSpace(reply.Content)
-			if answer == "" {
-				return "", fmt.Errorf("assistant returned neither content nor tool calls")
-			}
 			if out != nil && !streamedText {
 				fmt.Fprintln(out)
 				fmt.Fprintln(out, answer)
@@ -358,7 +360,7 @@ func (r *Runner) completeTurn(ctx context.Context, request llm.ChatRequest, out 
 		return r.client.CreateMessage(ctx, request)
 	}
 
-	return r.client.StreamMessage(ctx, request, func(delta string) {
+	reply, err := r.client.StreamMessage(ctx, request, func(delta string) {
 		if out == nil || delta == "" {
 			if delta != "" {
 				r.emit(Event{Type: EventAssistantDelta, Content: delta})
@@ -372,6 +374,20 @@ func (r *Runner) completeTurn(ctx context.Context, request llm.ChatRequest, out 
 		fmt.Fprint(out, delta)
 		r.emit(Event{Type: EventAssistantDelta, Content: delta})
 	})
+	if err != nil {
+		return llm.Message{}, err
+	}
+	if strings.TrimSpace(reply.Content) != "" || len(reply.ToolCalls) > 0 {
+		return reply, nil
+	}
+
+	// Some providers/models occasionally return empty streaming payloads while
+	// still producing a valid non-stream completion. Retry once without stream.
+	fallback, fallbackErr := r.client.CreateMessage(ctx, request)
+	if fallbackErr == nil {
+		return fallback, nil
+	}
+	return reply, nil
 }
 
 func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {

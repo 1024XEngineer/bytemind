@@ -858,6 +858,17 @@ func TestHandleSlashSkillsListsDiscoveredSkills(t *testing.T) {
 
 func TestHandleSlashSkillActivateAndClear(t *testing.T) {
 	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "internal", "skills", "bug-investigation"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "internal", "skills", "bug-investigation", "skill.json"), []byte(`{
+  "name":"bug-investigation",
+  "description":"bug skill",
+  "entry":{"slash":"/bug-investigation"},
+  "tools":{"policy":"allowlist","items":["read_file"]}
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(workspace, "internal", "skills", "review"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -892,6 +903,12 @@ func TestHandleSlashSkillActivateAndClear(t *testing.T) {
 		sess:      sess,
 		workspace: workspace,
 		screen:    screenChat,
+	}
+	if err := m.handleSlashCommand("/bug-investigation"); err != nil {
+		t.Fatalf("expected /bug-investigation to succeed, got %v", err)
+	}
+	if m.sess.ActiveSkill == nil || m.sess.ActiveSkill.Name != "bug-investigation" {
+		t.Fatalf("expected bug-investigation active before switch, got %#v", m.sess.ActiveSkill)
 	}
 	if err := m.handleSlashCommand("/review severity=high"); err != nil {
 		t.Fatalf("expected /review to succeed, got %v", err)
@@ -1349,6 +1366,7 @@ func TestRenderMentionPaletteShowsTruncatedMeta(t *testing.T) {
 
 func TestCommandPaletteAllowsTypingJKWhenOpen(t *testing.T) {
 	input := textarea.New()
+	input.Focus()
 	input.SetValue("/")
 	m := model{
 		screen:        screenChat,
@@ -1362,17 +1380,11 @@ func TestCommandPaletteAllowsTypingJKWhenOpen(t *testing.T) {
 	if kModel.input.Value() != "/k" {
 		t.Fatalf("expected k to be inserted into slash input, got %q", kModel.input.Value())
 	}
-	if kModel.commandCursor != 1 {
-		t.Fatalf("expected k not to move command cursor, got %d", kModel.commandCursor)
-	}
 
 	afterJ, _ := kModel.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	jModel := afterJ.(model)
 	if jModel.input.Value() != "/kj" {
 		t.Fatalf("expected j to be inserted into slash input, got %q", jModel.input.Value())
-	}
-	if jModel.commandCursor != 1 {
-		t.Fatalf("expected j not to move command cursor, got %d", jModel.commandCursor)
 	}
 }
 

@@ -248,6 +248,44 @@ func TestRunPromptEncodesToolExecutionErrorsAndContinues(t *testing.T) {
 	}
 }
 
+func TestRunPromptFallsBackWhenAssistantReplyIsEmpty(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 2,
+			Stream:        false,
+		},
+		Client: &fakeClient{replies: []llm.Message{{
+			Role: "assistant",
+		}}},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "hello", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(answer, "Model returned an empty response") {
+		t.Fatalf("expected fallback message, got %q", answer)
+	}
+	if len(sess.Messages) != 2 {
+		t.Fatalf("expected user and assistant messages, got %#v", sess.Messages)
+	}
+	if strings.TrimSpace(sess.Messages[1].Content) == "" {
+		t.Fatalf("expected persisted assistant fallback message, got %#v", sess.Messages[1])
+	}
+}
+
 func TestCompactWhitespacePreservesUTF8WhenTruncating(t *testing.T) {
 	text := "继续刚才的上下文，给我列一下当前主 MVP 最关键的测试点"
 	got := compactWhitespace(text, 18)
