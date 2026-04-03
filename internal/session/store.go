@@ -3,23 +3,27 @@ package session
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
-	planpkg "bytemind/internal/plan"
 	"bytemind/internal/llm"
+	planpkg "bytemind/internal/plan"
 )
 
-type legacyPlanItem struct {
-	Step   string `json:"step"`
-	Status string `json:"status"`
-}
+const (
+	snapshotEventType = "session_snapshot"
+	schemaVersion     = 1
+)
 
 type Session struct {
 	ID        string            `json:"id"`
@@ -29,6 +33,13 @@ type Session struct {
 	Messages  []llm.Message     `json:"messages"`
 	Mode      planpkg.AgentMode `json:"mode,omitempty"`
 	Plan      planpkg.State     `json:"plan,omitempty"`
+}
+
+type sessionRecord struct {
+	Version   int       `json:"v"`
+	Timestamp time.Time `json:"ts"`
+	Type      string    `json:"type"`
+	Payload   Session   `json:"payload"`
 }
 
 type Store struct {
@@ -60,78 +71,6 @@ func New(workspace string) *Session {
 	}
 }
 
-func (s *Session) UnmarshalJSON(data []byte) error {
-	type rawSession struct {
-		ID        string          `json:"id"`
-		Workspace string          `json:"workspace"`
-		CreatedAt time.Time       `json:"created_at"`
-		UpdatedAt time.Time       `json:"updated_at"`
-		Messages  []llm.Message   `json:"messages"`
-		Mode      string          `json:"mode,omitempty"`
-		Plan      json.RawMessage `json:"plan,omitempty"`
-	}
-	var raw rawSession
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	s.ID = raw.ID
-	s.Workspace = raw.Workspace
-	s.CreatedAt = raw.CreatedAt
-	s.UpdatedAt = raw.UpdatedAt
-	s.Messages = raw.Messages
-	s.Mode = planpkg.NormalizeMode(raw.Mode)
-	s.Plan = planpkg.State{Phase: planpkg.PhaseNone, Steps: make([]planpkg.Step, 0, 8)}
-
-	trimmed := bytes.TrimSpace(raw.Plan)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil
-	}
-
-	switch trimmed[0] {
-	case '[':
-		var legacy []legacyPlanItem
-		if err := json.Unmarshal(trimmed, &legacy); err != nil {
-			return err
-		}
-		s.Plan = legacyPlanToState(legacy)
-	default:
-		var state planpkg.State
-		if err := json.Unmarshal(trimmed, &state); err != nil {
-			return err
-		}
-		s.Plan = planpkg.NormalizeState(state)
-	}
-
-	if s.Mode == "" {
-		s.Mode = planpkg.ModeBuild
-	}
-	if len(s.Plan.Steps) > 0 && s.Plan.UpdatedAt.IsZero() {
-		s.Plan.UpdatedAt = s.UpdatedAt
-	}
-	return nil
-}
-
-func legacyPlanToState(items []legacyPlanItem) planpkg.State {
-	steps := make([]planpkg.Step, 0, len(items))
-	for i, item := range items {
-		step := strings.TrimSpace(item.Step)
-		if step == "" {
-			continue
-		}
-		steps = append(steps, planpkg.Step{
-			ID:     fmt.Sprintf("s%d", i+1),
-			Title:  step,
-			Status: planpkg.NormalizeStepStatus(item.Status),
-		})
-	}
-	state := planpkg.State{
-		Phase: planpkg.PhaseReady,
-		Steps: steps,
-	}
-	return planpkg.NormalizeState(state)
-}
-
 func NewStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -140,7 +79,15 @@ func NewStore(dir string) (*Store, error) {
 }
 
 func (s *Store) Save(session *Session) error {
-	session.UpdatedAt = time.Now().UTC()
+	if session == nil {
+		return errors.New("session is nil")
+	}
+
+	now := time.Now().UTC()
+	session.UpdatedAt = now
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = now
+	}
 	if session.Mode == "" {
 		session.Mode = planpkg.ModeBuild
 	}
@@ -148,86 +95,38 @@ func (s *Store) Save(session *Session) error {
 	if len(session.Plan.Steps) > 0 {
 		session.Plan.UpdatedAt = session.UpdatedAt
 	}
-	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(session); err != nil {
-		return err
-	}
 
-	target := filepath.Join(s.dir, session.ID+".json")
-	tmp, err := os.CreateTemp(s.dir, session.ID+".*.tmp")
+	target, err := s.pathForSession(session)
 	if err != nil {
 		return err
 	}
-	tmpPath := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	if err := tmp.Chmod(0o644); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(bytes.TrimRight(buf.Bytes(), "\n")); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, target); err != nil {
-		return err
-	}
-	cleanup = false
-	return nil
+	return writeSessionSnapshot(target, session)
 }
 
 func (s *Store) Load(id string) (*Session, error) {
-	data, err := os.ReadFile(filepath.Join(s.dir, id+".json"))
+	path, err := s.findSessionPath(id)
 	if err != nil {
 		return nil, err
 	}
-	var session Session
-	if err := json.Unmarshal(data, &session); err != nil {
-		return nil, err
-	}
-	return &session, nil
+	return loadSessionFile(path)
 }
 
 func (s *Store) List(limit int) ([]Summary, []string, error) {
-	entries, err := os.ReadDir(s.dir)
+	paths, err := s.sessionPaths()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	summaries := make([]Summary, 0, len(entries))
+	summaries := make([]Summary, 0, len(paths))
 	warnings := make([]string, 0)
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-
-		data, err := os.ReadFile(filepath.Join(s.dir, entry.Name()))
+	for _, path := range paths {
+		sess, err := loadSessionFile(path)
 		if err != nil {
-			return nil, nil, err
-		}
-		if len(bytes.TrimSpace(data)) == 0 {
-			warnings = append(warnings, fmt.Sprintf("skipped corrupted session file %s: empty file", entry.Name()))
+			warnings = append(warnings, fmt.Sprintf("skipped corrupted session file %s: %v", filepath.Base(path), err))
 			continue
 		}
-
-		var sess Session
-		if err := json.Unmarshal(data, &sess); err != nil {
-			warnings = append(warnings, fmt.Sprintf("skipped corrupted session file %s: invalid JSON (%v)", entry.Name(), err))
+		if strings.TrimSpace(sess.ID) == "" {
+			warnings = append(warnings, fmt.Sprintf("skipped corrupted session file %s: missing session id", filepath.Base(path)))
 			continue
 		}
 
@@ -249,6 +148,238 @@ func (s *Store) List(limit int) ([]Summary, []string, error) {
 		summaries = summaries[:limit]
 	}
 	return summaries, warnings, nil
+}
+
+func (s *Store) pathForSession(session *Session) (string, error) {
+	if strings.TrimSpace(session.ID) == "" {
+		return "", errors.New("session id is required")
+	}
+	projectDir := filepath.Join(s.dir, projectID(session.Workspace))
+	return filepath.Join(projectDir, session.ID+".jsonl"), nil
+}
+
+func (s *Store) findSessionPath(id string) (string, error) {
+	if strings.TrimSpace(id) == "" {
+		return "", errors.New("session id is required")
+	}
+
+	matches := make([]string, 0, 2)
+	err := filepath.WalkDir(s.dir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if name == id+".jsonl" {
+			matches = append(matches, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 0 {
+		return "", os.ErrNotExist
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		leftInfo, leftErr := os.Stat(matches[i])
+		rightInfo, rightErr := os.Stat(matches[j])
+		if leftErr != nil || rightErr != nil {
+			return matches[i] < matches[j]
+		}
+		if leftInfo.ModTime().Equal(rightInfo.ModTime()) {
+			return matches[i] < matches[j]
+		}
+		return leftInfo.ModTime().After(rightInfo.ModTime())
+	})
+	return matches[0], nil
+}
+
+func (s *Store) sessionPaths() ([]string, error) {
+	paths := make([]string, 0, 32)
+	err := filepath.WalkDir(s.dir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(d.Name()))
+		if ext == ".jsonl" {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+func loadSessionFile(path string) (*Session, error) {
+	if strings.ToLower(filepath.Ext(path)) != ".jsonl" {
+		return nil, errors.New("unsupported session file extension")
+	}
+	return loadJSONLSession(path)
+}
+
+func loadJSONLSession(path string) (*Session, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	lines := bytes.Split(data, []byte("\n"))
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := bytes.TrimSpace(lines[i])
+		if len(line) == 0 {
+			continue
+		}
+
+		var envelope struct {
+			Type    string          `json:"type"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal(line, &envelope); err == nil {
+			if envelope.Type == snapshotEventType && len(bytes.TrimSpace(envelope.Payload)) > 0 {
+				var sess Session
+				if err := json.Unmarshal(envelope.Payload, &sess); err == nil {
+					normalizeLoadedSession(&sess, path)
+					return &sess, nil
+				}
+			}
+		}
+	}
+	return nil, errors.New("no valid session snapshot found")
+}
+
+func normalizeLoadedSession(sess *Session, path string) {
+	if strings.TrimSpace(sess.ID) == "" {
+		sess.ID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	}
+	if sess.CreatedAt.IsZero() && !sess.UpdatedAt.IsZero() {
+		sess.CreatedAt = sess.UpdatedAt
+	}
+	if sess.UpdatedAt.IsZero() && !sess.CreatedAt.IsZero() {
+		sess.UpdatedAt = sess.CreatedAt
+	}
+	if sess.Messages == nil {
+		sess.Messages = make([]llm.Message, 0, 32)
+	}
+	if sess.Mode == "" {
+		sess.Mode = planpkg.ModeBuild
+	}
+	sess.Plan = planpkg.NormalizeState(sess.Plan)
+	if len(sess.Plan.Steps) > 0 && sess.Plan.UpdatedAt.IsZero() {
+		sess.Plan.UpdatedAt = sess.UpdatedAt
+	}
+}
+
+func writeSessionSnapshot(path string, session *Session) error {
+	record := sessionRecord{
+		Version:   schemaVersion,
+		Timestamp: session.UpdatedAt,
+		Type:      snapshotEventType,
+		Payload:   *session,
+	}
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(record); err != nil {
+		return err
+	}
+	content := bytes.TrimSpace(buf.Bytes())
+	content = append(content, '\n')
+	return writeAtomicFile(path, content)
+}
+
+func writeAtomicFile(path string, content []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
+func projectID(workspace string) string {
+	value := strings.TrimSpace(workspace)
+	if value == "" {
+		return "-unknown-project"
+	}
+	if abs, err := filepath.Abs(value); err == nil {
+		value = abs
+	}
+	value = filepath.Clean(value)
+	if runtime.GOOS == "windows" {
+		value = strings.ToLower(value)
+	}
+	value = filepath.ToSlash(value)
+
+	var builder strings.Builder
+	lastDash := false
+	for _, r := range value {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r):
+			builder.WriteRune(r)
+			lastDash = false
+		case r == '-', r == '_', r == '.':
+			builder.WriteRune(r)
+			lastDash = false
+		default:
+			if !lastDash {
+				builder.WriteRune('-')
+				lastDash = true
+			}
+		}
+	}
+
+	id := strings.Trim(builder.String(), "-")
+	if id == "" {
+		id = "unknown-project"
+	}
+	if len(id) > 96 {
+		sum := sha1.Sum([]byte(value))
+		id = id[:80] + "-" + hex.EncodeToString(sum[:4])
+	}
+	return "-" + id
 }
 
 func newID() string {

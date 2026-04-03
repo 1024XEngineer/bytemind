@@ -17,23 +17,21 @@ func TestStorePreservesUTF8Content(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	utf8Text := "\u4f60\u597d\uff0c\u4e16\u754c"
+	utf8Text := "你好，世界"
 	sess := New(`E:\\workspace`)
-	sess.Messages = append(sess.Messages, llm.Message{
-		Role:    "user",
-		Content: utf8Text,
-	})
+	sess.Messages = append(sess.Messages, llm.Message{Role: "user", Content: utf8Text})
 
 	if err := store.Save(sess); err != nil {
 		t.Fatal(err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, sess.ID+".json"))
+	path := filepath.Join(dir, projectID(sess.Workspace), sess.ID+".jsonl")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(data), utf8Text) {
-		t.Fatalf("expected raw json to contain utf-8 text %q, got %q", utf8Text, string(data))
+		t.Fatalf("expected raw jsonl to contain utf-8 text %q, got %q", utf8Text, string(data))
 	}
 
 	loaded, err := store.Load(sess.ID)
@@ -115,7 +113,12 @@ func TestStoreListSkipsEmptySessionFiles(t *testing.T) {
 	if err := store.Save(sess); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "empty.json"), nil, 0o644); err != nil {
+
+	brokenDir := filepath.Join(dir, projectID(sess.Workspace))
+	if err := os.MkdirAll(brokenDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(brokenDir, "empty.jsonl"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -129,7 +132,7 @@ func TestStoreListSkipsEmptySessionFiles(t *testing.T) {
 	if len(warnings) != 1 {
 		t.Fatalf("expected 1 warning, got %#v", warnings)
 	}
-	if !strings.Contains(warnings[0], "empty.json") || !strings.Contains(warnings[0], "empty file") {
+	if !strings.Contains(warnings[0], "empty.jsonl") {
 		t.Fatalf("unexpected warning: %q", warnings[0])
 	}
 }
@@ -147,7 +150,12 @@ func TestStoreListSkipsInvalidJSONSessionFiles(t *testing.T) {
 	if err := store.Save(sess); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte("{"), 0o644); err != nil {
+
+	brokenDir := filepath.Join(dir, projectID(sess.Workspace))
+	if err := os.MkdirAll(brokenDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(brokenDir, "broken.jsonl"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -161,7 +169,7 @@ func TestStoreListSkipsInvalidJSONSessionFiles(t *testing.T) {
 	if len(warnings) != 1 {
 		t.Fatalf("expected 1 warning, got %#v", warnings)
 	}
-	if !strings.Contains(warnings[0], "broken.json") || !strings.Contains(warnings[0], "invalid JSON") {
+	if !strings.Contains(warnings[0], "broken.jsonl") {
 		t.Fatalf("unexpected warning: %q", warnings[0])
 	}
 }
@@ -192,7 +200,8 @@ func TestStoreSaveReplacesExistingSessionFile(t *testing.T) {
 		t.Fatalf("expected updated session content, got %#v", loaded.Messages)
 	}
 
-	entries, err := os.ReadDir(dir)
+	projectDir := filepath.Join(dir, projectID(sess.Workspace))
+	entries, err := os.ReadDir(projectDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,8 +212,49 @@ func TestStoreSaveReplacesExistingSessionFile(t *testing.T) {
 	}
 }
 
+func TestStoreIgnoresLegacyJSONFiles(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	legacy := filepath.Join(dir, "legacy.json")
+	if err := os.WriteFile(legacy, []byte(`{"id":"legacy","workspace":"E:\\repo"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, warnings, err := store.List(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 0 {
+		t.Fatalf("expected no summaries from legacy json, got %#v", summaries)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings for ignored legacy json files, got %#v", warnings)
+	}
+	if _, err := store.Load("legacy"); !os.IsNotExist(err) {
+		t.Fatalf("expected legacy json to be unsupported and not found, got %v", err)
+	}
+}
+
+func TestProjectIDProducesStablePathSafeValue(t *testing.T) {
+	first := projectID(`C:\\Users\\Wheat\\Desktop\\Demo Repo`)
+	second := projectID(`C:\\Users\\wheat\\Desktop\\Demo Repo`)
+	if first != second {
+		t.Fatalf("expected stable id normalization, got %q vs %q", first, second)
+	}
+	if !strings.HasPrefix(first, "-") {
+		t.Fatalf("expected project id to be prefixed with '-', got %q", first)
+	}
+	if strings.Contains(first, "\\") || strings.Contains(first, "/") || strings.Contains(first, ":") {
+		t.Fatalf("expected path-safe project id, got %q", first)
+	}
+}
+
 func TestSummarizeMessagePreservesUTF8WhenTruncating(t *testing.T) {
-	text := "\u7ee7\u7eed\u521a\u624d\u7684\u4e0a\u4e0b\u6587\uff0c\u7ed9\u6211\u5217\u4e00\u4e0b\u5f53\u524d\u4e3b MVP \u6700\u5173\u952e\u7684\u6d4b\u8bd5\u70b9"
+	text := "继续刚才的上下文，给我列一下当前主 MVP 最关键的测试点"
 	got := summarizeMessage(text, 24)
 	if strings.ContainsRune(got, '\uFFFD') {
 		t.Fatalf("expected valid utf-8 preview, got %q", got)

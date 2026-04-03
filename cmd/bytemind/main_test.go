@@ -435,6 +435,7 @@ func TestBootstrapRejectsMissingAPIKey(t *testing.T) {
 func TestBootstrapRejectsExplicitMissingConfigFile(t *testing.T) {
 	workspace := t.TempDir()
 	t.Chdir(workspace)
+	t.Setenv("BYTEMIND_HOME", filepath.Join(workspace, ".bytemind-home"))
 
 	_, _, _, err := bootstrap(filepath.Join(workspace, "missing-config.json"), "", "", "", "", 0, strings.NewReader(""), &bytes.Buffer{})
 	if err == nil {
@@ -448,6 +449,7 @@ func TestBootstrapRejectsExplicitMissingConfigFile(t *testing.T) {
 func TestBootstrapRejectsExplicitMalformedConfigFile(t *testing.T) {
 	workspace := t.TempDir()
 	t.Chdir(workspace)
+	t.Setenv("BYTEMIND_HOME", filepath.Join(workspace, ".bytemind-home"))
 	badConfigPath := filepath.Join(workspace, "bad-config.json")
 	if err := os.WriteFile(badConfigPath, []byte(`{"provider":`), 0o644); err != nil {
 		t.Fatal(err)
@@ -464,6 +466,7 @@ func TestBootstrapRejectsExplicitMalformedConfigFile(t *testing.T) {
 
 func writeTestConfig(t *testing.T, workspace string, cfg map[string]any) {
 	t.Helper()
+	t.Setenv("BYTEMIND_HOME", filepath.Join(workspace, ".bytemind-home"))
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
