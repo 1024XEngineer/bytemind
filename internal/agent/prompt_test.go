@@ -1,89 +1,161 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	planpkg "bytemind/internal/plan"
 )
 
-func TestSystemPromptRendersConfiguredBlocks(t *testing.T) {
+func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
+	workspace := t.TempDir()
+	agentsPath := filepath.Join(workspace, "AGENTS.md")
+	if err := os.WriteFile(agentsPath, []byte("Use rg for search before broad shell scans."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	prompt := systemPrompt(PromptInput{
-		Workspace:      "/tmp/workspace",
+		Workspace:      workspace,
 		ApprovalPolicy: "on-request",
-		ProviderType:   "openai-compatible",
 		Model:          "gpt-5.4-mini",
-		MaxIterations:  32,
-		Mode:           "build",
+		Mode:           "plan",
 		Platform:       "linux/amd64",
-		Now:            time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC),
-		Plan: planpkg.State{
-			Goal:    "Rewrite prompt architecture",
-			Summary: "Keep the prompt composable and mode-aware.",
-			Phase:   planpkg.PhaseExecuting,
-			Steps: []planpkg.Step{
-				{Title: "Inspect relevant files", Status: planpkg.StepCompleted},
-				{Title: "Rewrite prompt architecture", Status: planpkg.StepInProgress, Files: []string{"internal/agent/prompt.go"}, Verify: []string{"go test ./internal/agent"}, Risk: planpkg.RiskMedium},
-			},
-			NextAction: "Continue: Rewrite prompt architecture",
-		},
-		RepoRulesSummary: "- Prefer Go standard library when practical.",
+		Now:            time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
 		Skills: []PromptSkill{
-			{Name: "review", Description: "Review code changes for bugs and regressions.", Enabled: true},
+			{Name: "review", Description: "Review code changes for regressions.", Enabled: true},
 		},
-		OutputContract: "{\"summary\": string}",
+		Tools:       []string{"read_file", "list_files", "read_file"},
+		Instruction: loadAGENTSInstruction(workspace),
 	})
 
 	assertContains(t, prompt, "You are ByteMind")
 	assertContains(t, prompt, "[Current Mode]")
-	assertContains(t, prompt, "build")
-	assertContains(t, prompt, "/tmp/workspace")
-	assertContains(t, prompt, "on-request")
-	assertContains(t, prompt, "gpt-5.4-mini")
-	assertContains(t, prompt, "linux/amd64")
-	assertContains(t, prompt, "2026-03-31")
-	assertContains(t, prompt, "Goal: Rewrite prompt architecture")
-	assertContains(t, prompt, "- [completed] Inspect relevant files")
-	assertContains(t, prompt, "- [in_progress] Rewrite prompt architecture")
-	assertContains(t, prompt, "[Current Execution Plan]")
-	assertContains(t, prompt, "[Repo Rules]")
+	assertContains(t, prompt, "plan")
+	assertContains(t, prompt, "[Runtime Context]")
+	assertContains(t, prompt, "workspace_root: "+workspace)
+	assertContains(t, prompt, "platform: linux/amd64")
+	assertContains(t, prompt, "date: 2026-04-03")
+	assertContains(t, prompt, "model: gpt-5.4-mini")
+	assertContains(t, prompt, "mode: plan")
+	assertContains(t, prompt, "approval_policy: on-request")
 	assertContains(t, prompt, "[Available Skills]")
-	assertContains(t, prompt, "[Output Contract]")
-
-	assertNoTemplateMarkers(t, prompt)
+	assertContains(t, prompt, "- review: Review code changes for regressions. enabled=true")
+	assertContains(t, prompt, "[Available Tools]")
+	assertContains(t, prompt, "- list_files")
+	assertContains(t, prompt, "- read_file")
+	assertContains(t, prompt, "[Instructions]")
+	assertContains(t, prompt, "Instructions from:")
+	assertContains(t, prompt, "Use rg for search before broad shell scans.")
 }
 
-func TestSystemPromptOmitsOptionalBlocksWhenEmpty(t *testing.T) {
+func TestSystemPromptOmitsInstructionWhenEmpty(t *testing.T) {
 	prompt := systemPrompt(PromptInput{
 		Workspace:      "/tmp/workspace",
 		ApprovalPolicy: "never",
-		ProviderType:   "anthropic",
-		Model:          "claude-sonnet-4",
-		MaxIterations:  16,
-		Mode:           "plan",
+		Model:          "deepseek-chat",
+		Mode:           "build",
 		Platform:       "darwin/arm64",
-		Now:            time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC),
+		Now:            time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
 	})
 
+	assertContains(t, prompt, "[Runtime Context]")
+	assertContains(t, prompt, "[Available Skills]")
+	assertContains(t, prompt, "- none")
+	assertContains(t, prompt, "[Available Tools]")
+	assertContains(t, prompt, "- none")
+	if strings.Contains(prompt, "[Instructions]") {
+		t.Fatalf("did not expect instruction block in prompt: %q", prompt)
+	}
+}
+
+func TestModePromptDefaultsToBuild(t *testing.T) {
+	prompt := strings.TrimSpace(modePrompt(""))
 	assertContains(t, prompt, "[Current Mode]")
-	assertContains(t, prompt, "plan")
-	assertContains(t, prompt, "Required final answer structure:")
-	assertContains(t, prompt, "Plan")
-	assertContains(t, prompt, "Risks")
-	assertContains(t, prompt, "Verification")
-	assertContains(t, prompt, "Next Action")
-	if strings.Contains(prompt, "[Current Plan]") {
-		t.Fatalf("did not expect plan block in prompt: %q", prompt)
+	assertContains(t, prompt, "build")
+}
+
+func TestLoadAGENTSInstruction(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Always keep edits minimal."), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(prompt, "[Repo Rules]") {
-		t.Fatalf("did not expect repo rules block in prompt: %q", prompt)
+
+	got := loadAGENTSInstruction(workspace)
+	if got == "" {
+		t.Fatal("expected AGENTS instruction text, got empty")
 	}
-	if strings.Contains(prompt, "[Available Skills]") {
-		t.Fatalf("did not expect skills block in prompt: %q", prompt)
+	assertContains(t, got, "Instructions from:")
+	assertContains(t, got, "Always keep edits minimal.")
+}
+
+func TestLoadAGENTSInstructionReturnsEmptyWhenMissing(t *testing.T) {
+	if got := loadAGENTSInstruction(t.TempDir()); got != "" {
+		t.Fatalf("expected empty instruction text, got %q", got)
 	}
-	if strings.Contains(prompt, "[Output Contract]") {
-		t.Fatalf("did not expect output contract block in prompt: %q", prompt)
+}
+
+func TestLoadAGENTSInstructionReturnsEmptyWhenWorkspaceBlank(t *testing.T) {
+	if got := loadAGENTSInstruction("   "); got != "" {
+		t.Fatalf("expected empty instruction text, got %q", got)
+	}
+}
+
+func TestLoadAGENTSInstructionReturnsEmptyWhenReadFails(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.Mkdir(filepath.Join(workspace, "AGENTS.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadAGENTSInstruction(workspace); got != "" {
+		t.Fatalf("expected empty instruction text, got %q", got)
+	}
+}
+
+func TestFormatToolsDeduplicatesAndSorts(t *testing.T) {
+	got := formatTools([]string{"read_file", "list_files", "read_file"})
+	want := "- list_files\n- read_file"
+	if got != want {
+		t.Fatalf("unexpected tool list: got %q want %q", got, want)
+	}
+}
+
+func TestFormatToolsNone(t *testing.T) {
+	if got := formatTools(nil); got != "- none" {
+		t.Fatalf("expected \"- none\", got %q", got)
+	}
+}
+
+func TestFormatSkillsNone(t *testing.T) {
+	if got := formatSkills(nil); got != "- none" {
+		t.Fatalf("expected \"- none\", got %q", got)
+	}
+}
+
+func TestIsGitRepository(t *testing.T) {
+	workspace := t.TempDir()
+	if isGitRepository(workspace) {
+		t.Fatalf("expected non-git workspace to be false")
+	}
+	if err := os.Mkdir(filepath.Join(workspace, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !isGitRepository(workspace) {
+		t.Fatalf("expected workspace with .git to be true")
+	}
+}
+
+func TestPromptDebugEnabled(t *testing.T) {
+	for _, value := range []string{"1", "true", "yes", "on", "TRUE"} {
+		t.Setenv("BYTEMIND_DEBUG_PROMPT", value)
+		if !promptDebugEnabled() {
+			t.Fatalf("expected debug enabled for value %q", value)
+		}
+	}
+	for _, value := range []string{"", "0", "false", "off", "no"} {
+		t.Setenv("BYTEMIND_DEBUG_PROMPT", value)
+		if promptDebugEnabled() {
+			t.Fatalf("expected debug disabled for value %q", value)
+		}
 	}
 }
 
@@ -91,22 +163,5 @@ func assertContains(t *testing.T, prompt, needle string) {
 	t.Helper()
 	if !strings.Contains(prompt, needle) {
 		t.Fatalf("expected %q in prompt, got %q", needle, prompt)
-	}
-}
-
-func assertNoTemplateMarkers(t *testing.T, prompt string) {
-	t.Helper()
-	markers := []string{
-		"{{WORKSPACE}}",
-		"{{APPROVAL_POLICY}}",
-		"{{PLAN_ITEMS}}",
-		"{{REPO_RULES_SUMMARY}}",
-		"{{SKILLS_SUMMARY}}",
-		"{{OUTPUT_CONTRACT}}",
-	}
-	for _, marker := range markers {
-		if strings.Contains(prompt, marker) {
-			t.Fatalf("expected template marker %q to be rendered, got %q", marker, prompt)
-		}
 	}
 }

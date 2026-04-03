@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"bytemind/internal/config"
@@ -75,6 +76,9 @@ func (r *Runner) SetApprovalHandler(handler tools.ApprovalHandler) {
 
 func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput, mode string, out io.Writer) (string, error) {
 	runMode := planpkg.NormalizeMode(mode)
+	if strings.TrimSpace(mode) == "" {
+		runMode = planpkg.NormalizeMode(string(sess.Mode))
+	}
 	mode = string(runMode)
 	if sess.Mode != runMode {
 		sess.Mode = runMode
@@ -104,6 +108,8 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 	lastToolSequenceSignature := ""
 	repeatedToolSequenceCount := 0
 	executedToolNames := make([]string, 0, 16)
+	availableTools := toolNames(r.registry.DefinitionsForMode(runMode))
+	instructionText := loadAGENTSInstruction(r.workspace)
 
 	for step := 0; step < r.config.MaxIterations; step++ {
 		messages := make([]llm.Message, 0, len(sess.Messages)+1)
@@ -112,11 +118,10 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 			Content: systemPrompt(PromptInput{
 				Workspace:      r.workspace,
 				ApprovalPolicy: r.config.ApprovalPolicy,
-				ProviderType:   r.config.Provider.Type,
 				Model:          r.config.Provider.Model,
-				MaxIterations:  r.config.MaxIterations,
 				Mode:           mode,
-				Plan:           planpkg.CloneState(sess.Plan),
+				Tools:          availableTools,
+				Instruction:    instructionText,
 			}),
 		})
 		messages = append(messages, sess.Messages...)
@@ -583,5 +588,23 @@ func (r *Runner) emit(event Event) {
 	r.observer.HandleEvent(event)
 }
 
-
-
+func toolNames(definitions []llm.ToolDefinition) []string {
+	if len(definitions) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(definitions))
+	seen := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		name := strings.TrimSpace(definition.Function.Name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}

@@ -1,0 +1,157 @@
+package agent
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"strings"
+	"testing"
+
+	"bytemind/internal/config"
+	"bytemind/internal/llm"
+	"bytemind/internal/tools"
+)
+
+func TestRunnerSetters(t *testing.T) {
+	runner := NewRunner(Options{})
+	if runner.observer != nil {
+		t.Fatal("expected nil observer by default")
+	}
+	runner.SetObserver(ObserverFunc(func(Event) {}))
+	if runner.observer == nil {
+		t.Fatal("expected observer to be set")
+	}
+
+	if runner.approval != nil {
+		t.Fatal("expected nil approval handler by default")
+	}
+	runner.SetApprovalHandler(func(tools.ApprovalRequest) (bool, error) { return true, nil })
+	if runner.approval == nil {
+		t.Fatal("expected approval handler to be set")
+	}
+}
+
+func TestCompleteTurnNonStreamUsesCreateMessage(t *testing.T) {
+	client := &fakeClient{replies: []llm.Message{{
+		Role:    "assistant",
+		Content: "done",
+	}}}
+	runner := NewRunner(Options{
+		Config: config.Config{Stream: false},
+		Client: client,
+	})
+	streamed := false
+	msg, err := runner.completeTurn(context.Background(), llm.ChatRequest{}, io.Discard, &streamed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Content != "done" {
+		t.Fatalf("unexpected message: %#v", msg)
+	}
+	if streamed {
+		t.Fatalf("expected streamed=false, got true")
+	}
+}
+
+func TestCompleteTurnStreamWithNilOutputStillEmitsDelta(t *testing.T) {
+	client := &fakeClient{replies: []llm.Message{{
+		Role:    "assistant",
+		Content: "delta text",
+	}}}
+	events := make([]Event, 0, 2)
+	runner := NewRunner(Options{
+		Config: config.Config{Stream: true},
+		Client: client,
+		Observer: ObserverFunc(func(event Event) {
+			events = append(events, event)
+		}),
+	})
+	streamed := false
+	msg, err := runner.completeTurn(context.Background(), llm.ChatRequest{}, nil, &streamed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Content != "delta text" {
+		t.Fatalf("unexpected message: %#v", msg)
+	}
+	if streamed {
+		t.Fatalf("expected streamed=false with nil output writer")
+	}
+	if len(events) != 1 || events[0].Type != EventAssistantDelta || events[0].Content != "delta text" {
+		t.Fatalf("expected assistant delta event, got %#v", events)
+	}
+}
+
+func TestRenderToolFeedbackBranches(t *testing.T) {
+	runner := NewRunner(Options{})
+	var out bytes.Buffer
+
+	runner.renderToolFeedback(&out, "list_files", `{"ok":false,"error":"boom"}`)
+	runner.renderToolFeedback(&out, "search_text", `{"query":"todo","matches":[{"path":"a.go","line":7,"text":"TODO: fix this"}]}`)
+	runner.renderToolFeedback(&out, "run_shell", `{"ok":false,"exit_code":2,"stdout":"line1\nline2","stderr":"err1\nerr2"}`)
+
+	got := out.String()
+	for _, want := range []string{"error", "boom", "found", "todo", "exit", "code 2", "stdout:", "stderr:"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected output to contain %q, got %q", want, got)
+		}
+	}
+}
+
+func TestRenderToolFeedbackAdditionalBranches(t *testing.T) {
+	runner := NewRunner(Options{})
+	var out bytes.Buffer
+
+	runner.renderToolFeedback(&out, "list_files", `{"root":".","items":[{"path":"dir1","type":"dir"},{"path":"f.txt","type":"file"}]}`)
+	runner.renderToolFeedback(&out, "read_file", `{"path":"a.go","start_line":1,"end_line":2,"total_lines":10,"content":"line1\nline2"}`)
+	runner.renderToolFeedback(&out, "write_file", `{"path":"a.go","bytes_written":42}`)
+	runner.renderToolFeedback(&out, "replace_in_file", `{"path":"a.go","replaced":1,"old_count":2}`)
+	runner.renderToolFeedback(&out, "apply_patch", `{"operations":[{"type":"update","path":"a.go"}]}`)
+	runner.renderToolFeedback(&out, "unknown_tool", `{}`)
+
+	got := out.String()
+	for _, want := range []string{"listed", "dir  dir1", "read", "wrote", "updated", "patch", "completed"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected output to contain %q, got %q", want, got)
+		}
+	}
+}
+
+func TestUtilityHelpersBranches(t *testing.T) {
+	if got := normalizeToolArguments("{bad"); got != "{bad" {
+		t.Fatalf("expected raw fallback for invalid json, got %q", got)
+	}
+	if got := emptyDot("   "); got != "." {
+		t.Fatalf("expected dot fallback, got %q", got)
+	}
+	if matches := previewMatches([]struct {
+		Path string `json:"path"`
+		Line int    `json:"line"`
+		Text string `json:"text"`
+	}{
+		{Path: "a.go", Line: 1, Text: "one"},
+	}); len(matches) != 1 {
+		t.Fatalf("expected one match preview, got %#v", matches)
+	}
+	if output := previewOutput("stdout", "line1\nline2"); len(output) != 2 {
+		t.Fatalf("expected two output previews, got %#v", output)
+	}
+}
+
+func TestToolNamesDeduplicatesAndSkipsBlank(t *testing.T) {
+	definitions := []llm.ToolDefinition{
+		{Type: "function", Function: llm.FunctionDefinition{Name: "read_file"}},
+		{Type: "function", Function: llm.FunctionDefinition{Name: "  "}},
+		{Type: "function", Function: llm.FunctionDefinition{Name: "list_files"}},
+		{Type: "function", Function: llm.FunctionDefinition{Name: "read_file"}},
+	}
+	got := toolNames(definitions)
+	data, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `["list_files","read_file"]` {
+		t.Fatalf("unexpected tool names: %s", data)
+	}
+}

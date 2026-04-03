@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -286,8 +288,11 @@ func TestRunPromptUpdatePlanSyncsSessionAndEmitsPlanEvent(t *testing.T) {
 	}
 }
 
-func TestRunPromptSendsUpdatedPlanIntoNextTurnSystemPrompt(t *testing.T) {
+func TestRunPromptSystemPromptIncludesToolCatalog(t *testing.T) {
 	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("Prefer focused edits."), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -332,9 +337,53 @@ func TestRunPromptSendsUpdatedPlanIntoNextTurnSystemPrompt(t *testing.T) {
 		t.Fatalf("expected two LLM requests, got %d", len(client.requests))
 	}
 	systemPrompt := client.requests[1].Messages[0].Content
-	for _, want := range []string{"Inspect provider", "Add tests", "in_progress"} {
+	for _, want := range []string{"[Available Tools]", "list_files", "read_file", "[Instructions]", "Prefer focused edits."} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("expected second-turn system prompt to include %q, got %q", want, systemPrompt)
+		}
+	}
+}
+
+func TestRunPromptUsesSessionModeWhenModeArgEmpty(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModePlan
+
+	client := &recordingClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "Plan draft ready.",
+		},
+	}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Type: "openai-compatible", Model: "test-model"},
+			MaxIterations: 2,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	if _, err := runner.RunPrompt(context.Background(), sess, "draft a plan", "", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("expected one LLM request, got %d", len(client.requests))
+	}
+	systemPrompt := client.requests[0].Messages[0].Content
+	for _, want := range []string{"[Current Mode]", "plan", "mode: plan"} {
+		if !strings.Contains(systemPrompt, want) {
+			t.Fatalf("expected system prompt to include %q, got %q", want, systemPrompt)
 		}
 	}
 }
