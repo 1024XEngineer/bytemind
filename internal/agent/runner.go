@@ -74,7 +74,10 @@ func (r *Runner) SetApprovalHandler(handler tools.ApprovalHandler) {
 }
 
 func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput, mode string, out io.Writer) (string, error) {
-	runMode := planpkg.NormalizeMode(mode)
+	runMode := planpkg.NormalizeMode(string(sess.Mode))
+	if strings.TrimSpace(mode) != "" {
+		runMode = planpkg.NormalizeMode(mode)
+	}
 	mode = string(runMode)
 	if sess.Mode != runMode {
 		sess.Mode = runMode
@@ -106,6 +109,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 	executedToolNames := make([]string, 0, 16)
 
 	for step := 0; step < r.config.MaxIterations; step++ {
+		toolDefinitions := r.registry.DefinitionsForMode(runMode)
 		messages := make([]llm.Message, 0, len(sess.Messages)+1)
 		messages = append(messages, llm.Message{
 			Role: "system",
@@ -116,7 +120,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 				Model:          r.config.Provider.Model,
 				MaxIterations:  r.config.MaxIterations,
 				Mode:           mode,
-				Plan:           planpkg.CloneState(sess.Plan),
+				Tools:          toolDefinitionNames(toolDefinitions),
 			}),
 		})
 		messages = append(messages, sess.Messages...)
@@ -124,7 +128,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 		request := llm.ChatRequest{
 			Model:       r.config.Provider.Model,
 			Messages:    messages,
-			Tools:       r.registry.DefinitionsForMode(runMode),
+			Tools:       toolDefinitions,
 			Temperature: 0.2,
 		}
 
@@ -576,12 +580,24 @@ func compactWhitespace(text string, limit int) string {
 	return string(runes[:limit-3]) + "..."
 }
 
+func toolDefinitionNames(definitions []llm.ToolDefinition) []string {
+	if len(definitions) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		name := strings.TrimSpace(definition.Function.Name)
+		if name == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
 func (r *Runner) emit(event Event) {
 	if r.observer == nil {
 		return
 	}
 	r.observer.HandleEvent(event)
 }
-
-
-

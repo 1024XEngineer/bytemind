@@ -286,25 +286,15 @@ func TestRunPromptUpdatePlanSyncsSessionAndEmitsPlanEvent(t *testing.T) {
 	}
 }
 
-func TestRunPromptSendsUpdatedPlanIntoNextTurnSystemPrompt(t *testing.T) {
+func TestRunPromptUsesSessionModeWhenModeArgumentIsEmpty(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	sess := session.New(workspace)
+	sess.Mode = planpkg.ModePlan
 	client := &recordingClient{replies: []llm.Message{
-		{
-			Role: "assistant",
-			ToolCalls: []llm.ToolCall{{
-				ID:   "call-plan",
-				Type: "function",
-				Function: llm.ToolFunctionCall{
-					Name:      "update_plan",
-					Arguments: `{"plan":[{"step":"Inspect provider","status":"completed"},{"step":"Add tests","status":"in_progress"}]}`,
-				},
-			}},
-		},
 		{
 			Role:    "assistant",
 			Content: "Plan acknowledged.",
@@ -325,16 +315,16 @@ func TestRunPromptSendsUpdatedPlanIntoNextTurnSystemPrompt(t *testing.T) {
 		Stdout:   io.Discard,
 	})
 
-	if _, err := runner.RunPrompt(context.Background(), sess, "make a plan", "build", io.Discard); err != nil {
+	if _, err := runner.RunPrompt(context.Background(), sess, "make a plan", "", io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if len(client.requests) != 2 {
-		t.Fatalf("expected two LLM requests, got %d", len(client.requests))
+	if len(client.requests) != 1 {
+		t.Fatalf("expected one LLM request, got %d", len(client.requests))
 	}
-	systemPrompt := client.requests[1].Messages[0].Content
-	for _, want := range []string{"Inspect provider", "Add tests", "in_progress"} {
+	systemPrompt := client.requests[0].Messages[0].Content
+	for _, want := range []string{"[Current Mode]", "mode: plan", "Required final answer structure:"} {
 		if !strings.Contains(systemPrompt, want) {
-			t.Fatalf("expected second-turn system prompt to include %q, got %q", want, systemPrompt)
+			t.Fatalf("expected system prompt to include %q, got %q", want, systemPrompt)
 		}
 	}
 }

@@ -102,7 +102,7 @@ func runOneShot(args []string, stdin io.Reader, stdout, stderr io.Writer) error 
 		return err
 	}
 
-	_, err = app.RunPrompt(context.Background(), sess, *prompt, "build", stdout)
+	_, err = app.RunPrompt(context.Background(), sess, *prompt, "", stdout)
 	return err
 }
 

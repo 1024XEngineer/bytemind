@@ -802,7 +802,7 @@ func (m model) submitPrompt(value string) (tea.Model, tea.Cmd) {
 		m.syncLayoutForCurrentScreen()
 		m.refreshViewport()
 	}
-	return m, tea.Batch(m.startRunCmd(value, string(m.mode)), m.spinner.Tick, waitForAsync(m.async))
+	return m, tea.Batch(m.startRunCmd(value), m.spinner.Tick, waitForAsync(m.async))
 }
 
 func (m *model) handleAgentEvent(event agent.Event) {
@@ -1449,10 +1449,10 @@ func (m *model) resumeSession(prefix string) error {
 	return nil
 }
 
-func (m model) startRunCmd(prompt, mode string) tea.Cmd {
+func (m model) startRunCmd(prompt string) tea.Cmd {
 	return func() tea.Msg {
 		go func() {
-			_, err := m.runner.RunPrompt(context.Background(), m.sess, prompt, mode, io.Discard)
+			_, err := m.runner.RunPrompt(context.Background(), m.sess, prompt, "", io.Discard)
 			m.async <- runFinishedMsg{Err: err}
 		}()
 		return nil
