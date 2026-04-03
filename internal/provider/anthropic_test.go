@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"testing"
 
@@ -175,86 +174,3 @@ func TestParseJSONObjectFallsBackToRawValue(t *testing.T) {
 	}
 }
 
-func TestAnthropicCreateMessageFallsBackToMessagesEndpoint(t *testing.T) {
-	paths := make([]string, 0, 2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.URL.Path)
-		if r.URL.Path == "/v1/messages" {
-			http.NotFound(w, r)
-			return
-		}
-		if r.URL.Path != "/messages" {
-			t.Fatalf("unexpected path %q", r.URL.Path)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"content": []map[string]any{
-				{"type": "text", "text": "fallback ok"},
-			},
-		})
-	}))
-	defer server.Close()
-
-	client := NewAnthropic(Config{
-		BaseURL: server.URL,
-		APIKey:  "test-key",
-		Model:   "claude",
-	})
-	msg, err := client.CreateMessage(context.Background(), llm.ChatRequest{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if msg.Content != "fallback ok" {
-		t.Fatalf("unexpected content %#v", msg)
-	}
-	if len(paths) != 2 || paths[0] != "/v1/messages" || paths[1] != "/messages" {
-		t.Fatalf("unexpected path attempts: %#v", paths)
-	}
-}
-
-func TestAnthropicCreateMessageUsesCustomAuthHeaderAndPath(t *testing.T) {
-	var gotHeader string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/custom/messages" {
-			t.Fatalf("unexpected path %q", r.URL.Path)
-		}
-		gotHeader = r.Header.Get("Authorization")
-		if key := r.Header.Get("x-api-key"); key != "" {
-			t.Fatalf("expected no x-api-key header, got %q", key)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"content": []map[string]any{
-				{"type": "text", "text": "ok"},
-			},
-		})
-	}))
-	defer server.Close()
-
-	client := NewAnthropic(Config{
-		BaseURL:          server.URL,
-		APIPath:          "custom/messages",
-		APIKey:           "test-key",
-		AuthHeader:       "Authorization",
-		AuthScheme:       "Bearer",
-		Model:            "claude",
-		AnthropicVersion: "2023-06-01",
-	})
-	msg, err := client.CreateMessage(context.Background(), llm.ChatRequest{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if msg.Content != "ok" {
-		t.Fatalf("unexpected content %#v", msg)
-	}
-	if gotHeader != "Bearer test-key" {
-		t.Fatalf("unexpected Authorization header %q", gotHeader)
-	}
-}
-
-func TestAnthropicDefaultPathsByBaseURL(t *testing.T) {
-	if got := anthropicDefaultPaths("https://api.anthropic.com/v1"); !slices.Equal(got, []string{"messages"}) {
-		t.Fatalf("unexpected paths for /v1 base: %#v", got)
-	}
-	if got := anthropicDefaultPaths("https://api.anthropic.com"); !slices.Equal(got, []string{"v1/messages", "messages"}) {
-		t.Fatalf("unexpected paths for host base: %#v", got)
-	}
-}

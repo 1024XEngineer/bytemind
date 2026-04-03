@@ -11,12 +11,8 @@ func NewClient(cfg config.ProviderConfig) (llm.Client, error) {
 	clientCfg := Config{
 		Type:             cfg.Type,
 		BaseURL:          cfg.BaseURL,
-		APIPath:          cfg.APIPath,
 		APIKey:           cfg.ResolveAPIKey(),
 		Model:            cfg.Model,
-		AuthHeader:       cfg.AuthHeader,
-		AuthScheme:       cfg.AuthScheme,
-		ExtraHeaders:     cfg.ExtraHeaders,
 		AnthropicVersion: cfg.AnthropicVersion,
 	}
 

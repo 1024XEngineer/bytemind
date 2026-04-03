@@ -18,16 +18,12 @@ type Config struct {
 }
 
 type ProviderConfig struct {
-	Type             string            `json:"type"`
-	BaseURL          string            `json:"base_url"`
-	APIPath          string            `json:"api_path"`
-	Model            string            `json:"model"`
-	APIKey           string            `json:"api_key"`
-	APIKeyEnv        string            `json:"api_key_env"`
-	AuthHeader       string            `json:"auth_header"`
-	AuthScheme       string            `json:"auth_scheme"`
-	ExtraHeaders     map[string]string `json:"extra_headers"`
-	AnthropicVersion string            `json:"anthropic_version"`
+	Type             string `json:"type"`
+	BaseURL          string `json:"base_url"`
+	Model            string `json:"model"`
+	APIKey           string `json:"api_key"`
+	APIKeyEnv        string `json:"api_key_env"`
+	AnthropicVersion string `json:"anthropic_version"`
 }
 
 func Default(workspace string) Config {
@@ -110,9 +106,6 @@ func applyEnv(cfg *Config) {
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_BASE_URL")); value != "" {
 		cfg.Provider.BaseURL = value
 	}
-	if value := strings.TrimSpace(os.Getenv("BYTEMIND_API_PATH")); value != "" {
-		cfg.Provider.APIPath = value
-	}
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_MODEL")); value != "" {
 		cfg.Provider.Model = value
 	}
@@ -121,15 +114,6 @@ func applyEnv(cfg *Config) {
 	}
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_API_KEY_ENV")); value != "" {
 		cfg.Provider.APIKeyEnv = value
-	}
-	if value := strings.TrimSpace(os.Getenv("BYTEMIND_AUTH_HEADER")); value != "" {
-		cfg.Provider.AuthHeader = value
-	}
-	if value := strings.TrimSpace(os.Getenv("BYTEMIND_AUTH_SCHEME")); value != "" {
-		cfg.Provider.AuthScheme = value
-	}
-	if value := strings.TrimSpace(os.Getenv("BYTEMIND_ANTHROPIC_VERSION")); value != "" {
-		cfg.Provider.AnthropicVersion = value
 	}
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_APPROVAL_POLICY")); value != "" {
 		cfg.ApprovalPolicy = value
@@ -155,29 +139,8 @@ func normalize(workspace string, cfg *Config) error {
 	if cfg.Provider.APIKeyEnv == "" {
 		cfg.Provider.APIKeyEnv = "BYTEMIND_API_KEY"
 	}
-	cfg.Provider.APIPath = strings.TrimSpace(cfg.Provider.APIPath)
-	cfg.Provider.AuthHeader = strings.TrimSpace(cfg.Provider.AuthHeader)
-	cfg.Provider.AuthScheme = strings.TrimSpace(cfg.Provider.AuthScheme)
 	if cfg.Provider.AnthropicVersion == "" {
 		cfg.Provider.AnthropicVersion = "2023-06-01"
-	}
-	cfg.Provider.AnthropicVersion = strings.TrimSpace(cfg.Provider.AnthropicVersion)
-	if cfg.Provider.ExtraHeaders == nil {
-		cfg.Provider.ExtraHeaders = map[string]string{}
-	}
-	for key, value := range cfg.Provider.ExtraHeaders {
-		trimmedKey := strings.TrimSpace(key)
-		trimmedValue := strings.TrimSpace(value)
-		if trimmedKey == "" || trimmedValue == "" {
-			delete(cfg.Provider.ExtraHeaders, key)
-			continue
-		}
-		if trimmedKey != key {
-			delete(cfg.Provider.ExtraHeaders, key)
-			cfg.Provider.ExtraHeaders[trimmedKey] = trimmedValue
-			continue
-		}
-		cfg.Provider.ExtraHeaders[key] = trimmedValue
 	}
 	if cfg.MaxIterations <= 0 {
 		cfg.MaxIterations = 32
@@ -208,10 +171,6 @@ func normalizeProviderType(value string) string {
 			return "openai"
 		}
 		return "openai-compatible"
-	case "openrouter", "deepseek", "groq", "mistral", "together", "xai", "ollama", "azure-openai", "azure_openai", "azure", "siliconflow", "moonshot", "kimi", "zhipu", "qwen":
-		return "openai-compatible"
-	case "claude":
-		return "anthropic"
 	case "anthropic":
 		return "anthropic"
 	default:
