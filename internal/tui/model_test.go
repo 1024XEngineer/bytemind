@@ -2,6 +2,8 @@ package tui
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -601,6 +603,8 @@ func TestHelpTextOnlyMentionsSupportedEntryPoints(t *testing.T) {
 		"aicoding chat",
 		"aicoding run",
 		"/plan",
+		"/skill use",
+		"/skill show",
 	} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("help text should not mention %q", unwanted)
@@ -814,6 +818,171 @@ func TestHandleSlashSessionOpensSessionsModal(t *testing.T) {
 	}
 	if !m.sessionsOpen {
 		t.Fatalf("expected /session to open sessions modal")
+	}
+}
+
+func TestHandleSlashSkillsListsDiscoveredSkills(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "internal", "skills", "review"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "internal", "skills", "review", "skill.json"), []byte(`{
+  "name":"review",
+  "description":"review skill"
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	runner := agent.NewRunner(agent.Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+		},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	m := model{
+		runner:    runner,
+		store:     store,
+		sess:      sess,
+		workspace: workspace,
+		screen:    screenChat,
+	}
+	if err := m.handleSlashCommand("/skills"); err != nil {
+		t.Fatalf("expected /skills to succeed, got %v", err)
+	}
+	if len(m.chatItems) < 2 {
+		t.Fatalf("expected /skills command exchange in chat, got %#v", m.chatItems)
+	}
+	if !strings.Contains(m.chatItems[len(m.chatItems)-1].Body, "review") {
+		t.Fatalf("expected skills output to contain review, got %q", m.chatItems[len(m.chatItems)-1].Body)
+	}
+}
+
+func TestHandleSlashSkillActivateAndClear(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "internal", "skills", "bug-investigation"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "internal", "skills", "bug-investigation", "skill.json"), []byte(`{
+  "name":"bug-investigation",
+  "description":"bug skill",
+  "entry":{"slash":"/bug-investigation"},
+  "tools":{"policy":"allowlist","items":["read_file"]}
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspace, "internal", "skills", "review"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "internal", "skills", "review", "skill.json"), []byte(`{
+  "name":"review",
+  "description":"review skill",
+  "tools":{"policy":"allowlist","items":["read_file"]}
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+	runner := agent.NewRunner(agent.Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+		},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	m := model{
+		runner:    runner,
+		store:     store,
+		sess:      sess,
+		workspace: workspace,
+		screen:    screenChat,
+	}
+	if err := m.handleSlashCommand("/bug-investigation"); err != nil {
+		t.Fatalf("expected /bug-investigation to succeed, got %v", err)
+	}
+	if m.sess.ActiveSkill == nil || m.sess.ActiveSkill.Name != "bug-investigation" {
+		t.Fatalf("expected bug-investigation active before switch, got %#v", m.sess.ActiveSkill)
+	}
+	if err := m.handleSlashCommand("/review severity=high"); err != nil {
+		t.Fatalf("expected /review to succeed, got %v", err)
+	}
+	if m.sess.ActiveSkill == nil || m.sess.ActiveSkill.Name != "review" {
+		t.Fatalf("expected active skill to be set, got %#v", m.sess.ActiveSkill)
+	}
+	if got := m.sess.ActiveSkill.Args["severity"]; got != "high" {
+		t.Fatalf("expected skill arg severity=high, got %q", got)
+	}
+	if err := m.handleSlashCommand("/skill clear"); err != nil {
+		t.Fatalf("expected /skill clear to succeed, got %v", err)
+	}
+	if m.sess.ActiveSkill != nil {
+		t.Fatalf("expected active skill to be cleared, got %#v", m.sess.ActiveSkill)
+	}
+}
+
+func TestFilteredCommandsIncludeSkillSlashCommands(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "internal", "skills", "review"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "internal", "skills", "review", "skill.json"), []byte(`{
+  "name":"review",
+  "description":"review skill",
+  "entry":{"slash":"/review"}
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	runner := agent.NewRunner(agent.Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+		},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	input := textarea.New()
+	input.SetValue("/re")
+	m := model{
+		runner:    runner,
+		store:     store,
+		sess:      sess,
+		workspace: workspace,
+		input:     input,
+	}
+
+	items := m.filteredCommands()
+	found := false
+	for _, item := range items {
+		if item.Name == "/review" && item.Kind == "skill" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected /review skill command in filtered commands, got %+v", items)
 	}
 }
 
@@ -1177,6 +1346,30 @@ func TestRenderMentionPaletteShowsTruncatedMeta(t *testing.T) {
 	}
 }
 
+func TestCommandPaletteAllowsTypingJKWhenOpen(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("/")
+	m := model{
+		screen:        screenChat,
+		commandOpen:   true,
+		commandCursor: 1,
+		input:         input,
+	}
+
+	afterK, _ := m.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	kModel := afterK.(model)
+	if kModel.input.Value() != "/k" {
+		t.Fatalf("expected k to be inserted into slash input, got %q", kModel.input.Value())
+	}
+
+	afterJ, _ := kModel.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	jModel := afterJ.(model)
+	if jModel.input.Value() != "/kj" {
+		t.Fatalf("expected j to be inserted into slash input, got %q", jModel.input.Value())
+	}
+}
+
 func TestRenderCommandPaletteDoesNotCorruptChineseDescriptions(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("/")
@@ -1512,6 +1705,28 @@ func TestApprovalBannerRendersAboveInput(t *testing.T) {
 	}
 	if strings.Contains(footer, "Approval Request") {
 		t.Fatalf("did not expect old centered approval modal title in footer")
+	}
+}
+
+func TestRenderFooterShowsActiveSkillBanner(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		width: 120,
+		input: input,
+		sess: &session.Session{
+			ActiveSkill: &session.ActiveSkill{
+				Name: "review",
+				Args: map[string]string{"severity": "high"},
+			},
+		},
+	}
+
+	footer := m.renderFooter()
+	if !strings.Contains(footer, "Active skill: review") {
+		t.Fatalf("expected footer to show active skill banner, got %q", footer)
+	}
+	if !strings.Contains(footer, "severity=high") {
+		t.Fatalf("expected footer to show active skill args, got %q", footer)
 	}
 }
 

@@ -1,0 +1,29 @@
+{
+  "name": "write-rfc",
+  "version": "0.1.0",
+  "title": "Write RFC",
+  "description": "Produce structured technical proposals with explicit trade-offs and rollout plans.",
+  "entry": {
+    "slash": "/write-rfc"
+  },
+  "tools": {
+    "policy": "allowlist",
+    "items": [
+      "list_files",
+      "read_file",
+      "search_text",
+      "write_file",
+      "replace_in_file",
+      "apply_patch",
+      "update_plan"
+    ]
+  },
+  "args": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": false,
+      "description": "Optional RFC output path, for example docs/rfc/feature.md."
+    }
+  ]
+}

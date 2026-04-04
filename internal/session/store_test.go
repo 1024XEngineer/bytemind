@@ -212,6 +212,40 @@ func TestStoreSaveReplacesExistingSessionFile(t *testing.T) {
 	}
 }
 
+func TestStorePersistsActiveSkill(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sess := New(`E:\\repo`)
+	sess.ActiveSkill = &ActiveSkill{
+		Name: "review",
+		Args: map[string]string{
+			"base_ref": "main",
+		},
+		ActivatedAt: time.Date(2026, 4, 3, 10, 20, 0, 0, time.UTC),
+	}
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := store.Load(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ActiveSkill == nil {
+		t.Fatal("expected active skill to be persisted")
+	}
+	if loaded.ActiveSkill.Name != "review" {
+		t.Fatalf("unexpected active skill name: %#v", loaded.ActiveSkill)
+	}
+	if loaded.ActiveSkill.Args["base_ref"] != "main" {
+		t.Fatalf("unexpected active skill args: %#v", loaded.ActiveSkill.Args)
+	}
+}
+
 func TestStoreIgnoresLegacyJSONFiles(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewStore(dir)

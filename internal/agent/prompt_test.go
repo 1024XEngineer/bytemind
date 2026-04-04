@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,7 +26,18 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 		Skills: []PromptSkill{
 			{Name: "review", Description: "Review code changes for regressions.", Enabled: true},
 		},
-		Tools:       []string{"read_file", "list_files", "read_file"},
+		Tools: []string{"read_file", "list_files", "read_file"},
+		ActiveSkill: &PromptActiveSkill{
+			Name:         "review",
+			Description:  "Review code changes with correctness focus.",
+			WhenToUse:    "When user asks for review.",
+			Instructions: "Prioritize regressions and missing tests.",
+			Args: map[string]string{
+				"base_ref": "main",
+			},
+			ToolPolicy: "allowlist",
+			Tools:      []string{"read_file", "search_text"},
+		},
 		Instruction: loadAGENTSInstruction(workspace),
 	})
 
@@ -40,16 +52,20 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	assertContains(t, prompt, "mode: plan")
 	assertContains(t, prompt, "approval_policy: on-request")
 	assertContains(t, prompt, "[Available Skills]")
+	assertContains(t, prompt, "Skills are user-selected session profiles")
 	assertContains(t, prompt, "- review: Review code changes for regressions. enabled=true")
 	assertContains(t, prompt, "[Available Tools]")
 	assertContains(t, prompt, "- list_files")
 	assertContains(t, prompt, "- read_file")
+	assertContains(t, prompt, "[Active Skill]")
+	assertContains(t, prompt, "Tool Policy: allowlist")
 	assertContains(t, prompt, "[Instructions]")
 	assertContains(t, prompt, "Instructions from:")
 	assertContains(t, prompt, "Use rg for search before broad shell scans.")
+	assertNoTemplateMarkers(t, prompt)
 }
 
-func TestSystemPromptOmitsInstructionWhenEmpty(t *testing.T) {
+func TestSystemPromptOmitsOptionalBlocksWhenEmpty(t *testing.T) {
 	prompt := systemPrompt(PromptInput{
 		Workspace:      "/tmp/workspace",
 		ApprovalPolicy: "never",
@@ -67,6 +83,10 @@ func TestSystemPromptOmitsInstructionWhenEmpty(t *testing.T) {
 	if strings.Contains(prompt, "[Instructions]") {
 		t.Fatalf("did not expect instruction block in prompt: %q", prompt)
 	}
+	if strings.Contains(prompt, "[Active Skill]") {
+		t.Fatalf("did not expect active skill block in prompt: %q", prompt)
+	}
+	assertNoTemplateMarkers(t, prompt)
 }
 
 func TestModePromptDefaultsToBuild(t *testing.T) {
@@ -131,6 +151,24 @@ func TestFormatSkillsNone(t *testing.T) {
 	}
 }
 
+func TestFormatSkillsLimitsAndSummarizesOverflow(t *testing.T) {
+	skills := make([]PromptSkill, 0, maxPromptSkillEntries+2)
+	for i := 0; i < maxPromptSkillEntries+2; i++ {
+		skills = append(skills, PromptSkill{
+			Name:        fmt.Sprintf("skill-%02d", i),
+			Description: strings.Repeat("x", maxPromptSkillDescriptionRune+20),
+			Enabled:     true,
+		})
+	}
+	got := formatSkills(skills)
+	if !strings.Contains(got, "- ... and 2 more skill(s)") {
+		t.Fatalf("expected overflow summary line, got %q", got)
+	}
+	if strings.Contains(got, strings.Repeat("x", maxPromptSkillDescriptionRune+10)) {
+		t.Fatalf("expected long descriptions to be trimmed, got %q", got)
+	}
+}
+
 func TestIsGitRepository(t *testing.T) {
 	workspace := t.TempDir()
 	if isGitRepository(workspace) {
@@ -163,5 +201,17 @@ func assertContains(t *testing.T, prompt, needle string) {
 	t.Helper()
 	if !strings.Contains(prompt, needle) {
 		t.Fatalf("expected %q in prompt, got %q", needle, prompt)
+	}
+}
+
+func assertNoTemplateMarkers(t *testing.T, prompt string) {
+	t.Helper()
+	markers := []string{
+		"{{ACTIVE_SKILL_BLOCK}}",
+	}
+	for _, marker := range markers {
+		if strings.Contains(prompt, marker) {
+			t.Fatalf("expected template marker %q to be rendered, got %q", marker, prompt)
+		}
 	}
 }

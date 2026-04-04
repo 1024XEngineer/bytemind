@@ -1,0 +1,27 @@
+{
+  "name": "bug-investigation",
+  "version": "0.1.0",
+  "title": "Bug Investigation",
+  "description": "Investigate bugs through reproducible evidence before proposing a fix.",
+  "entry": {
+    "slash": "/bug-investigation"
+  },
+  "tools": {
+    "policy": "allowlist",
+    "items": [
+      "list_files",
+      "read_file",
+      "search_text",
+      "run_shell",
+      "update_plan"
+    ]
+  },
+  "args": [
+    {
+      "name": "symptom",
+      "type": "string",
+      "required": false,
+      "description": "Optional symptom summary or error keyword."
+    }
+  ]
+}

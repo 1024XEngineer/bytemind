@@ -1,0 +1,33 @@
+{
+  "name": "github-pr",
+  "version": "0.1.0",
+  "title": "GitHub PR Analysis",
+  "description": "Analyze PR diffs, review comments, and merge risks with evidence.",
+  "entry": {
+    "slash": "/github-pr"
+  },
+  "tools": {
+    "policy": "allowlist",
+    "items": [
+      "list_files",
+      "read_file",
+      "search_text",
+      "run_shell",
+      "update_plan"
+    ]
+  },
+  "args": [
+    {
+      "name": "pr_number",
+      "type": "string",
+      "required": false,
+      "description": "Optional pull request number."
+    },
+    {
+      "name": "base_ref",
+      "type": "string",
+      "required": false,
+      "description": "Optional baseline branch, for example main."
+    }
+  ]
+}

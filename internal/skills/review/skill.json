@@ -1,0 +1,27 @@
+{
+  "name": "review",
+  "version": "0.1.0",
+  "title": "Code Review",
+  "description": "Review code changes with priority on correctness, regressions, and test gaps.",
+  "entry": {
+    "slash": "/review"
+  },
+  "tools": {
+    "policy": "allowlist",
+    "items": [
+      "list_files",
+      "read_file",
+      "search_text",
+      "run_shell",
+      "update_plan"
+    ]
+  },
+  "args": [
+    {
+      "name": "base_ref",
+      "type": "string",
+      "required": false,
+      "description": "Optional baseline branch, for example main."
+    }
+  ]
+}

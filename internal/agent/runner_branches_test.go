@@ -13,6 +13,26 @@ import (
 	"bytemind/internal/tools"
 )
 
+type streamFallbackClient struct {
+	streamMsg   llm.Message
+	createMsg   llm.Message
+	streamCalls int
+	createCalls int
+}
+
+func (c *streamFallbackClient) CreateMessage(_ context.Context, _ llm.ChatRequest) (llm.Message, error) {
+	c.createCalls++
+	return c.createMsg, nil
+}
+
+func (c *streamFallbackClient) StreamMessage(_ context.Context, _ llm.ChatRequest, onDelta func(string)) (llm.Message, error) {
+	c.streamCalls++
+	if onDelta != nil && c.streamMsg.Content != "" {
+		onDelta(c.streamMsg.Content)
+	}
+	return c.streamMsg, nil
+}
+
 func TestRunnerSetters(t *testing.T) {
 	runner := NewRunner(Options{})
 	if runner.observer != nil {
@@ -80,6 +100,31 @@ func TestCompleteTurnStreamWithNilOutputStillEmitsDelta(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].Type != EventAssistantDelta || events[0].Content != "delta text" {
 		t.Fatalf("expected assistant delta event, got %#v", events)
+	}
+}
+
+func TestCompleteTurnFallsBackToCreateWhenStreamReplyIsEmpty(t *testing.T) {
+	client := &streamFallbackClient{
+		streamMsg: llm.Message{Role: "assistant"},
+		createMsg: llm.Message{Role: "assistant", Content: "fallback answer"},
+	}
+	runner := NewRunner(Options{
+		Config: config.Config{Stream: true},
+		Client: client,
+	})
+	streamed := false
+	msg, err := runner.completeTurn(context.Background(), llm.ChatRequest{}, nil, &streamed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Content != "fallback answer" {
+		t.Fatalf("expected fallback non-stream answer, got %#v", msg)
+	}
+	if client.streamCalls != 1 || client.createCalls != 1 {
+		t.Fatalf("expected one stream and one create call, got stream=%d create=%d", client.streamCalls, client.createCalls)
+	}
+	if streamed {
+		t.Fatalf("expected streamed=false when no deltas emitted, got true")
 	}
 }
 

@@ -35,14 +35,16 @@ jobs:
         run: go tool cover -func=coverage.out
 
       - name: Upload coverage to Codecov
+        continue-on-error: true
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.out
           flags: main-linux
           name: main-linux
-          fail_ci_if_error: true
+          fail_ci_if_error: false
           verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Run race detector
         run: go test -race ./...

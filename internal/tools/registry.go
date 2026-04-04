@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 
 	"bytemind/internal/llm"
 	planpkg "bytemind/internal/plan"
@@ -20,6 +21,8 @@ type ExecutionContext struct {
 	Mode           planpkg.AgentMode
 	Stdin          io.Reader
 	Stdout         io.Writer
+	AllowedTools   map[string]struct{}
+	DeniedTools    map[string]struct{}
 }
 
 type Tool interface {
@@ -53,9 +56,24 @@ func (r *Registry) Definitions() []llm.ToolDefinition {
 }
 
 func (r *Registry) DefinitionsForMode(mode planpkg.AgentMode) []llm.ToolDefinition {
+	return r.DefinitionsForModeWithFilters(mode, nil, nil)
+}
+
+func (r *Registry) DefinitionsForModeWithFilters(mode planpkg.AgentMode, allowlist, denylist []string) []llm.ToolDefinition {
+	allowSet := toNameSet(allowlist)
+	denySet := toNameSet(denylist)
+
 	names := make([]string, 0, len(r.tools))
 	for name := range r.tools {
 		if toolAllowedInMode(mode, name) {
+			if len(allowSet) > 0 {
+				if _, ok := allowSet[name]; !ok {
+					continue
+				}
+			}
+			if _, blocked := denySet[name]; blocked {
+				continue
+			}
 			names = append(names, name)
 		}
 	}
@@ -80,6 +98,9 @@ func (r *Registry) ExecuteForMode(ctx context.Context, mode planpkg.AgentMode, n
 	if !toolAllowedInMode(mode, name) {
 		return "", fmt.Errorf("tool %q is unavailable in %s mode", name, mode)
 	}
+	if !toolAllowedByPolicy(name, execCtx) {
+		return "", fmt.Errorf("tool %q is unavailable by active skill policy", name)
+	}
 	if rawArgs == "" {
 		rawArgs = "{}"
 	}
@@ -87,6 +108,38 @@ func (r *Registry) ExecuteForMode(ctx context.Context, mode planpkg.AgentMode, n
 		execCtx.Mode = mode
 	}
 	return tool.Run(ctx, json.RawMessage(rawArgs), execCtx)
+}
+
+func toNameSet(items []string) map[string]struct{} {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		result[item] = struct{}{}
+	}
+	return result
+}
+
+func toolAllowedByPolicy(name string, execCtx *ExecutionContext) bool {
+	if execCtx == nil {
+		return true
+	}
+	if len(execCtx.AllowedTools) > 0 {
+		if _, ok := execCtx.AllowedTools[name]; !ok {
+			return false
+		}
+	}
+	if len(execCtx.DeniedTools) > 0 {
+		if _, blocked := execCtx.DeniedTools[name]; blocked {
+			return false
+		}
+	}
+	return true
 }
 
 func toolAllowedInMode(mode planpkg.AgentMode, name string) bool {

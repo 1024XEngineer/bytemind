@@ -1,0 +1,19 @@
+{
+  "name": "repo-onboarding",
+  "version": "0.1.0",
+  "title": "Repo Onboarding",
+  "description": "Build a fast understanding of repository structure, entry points, and runtime flow.",
+  "entry": {
+    "slash": "/repo-onboarding"
+  },
+  "tools": {
+    "policy": "allowlist",
+    "items": [
+      "list_files",
+      "read_file",
+      "search_text",
+      "run_shell",
+      "update_plan"
+    ]
+  }
+}

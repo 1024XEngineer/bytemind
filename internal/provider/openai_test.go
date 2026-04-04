@@ -153,6 +153,144 @@ func TestOpenAICompatibleStreamMessageRejectsInvalidChunk(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleCreateMessageDoesNotExposeReasoningOnlyResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]any{
+					"role":              "assistant",
+					"content":           nil,
+					"reasoning_content": "final from reasoning",
+				},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatible(Config{BaseURL: server.URL, APIKey: "test-key", Model: "fallback-model"})
+	msg, err := client.CreateMessage(context.Background(), llm.ChatRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Content != "" {
+		t.Fatalf("expected reasoning-only response to stay empty, got %#v", msg)
+	}
+}
+
+func TestOpenAICompatibleCreateMessageParsesLegacyFunctionCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "",
+					"function_call": map[string]any{
+						"name":      "list_files",
+						"arguments": "{\"path\":\".\"}",
+					},
+				},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatible(Config{BaseURL: server.URL, APIKey: "test-key", Model: "fallback-model"})
+	msg, err := client.CreateMessage(context.Background(), llm.ChatRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("expected one parsed legacy function call, got %#v", msg.ToolCalls)
+	}
+	if msg.ToolCalls[0].Function.Name != "list_files" || msg.ToolCalls[0].Function.Arguments != "{\"path\":\".\"}" {
+		t.Fatalf("unexpected legacy tool call parse result: %#v", msg.ToolCalls[0])
+	}
+}
+
+func TestOpenAICompatibleStreamMessageDoesNotExposeReasoningOnlyResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"choices":[{"delta":{"role":"assistant","reasoning_content":"hello"}}]}`,
+			`data: {"choices":[{"delta":{"reasoning_content":" world"}}]}`,
+			`data: [DONE]`,
+			"",
+		}, "\n")))
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatible(Config{BaseURL: server.URL, APIKey: "test-key", Model: "fallback-model"})
+	msg, err := client.StreamMessage(context.Background(), llm.ChatRequest{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Content != "" {
+		t.Fatalf("expected reasoning-only stream to stay empty, got %#v", msg)
+	}
+}
+
+func TestOpenAICompatibleStreamMessageAssemblesLegacyFunctionCallAcrossChunks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"choices":[{"delta":{"role":"assistant","function_call":{"name":"run_shell"}}}]}`,
+			`data: {"choices":[{"delta":{"function_call":{"arguments":"{\"cmd\":[\"bash\",\"-lc\",\"ls -R\"]}"}}}]}`,
+			`data: [DONE]`,
+			"",
+		}, "\n")))
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatible(Config{BaseURL: server.URL, APIKey: "test-key", Model: "fallback-model"})
+	msg, err := client.StreamMessage(context.Background(), llm.ChatRequest{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("expected one legacy tool call, got %#v", msg.ToolCalls)
+	}
+	call := msg.ToolCalls[0]
+	if call.Function.Name != "run_shell" {
+		t.Fatalf("expected legacy tool call name run_shell, got %#v", call)
+	}
+	if call.Function.Arguments != "{\"cmd\":[\"bash\",\"-lc\",\"ls -R\"]}" {
+		t.Fatalf("unexpected legacy tool call arguments: %#v", call)
+	}
+}
+
+func TestOpenAICompatibleCreateMessageParsesToolCallObjectArguments(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]any{
+					"role": "assistant",
+					"tool_calls": []map[string]any{{
+						"id":   "call-1",
+						"type": "function",
+						"function": map[string]any{
+							"name":      "list_files",
+							"arguments": map[string]any{"path": "."},
+						},
+					}},
+				},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatible(Config{BaseURL: server.URL, APIKey: "test-key", Model: "fallback-model"})
+	msg, err := client.CreateMessage(context.Background(), llm.ChatRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("expected one tool call, got %#v", msg.ToolCalls)
+	}
+	if msg.ToolCalls[0].Function.Arguments != "{\"path\":\".\"}" {
+		t.Fatalf("expected object arguments to serialize as json, got %#v", msg.ToolCalls[0])
+	}
+}
+
 func TestOpenAICompatibleChatPayloadUsesFallbackModelAndTools(t *testing.T) {
 	client := NewOpenAICompatible(Config{BaseURL: "https://example.com", APIKey: "test-key", Model: "fallback-model"})
 	payload := client.chatPayload(llm.ChatRequest{

@@ -107,6 +107,12 @@ var (
 				Background(lipgloss.Color("#17140D")).
 				Padding(0, 1)
 
+	activeSkillBannerStyle = lipgloss.NewStyle().
+				BorderStyle(lipgloss.NormalBorder()).
+				BorderForeground(colorAccent).
+				Background(lipgloss.Color("#0F1A28")).
+				Padding(0, 1)
+
 	statusBarStyle = lipgloss.NewStyle().
 			Foreground(colorMuted).
 			Faint(true)
