@@ -1895,6 +1895,47 @@ func summarizeTool(name, payload string) (string, []string, string) {
 			}
 			return fmt.Sprintf("Found %d match(es) for %q", len(result.Matches), result.Query), lines, "done"
 		}
+	case "web_search":
+		var result struct {
+			Query   string `json:"query"`
+			Results []struct {
+				Title string `json:"title"`
+				URL   string `json:"url"`
+			} `json:"results"`
+		}
+		if json.Unmarshal([]byte(payload), &result) == nil {
+			lines := make([]string, 0, min(3, len(result.Results)))
+			for i := 0; i < min(3, len(result.Results)); i++ {
+				item := result.Results[i]
+				title := compact(item.Title, 56)
+				if strings.TrimSpace(title) == "" {
+					title = item.URL
+				}
+				lines = append(lines, title+" - "+item.URL)
+			}
+			return fmt.Sprintf("Searched web for %q (%d result(s))", result.Query, len(result.Results)), lines, "done"
+		}
+	case "web_fetch":
+		var result struct {
+			URL        string `json:"url"`
+			StatusCode int    `json:"status_code"`
+			Title      string `json:"title"`
+			Content    string `json:"content"`
+			Truncated  bool   `json:"truncated"`
+		}
+		if json.Unmarshal([]byte(payload), &result) == nil {
+			lines := make([]string, 0, 2)
+			if strings.TrimSpace(result.Title) != "" {
+				lines = append(lines, "title: "+compact(result.Title, 72))
+			}
+			if strings.TrimSpace(result.Content) != "" {
+				lines = append(lines, "preview: "+compact(result.Content, 72))
+			}
+			if result.Truncated {
+				lines = append(lines, "content truncated")
+			}
+			return fmt.Sprintf("Fetched %s (HTTP %d)", result.URL, result.StatusCode), lines, "done"
+		}
 	case "write_file":
 		var result struct {
 			Path         string `json:"path"`

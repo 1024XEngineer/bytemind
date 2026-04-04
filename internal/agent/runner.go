@@ -110,6 +110,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 	executedToolNames := make([]string, 0, 16)
 	availableTools := toolNames(r.registry.DefinitionsForMode(runMode))
 	instructionText := loadAGENTSInstruction(r.workspace)
+	webLookupInstruction := explicitWebLookupInstruction(userInput)
 
 	for step := 0; step < r.config.MaxIterations; step++ {
 		messages := make([]llm.Message, 0, len(sess.Messages)+1)
@@ -124,6 +125,12 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 				Instruction:    instructionText,
 			}),
 		})
+		if webLookupInstruction != "" {
+			messages = append(messages, llm.Message{
+				Role:    "system",
+				Content: webLookupInstruction,
+			})
+		}
 		messages = append(messages, sess.Messages...)
 
 		request := llm.ChatRequest{
@@ -342,6 +349,48 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 			fmt.Fprintf(out, "  %sfound%s %d matches for %q\n", ansiGreen, ansiReset, len(result.Matches), result.Query)
 			for _, match := range previewMatches(result.Matches) {
 				fmt.Fprintf(out, "    %s\n", match)
+			}
+		}
+	case "web_search":
+		var result struct {
+			Query   string `json:"query"`
+			Results []struct {
+				Title string `json:"title"`
+				URL   string `json:"url"`
+			} `json:"results"`
+		}
+		if err := json.Unmarshal([]byte(payload), &result); err == nil {
+			fmt.Fprintf(out, "  %ssearched%s web for %q (%d results)\n", ansiGreen, ansiReset, result.Query, len(result.Results))
+			previewCount := toolPreview
+			if len(result.Results) < previewCount {
+				previewCount = len(result.Results)
+			}
+			for i := 0; i < previewCount; i++ {
+				title := compactWhitespace(result.Results[i].Title, 64)
+				if strings.TrimSpace(title) == "" {
+					title = result.Results[i].URL
+				}
+				fmt.Fprintf(out, "    %s - %s\n", title, result.Results[i].URL)
+			}
+		}
+	case "web_fetch":
+		var result struct {
+			URL        string `json:"url"`
+			StatusCode int    `json:"status_code"`
+			Title      string `json:"title"`
+			Content    string `json:"content"`
+			Truncated  bool   `json:"truncated"`
+		}
+		if err := json.Unmarshal([]byte(payload), &result); err == nil {
+			fmt.Fprintf(out, "  %sfetched%s %s (HTTP %d)\n", ansiGreen, ansiReset, result.URL, result.StatusCode)
+			if strings.TrimSpace(result.Title) != "" {
+				fmt.Fprintf(out, "    title: %s\n", compactWhitespace(result.Title, 80))
+			}
+			if strings.TrimSpace(result.Content) != "" {
+				fmt.Fprintf(out, "    preview: %s\n", compactWhitespace(result.Content, 100))
+			}
+			if result.Truncated {
+				fmt.Fprintf(out, "    %scontent truncated%s\n", ansiDim, ansiReset)
 			}
 		}
 	case "write_file":
@@ -607,4 +656,30 @@ func toolNames(definitions []llm.ToolDefinition) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func explicitWebLookupInstruction(userInput string) string {
+	text := strings.ToLower(strings.TrimSpace(userInput))
+	if text == "" {
+		return ""
+	}
+
+	webSignals := []string{
+		"github", "gitlab", "bitbucket",
+		"联网", "上网", "互联网", "网上",
+		"源码", "源代码", "repo", "repository",
+		"official website", "官网",
+	}
+	matched := false
+	for _, signal := range webSignals {
+		if strings.Contains(text, signal) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return ""
+	}
+
+	return "The user explicitly requested online or GitHub-source lookup. Use web_search/web_fetch first. Do not substitute local-workspace tools (list_files/read_file/search_text) for this request unless the user explicitly asks to inspect the current workspace repository."
 }

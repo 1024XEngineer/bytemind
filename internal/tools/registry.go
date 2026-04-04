@@ -36,6 +36,8 @@ func DefaultRegistry() *Registry {
 	r.Add(ListFilesTool{})
 	r.Add(ReadFileTool{})
 	r.Add(SearchTextTool{})
+	r.Add(NewWebSearchTool())
+	r.Add(NewWebFetchTool())
 	r.Add(WriteFileTool{})
 	r.Add(ReplaceInFileTool{})
 	r.Add(ApplyPatchTool{})
@@ -94,7 +96,7 @@ func toolAllowedInMode(mode planpkg.AgentMode, name string) bool {
 		return true
 	}
 	switch name {
-	case "list_files", "read_file", "search_text", "update_plan", "run_shell":
+	case "list_files", "read_file", "search_text", "web_search", "web_fetch", "update_plan", "run_shell":
 		return true
 	default:
 		return false
