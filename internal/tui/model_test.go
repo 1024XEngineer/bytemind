@@ -10,6 +10,7 @@ import (
 
 	"bytemind/internal/agent"
 	"bytemind/internal/config"
+	"bytemind/internal/llm"
 	"bytemind/internal/mention"
 	planpkg "bytemind/internal/plan"
 	"bytemind/internal/session"
@@ -1466,6 +1467,37 @@ func TestRenderConversationIncludesToolEntries(t *testing.T) {
 	}
 	if !strings.Contains(got, "Read internal/tui/model.go lines 1-20") {
 		t.Fatalf("expected conversation to show tool summary, got %q", got)
+	}
+}
+
+func TestRebuildSessionTimelineParsesUserToolResultParts(t *testing.T) {
+	sess := &session.Session{
+		Messages: []llm.Message{
+			llm.NewUserTextMessage("please inspect"),
+			{
+				Role: llm.RoleAssistant,
+				Parts: []llm.Part{{
+					Type: llm.PartToolUse,
+					ToolUse: &llm.ToolUsePart{
+						ID:        "call-1",
+						Name:      "read_file",
+						Arguments: `{"path":"a.txt"}`,
+					},
+				}},
+			},
+			llm.NewToolResultMessage("call-1", `{"path":"a.txt","content":"ok"}`),
+		},
+	}
+
+	items, runs := rebuildSessionTimeline(sess)
+	if len(items) != 2 {
+		t.Fatalf("expected user + tool items, got %#v", items)
+	}
+	if items[1].Kind != "tool" || !strings.Contains(items[1].Title, "Tool | read_file") {
+		t.Fatalf("expected tool item from tool_result part, got %#v", items[1])
+	}
+	if len(runs) != 1 || runs[0].Name != "read_file" {
+		t.Fatalf("expected tool run reconstructed, got %#v", runs)
 	}
 }
 

@@ -1794,15 +1794,40 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 	callNames := map[string]string{}
 
 	for _, message := range sess.Messages {
+		message.Normalize()
 		switch message.Role {
 		case "user":
-			items = append(items, chatEntry{Kind: "user", Title: "You", Body: message.Content, Status: "final"})
+			userTextParts := make([]string, 0, len(message.Parts))
+			for _, part := range message.Parts {
+				if part.Text != nil {
+					userTextParts = append(userTextParts, part.Text.Value)
+				}
+				if part.ToolResult == nil {
+					continue
+				}
+				name := callNames[part.ToolResult.ToolUseID]
+				if name == "" {
+					name = "tool"
+				}
+				summary, lines, status := summarizeTool(name, part.ToolResult.Content)
+				items = append(items, chatEntry{
+					Kind:   "tool",
+					Title:  "Tool | " + name,
+					Body:   joinSummary(summary, lines),
+					Status: status,
+				})
+				runs = append(runs, toolRun{Name: name, Summary: summary, Lines: lines, Status: status})
+			}
+			userText := strings.Join(userTextParts, "")
+			if strings.TrimSpace(userText) != "" {
+				items = append(items, chatEntry{Kind: "user", Title: "You", Body: userText, Status: "final"})
+			}
 		case "assistant":
 			for _, call := range message.ToolCalls {
 				callNames[call.ID] = call.Function.Name
 			}
-			if strings.TrimSpace(message.Content) != "" {
-				items = append(items, chatEntry{Kind: "assistant", Title: assistantLabel, Body: message.Content, Status: "final"})
+			if strings.TrimSpace(message.Text()) != "" {
+				items = append(items, chatEntry{Kind: "assistant", Title: assistantLabel, Body: message.Text(), Status: "final"})
 			}
 		case "tool":
 			name := callNames[message.ToolCallID]

@@ -246,6 +246,54 @@ func TestStorePersistsActiveSkill(t *testing.T) {
 	}
 }
 
+func TestStoreListUserPreviewIgnoresToolResultPayload(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sess := New(`E:\\repo`)
+	sess.ID = "preview"
+	sess.Messages = []llm.Message{
+		llm.NewUserTextMessage("real user text"),
+		llm.NewToolResultMessage("call-1", `{"ok":true}`),
+	}
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, _, err := store.List(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("expected one summary, got %#v", summaries)
+	}
+	if summaries[0].LastUserMessage != "real user text" {
+		t.Fatalf("expected preview from user text part, got %#v", summaries[0])
+	}
+}
+
+func TestStoreSaveRejectsInvalidTimelineMessage(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := New(`E:\\repo`)
+	sess.Messages = []llm.Message{{
+		Role: llm.RoleAssistant,
+		Parts: []llm.Part{{
+			Type:  llm.PartImageRef,
+			Image: &llm.ImagePartRef{AssetID: "asset-1"},
+		}},
+	}}
+	if err := store.Save(sess); err == nil {
+		t.Fatal("expected validation failure for invalid assistant image_ref")
+	}
+}
+
 func TestStoreIgnoresLegacyJSONFiles(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewStore(dir)

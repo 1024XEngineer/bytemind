@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -89,8 +90,12 @@ func TestOpenAICompatibleCreateMessageReturnsProviderError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected provider error")
 	}
-	if !strings.Contains(err.Error(), "provider error 429") {
-		t.Fatalf("unexpected error: %v", err)
+	var providerErr *llm.ProviderError
+	if !errors.As(err, &providerErr) {
+		t.Fatalf("expected provider error type, got %T", err)
+	}
+	if providerErr.Code != llm.ErrorCodeRateLimited || providerErr.Status != http.StatusTooManyRequests {
+		t.Fatalf("unexpected provider error: %#v", providerErr)
 	}
 }
 
@@ -293,7 +298,7 @@ func TestOpenAICompatibleCreateMessageParsesToolCallObjectArguments(t *testing.T
 
 func TestOpenAICompatibleChatPayloadUsesFallbackModelAndTools(t *testing.T) {
 	client := NewOpenAICompatible(Config{BaseURL: "https://example.com", APIKey: "test-key", Model: "fallback-model"})
-	payload := client.chatPayload(llm.ChatRequest{
+	payload, err := client.chatPayload(llm.ChatRequest{
 		Messages: []llm.Message{{Role: "user", Content: "hello"}},
 		Tools: []llm.ToolDefinition{{
 			Type: "function",
@@ -303,6 +308,9 @@ func TestOpenAICompatibleChatPayloadUsesFallbackModelAndTools(t *testing.T) {
 		}},
 		Temperature: 0.4,
 	}, true)
+	if err != nil {
+		t.Fatalf("chat payload: %v", err)
+	}
 
 	if got := payload["model"]; got != "fallback-model" {
 		t.Fatalf("expected fallback model, got %#v", got)
@@ -315,3 +323,72 @@ func TestOpenAICompatibleChatPayloadUsesFallbackModelAndTools(t *testing.T) {
 	}
 }
 
+func TestOpenAIMessagesMapsThinkingAndToolResultParts(t *testing.T) {
+	messages, err := openAIMessages(llm.ChatRequest{
+		Messages: []llm.Message{
+			{
+				Role: llm.RoleAssistant,
+				Parts: []llm.Part{
+					{Type: llm.PartThinking, Thinking: &llm.ThinkingPart{Value: "reasoning"}},
+					{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{ID: "call-1", Name: "list_files", Arguments: `{"path":"."}`}},
+				},
+			},
+			llm.NewToolResultMessage("call-1", `{"ok":true}`),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("expected assistant and tool_result messages, got %#v", messages)
+	}
+
+	assistant := messages[0]
+	content, _ := assistant["content"].([]map[string]any)
+	if len(content) != 1 || content[0]["text"] != "reasoning" {
+		t.Fatalf("expected thinking mapped as text content, got %#v", assistant)
+	}
+	toolCalls, _ := assistant["tool_calls"].([]map[string]any)
+	if len(toolCalls) != 1 || toolCalls[0]["id"] != "call-1" {
+		t.Fatalf("expected tool call mapping, got %#v", assistant)
+	}
+	if messages[1]["role"] != "tool" || messages[1]["tool_call_id"] != "call-1" {
+		t.Fatalf("expected tool_result mapping, got %#v", messages[1])
+	}
+}
+
+func TestOpenAIMessagesRejectsMissingImageAsset(t *testing.T) {
+	_, err := openAIMessages(llm.ChatRequest{
+		Messages: []llm.Message{{
+			Role: llm.RoleUser,
+			Parts: []llm.Part{{
+				Type:  llm.PartImageRef,
+				Image: &llm.ImagePartRef{AssetID: "asset-1"},
+			}},
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected missing image asset error")
+	}
+	var providerErr *llm.ProviderError
+	if !errors.As(err, &providerErr) || providerErr.Code != llm.ErrorCodeAssetNotFound {
+		t.Fatalf("unexpected error: %#v", err)
+	}
+}
+
+func TestParseOpenAIDeltaParsesToolCallsAndReasoning(t *testing.T) {
+	delta, err := parseOpenAIDelta([]byte(`{
+  "role":"assistant",
+  "reasoning_content":"thinking",
+  "tool_calls":[{"index":1,"id":"call-1","type":"function","function":{"name":"list_","arguments":"{\"path\":\"src"}}]
+}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta.Role != llm.RoleAssistant || delta.Reasoning != "thinking" {
+		t.Fatalf("unexpected parsed delta: %#v", delta)
+	}
+	if len(delta.ToolCalls) != 1 || delta.ToolCalls[0].FunctionName != "list_" {
+		t.Fatalf("unexpected tool call delta parse: %#v", delta.ToolCalls)
+	}
+}

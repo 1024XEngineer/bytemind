@@ -3,9 +3,9 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"bytemind/internal/llm"
@@ -98,8 +98,12 @@ func TestAnthropicCreateMessageReturnsProviderError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected provider error")
 	}
-	if !strings.Contains(err.Error(), "provider error 400") {
-		t.Fatalf("unexpected error: %v", err)
+	var providerErr *llm.ProviderError
+	if !errors.As(err, &providerErr) {
+		t.Fatalf("expected provider error type, got %T", err)
+	}
+	if providerErr.Status != http.StatusBadRequest || providerErr.Code != llm.ErrorCodeUnknown {
+		t.Fatalf("unexpected provider error: %#v", providerErr)
 	}
 }
 
@@ -127,24 +131,29 @@ func TestAnthropicStreamMessageInvokesDelta(t *testing.T) {
 }
 
 func TestAnthropicMessagesConvertsConversation(t *testing.T) {
-	system, converted := anthropicMessages([]llm.Message{
-		{Role: "system", Content: "sys-1"},
-		{Role: "system", Content: "sys-2"},
-		{Role: "user", Content: "question"},
-		{
-			Role:    "assistant",
-			Content: "thinking",
-			ToolCalls: []llm.ToolCall{{
-				ID:   "call-1",
-				Type: "function",
-				Function: llm.ToolFunctionCall{
-					Name:      "list_files",
-					Arguments: "{\"path\":\".\"}",
-				},
-			}},
+	system, converted, err := anthropicMessages(llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: "sys-1"},
+			{Role: "system", Content: "sys-2"},
+			{Role: "user", Content: "question"},
+			{
+				Role:    "assistant",
+				Content: "thinking",
+				ToolCalls: []llm.ToolCall{{
+					ID:   "call-1",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "list_files",
+						Arguments: "{\"path\":\".\"}",
+					},
+				}},
+			},
+			{Role: "tool", ToolCallID: "call-1", Content: "{\"ok\":true}"},
 		},
-		{Role: "tool", ToolCallID: "call-1", Content: "{\"ok\":true}"},
 	})
+	if err != nil {
+		t.Fatalf("anthropicMessages: %v", err)
+	}
 
 	if system != "sys-1\n\nsys-2" {
 		t.Fatalf("unexpected system prompt %q", system)
@@ -174,3 +183,47 @@ func TestParseJSONObjectFallsBackToRawValue(t *testing.T) {
 	}
 }
 
+func TestAnthropicMessagesRejectsMissingImageAsset(t *testing.T) {
+	_, _, err := anthropicMessages(llm.ChatRequest{
+		Messages: []llm.Message{{
+			Role: llm.RoleUser,
+			Parts: []llm.Part{{
+				Type:  llm.PartImageRef,
+				Image: &llm.ImagePartRef{AssetID: "asset-1"},
+			}},
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected missing image asset error")
+	}
+	var providerErr *llm.ProviderError
+	if !errors.As(err, &providerErr) || providerErr.Code != llm.ErrorCodeAssetNotFound {
+		t.Fatalf("unexpected error: %#v", err)
+	}
+}
+
+func TestAnthropicMessagesPreservesToolResultErrorFlag(t *testing.T) {
+	_, converted, err := anthropicMessages(llm.ChatRequest{
+		Messages: []llm.Message{{
+			Role: llm.RoleUser,
+			Parts: []llm.Part{{
+				Type: llm.PartToolResult,
+				ToolResult: &llm.ToolResultPart{
+					ToolUseID: "call-1",
+					Content:   "{\"ok\":false}",
+					IsError:   true,
+				},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(converted) != 1 {
+		t.Fatalf("unexpected converted messages: %#v", converted)
+	}
+	blocks := converted[0]["content"].([]map[string]any)
+	if len(blocks) != 1 || blocks[0]["is_error"] != true {
+		t.Fatalf("expected is_error propagated, got %#v", blocks)
+	}
+}

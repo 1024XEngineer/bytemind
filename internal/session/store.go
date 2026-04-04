@@ -31,14 +31,37 @@ type ActiveSkill struct {
 }
 
 type Session struct {
-	ID          string            `json:"id"`
-	Workspace   string            `json:"workspace"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
-	Messages    []llm.Message     `json:"messages"`
-	Mode        planpkg.AgentMode `json:"mode,omitempty"`
-	Plan        planpkg.State     `json:"plan,omitempty"`
-	ActiveSkill *ActiveSkill      `json:"active_skill,omitempty"`
+	ID           string            `json:"id"`
+	Workspace    string            `json:"workspace"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
+	Conversation Conversation      `json:"conversation,omitempty"`
+	Messages     []llm.Message     `json:"messages,omitempty"`
+	Mode         planpkg.AgentMode `json:"mode,omitempty"`
+	Plan         planpkg.State     `json:"plan,omitempty"`
+	ActiveSkill  *ActiveSkill      `json:"active_skill,omitempty"`
+}
+
+type Conversation struct {
+	Meta     ConversationMeta   `json:"meta,omitempty"`
+	Timeline []llm.Message      `json:"timeline"`
+	Assets   ConversationAssets `json:"assets,omitempty"`
+}
+
+type ConversationMeta map[string]any
+
+type ConversationAssets struct {
+	Images map[llm.AssetID]ImageAssetMeta `json:"images,omitempty"`
+}
+
+type ImageAssetMeta struct {
+	ImageID   int    `json:"image_id"`
+	MediaType string `json:"media_type"`
+	FileName  string `json:"file_name,omitempty"`
+	CachePath string `json:"cache_path"`
+	ByteSize  int64  `json:"byte_size"`
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
 }
 
 type sessionRecord struct {
@@ -68,8 +91,11 @@ func New(workspace string) *Session {
 		Workspace: workspace,
 		CreatedAt: now,
 		UpdatedAt: now,
-		Messages:  make([]llm.Message, 0, 32),
-		Mode:      planpkg.ModeBuild,
+		Conversation: Conversation{
+			Timeline: make([]llm.Message, 0, 32),
+		},
+		Messages: make([]llm.Message, 0, 32),
+		Mode:     planpkg.ModeBuild,
 		Plan: planpkg.State{
 			Phase: planpkg.PhaseNone,
 			Steps: make([]planpkg.Step, 0, 8),
@@ -96,6 +122,12 @@ func (s *Store) Save(session *Session) error {
 	}
 	if session.Mode == "" {
 		session.Mode = planpkg.ModeBuild
+	}
+	normalizeSessionConversation(session)
+	for i, message := range session.Conversation.Timeline {
+		if err := llm.ValidateMessage(message); err != nil {
+			return fmt.Errorf("timeline[%d] validation failed: %w", i, err)
+		}
 	}
 	session.Plan = planpkg.NormalizeState(session.Plan)
 	session.ActiveSkill = normalizeActiveSkill(session.ActiveSkill)
@@ -142,8 +174,8 @@ func (s *Store) List(limit int) ([]Summary, []string, error) {
 			Workspace:       sess.Workspace,
 			CreatedAt:       sess.CreatedAt,
 			UpdatedAt:       sess.UpdatedAt,
-			LastUserMessage: summarizeMessage(lastUserMessage(sess.Messages), 72),
-			MessageCount:    len(sess.Messages),
+			LastUserMessage: summarizeMessage(lastUserMessage(sessionTimeline(sess)), 72),
+			MessageCount:    len(sessionTimeline(sess)),
 		})
 	}
 
@@ -276,9 +308,7 @@ func normalizeLoadedSession(sess *Session, path string) {
 	if sess.UpdatedAt.IsZero() && !sess.CreatedAt.IsZero() {
 		sess.UpdatedAt = sess.CreatedAt
 	}
-	if sess.Messages == nil {
-		sess.Messages = make([]llm.Message, 0, 32)
-	}
+	normalizeSessionConversation(sess)
 	if sess.Mode == "" {
 		sess.Mode = planpkg.ModeBuild
 	}
@@ -428,11 +458,50 @@ func newID() string {
 
 func lastUserMessage(messages []llm.Message) string {
 	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
-			return messages[i].Content
+		if messages[i].Role == llm.RoleUser {
+			messages[i].Normalize()
+			textParts := make([]string, 0, len(messages[i].Parts))
+			for _, part := range messages[i].Parts {
+				if part.Text != nil && strings.TrimSpace(part.Text.Value) != "" {
+					textParts = append(textParts, part.Text.Value)
+				}
+			}
+			if len(textParts) > 0 {
+				return strings.TrimSpace(strings.Join(textParts, " "))
+			}
 		}
 	}
 	return ""
+}
+
+func sessionTimeline(sess *Session) []llm.Message {
+	if sess == nil {
+		return nil
+	}
+	if len(sess.Conversation.Timeline) > 0 {
+		return sess.Conversation.Timeline
+	}
+	return sess.Messages
+}
+
+func normalizeSessionConversation(sess *Session) {
+	if sess == nil {
+		return
+	}
+	if len(sess.Messages) > 0 {
+		sess.Conversation.Timeline = sess.Messages
+	} else if len(sess.Conversation.Timeline) > 0 {
+		sess.Messages = sess.Conversation.Timeline
+	} else {
+		sess.Messages = make([]llm.Message, 0, 32)
+		sess.Conversation.Timeline = make([]llm.Message, 0, 32)
+	}
+	for i := range sess.Conversation.Timeline {
+		sess.Conversation.Timeline[i].Normalize()
+	}
+	for i := range sess.Messages {
+		sess.Messages[i].Normalize()
+	}
 }
 
 func summarizeMessage(text string, limit int) string {

@@ -184,8 +184,11 @@ func TestRunPromptCompletesMinimalToolLoop(t *testing.T) {
 	if len(sess.Messages[1].ToolCalls) != 1 || sess.Messages[1].ToolCalls[0].Function.Name != "list_files" {
 		t.Fatalf("expected second message to record tool call, got %#v", sess.Messages[1])
 	}
-	if sess.Messages[2].Role != "tool" || !strings.Contains(sess.Messages[2].Content, `"items"`) {
+	if sess.Messages[2].Role != "user" || !strings.Contains(sess.Messages[2].Content, `"items"`) {
 		t.Fatalf("expected third message to be tool result, got %#v", sess.Messages[2])
+	}
+	if len(sess.Messages[2].Parts) != 1 || sess.Messages[2].Parts[0].ToolResult == nil {
+		t.Fatalf("expected third message to carry tool_result part, got %#v", sess.Messages[2])
 	}
 	if sess.Messages[3].Role != "assistant" || sess.Messages[3].Content != "Workspace inspected." {
 		t.Fatalf("expected final assistant message, got %#v", sess.Messages[3])
@@ -240,8 +243,11 @@ func TestRunPromptEncodesToolExecutionErrorsAndContinues(t *testing.T) {
 	if len(sess.Messages) != 4 {
 		t.Fatalf("expected 4 session messages, got %#v", sess.Messages)
 	}
-	if sess.Messages[2].Role != "tool" {
+	if sess.Messages[2].Role != "user" {
 		t.Fatalf("expected third message to be tool result, got %#v", sess.Messages[2])
+	}
+	if len(sess.Messages[2].Parts) != 1 || sess.Messages[2].Parts[0].ToolResult == nil {
+		t.Fatalf("expected third message to carry tool_result part, got %#v", sess.Messages[2])
 	}
 	if !strings.Contains(sess.Messages[2].Content, `"ok":false`) || !strings.Contains(sess.Messages[2].Content, `unknown tool`) {
 		t.Fatalf("expected encoded tool error payload, got %q", sess.Messages[2].Content)
@@ -429,8 +435,52 @@ func TestRunPromptBlocksToolCallOutsideActiveSkillPolicy(t *testing.T) {
 		t.Fatalf("expected tool result message, got %#v", sess.Messages)
 	}
 	toolMsg := sess.Messages[2]
-	if toolMsg.Role != "tool" || !strings.Contains(toolMsg.Content, "active skill policy") {
+	if toolMsg.Role != "user" || !strings.Contains(toolMsg.Content, "active skill policy") {
 		t.Fatalf("expected policy rejection in tool message, got %#v", toolMsg)
+	}
+	if len(toolMsg.Parts) != 1 || toolMsg.Parts[0].ToolResult == nil {
+		t.Fatalf("expected tool_result part in tool message, got %#v", toolMsg)
+	}
+}
+
+func TestRunPromptDropsToolDefinitionsForNoToolModels(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+
+	client := &fakeClient{replies: []llm.Message{{
+		Role:    "assistant",
+		Content: "done",
+	}}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "gpt-5.4-no-tool"},
+			MaxIterations: 2,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "hello", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "done" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(client.requests) == 0 {
+		t.Fatal("expected request captured")
+	}
+	if len(client.requests[0].Tools) != 0 {
+		t.Fatalf("expected no tool definitions for no-tool model, got %#v", client.requests[0].Tools)
 	}
 }
 

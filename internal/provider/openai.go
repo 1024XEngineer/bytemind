@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,7 +45,10 @@ func NewOpenAICompatible(cfg Config) *OpenAICompatible {
 }
 
 func (c *OpenAICompatible) CreateMessage(ctx context.Context, req llm.ChatRequest) (llm.Message, error) {
-	payload := c.chatPayload(req, false)
+	payload, err := c.chatPayload(req, false)
+	if err != nil {
+		return llm.Message{}, err
+	}
 	respBody, err := c.postJSON(ctx, c.baseURL+"/chat/completions", payload)
 	if err != nil {
 		return llm.Message{}, err
@@ -65,7 +69,10 @@ func (c *OpenAICompatible) CreateMessage(ctx context.Context, req llm.ChatReques
 }
 
 func (c *OpenAICompatible) StreamMessage(ctx context.Context, req llm.ChatRequest, onDelta func(string)) (llm.Message, error) {
-	payload := c.chatPayload(req, true)
+	payload, err := c.chatPayload(req, true)
+	if err != nil {
+		return llm.Message{}, err
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return llm.Message{}, err
@@ -86,11 +93,12 @@ func (c *OpenAICompatible) StreamMessage(ctx context.Context, req llm.ChatReques
 
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return llm.Message{}, fmt.Errorf("provider error %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return llm.Message{}, llm.MapProviderError("openai", resp.StatusCode, string(respBody), nil)
 	}
 
-	assembled := llm.Message{Role: "assistant"}
+	assembled := llm.Message{Role: llm.RoleAssistant}
 	toolCalls := map[int]*llm.ToolCall{}
+
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -180,11 +188,12 @@ func (c *OpenAICompatible) StreamMessage(ctx context.Context, req llm.ChatReques
 		}
 	}
 
+	assembled.Normalize()
 	return assembled, nil
 }
 
 type streamDelta struct {
-	Role      string
+	Role      llm.Role
 	Content   string
 	Reasoning string
 	ToolCalls []streamToolCallDelta
@@ -210,7 +219,10 @@ func parseOpenAIDelta(raw json.RawMessage) (streamDelta, error) {
 	}
 
 	if roleRaw, ok := obj["role"]; ok {
-		_ = json.Unmarshal(roleRaw, &delta.Role)
+		var role string
+		if err := json.Unmarshal(roleRaw, &role); err == nil {
+			delta.Role = llm.Role(strings.TrimSpace(role))
+		}
 	}
 	if contentRaw, ok := obj["content"]; ok {
 		delta.Content = extractTextFromRaw(contentRaw, false)
@@ -244,7 +256,7 @@ func parseOpenAIDelta(raw json.RawMessage) (streamDelta, error) {
 }
 
 func parseOpenAIMessage(raw json.RawMessage) llm.Message {
-	msg := llm.Message{Role: "assistant"}
+	msg := llm.Message{Role: llm.RoleAssistant}
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return msg
 	}
@@ -256,7 +268,7 @@ func parseOpenAIMessage(raw json.RawMessage) llm.Message {
 	if roleRaw, ok := obj["role"]; ok {
 		var role string
 		if err := json.Unmarshal(roleRaw, &role); err == nil && strings.TrimSpace(role) != "" {
-			msg.Role = role
+			msg.Role = llm.Role(role)
 		}
 	}
 	if contentRaw, ok := obj["content"]; ok {
@@ -287,6 +299,7 @@ func parseOpenAIMessage(raw json.RawMessage) llm.Message {
 		}
 	}
 
+	msg.Normalize()
 	return msg
 }
 
@@ -295,7 +308,7 @@ func parseToolCalls(raw json.RawMessage) []llm.ToolCall {
 		ID       string `json:"id"`
 		Type     string `json:"type"`
 		Function struct {
-			Name      string `json:"name"`
+			Name      string          `json:"name"`
 			Arguments json.RawMessage `json:"arguments"`
 		} `json:"function"`
 	}
@@ -337,7 +350,7 @@ func parseStreamToolCalls(raw json.RawMessage) []streamToolCallDelta {
 		ID       string `json:"id"`
 		Type     string `json:"type"`
 		Function struct {
-			Name      string `json:"name"`
+			Name      string          `json:"name"`
 			Arguments json.RawMessage `json:"arguments"`
 		} `json:"function"`
 	}
@@ -359,7 +372,7 @@ func parseStreamToolCalls(raw json.RawMessage) []streamToolCallDelta {
 
 func parseLegacyFunctionCall(raw json.RawMessage) streamToolCallDelta {
 	var call struct {
-		Name      string `json:"name"`
+		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
 	}
 	if err := json.Unmarshal(raw, &call); err != nil {
@@ -443,10 +456,14 @@ func extractTextFromAny(value any, includeReasoning bool) string {
 	}
 }
 
-func (c *OpenAICompatible) chatPayload(req llm.ChatRequest, stream bool) map[string]any {
+func (c *OpenAICompatible) chatPayload(req llm.ChatRequest, stream bool) (map[string]any, error) {
+	messages, err := openAIMessages(req)
+	if err != nil {
+		return nil, err
+	}
 	payload := map[string]any{
 		"model":       choose(req.Model, c.model),
-		"messages":    req.Messages,
+		"messages":    messages,
 		"temperature": req.Temperature,
 	}
 	if len(req.Tools) > 0 {
@@ -456,7 +473,94 @@ func (c *OpenAICompatible) chatPayload(req llm.ChatRequest, stream bool) map[str
 	if stream {
 		payload["stream"] = true
 	}
-	return payload
+	return payload, nil
+}
+
+func openAIMessages(req llm.ChatRequest) ([]map[string]any, error) {
+	result := make([]map[string]any, 0, len(req.Messages))
+
+	for _, message := range req.Messages {
+		message.Normalize()
+		content := make([]map[string]any, 0, len(message.Parts))
+		toolCalls := make([]map[string]any, 0, len(message.Parts))
+		toolResults := make([]map[string]any, 0, len(message.Parts))
+
+		for _, part := range message.Parts {
+			switch part.Type {
+			case llm.PartText:
+				content = append(content, map[string]any{"type": "text", "text": part.Text.Value})
+			case llm.PartThinking:
+				content = append(content, map[string]any{"type": "text", "text": part.Thinking.Value})
+			case llm.PartImageRef:
+				asset, ok := req.Assets[part.Image.AssetID]
+				if !ok {
+					return nil, llm.WrapError("openai", llm.ErrorCodeAssetNotFound, fmt.Errorf("asset %q not found", part.Image.AssetID))
+				}
+				if len(asset.Data) == 0 {
+					return nil, llm.WrapError("openai", llm.ErrorCodeAssetNotFound, fmt.Errorf("asset %q has empty payload", part.Image.AssetID))
+				}
+				mediaType := strings.TrimSpace(asset.MediaType)
+				if mediaType == "" {
+					mediaType = "image/png"
+				}
+				content = append(content, map[string]any{
+					"type": "image_url",
+					"image_url": map[string]any{
+						"url": "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(asset.Data),
+					},
+				})
+			case llm.PartToolUse:
+				toolCalls = append(toolCalls, map[string]any{
+					"id":   part.ToolUse.ID,
+					"type": "function",
+					"function": map[string]any{
+						"name":      part.ToolUse.Name,
+						"arguments": part.ToolUse.Arguments,
+					},
+				})
+			case llm.PartToolResult:
+				toolResults = append(toolResults, map[string]any{
+					"role":         "tool",
+					"tool_call_id": part.ToolResult.ToolUseID,
+					"content":      part.ToolResult.Content,
+				})
+			}
+		}
+
+		if message.Role == "tool" {
+			toolID := message.ToolCallID
+			if toolID == "" && len(message.Parts) > 0 {
+				for _, part := range message.Parts {
+					if part.ToolResult != nil {
+						toolID = part.ToolResult.ToolUseID
+						break
+					}
+				}
+			}
+			result = append(result, map[string]any{
+				"role":         "tool",
+				"tool_call_id": toolID,
+				"content":      message.Text(),
+			})
+			continue
+		}
+
+		if len(content) > 0 || len(toolCalls) > 0 {
+			wire := map[string]any{"role": string(message.Role)}
+			if len(content) > 0 {
+				wire["content"] = content
+			}
+			if len(toolCalls) > 0 {
+				wire["tool_calls"] = toolCalls
+			}
+			result = append(result, wire)
+		}
+		if len(toolResults) > 0 {
+			result = append(result, toolResults...)
+		}
+	}
+
+	return result, nil
 }
 
 func (c *OpenAICompatible) postJSON(ctx context.Context, url string, payload map[string]any) ([]byte, error) {
@@ -483,7 +587,7 @@ func (c *OpenAICompatible) postJSON(ctx context.Context, url string, payload map
 		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("provider error %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return nil, llm.MapProviderError("openai", resp.StatusCode, string(respBody), nil)
 	}
 	return respBody, nil
 }
