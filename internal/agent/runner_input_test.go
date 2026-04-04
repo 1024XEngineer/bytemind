@@ -91,3 +91,50 @@ func TestRunPromptWithInputForwardsStructuredUserMessageAndAssets(t *testing.T) 
 		t.Fatalf("expected session user message to keep image_ref part, got %#v", first.Parts)
 	}
 }
+
+func TestRunPromptWithInputFallsBackToDisplayTextWhenUserMessageEmpty(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+
+	client := &fakeClient{
+		replies: []llm.Message{
+			llm.NewAssistantTextMessage("done"),
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "gpt-4o"},
+			MaxIterations: 2,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPromptWithInput(context.Background(), sess, RunPromptInput{
+		DisplayText: "fallback user prompt",
+	}, "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "done" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(sess.Messages) == 0 {
+		t.Fatalf("expected user message persisted")
+	}
+	if sess.Messages[0].Role != llm.RoleUser {
+		t.Fatalf("expected fallback user role, got %q", sess.Messages[0].Role)
+	}
+	if sess.Messages[0].Text() != "fallback user prompt" {
+		t.Fatalf("expected fallback display text to be used, got %q", sess.Messages[0].Text())
+	}
+}

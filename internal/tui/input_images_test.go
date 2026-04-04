@@ -44,14 +44,15 @@ func newImagePipelineModel(t *testing.T) *model {
 	input.Focus()
 
 	m := &model{
-		store:          store,
-		sess:           session.New(workspace),
-		imageStore:     imageStore,
-		workspace:      workspace,
-		input:          input,
-		inputImageRefs: make(map[int]llm.AssetID, 8),
-		orphanedImages: make(map[llm.AssetID]time.Time, 8),
-		nextImageID:    1,
+		store:              store,
+		sess:               session.New(workspace),
+		imageStore:         imageStore,
+		workspace:          workspace,
+		input:              input,
+		inputImageRefs:     make(map[int]llm.AssetID, 8),
+		inputImageMentions: make(map[string]llm.AssetID, 8),
+		orphanedImages:     make(map[llm.AssetID]time.Time, 8),
+		nextImageID:        1,
 	}
 	m.ensureSessionImageAssets()
 	return m
@@ -117,6 +118,23 @@ func TestExtractImagePathsFromChunkRejectsMixedTokens(t *testing.T) {
 	}
 }
 
+func TestExtractInlineImagePathSpansFindsPathInsideMixedText(t *testing.T) {
+	workspace := t.TempDir()
+	imagePath := filepath.Join(workspace, "inline.jpg")
+	if err := os.WriteFile(imagePath, []byte("jpg"), 0o644); err != nil {
+		t.Fatalf("write jpg fixture: %v", err)
+	}
+
+	text := imagePath + "图片在描述什么？"
+	spans := extractInlineImagePathSpans(text)
+	if len(spans) != 1 {
+		t.Fatalf("expected one inline path span, got %#v", spans)
+	}
+	if spans[0].Path != filepath.Clean(imagePath) {
+		t.Fatalf("unexpected span path: %q", spans[0].Path)
+	}
+}
+
 func TestBuildPromptInputExpandsReferencedPlaceholdersOnly(t *testing.T) {
 	m := newImagePipelineModel(t)
 	first := mustIngestTestImage(t, m, "first")
@@ -147,6 +165,77 @@ func TestBuildPromptInputExpandsReferencedPlaceholdersOnly(t *testing.T) {
 	}
 	if imageParts != 1 {
 		t.Fatalf("expected one image_ref part, got %d", imageParts)
+	}
+}
+
+func TestBuildPromptInputExpandsMentionedImageReference(t *testing.T) {
+	m := newImagePipelineModel(t)
+	_ = mustIngestTestImage(t, m, "mention")
+	assetID := findAssetIDByImageID(t, m, 1)
+	m.bindMentionImageAsset("2.1.jpg", assetID)
+
+	input, display, err := m.buildPromptInput("这张图 @2.1.jpg 讲了什么")
+	if err != nil {
+		t.Fatalf("build prompt input: %v", err)
+	}
+	if display != "这张图 @2.1.jpg 讲了什么" {
+		t.Fatalf("unexpected display text: %q", display)
+	}
+	if len(input.Assets) != 1 {
+		t.Fatalf("expected one referenced asset, got %d", len(input.Assets))
+	}
+	if _, ok := input.Assets[assetID]; !ok {
+		t.Fatalf("expected mentioned image asset to be included")
+	}
+
+	imageParts := 0
+	for _, part := range input.UserMessage.Parts {
+		if part.Type == llm.PartImageRef && part.Image != nil && part.Image.AssetID == assetID {
+			imageParts++
+		}
+	}
+	if imageParts != 1 {
+		t.Fatalf("expected one image_ref part from @mention, got %d", imageParts)
+	}
+}
+
+func TestBuildPromptInputIncludesHistoricalImageAssets(t *testing.T) {
+	m := newImagePipelineModel(t)
+	_ = mustIngestTestImage(t, m, "history")
+	assetID := findAssetIDByImageID(t, m, 1)
+	m.sess.Messages = append(m.sess.Messages, llm.Message{
+		Role: llm.RoleUser,
+		Parts: []llm.Part{
+			{Type: llm.PartText, Text: &llm.TextPart{Value: "old image "}},
+			{Type: llm.PartImageRef, Image: &llm.ImagePartRef{AssetID: assetID}},
+		},
+	})
+
+	input, _, err := m.buildPromptInput("继续分析")
+	if err != nil {
+		t.Fatalf("build prompt input: %v", err)
+	}
+	if len(input.Assets) != 1 {
+		t.Fatalf("expected historical image asset included, got %d", len(input.Assets))
+	}
+	if _, ok := input.Assets[assetID]; !ok {
+		t.Fatalf("expected historical asset %q in request assets", assetID)
+	}
+}
+
+func TestApplyInputImagePipelineReplacesInlinePathAndKeepsTrailingText(t *testing.T) {
+	m := newImagePipelineModel(t)
+	imagePath := filepath.Join(m.workspace, "inline.png")
+	if err := os.WriteFile(imagePath, []byte("png-inline"), 0o644); err != nil {
+		t.Fatalf("write image fixture: %v", err)
+	}
+
+	updated, note := m.applyInputImagePipeline("", imagePath+"图片在描述什么？", "ctrl+v")
+	if updated != "[Image #1]图片在描述什么？" {
+		t.Fatalf("expected inline path replaced and text preserved, got %q", updated)
+	}
+	if !strings.Contains(note, "Attached 1 image") {
+		t.Fatalf("expected attach note, got %q", note)
 	}
 }
 
@@ -202,6 +291,23 @@ func TestSyncInputImageRefsMarksOrphansAndRestoresReferences(t *testing.T) {
 	}
 }
 
+func TestSyncInputImageRefsOrphansMentionImageWhenMentionRemoved(t *testing.T) {
+	m := newImagePipelineModel(t)
+	_ = mustIngestTestImage(t, m, "mention-orphan")
+	assetID := findAssetIDByImageID(t, m, 1)
+	m.bindMentionImageAsset("2.1.jpg", assetID)
+
+	m.syncInputImageRefs("请看 @2.1.jpg")
+	if _, orphaned := m.orphanedImages[assetID]; orphaned {
+		t.Fatalf("did not expect mentioned image to be orphaned while referenced")
+	}
+
+	m.syncInputImageRefs("请看这个文件")
+	if _, orphaned := m.orphanedImages[assetID]; !orphaned {
+		t.Fatalf("expected mention image to be marked orphan after mention removal")
+	}
+}
+
 func TestHandleEmptyClipboardPasteReadsAndAttachesImage(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.clipboard = fakeClipboardImageReader{
@@ -216,6 +322,27 @@ func TestHandleEmptyClipboardPasteReadsAndAttachesImage(t *testing.T) {
 	}
 	if m.input.Value() != "[Image #1]" {
 		t.Fatalf("expected placeholder inserted into input, got %q", m.input.Value())
+	}
+}
+
+func TestBuildPromptInputFallsBackWhenMentionAssetMissing(t *testing.T) {
+	m := newImagePipelineModel(t)
+	_ = mustIngestTestImage(t, m, "mention-missing")
+	assetID := findAssetIDByImageID(t, m, 1)
+	m.bindMentionImageAsset("2.1.jpg", assetID)
+	if err := m.imageStore.DeleteSessionImages(context.Background(), m.sess.ID); err != nil {
+		t.Fatalf("delete session images: %v", err)
+	}
+
+	input, _, err := m.buildPromptInput("分析 @2.1.jpg")
+	if err != nil {
+		t.Fatalf("build prompt input: %v", err)
+	}
+	if len(input.Assets) != 0 {
+		t.Fatalf("expected missing mention asset not to produce binary payload")
+	}
+	if !strings.Contains(input.UserMessage.Text(), "@2.1.jpg") {
+		t.Fatalf("expected missing mention image to fall back to literal mention text, got %q", input.UserMessage.Text())
 	}
 }
 

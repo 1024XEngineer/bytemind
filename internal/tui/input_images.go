@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,9 @@ import (
 )
 
 var imagePlaceholderPattern = regexp.MustCompile(`\[Image #(\d+)\]`)
+var imageMentionPattern = regexp.MustCompile(`(?i)@([^\s@]+?\.(?:png|jpe?g|webp|gif))`)
+var inlineWindowsImagePathPattern = regexp.MustCompile(`(?i)[a-z]:\\[^\r\n\t"'<>|]*?\.(?:png|jpe?g|webp|gif)`)
+var inlineUnixImagePathPattern = regexp.MustCompile(`(?i)/(?:[^\r\n\t"'<>|/]+/)*[^\r\n\t"'<>|/]+\.(?:png|jpe?g|webp|gif)`)
 
 type inputMutationClass string
 
@@ -104,31 +108,125 @@ func (m *model) applyInputImagePipeline(before, after, source string) (string, s
 	}
 
 	paths := extractImagePathsFromChunk(inserted, m.workspace)
-	if len(paths) == 0 {
+	if len(paths) > 0 {
+		placeholders := make([]string, 0, len(paths))
+		notes := make([]string, 0, len(paths))
+		for _, path := range paths {
+			placeholder, note, ok := m.ingestImageFromPath(path)
+			if !ok {
+				notes = append(notes, note)
+				continue
+			}
+			placeholders = append(placeholders, placeholder)
+		}
+		if len(placeholders) == 0 {
+			if len(notes) > 0 {
+				return after, notes[0]
+			}
+			return after, ""
+		}
+
+		replacement := strings.Join(placeholders, " ")
+		updated := after[:prefix] + replacement + after[len(after)-suffix:]
+		m.syncInputImageRefs(updated)
+		note := fmt.Sprintf("Attached %d image(s): %s", len(placeholders), strings.Join(placeholders, ", "))
+		if len(notes) > 0 {
+			note += "; " + notes[0]
+		}
+		return updated, note
+	}
+
+	spans := extractInlineImagePathSpans(inserted)
+	if len(spans) == 0 {
 		return after, ""
 	}
 
-	placeholders := make([]string, 0, len(paths))
-	notes := make([]string, 0, len(paths))
-	for _, path := range paths {
-		placeholder, note, ok := m.ingestImageFromPath(path)
-		if !ok {
-			notes = append(notes, note)
-			continue
+	var transformed strings.Builder
+	transformed.Grow(len(inserted))
+	attached := make([]string, 0, len(spans))
+	notes := make([]string, 0, len(spans))
+	last := 0
+	for _, span := range spans {
+		if span.Start > last {
+			transformed.WriteString(inserted[last:span.Start])
 		}
-		placeholders = append(placeholders, placeholder)
+		placeholder, note, ok := m.ingestImageFromPath(span.Path)
+		if !ok {
+			transformed.WriteString(inserted[span.Start:span.End])
+			notes = append(notes, note)
+		} else {
+			transformed.WriteString(placeholder)
+			attached = append(attached, placeholder)
+		}
+		last = span.End
 	}
-	if len(placeholders) == 0 {
+	if last < len(inserted) {
+		transformed.WriteString(inserted[last:])
+	}
+	if len(attached) == 0 {
 		if len(notes) > 0 {
 			return after, notes[0]
 		}
 		return after, ""
 	}
 
-	replacement := strings.Join(placeholders, " ")
-	updated := after[:prefix] + replacement + after[len(after)-suffix:]
+	updated := after[:prefix] + transformed.String() + after[len(after)-suffix:]
 	m.syncInputImageRefs(updated)
-	note := fmt.Sprintf("Attached %d image(s): %s", len(placeholders), strings.Join(placeholders, ", "))
+	note := fmt.Sprintf("Attached %d image(s): %s", len(attached), strings.Join(attached, ", "))
+	if len(notes) > 0 {
+		note += "; " + notes[0]
+	}
+	return updated, note
+}
+
+func (m *model) applyWholeInputImagePathFallback(text, source string) (string, string) {
+	if strings.TrimSpace(text) == "" {
+		return text, ""
+	}
+	pasteLike := isCtrlVKey(source) || strings.Contains(strings.ToLower(source), "paste")
+	if !pasteLike {
+		if m.lastPasteAt.IsZero() || time.Since(m.lastPasteAt) > 2*pasteSubmitGuard {
+			return text, ""
+		}
+	}
+
+	spans := extractInlineImagePathSpans(text)
+	if len(spans) == 0 {
+		return text, ""
+	}
+
+	var transformed strings.Builder
+	transformed.Grow(len(text))
+	attached := make([]string, 0, len(spans))
+	notes := make([]string, 0, len(spans))
+	last := 0
+	for _, span := range spans {
+		if span.Start > last {
+			transformed.WriteString(text[last:span.Start])
+		}
+		placeholder, note, ok := m.ingestImageFromPath(span.Path)
+		if !ok {
+			transformed.WriteString(text[span.Start:span.End])
+			notes = append(notes, note)
+		} else {
+			transformed.WriteString(placeholder)
+			attached = append(attached, placeholder)
+		}
+		last = span.End
+	}
+	if last < len(text) {
+		transformed.WriteString(text[last:])
+	}
+	if len(attached) == 0 {
+		if len(notes) > 0 {
+			return text, notes[0]
+		}
+		return text, ""
+	}
+
+	updated := transformed.String()
+	m.syncInputImageRefs(updated)
+	note := fmt.Sprintf("Attached %d image(s): %s", len(attached), strings.Join(attached, ", "))
 	if len(notes) > 0 {
 		note += "; " + notes[0]
 	}
@@ -239,17 +337,22 @@ func (m *model) syncInputImageRefs(text string) {
 	if m.inputImageRefs == nil {
 		m.inputImageRefs = make(map[int]llm.AssetID, 8)
 	}
+	if m.inputImageMentions == nil {
+		m.inputImageMentions = make(map[string]llm.AssetID, 8)
+	}
 	if m.orphanedImages == nil {
 		m.orphanedImages = make(map[llm.AssetID]time.Time, 8)
 	}
 
 	referencedIDs := extractImagePlaceholderIDs(text)
 	referencedSet := make(map[int]struct{}, len(referencedIDs))
+	referencedAssets := make(map[llm.AssetID]struct{}, len(referencedIDs))
 	for _, id := range referencedIDs {
 		referencedSet[id] = struct{}{}
 		assetID, _, ok := m.findAssetByImageID(id)
 		if ok {
 			m.inputImageRefs[id] = assetID
+			referencedAssets[assetID] = struct{}{}
 			delete(m.orphanedImages, assetID)
 		}
 	}
@@ -261,6 +364,23 @@ func (m *model) syncInputImageRefs(text string) {
 		delete(m.inputImageRefs, id)
 		m.orphanedImages[assetID] = time.Now().UTC()
 	}
+
+	mentionRefs := extractMentionImageReferenceKeys(text)
+	for key := range mentionRefs {
+		assetID, ok := m.inputImageMentions[key]
+		if !ok {
+			continue
+		}
+		referencedAssets[assetID] = struct{}{}
+		delete(m.orphanedImages, assetID)
+	}
+	for key, assetID := range m.inputImageMentions {
+		if _, ok := mentionRefs[key]; ok {
+			continue
+		}
+		delete(m.inputImageMentions, key)
+		m.orphanedImages[assetID] = time.Now().UTC()
+	}
 }
 
 func (m *model) buildPromptInput(raw string) (agent.RunPromptInput, string, error) {
@@ -270,16 +390,74 @@ func (m *model) buildPromptInput(raw string) (agent.RunPromptInput, string, erro
 	}
 	m.syncInputImageRefs(raw)
 
-	matches := imagePlaceholderPattern.FindAllStringSubmatchIndex(raw, -1)
-	if len(matches) == 0 {
+	placeholderMatches := imagePlaceholderPattern.FindAllStringSubmatchIndex(raw, -1)
+	mentionMatches := extractMentionImageSpans(raw, m.inputImageMentions)
+	if len(placeholderMatches) == 0 && len(mentionMatches) == 0 {
+		assets := m.hydrateHistoricalRequestAssets(nil)
 		return agent.RunPromptInput{
 			UserMessage: llm.NewUserTextMessage(raw),
+			Assets:      assets,
 			DisplayText: raw,
 		}, raw, nil
 	}
 
-	parts := make([]llm.Part, 0, len(matches)*2+1)
-	assetPayloads := make(map[llm.AssetID]llm.ImageAsset, len(matches))
+	type imageSpan struct {
+		Start    int
+		End      int
+		AssetID  llm.AssetID
+		Fallback string
+	}
+	spans := make([]imageSpan, 0, len(placeholderMatches)+len(mentionMatches))
+	for _, match := range placeholderMatches {
+		start, end := match[0], match[1]
+		idStart, idEnd := match[2], match[3]
+		imageID, err := strconv.Atoi(raw[idStart:idEnd])
+		if err != nil {
+			continue
+		}
+		assetID, _, ok := m.findAssetByImageID(imageID)
+		if !ok {
+			spans = append(spans, imageSpan{
+				Start:    start,
+				End:      end,
+				Fallback: fmt.Sprintf("[Image #%d unavailable]", imageID),
+			})
+			continue
+		}
+		spans = append(spans, imageSpan{
+			Start:    start,
+			End:      end,
+			AssetID:  assetID,
+			Fallback: fmt.Sprintf("[Image #%d unavailable]", imageID),
+		})
+	}
+	for _, match := range mentionMatches {
+		spans = append(spans, imageSpan{
+			Start:    match.Start,
+			End:      match.End,
+			AssetID:  match.AssetID,
+			Fallback: match.Raw,
+		})
+	}
+	sort.Slice(spans, func(i, j int) bool {
+		if spans[i].Start == spans[j].Start {
+			return spans[i].End > spans[j].End
+		}
+		return spans[i].Start < spans[j].Start
+	})
+
+	filtered := make([]imageSpan, 0, len(spans))
+	lastEnd := -1
+	for _, span := range spans {
+		if span.Start < lastEnd {
+			continue
+		}
+		filtered = append(filtered, span)
+		lastEnd = span.End
+	}
+
+	parts := make([]llm.Part, 0, len(filtered)*2+1)
+	assetPayloads := make(map[llm.AssetID]llm.ImageAsset, len(filtered))
 	appendTextPart := func(text string) {
 		if strings.TrimSpace(text) == "" {
 			return
@@ -288,38 +466,22 @@ func (m *model) buildPromptInput(raw string) (agent.RunPromptInput, string, erro
 	}
 
 	last := 0
-	for _, match := range matches {
-		start, end := match[0], match[1]
-		idStart, idEnd := match[2], match[3]
-		appendTextPart(raw[last:start])
-
-		imageID, err := strconv.Atoi(raw[idStart:idEnd])
+	for _, span := range filtered {
+		appendTextPart(raw[last:span.Start])
+		if m.imageStore == nil || strings.TrimSpace(string(span.AssetID)) == "" {
+			appendTextPart(span.Fallback)
+			last = span.End
+			continue
+		}
+		blob, err := m.imageStore.GetImageByAssetID(context.Background(), m.sess.ID, span.AssetID)
 		if err != nil {
-			appendTextPart(raw[start:end])
-			last = end
+			appendTextPart(span.Fallback)
+			last = span.End
 			continue
 		}
-		assetID, _, ok := m.findAssetByImageID(imageID)
-		if !ok {
-			appendTextPart(raw[start:end])
-			last = end
-			continue
-		}
-
-		if m.imageStore == nil {
-			appendTextPart(fmt.Sprintf("[Image #%d unavailable]", imageID))
-			last = end
-			continue
-		}
-		blob, err := m.imageStore.GetImageByAssetID(context.Background(), m.sess.ID, assetID)
-		if err != nil {
-			appendTextPart(fmt.Sprintf("[Image #%d unavailable]", imageID))
-			last = end
-			continue
-		}
-		assetPayloads[assetID] = llm.ImageAsset{MediaType: blob.MediaType, Data: blob.Data}
-		parts = append(parts, llm.Part{Type: llm.PartImageRef, Image: &llm.ImagePartRef{AssetID: assetID}})
-		last = end
+		assetPayloads[span.AssetID] = llm.ImageAsset{MediaType: blob.MediaType, Data: blob.Data}
+		parts = append(parts, llm.Part{Type: llm.PartImageRef, Image: &llm.ImagePartRef{AssetID: span.AssetID}})
+		last = span.End
 	}
 	appendTextPart(raw[last:])
 
@@ -332,12 +494,76 @@ func (m *model) buildPromptInput(raw string) (agent.RunPromptInput, string, erro
 	if err := llm.ValidateMessage(userMessage); err != nil {
 		return agent.RunPromptInput{}, "", err
 	}
+	assetPayloads = m.hydrateHistoricalRequestAssets(assetPayloads)
 
 	return agent.RunPromptInput{
 		UserMessage: userMessage,
 		Assets:      assetPayloads,
 		DisplayText: raw,
 	}, raw, nil
+}
+
+func (m *model) hydrateHistoricalRequestAssets(current map[llm.AssetID]llm.ImageAsset) map[llm.AssetID]llm.ImageAsset {
+	if m == nil || m.sess == nil || m.imageStore == nil {
+		return current
+	}
+	imageAssetIDs := collectImageAssetIDsFromMessages(m.sess.Messages)
+	if len(imageAssetIDs) == 0 {
+		return current
+	}
+	if current == nil {
+		current = make(map[llm.AssetID]llm.ImageAsset, len(imageAssetIDs))
+	}
+	for _, assetID := range imageAssetIDs {
+		if strings.TrimSpace(string(assetID)) == "" {
+			continue
+		}
+		if _, ok := current[assetID]; ok {
+			continue
+		}
+		blob, err := m.imageStore.GetImageByAssetID(context.Background(), m.sess.ID, assetID)
+		if err != nil || len(blob.Data) == 0 {
+			continue
+		}
+		current[assetID] = llm.ImageAsset{
+			MediaType: blob.MediaType,
+			Data:      blob.Data,
+		}
+	}
+	if len(current) == 0 {
+		return nil
+	}
+	return current
+}
+
+func collectImageAssetIDsFromMessages(messages []llm.Message) []llm.AssetID {
+	if len(messages) == 0 {
+		return nil
+	}
+	seen := make(map[llm.AssetID]struct{}, 8)
+	assetIDs := make([]llm.AssetID, 0, 8)
+	for i := range messages {
+		msg := messages[i]
+		msg.Normalize()
+		for _, part := range msg.Parts {
+			if part.Type != llm.PartImageRef || part.Image == nil {
+				continue
+			}
+			assetID := part.Image.AssetID
+			if strings.TrimSpace(string(assetID)) == "" {
+				continue
+			}
+			if _, ok := seen[assetID]; ok {
+				continue
+			}
+			seen[assetID] = struct{}{}
+			assetIDs = append(assetIDs, assetID)
+		}
+	}
+	if len(assetIDs) == 0 {
+		return nil
+	}
+	return assetIDs
 }
 
 func (m *model) findAssetByImageID(imageID int) (llm.AssetID, session.ImageAssetMeta, bool) {
@@ -517,4 +743,154 @@ func extractImagePlaceholderIDs(text string) []int {
 
 func placeholderForImageID(id int) string {
 	return fmt.Sprintf("[Image #%d]", id)
+}
+
+func imageIDFromPlaceholder(value string) (int, bool) {
+	match := imagePlaceholderPattern.FindStringSubmatch(strings.TrimSpace(value))
+	if len(match) < 2 {
+		return 0, false
+	}
+	id, err := strconv.Atoi(match[1])
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
+}
+
+type mentionImageSpan struct {
+	Start   int
+	End     int
+	AssetID llm.AssetID
+	Raw     string
+}
+
+func extractMentionImageSpans(text string, bindings map[string]llm.AssetID) []mentionImageSpan {
+	if len(bindings) == 0 || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	matches := imageMentionPattern.FindAllStringSubmatchIndex(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	spans := make([]mentionImageSpan, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 4 {
+			continue
+		}
+		start, end := match[0], match[1]
+		pathStart, pathEnd := match[2], match[3]
+		key := normalizeImageMentionPath(text[pathStart:pathEnd])
+		if key == "" {
+			continue
+		}
+		assetID, ok := bindings[key]
+		if !ok {
+			continue
+		}
+		spans = append(spans, mentionImageSpan{
+			Start:   start,
+			End:     end,
+			AssetID: assetID,
+			Raw:     text[start:end],
+		})
+	}
+	return spans
+}
+
+func extractMentionImageReferenceKeys(text string) map[string]struct{} {
+	result := make(map[string]struct{}, 8)
+	if strings.TrimSpace(text) == "" {
+		return result
+	}
+	matches := imageMentionPattern.FindAllStringSubmatch(text, -1)
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		key := normalizeImageMentionPath(match[1])
+		if key == "" {
+			continue
+		}
+		result[key] = struct{}{}
+	}
+	return result
+}
+
+func normalizeImageMentionPath(path string) string {
+	path = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(path), "@"))
+	if path == "" {
+		return ""
+	}
+	cleaned := filepath.Clean(path)
+	cleaned = filepath.ToSlash(cleaned)
+	cleaned = strings.TrimPrefix(cleaned, "./")
+	if cleaned == "." || cleaned == "" {
+		return ""
+	}
+	if runtime.GOOS == "windows" {
+		cleaned = strings.ToLower(cleaned)
+	}
+	return cleaned
+}
+
+type imagePathSpan struct {
+	Start int
+	End   int
+	Path  string
+}
+
+func extractInlineImagePathSpans(chunk string) []imagePathSpan {
+	chunk = strings.TrimSpace(chunk)
+	if chunk == "" {
+		return nil
+	}
+
+	matches := make([]imagePathSpan, 0, 4)
+	appendMatches := func(pattern *regexp.Regexp) {
+		for _, loc := range pattern.FindAllStringIndex(chunk, -1) {
+			if len(loc) != 2 || loc[1] <= loc[0] {
+				continue
+			}
+			raw := chunk[loc[0]:loc[1]]
+			resolved := filepath.Clean(raw)
+			info, err := os.Stat(resolved)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			if _, ok := mediaTypeFromPath(resolved); !ok {
+				continue
+			}
+			matches = append(matches, imagePathSpan{
+				Start: loc[0],
+				End:   loc[1],
+				Path:  resolved,
+			})
+		}
+	}
+	appendMatches(inlineWindowsImagePathPattern)
+	appendMatches(inlineUnixImagePathPattern)
+
+	if len(matches) == 0 {
+		return nil
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].Start == matches[j].Start {
+			return matches[i].End < matches[j].End
+		}
+		return matches[i].Start < matches[j].Start
+	})
+	filtered := make([]imagePathSpan, 0, len(matches))
+	lastEnd := -1
+	for _, span := range matches {
+		if span.Start < lastEnd {
+			continue
+		}
+		filtered = append(filtered, span)
+		lastEnd = span.End
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }

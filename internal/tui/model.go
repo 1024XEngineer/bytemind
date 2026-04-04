@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -136,40 +137,41 @@ type model struct {
 	input    textarea.Model
 	spinner  spinner.Model
 
-	chatItems      []chatEntry
-	toolRuns       []toolRun
-	plan           planpkg.State
-	sessions       []session.Summary
-	sessionLimit   int
-	sessionCursor  int
-	commandCursor  int
-	mentionCursor  int
-	screen         screenKind
-	mode           agentMode
-	sessionsOpen   bool
-	helpOpen       bool
-	commandOpen    bool
-	mentionOpen    bool
-	busy           bool
-	streamingIndex int
-	statusNote     string
-	phase          string
-	llmConnected   bool
-	approval       *approvalPrompt
-	mentionQuery   string
-	mentionToken   mention.Token
-	mentionResults []mention.Candidate
-	mentionIndex   *mention.WorkspaceFileIndex
-	mentionRecent  map[string]int
-	mentionSeq     int
-	inputImageRefs map[int]llm.AssetID
-	orphanedImages map[llm.AssetID]time.Time
-	nextImageID    int
-	clipboard      clipboardImageReader
-	lastPasteAt    time.Time
-	lastInputAt    time.Time
-	inputBurstSize int
-	chatAutoFollow bool
+	chatItems          []chatEntry
+	toolRuns           []toolRun
+	plan               planpkg.State
+	sessions           []session.Summary
+	sessionLimit       int
+	sessionCursor      int
+	commandCursor      int
+	mentionCursor      int
+	screen             screenKind
+	mode               agentMode
+	sessionsOpen       bool
+	helpOpen           bool
+	commandOpen        bool
+	mentionOpen        bool
+	busy               bool
+	streamingIndex     int
+	statusNote         string
+	phase              string
+	llmConnected       bool
+	approval           *approvalPrompt
+	mentionQuery       string
+	mentionToken       mention.Token
+	mentionResults     []mention.Candidate
+	mentionIndex       *mention.WorkspaceFileIndex
+	mentionRecent      map[string]int
+	mentionSeq         int
+	inputImageRefs     map[int]llm.AssetID
+	inputImageMentions map[string]llm.AssetID
+	orphanedImages     map[llm.AssetID]time.Time
+	nextImageID        int
+	clipboard          clipboardImageReader
+	lastPasteAt        time.Time
+	lastInputAt        time.Time
+	inputBurstSize     int
+	chatAutoFollow     bool
 }
 
 func newModel(opts Options) model {
@@ -212,34 +214,35 @@ func newModel(opts Options) model {
 	})
 
 	m := model{
-		runner:         opts.Runner,
-		store:          opts.Store,
-		sess:           opts.Session,
-		imageStore:     opts.ImageStore,
-		cfg:            opts.Config,
-		workspace:      opts.Workspace,
-		async:          async,
-		viewport:       vp,
-		planView:       planVP,
-		input:          input,
-		spinner:        spin,
-		chatItems:      chatItems,
-		toolRuns:       toolRuns,
-		plan:           copyPlanState(opts.Session.Plan),
-		sessions:       summaries,
-		sessionLimit:   defaultSessionLimit,
-		screen:         initialScreen(opts.Session),
-		mode:           toAgentMode(opts.Session.Mode),
-		streamingIndex: -1,
-		statusNote:     "Ready.",
-		phase:          "idle",
-		llmConnected:   true,
-		chatAutoFollow: true,
-		mentionIndex:   mention.NewWorkspaceFileIndex(opts.Workspace),
-		inputImageRefs: make(map[int]llm.AssetID, 8),
-		orphanedImages: make(map[llm.AssetID]time.Time, 8),
-		nextImageID:    nextSessionImageID(opts.Session),
-		clipboard:      defaultClipboardImageReader{},
+		runner:             opts.Runner,
+		store:              opts.Store,
+		sess:               opts.Session,
+		imageStore:         opts.ImageStore,
+		cfg:                opts.Config,
+		workspace:          opts.Workspace,
+		async:              async,
+		viewport:           vp,
+		planView:           planVP,
+		input:              input,
+		spinner:            spin,
+		chatItems:          chatItems,
+		toolRuns:           toolRuns,
+		plan:               copyPlanState(opts.Session.Plan),
+		sessions:           summaries,
+		sessionLimit:       defaultSessionLimit,
+		screen:             initialScreen(opts.Session),
+		mode:               toAgentMode(opts.Session.Mode),
+		streamingIndex:     -1,
+		statusNote:         "Ready.",
+		phase:              "idle",
+		llmConnected:       true,
+		chatAutoFollow:     true,
+		mentionIndex:       mention.NewWorkspaceFileIndex(opts.Workspace),
+		inputImageRefs:     make(map[int]llm.AssetID, 8),
+		inputImageMentions: make(map[string]llm.AssetID, 8),
+		orphanedImages:     make(map[llm.AssetID]time.Time, 8),
+		nextImageID:        nextSessionImageID(opts.Session),
+		clipboard:          defaultClipboardImageReader{},
 	}
 	m.ensureSessionImageAssets()
 	m.syncInputStyle()
@@ -800,12 +803,7 @@ func (m model) handleMentionPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		m.recordRecentMention(selected.Path)
-		nextValue := mention.InsertIntoInput(m.input.Value(), m.mentionToken, selected.Path)
-		m.setInputValue(nextValue)
-		m.statusNote = "Inserted mention: " + selected.Path
-		m.closeMentionPalette()
-		m.syncInputOverlays()
+		m.applyMentionSelection(selected)
 		return m, nil
 	case "enter":
 		selected, ok := m.selectedMentionCandidate()
@@ -813,12 +811,7 @@ func (m model) handleMentionPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.closeMentionPalette()
 			return m.handleKey(msg)
 		}
-		m.recordRecentMention(selected.Path)
-		nextValue := mention.InsertIntoInput(m.input.Value(), m.mentionToken, selected.Path)
-		m.setInputValue(nextValue)
-		m.statusNote = "Inserted mention: " + selected.Path
-		m.closeMentionPalette()
-		m.syncInputOverlays()
+		m.applyMentionSelection(selected)
 		return m, nil
 	}
 
@@ -830,6 +823,91 @@ func (m model) handleMentionPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.syncInputOverlays()
 	}
 	return m, cmd
+}
+
+func (m *model) applyMentionSelection(selected mention.Candidate) {
+	m.recordRecentMention(selected.Path)
+
+	if assetID, note, isImage := m.ingestMentionImageCandidate(selected.Path); isImage {
+		if strings.TrimSpace(string(assetID)) != "" {
+			m.bindMentionImageAsset(selected.Path, assetID)
+			nextValue := mention.InsertIntoInput(m.input.Value(), m.mentionToken, selected.Path)
+			m.setInputValue(nextValue)
+			if strings.TrimSpace(note) != "" {
+				m.statusNote = note
+			} else {
+				m.statusNote = "Attached image: @" + filepath.ToSlash(strings.TrimSpace(selected.Path))
+			}
+			m.closeMentionPalette()
+			m.syncInputOverlays()
+			return
+		}
+		if strings.TrimSpace(note) != "" {
+			m.statusNote = note
+		}
+	}
+
+	nextValue := mention.InsertIntoInput(m.input.Value(), m.mentionToken, selected.Path)
+	m.setInputValue(nextValue)
+	m.statusNote = "Inserted mention: " + selected.Path
+	m.closeMentionPalette()
+	m.syncInputOverlays()
+}
+
+func (m *model) ingestMentionImageCandidate(path string) (assetID llm.AssetID, note string, isImage bool) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", "", false
+	}
+
+	resolved := path
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(m.workspace, resolved)
+	}
+	resolved = filepath.Clean(resolved)
+
+	info, err := os.Stat(resolved)
+	if err != nil || info.IsDir() {
+		return "", "", false
+	}
+	if _, ok := mediaTypeFromPath(resolved); !ok {
+		return "", "", false
+	}
+
+	placeholder, note, ok := m.ingestImageFromPath(resolved)
+	if !ok {
+		return "", note, true
+	}
+	imageID, ok := imageIDFromPlaceholder(placeholder)
+	if !ok {
+		return "", "image ingest failed: invalid placeholder id", true
+	}
+	assetID, _, ok = m.findAssetByImageID(imageID)
+	if !ok {
+		return "", "image ingest failed: asset metadata missing", true
+	}
+	return assetID, note, true
+}
+
+func (m *model) bindMentionImageAsset(path string, assetID llm.AssetID) {
+	if m == nil {
+		return
+	}
+	key := normalizeImageMentionPath(path)
+	if key == "" || strings.TrimSpace(string(assetID)) == "" {
+		return
+	}
+	if m.inputImageMentions == nil {
+		m.inputImageMentions = make(map[string]llm.AssetID, 8)
+	}
+	if m.orphanedImages == nil {
+		m.orphanedImages = make(map[llm.AssetID]time.Time, 8)
+	}
+	if prev, ok := m.inputImageMentions[key]; ok && prev != assetID {
+		m.orphanedImages[prev] = time.Now().UTC()
+	}
+	m.inputImageMentions[key] = assetID
+	delete(m.orphanedImages, assetID)
 }
 
 func (m *model) openCommandPalette() {
@@ -906,6 +984,15 @@ func (m *model) noteInputMutation(before, after, source string) {
 func (m *model) handleInputMutation(before, after, source string) {
 	m.noteInputMutation(before, after, source)
 	updated, note := m.applyInputImagePipeline(before, after, source)
+	if updated == after {
+		fallbackUpdated, fallbackNote := m.applyWholeInputImagePathFallback(after, source)
+		if fallbackUpdated != after {
+			updated = fallbackUpdated
+		}
+		if strings.TrimSpace(note) == "" {
+			note = fallbackNote
+		}
+	}
 	if updated != after {
 		m.setInputValue(updated)
 	}
@@ -1787,6 +1874,7 @@ func (m *model) newSession() error {
 	m.statusNote = "Started a new session."
 	m.chatAutoFollow = true
 	m.inputImageRefs = make(map[int]llm.AssetID, 8)
+	m.inputImageMentions = make(map[string]llm.AssetID, 8)
 	m.orphanedImages = make(map[llm.AssetID]time.Time, 8)
 	m.nextImageID = nextSessionImageID(next)
 	m.ensureSessionImageAssets()
@@ -1819,6 +1907,7 @@ func (m *model) resumeSession(prefix string) error {
 	m.statusNote = "Resumed session " + shortID(next.ID)
 	m.chatAutoFollow = true
 	m.inputImageRefs = make(map[int]llm.AssetID, 8)
+	m.inputImageMentions = make(map[string]llm.AssetID, 8)
 	m.orphanedImages = make(map[llm.AssetID]time.Time, 8)
 	m.nextImageID = nextSessionImageID(next)
 	m.ensureSessionImageAssets()

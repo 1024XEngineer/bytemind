@@ -10,6 +10,8 @@ import (
 	"bytemind/internal/tui"
 )
 
+var runTUIProgram = tui.Run
+
 func runTUI(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -60,7 +62,7 @@ func runTUI(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	return tui.Run(tui.Options{
+	return runTUIProgram(tui.Options{
 		Runner:     app,
 		Store:      store,
 		Session:    sess,
