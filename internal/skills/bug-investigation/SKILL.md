@@ -1,19 +1,19 @@
 ---
 name: bug-investigation
 description: |
-  以复现和证据为中心定位问题，不先入为主下结论。
-when_to_use: 用户反馈 bug、测试失败、线上异常排查。
+  Diagnose issues with reproducible evidence before proposing a fix.
+when_to_use: User reports a bug, failing test, or production incident.
 ---
 
 # bug-investigation
 
 ## Workflow
 
-1. 明确症状、期望行为、实际行为。
-2. 给出可执行的最小复现路径。
-3. 记录证据（日志、调用链、代码位置、命令结果）。
-4. 输出根因假设，并标明置信度。
-5. 提供最小修复方案和验证步骤。
+1. Clarify symptom, expected behavior, and actual behavior.
+2. Provide a minimal reproducible path.
+3. Collect evidence (logs, call chain, code location, command outputs).
+4. State root-cause hypotheses with confidence levels.
+5. Propose a minimal fix and verification steps.
 
 ## Output Contract
 
@@ -21,5 +21,4 @@ when_to_use: 用户反馈 bug、测试失败、线上异常排查。
 - Reproduction Steps
 - Evidence
 - Root Cause Hypothesis
-- Fix & Verification Plan
-
+- Fix and Verification Plan

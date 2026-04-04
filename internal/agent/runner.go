@@ -191,6 +191,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 	lastToolSequenceSignature := ""
 	repeatedToolSequenceCount := 0
 	executedToolNames := make([]string, 0, 16)
+	availableSkills := r.promptSkills()
 	availableTools := toolNames(r.registry.DefinitionsForMode(runMode))
 	instructionText := loadAGENTSInstruction(r.workspace)
 
@@ -203,6 +204,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput
 				ApprovalPolicy: r.config.ApprovalPolicy,
 				Model:          r.config.Provider.Model,
 				Mode:           mode,
+				Skills:         availableSkills,
 				Tools:          availableTools,
 				ActiveSkill:    promptActiveSkill(activeSkill),
 				Instruction:    instructionText,
@@ -821,6 +823,36 @@ func (r *Runner) emit(event Event) {
 		return
 	}
 	r.observer.HandleEvent(event)
+}
+
+func (r *Runner) promptSkills() []PromptSkill {
+	if r.skillManager == nil {
+		return nil
+	}
+	skillList, _ := r.skillManager.List()
+	if len(skillList) == 0 {
+		return nil
+	}
+	out := make([]PromptSkill, 0, len(skillList))
+	for _, skill := range skillList {
+		name := strings.TrimSpace(skill.Name)
+		description := strings.TrimSpace(skill.Description)
+		if name == "" || description == "" {
+			continue
+		}
+		out = append(out, PromptSkill{
+			Name:        name,
+			Description: description,
+			Enabled:     true,
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out
 }
 
 func toolNames(definitions []llm.ToolDefinition) []string {

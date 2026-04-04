@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+const (
+	maxPromptSkillEntries         = 12
+	maxPromptSkillDescriptionRune = 140
+)
+
 //go:embed prompts/system_prompt.md
 var mainPromptSource string
 
@@ -143,6 +148,7 @@ func renderSystemBlock(input PromptInput) string {
 		fmt.Sprintf("approval_policy: %s", approval),
 		"",
 		"[Available Skills]",
+		"- Skills are user-selected session profiles that define workflow focus and tool boundaries.",
 		formatSkills(input.Skills),
 		"",
 		"[Available Tools]",
@@ -163,12 +169,17 @@ func formatSkills(skills []PromptSkill) string {
 		if name == "" || description == "" {
 			continue
 		}
+		description = trimPromptText(description, maxPromptSkillDescriptionRune)
 		lines = append(lines, fmt.Sprintf("- %s: %s enabled=%t", name, description, skill.Enabled))
 	}
 	if len(lines) == 0 {
 		return "- none"
 	}
 	sort.Strings(lines)
+	if len(lines) > maxPromptSkillEntries {
+		remaining := len(lines) - maxPromptSkillEntries
+		lines = append(lines[:maxPromptSkillEntries], fmt.Sprintf("- ... and %d more skill(s)", remaining))
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -291,6 +302,21 @@ func filterPromptParts(parts []string) []string {
 		}
 	}
 	return filtered
+}
+
+func trimPromptText(text string, maxRunes int) string {
+	text = strings.TrimSpace(text)
+	if maxRunes <= 0 || text == "" {
+		return text
+	}
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	if maxRunes <= 3 {
+		return string(runes[:maxRunes])
+	}
+	return string(runes[:maxRunes-3]) + "..."
 }
 
 func promptDebugEnabled() bool {

@@ -1,29 +1,28 @@
 ---
 name: review
 description: |
-  对当前代码改动做审查，聚焦正确性、回归风险和测试缺口。
-when_to_use: 用户要求 code review、pre-merge review、风险评估时。
+  Review current code changes with focus on correctness, regressions, and missing tests.
+when_to_use: User asks for code review, pre-merge review, or risk assessment.
 ---
 
 # review
 
 ## Workflow
 
-1. 明确审查范围（分支、目录、文件）。
-2. 先看行为变化，再看实现细节。
-3. 按严重级别输出问题，必须包含定位信息。
-4. 单独列出测试缺口和未验证假设。
+1. Confirm review scope (branch, directory, and files).
+2. Check behavior changes before implementation details.
+3. Report findings ordered by severity with precise locations.
+4. List test gaps and unverified assumptions separately.
 
 ## Must Check
 
-- correctness 与边界条件
-- 潜在回归与兼容性
-- 错误处理与异常路径
-- 测试覆盖是否匹配变更
+- Correctness and edge conditions
+- Regression and compatibility risks
+- Error handling and exceptional paths
+- Test coverage alignment with code changes
 
 ## Output Contract
 
-- Findings: 严重度排序，给出文件与原因
-- Risks: 非阻断但需要关注的点
-- Verification: 已执行与建议执行的验证
-
+- Findings: ordered by severity with file and reasoning
+- Risks: non-blocking concerns that still matter
+- Verification: executed checks and recommended follow-up checks

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,6 +52,7 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	assertContains(t, prompt, "mode: plan")
 	assertContains(t, prompt, "approval_policy: on-request")
 	assertContains(t, prompt, "[Available Skills]")
+	assertContains(t, prompt, "Skills are user-selected session profiles")
 	assertContains(t, prompt, "- review: Review code changes for regressions. enabled=true")
 	assertContains(t, prompt, "[Available Tools]")
 	assertContains(t, prompt, "- list_files")
@@ -146,6 +148,24 @@ func TestFormatToolsNone(t *testing.T) {
 func TestFormatSkillsNone(t *testing.T) {
 	if got := formatSkills(nil); got != "- none" {
 		t.Fatalf("expected \"- none\", got %q", got)
+	}
+}
+
+func TestFormatSkillsLimitsAndSummarizesOverflow(t *testing.T) {
+	skills := make([]PromptSkill, 0, maxPromptSkillEntries+2)
+	for i := 0; i < maxPromptSkillEntries+2; i++ {
+		skills = append(skills, PromptSkill{
+			Name:        fmt.Sprintf("skill-%02d", i),
+			Description: strings.Repeat("x", maxPromptSkillDescriptionRune+20),
+			Enabled:     true,
+		})
+	}
+	got := formatSkills(skills)
+	if !strings.Contains(got, "- ... and 2 more skill(s)") {
+		t.Fatalf("expected overflow summary line, got %q", got)
+	}
+	if strings.Contains(got, strings.Repeat("x", maxPromptSkillDescriptionRune+10)) {
+		t.Fatalf("expected long descriptions to be trimmed, got %q", got)
 	}
 }
 

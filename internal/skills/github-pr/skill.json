@@ -2,7 +2,7 @@
   "name": "github-pr",
   "version": "0.1.0",
   "title": "GitHub PR Analysis",
-  "description": "分析 PR 变更、review 评论和 CI 风险（优先使用本地 git 证据）。",
+  "description": "Analyze PR diffs, review comments, and merge risks with evidence.",
   "entry": {
     "slash": "/github-pr"
   },
@@ -21,14 +21,13 @@
       "name": "pr_number",
       "type": "string",
       "required": false,
-      "description": "可选 PR 编号"
+      "description": "Optional pull request number."
     },
     {
       "name": "base_ref",
       "type": "string",
       "required": false,
-      "description": "对比分支，默认 main"
+      "description": "Optional baseline branch, for example main."
     }
   ]
 }
-

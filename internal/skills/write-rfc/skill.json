@@ -2,7 +2,7 @@
   "name": "write-rfc",
   "version": "0.1.0",
   "title": "Write RFC",
-  "description": "输出结构化设计文档，明确 trade-off、风险与 rollout 计划。",
+  "description": "Produce structured technical proposals with explicit trade-offs and rollout plans.",
   "entry": {
     "slash": "/write-rfc"
   },
@@ -23,8 +23,7 @@
       "name": "path",
       "type": "string",
       "required": false,
-      "description": "RFC 输出路径，例如 docs/rfc/xxx.md"
+      "description": "Optional RFC output path, for example docs/rfc/feature.md."
     }
   ]
 }
-

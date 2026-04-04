@@ -348,6 +348,13 @@ func TestRunPromptAppliesActiveSkillToolAllowlist(t *testing.T) {
 	if len(client.requests) == 0 {
 		t.Fatal("expected at least one request")
 	}
+	if len(client.requests[0].Messages) == 0 || client.requests[0].Messages[0].Role != "system" {
+		t.Fatalf("expected first request message to be system prompt, got %#v", client.requests[0].Messages)
+	}
+	if !strings.Contains(client.requests[0].Messages[0].Content, "[Available Skills]") ||
+		!strings.Contains(client.requests[0].Messages[0].Content, "- review: Review changes enabled=true") {
+		t.Fatalf("expected system prompt to include available skills list, got %q", client.requests[0].Messages[0].Content)
+	}
 	names := make([]string, 0, len(client.requests[0].Tools))
 	for _, def := range client.requests[0].Tools {
 		names = append(names, def.Function.Name)

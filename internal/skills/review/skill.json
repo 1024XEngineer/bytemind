@@ -2,7 +2,7 @@
   "name": "review",
   "version": "0.1.0",
   "title": "Code Review",
-  "description": "面向代码审查任务，优先关注 correctness、风险与测试缺口。",
+  "description": "Review code changes with priority on correctness, regressions, and test gaps.",
   "entry": {
     "slash": "/review"
   },
@@ -21,8 +21,7 @@
       "name": "base_ref",
       "type": "string",
       "required": false,
-      "description": "可选的对比分支，例如 main"
+      "description": "Optional baseline branch, for example main."
     }
   ]
 }
-

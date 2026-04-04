@@ -1,19 +1,19 @@
 ---
 name: github-pr
 description: |
-  面向 PR 评审上下文，优先梳理 diff、评论和潜在回归风险。
-when_to_use: 用户要求分析 PR、处理 review comments、评估合并风险。
+  Analyze pull request context and highlight merge risks from diffs and comments.
+when_to_use: User asks for PR analysis, review comment handling, or merge risk assessment.
 ---
 
 # github-pr
 
 ## Workflow
 
-1. 明确比较基线（base ref / feature ref）。
-2. 汇总主要改动文件与模块。
-3. 标注风险点（行为变化、边界条件、兼容性）。
-4. 汇总 review comments 对应的处理建议。
-5. 给出合并前验证清单。
+1. Confirm comparison baseline (base ref and feature ref).
+2. Summarize major file and module changes.
+3. Mark behavior-change, edge-case, and compatibility risks.
+4. Map review comments to actionable response plans.
+5. Provide a pre-merge verification checklist.
 
 ## Output Contract
 
@@ -21,4 +21,3 @@ when_to_use: 用户要求分析 PR、处理 review comments、评估合并风险
 - Key Risks
 - Review Comment Response Plan
 - Pre-merge Verification Checklist
-

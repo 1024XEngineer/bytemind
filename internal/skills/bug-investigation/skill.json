@@ -2,7 +2,7 @@
   "name": "bug-investigation",
   "version": "0.1.0",
   "title": "Bug Investigation",
-  "description": "面向故障定位，强调复现路径、证据链和最小修复方案。",
+  "description": "Investigate bugs through reproducible evidence before proposing a fix.",
   "entry": {
     "slash": "/bug-investigation"
   },
@@ -21,8 +21,7 @@
       "name": "symptom",
       "type": "string",
       "required": false,
-      "description": "故障症状或报错关键字"
+      "description": "Optional symptom summary or error keyword."
     }
   ]
 }
-

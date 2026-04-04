@@ -2,7 +2,7 @@
   "name": "repo-onboarding",
   "version": "0.1.0",
   "title": "Repo Onboarding",
-  "description": "快速梳理仓库结构、入口、构建方式和关键模块。",
+  "description": "Build a fast understanding of repository structure, entry points, and runtime flow.",
   "entry": {
     "slash": "/repo-onboarding"
   },
@@ -17,4 +17,3 @@
     ]
   }
 }
-
