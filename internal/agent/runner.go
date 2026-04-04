@@ -174,6 +174,7 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 	if strings.TrimSpace(input.DisplayText) == "" {
 		input.DisplayText = userMessage.Text()
 	}
+	userInput := input.DisplayText
 
 	runMode := planpkg.NormalizeMode(mode)
 	if strings.TrimSpace(mode) == "" {
@@ -184,7 +185,7 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 		sess.Mode = runMode
 	}
 	if runMode == planpkg.ModePlan {
-		goalText := strings.TrimSpace(input.DisplayText)
+		goalText := strings.TrimSpace(userInput)
 		if goalText == "" {
 			goalText = strings.TrimSpace(userMessage.Text())
 		}
@@ -206,7 +207,7 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 	r.emit(Event{
 		Type:      EventRunStarted,
 		SessionID: sess.ID,
-		UserInput: input.DisplayText,
+		UserInput: userInput,
 	})
 
 	activeSkill := r.resolveActiveSkill(sess)
