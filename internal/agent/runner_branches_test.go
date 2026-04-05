@@ -152,11 +152,13 @@ func TestRenderToolFeedbackAdditionalBranches(t *testing.T) {
 	runner.renderToolFeedback(&out, "read_file", `{"path":"a.go","start_line":1,"end_line":2,"total_lines":10,"content":"line1\nline2"}`)
 	runner.renderToolFeedback(&out, "write_file", `{"path":"a.go","bytes_written":42}`)
 	runner.renderToolFeedback(&out, "replace_in_file", `{"path":"a.go","replaced":1,"old_count":2}`)
+	runner.renderToolFeedback(&out, "web_search", `{"query":"go release","results":[{"title":"Go Release Notes","url":"https://go.dev/doc/devel/release"}]}`)
+	runner.renderToolFeedback(&out, "web_fetch", `{"url":"https://go.dev/doc/devel/release","status_code":200,"title":"Release Notes","content":"Go 1.x details","truncated":false}`)
 	runner.renderToolFeedback(&out, "apply_patch", `{"operations":[{"type":"update","path":"a.go"}]}`)
 	runner.renderToolFeedback(&out, "unknown_tool", `{}`)
 
 	got := out.String()
-	for _, want := range []string{"listed", "dir  dir1", "read", "wrote", "updated", "patch", "completed"} {
+	for _, want := range []string{"listed", "dir  dir1", "read", "wrote", "updated", "searched", "fetched", "patch", "completed"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected output to contain %q, got %q", want, got)
 		}
@@ -198,5 +200,16 @@ func TestToolNamesDeduplicatesAndSkipsBlank(t *testing.T) {
 	}
 	if string(data) != `["list_files","read_file"]` {
 		t.Fatalf("unexpected tool names: %s", data)
+	}
+}
+
+func TestExplicitWebLookupInstruction(t *testing.T) {
+	got := explicitWebLookupInstruction("请去 GitHub 找这个项目的源码实现")
+	if !strings.Contains(got, "web_search/web_fetch") {
+		t.Fatalf("expected explicit web lookup instruction, got %q", got)
+	}
+
+	if got := explicitWebLookupInstruction("请在当前仓库用 search_text 找 TODO"); got != "" {
+		t.Fatalf("expected no explicit web lookup instruction, got %q", got)
 	}
 }

@@ -387,3 +387,48 @@ func TestRunPromptUsesSessionModeWhenModeArgEmpty(t *testing.T) {
 		}
 	}
 }
+
+func TestRunPromptInjectsExplicitWebLookupInstruction(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &recordingClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "Checked online sources.",
+		},
+	}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Type: "openai-compatible", Model: "test-model"},
+			MaxIterations: 2,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	if _, err := runner.RunPrompt(context.Background(), sess, "去 GitHub 源码里找这个函数实现", "build", io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("expected one request, got %d", len(client.requests))
+	}
+	if len(client.requests[0].Messages) < 2 {
+		t.Fatalf("expected at least two system messages, got %#v", client.requests[0].Messages)
+	}
+	if client.requests[0].Messages[1].Role != "system" {
+		t.Fatalf("expected second message to be system hint, got %#v", client.requests[0].Messages[1])
+	}
+	if !strings.Contains(client.requests[0].Messages[1].Content, "web_search/web_fetch") {
+		t.Fatalf("expected web lookup hint in second system message, got %q", client.requests[0].Messages[1].Content)
+	}
+}

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -1105,6 +1106,40 @@ func TestCommandPaletteEnterOnQuitReturnsQuitCmd(t *testing.T) {
 	}
 }
 
+func TestCommandPaletteBusyPlainTextQueuesBTW(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("focus only on unit tests")
+	input.CursorEnd()
+
+	canceled := false
+	m := model{
+		screen:      screenChat,
+		commandOpen: true,
+		busy:        true,
+		input:       input,
+		runCancel:   func() { canceled = true },
+		sess:        session.New("E:\\bytemind"),
+		workspace:   "E:\\bytemind",
+	}
+
+	got, _ := m.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if !canceled {
+		t.Fatalf("expected command palette busy submit to cancel active run")
+	}
+	if updated.commandOpen {
+		t.Fatalf("expected command palette to close after busy plain-text submit")
+	}
+	if len(updated.pendingBTW) != 1 || updated.pendingBTW[0] != "focus only on unit tests" {
+		t.Fatalf("expected plain text to queue as btw, got %#v", updated.pendingBTW)
+	}
+	if !updated.interrupting {
+		t.Fatalf("expected busy plain-text submit to enter interrupting state")
+	}
+}
+
 func TestViewRendersCommandPaletteAsOverlaySection(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("/")
@@ -2025,6 +2060,465 @@ func TestUpdateRunFinishedMsgResetsBusyState(t *testing.T) {
 			t.Fatalf("expected latest assistant card to show failure, got %+v", last)
 		}
 	})
+}
+
+func TestBusyInputStillEditable(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	m := model{
+		screen:    screenChat,
+		busy:      true,
+		input:     input,
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	updated := got.(model)
+	if updated.input.Value() != "a" {
+		t.Fatalf("expected busy input to stay editable, got %q", updated.input.Value())
+	}
+}
+
+func TestBusyEnterQueuesBTWAndCancelsRun(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("focus only on unit tests")
+	input.CursorEnd()
+
+	canceled := false
+	m := model{
+		screen:    screenChat,
+		busy:      true,
+		input:     input,
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+		runCancel: func() { canceled = true },
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if !canceled {
+		t.Fatalf("expected busy enter to cancel the active run")
+	}
+	if !updated.interrupting {
+		t.Fatalf("expected model to enter interrupting state")
+	}
+	if len(updated.pendingBTW) != 1 || updated.pendingBTW[0] != "focus only on unit tests" {
+		t.Fatalf("expected pending btw queue to capture input, got %#v", updated.pendingBTW)
+	}
+	if updated.input.Value() != "" {
+		t.Fatalf("expected btw submit to reset input, got %q", updated.input.Value())
+	}
+	if len(updated.chatItems) != 1 || updated.chatItems[0].Body != "focus only on unit tests" {
+		t.Fatalf("expected btw submit to append a user chat entry, got %#v", updated.chatItems)
+	}
+	if !strings.Contains(updated.chatItems[0].Meta, "btw") {
+		t.Fatalf("expected btw marker in chat meta, got %q", updated.chatItems[0].Meta)
+	}
+}
+
+func TestBusyEnterInToolPhaseDefersBTWCancel(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("change plan after this step")
+	input.CursorEnd()
+
+	canceled := false
+	m := model{
+		screen:    screenChat,
+		busy:      true,
+		phase:     "tool",
+		input:     input,
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+		runCancel: func() { canceled = true },
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if canceled {
+		t.Fatalf("expected tool phase btw to defer cancel until tool step completes")
+	}
+	if !updated.interrupting || !updated.interruptSafe {
+		t.Fatalf("expected deferred interrupt flags, got interrupting=%v interruptSafe=%v", updated.interrupting, updated.interruptSafe)
+	}
+	if updated.statusNote != "BTW queued. Waiting for current tool step to finish..." {
+		t.Fatalf("expected deferred tool note, got %q", updated.statusNote)
+	}
+}
+
+func TestSubmitBTWWithoutRunCancelRestartsImmediately(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	m := model{
+		async:     make(chan tea.Msg, 1),
+		busy:      true,
+		mode:      modeBuild,
+		input:     input,
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+	}
+
+	got, cmd := m.submitBTW("continue with deletion")
+	updated := got.(model)
+
+	if cmd == nil {
+		t.Fatalf("expected fallback btw path to start a new run command")
+	}
+	if !updated.busy {
+		t.Fatalf("expected model to become busy after immediate btw restart")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting state to clear after immediate restart")
+	}
+	if updated.interruptSafe {
+		t.Fatalf("expected interruptSafe to be false after immediate restart")
+	}
+	if len(updated.pendingBTW) != 0 {
+		t.Fatalf("expected pending btw queue to be consumed, got %#v", updated.pendingBTW)
+	}
+	if updated.runCancel == nil {
+		t.Fatalf("expected immediate restart to set runCancel")
+	}
+	if updated.statusNote != "BTW accepted. Restarting with your update..." {
+		t.Fatalf("expected immediate restart status note, got %q", updated.statusNote)
+	}
+}
+
+func TestToolCallCompletedTriggersDeferredBTWCancel(t *testing.T) {
+	canceled := false
+	m := model{
+		interrupting:  true,
+		interruptSafe: true,
+		pendingBTW:    []string{"change plan"},
+		runCancel:     func() { canceled = true },
+	}
+
+	m.handleAgentEvent(agent.Event{
+		Type:       agent.EventToolCallCompleted,
+		ToolName:   "read_file",
+		ToolResult: `{"path":"internal/tui/model.go","start_line":1,"end_line":3}`,
+	})
+
+	if !canceled {
+		t.Fatalf("expected deferred btw cancel to trigger after tool completion")
+	}
+	if m.interruptSafe {
+		t.Fatalf("expected deferred interrupt flag to clear after cancel")
+	}
+	if m.phase != "interrupting" {
+		t.Fatalf("expected phase to switch to interrupting, got %q", m.phase)
+	}
+}
+
+func TestRunFinishedWithPendingBTWRestartsRun(t *testing.T) {
+	m := model{
+		async:        make(chan tea.Msg, 1),
+		busy:         true,
+		activeRunID:  2,
+		runSeq:       2,
+		interrupting: true,
+		pendingBTW:   []string{"first update", "second update"},
+		mode:         modeBuild,
+		sess:         session.New("E:\\bytemind"),
+		workspace:    "E:\\bytemind",
+	}
+
+	got, cmd := m.Update(runFinishedMsg{RunID: 2, Err: context.Canceled})
+	updated := got.(model)
+
+	if cmd == nil {
+		t.Fatalf("expected interrupted run to schedule a follow-up run")
+	}
+	if !updated.busy {
+		t.Fatalf("expected model to restart immediately with pending btw prompt")
+	}
+	if len(updated.chatItems) != 1 || updated.chatItems[0].Kind != "system" {
+		t.Fatalf("expected system restart notice before resumed run, got %#v", updated.chatItems)
+	}
+	if !strings.Contains(updated.chatItems[0].Body, "BTW interrupt accepted") {
+		t.Fatalf("expected btw restart notice, got %#v", updated.chatItems[0])
+	}
+	if !strings.Contains(updated.chatItems[0].Body, "2 updates") {
+		t.Fatalf("expected restart notice to include update count, got %#v", updated.chatItems[0])
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting state to clear after restart")
+	}
+	if len(updated.pendingBTW) != 0 {
+		t.Fatalf("expected pending btw queue to be consumed, got %#v", updated.pendingBTW)
+	}
+	if updated.runCancel == nil {
+		t.Fatalf("expected restart to register a new cancel function")
+	}
+	if updated.phase != "thinking" {
+		t.Fatalf("expected restart phase to return to thinking, got %q", updated.phase)
+	}
+	if !strings.Contains(updated.statusNote, "Restarting with 2 updates") {
+		t.Fatalf("expected restart status note, got %q", updated.statusNote)
+	}
+	if updated.activeRunID == 0 {
+		t.Fatalf("expected resumed run to have a new active run id")
+	}
+}
+
+func TestClassifyRunFinish(t *testing.T) {
+	if got := classifyRunFinish(nil, false); got != runFinishReasonCompleted {
+		t.Fatalf("expected completed, got %q", got)
+	}
+	if got := classifyRunFinish(context.Canceled, false); got != runFinishReasonCanceled {
+		t.Fatalf("expected canceled, got %q", got)
+	}
+	if got := classifyRunFinish(errors.New("boom"), false); got != runFinishReasonFailed {
+		t.Fatalf("expected failed, got %q", got)
+	}
+	if got := classifyRunFinish(nil, true); got != runFinishReasonBTWRestart {
+		t.Fatalf("expected btw restart, got %q", got)
+	}
+}
+
+func TestQueueBTWUpdateKeepsMostRecentEntries(t *testing.T) {
+	queue, dropped := queueBTWUpdate([]string{"1", "2", "3", "4", "5"}, "6")
+	if dropped != 1 {
+		t.Fatalf("expected one dropped entry, got %d", dropped)
+	}
+	if len(queue) != maxPendingBTW {
+		t.Fatalf("expected capped queue length %d, got %d", maxPendingBTW, len(queue))
+	}
+	want := []string{"2", "3", "4", "5", "6"}
+	for i := range want {
+		if queue[i] != want[i] {
+			t.Fatalf("expected queue[%d]=%q, got %q", i, want[i], queue[i])
+		}
+	}
+}
+
+func TestFormatBTWUpdateScope(t *testing.T) {
+	if got := formatBTWUpdateScope(0); got != "your latest update" {
+		t.Fatalf("expected default scope text, got %q", got)
+	}
+	if got := formatBTWUpdateScope(1); got != "your latest update" {
+		t.Fatalf("expected single-entry scope text, got %q", got)
+	}
+	if got := formatBTWUpdateScope(3); got != "3 updates" {
+		t.Fatalf("expected multi-entry scope text, got %q", got)
+	}
+}
+
+func TestComposeBTWPromptSingleEntryKeepsContinuationContext(t *testing.T) {
+	got := composeBTWPrompt([]string{"delete calculator.py"})
+	if !strings.Contains(got, "Continue the same task") {
+		t.Fatalf("expected single btw prompt to preserve continuation context, got %q", got)
+	}
+	if !strings.Contains(got, "delete calculator.py") {
+		t.Fatalf("expected single btw prompt to include update content, got %q", got)
+	}
+}
+
+func TestComposeBTWPromptIgnoresEmptyEntries(t *testing.T) {
+	got := composeBTWPrompt([]string{"", "   ", "\n\t"})
+	if got != "" {
+		t.Fatalf("expected empty btw prompt when all entries are blank, got %q", got)
+	}
+}
+
+func TestSubmitBTWShowsDropHintWhenQueueCapped(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("new update")
+	input.CursorEnd()
+
+	m := model{
+		screen:       screenChat,
+		busy:         true,
+		interrupting: true,
+		input:        input,
+		pendingBTW:   []string{"1", "2", "3", "4", "5"},
+		sess:         session.New("E:\\bytemind"),
+		workspace:    "E:\\bytemind",
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if len(updated.pendingBTW) != maxPendingBTW {
+		t.Fatalf("expected capped pending queue length %d, got %d", maxPendingBTW, len(updated.pendingBTW))
+	}
+	if updated.pendingBTW[0] != "2" || updated.pendingBTW[len(updated.pendingBTW)-1] != "new update" {
+		t.Fatalf("expected oldest entry to be dropped, got %#v", updated.pendingBTW)
+	}
+	if !strings.Contains(updated.statusNote, "dropped 1 older") {
+		t.Fatalf("expected drop hint in status note, got %q", updated.statusNote)
+	}
+}
+
+func TestNewSessionClearsInterruptState(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	current := session.New(workspace)
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+
+	input := textarea.New()
+	input.SetValue("pending input")
+	m := model{
+		store:         store,
+		sess:          current,
+		workspace:     workspace,
+		input:         input,
+		pendingBTW:    []string{"keep this"},
+		interrupting:  true,
+		interruptSafe: true,
+		runCancel:     func() {},
+		activeRunID:   9,
+	}
+
+	if err := m.newSession(); err != nil {
+		t.Fatalf("expected newSession to succeed, got %v", err)
+	}
+	if m.interrupting || m.interruptSafe {
+		t.Fatalf("expected interrupt flags to clear, got interrupting=%v interruptSafe=%v", m.interrupting, m.interruptSafe)
+	}
+	if len(m.pendingBTW) != 0 {
+		t.Fatalf("expected pending btw queue cleared, got %#v", m.pendingBTW)
+	}
+	if m.runCancel != nil {
+		t.Fatalf("expected runCancel cleared on new session")
+	}
+	if m.activeRunID != 0 {
+		t.Fatalf("expected activeRunID reset, got %d", m.activeRunID)
+	}
+	if m.screen != screenLanding {
+		t.Fatalf("expected new session to switch to landing screen, got %q", m.screen)
+	}
+}
+
+func TestResumeSessionClearsInterruptState(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	current := session.New(workspace)
+	target := session.New(workspace)
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(target); err != nil {
+		t.Fatal(err)
+	}
+
+	m := model{
+		store:         store,
+		sess:          current,
+		workspace:     workspace,
+		sessions:      []session.Summary{{ID: target.ID}},
+		pendingBTW:    []string{"queued"},
+		interrupting:  true,
+		interruptSafe: true,
+		runCancel:     func() {},
+		activeRunID:   7,
+	}
+
+	if err := m.resumeSession(target.ID); err != nil {
+		t.Fatalf("expected resumeSession to succeed, got %v", err)
+	}
+	if m.sess == nil || m.sess.ID != target.ID {
+		t.Fatalf("expected target session to become active, got %#v", m.sess)
+	}
+	if m.interrupting || m.interruptSafe {
+		t.Fatalf("expected interrupt flags to clear, got interrupting=%v interruptSafe=%v", m.interrupting, m.interruptSafe)
+	}
+	if len(m.pendingBTW) != 0 {
+		t.Fatalf("expected pending btw queue cleared, got %#v", m.pendingBTW)
+	}
+	if m.runCancel != nil {
+		t.Fatalf("expected runCancel cleared on resume")
+	}
+	if m.activeRunID != 0 {
+		t.Fatalf("expected activeRunID reset, got %d", m.activeRunID)
+	}
+	if m.screen != screenChat {
+		t.Fatalf("expected resume to switch to chat screen, got %q", m.screen)
+	}
+}
+
+func TestUpdateIgnoresStaleRunFinishedMsg(t *testing.T) {
+	m := model{
+		async:       make(chan tea.Msg, 1),
+		busy:        true,
+		activeRunID: 5,
+		statusNote:  "Running...",
+		phase:       "responding",
+	}
+
+	got, cmd := m.Update(runFinishedMsg{RunID: 4})
+	updated := got.(model)
+
+	if cmd == nil {
+		t.Fatalf("expected stale run message handling to keep waiting for async events")
+	}
+	if !updated.busy {
+		t.Fatalf("expected stale run message not to stop the active run")
+	}
+	if updated.activeRunID != 5 {
+		t.Fatalf("expected active run id to remain unchanged, got %d", updated.activeRunID)
+	}
+	if updated.statusNote != "Running..." {
+		t.Fatalf("expected stale run message not to rewrite status, got %q", updated.statusNote)
+	}
+}
+
+func TestBTWCommandInIdleSubmitsPrompt(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("/btw tighten the test scope")
+	input.CursorEnd()
+	m := model{
+		screen:    screenChat,
+		input:     input,
+		workspace: "E:\\bytemind",
+		sess:      session.New("E:\\bytemind"),
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if len(updated.chatItems) == 0 || updated.chatItems[0].Body != "tighten the test scope" {
+		t.Fatalf("expected /btw in idle mode to submit its message, got %#v", updated.chatItems)
+	}
+	if !updated.busy {
+		t.Fatalf("expected /btw in idle mode to start a run")
+	}
+}
+
+func TestBTWCommandRequiresMessage(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("/btw")
+	input.CursorEnd()
+	m := model{
+		screen:    screenChat,
+		input:     input,
+		workspace: "E:\\bytemind",
+		sess:      session.New("E:\\bytemind"),
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	if updated.statusNote != "usage: /btw <message>" {
+		t.Fatalf("expected usage hint for empty /btw, got %q", updated.statusNote)
+	}
+	if updated.busy {
+		t.Fatalf("expected empty /btw not to start a run")
+	}
 }
 
 func TestUpdateSessionsLoadedMsgUpdatesAndClampsSessions(t *testing.T) {

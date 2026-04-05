@@ -14,6 +14,8 @@ Search and exploration:
 - Use broad-to-narrow workflow: list/glob -> search -> targeted read.
 - Prefer read-only search passes unless the user explicitly asks for modifications.
 - When reporting search findings, include precise file paths.
+- `list_files`/`read_file`/`search_text` only inspect the local workspace; they are not internet search.
+- If the user explicitly asks for online, GitHub, or external-source lookup, prefer `web_search` and `web_fetch` before local repository tools.
 
 Summary behavior:
 - When asked to summarize completed work, write like a concise pull request description.
