@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ByteMind Web</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">ByteMind Web</div>
+      <div class="topbar-meta">
+        <span>Workspace: <strong id="workspace">-</strong></span>
+        <span>Model: <strong id="model">-</strong></span>
+        <span>Approval: <strong id="approvalPolicy">-</strong></span>
+      </div>
+    </header>
+
+    <section class="layout">
+      <aside class="panel sessions">
+        <div class="panel-header">
+          <h2 class="panel-title">Sessions</h2>
+          <div class="sessions-actions">
+            <button class="btn" id="refreshSessionsBtn">Refresh</button>
+            <button class="btn primary" id="newSessionBtn">New</button>
+          </div>
+        </div>
+        <div class="sessions-list" id="sessionsList"></div>
+      </aside>
+
+      <main class="panel chat">
+        <div class="chat-status" id="chatStatus">Loading...</div>
+        <div class="messages" id="messages"></div>
+        <div class="composer">
+          <textarea id="promptInput" placeholder="Type a prompt or command. Ctrl/Cmd+Enter to send."></textarea>
+          <div class="composer-actions">
+            <button class="btn" id="modeBuildBtn">Mode: Build</button>
+            <button class="btn" id="modePlanBtn">Mode: Plan</button>
+            <button class="btn primary" id="sendBtn">Send</button>
+            <button class="btn warn" id="btwBtn">BTW</button>
+            <button class="btn danger" id="stopBtn">Stop</button>
+          </div>
+          <div class="composer-hint">Commands: /new /sessions /resume &lt;id&gt; /mode build|plan /btw &lt;message&gt; /skills /skill clear</div>
+        </div>
+      </main>
+
+      <aside class="panel side">
+        <section class="side-section">
+          <h2 class="panel-title">Run</h2>
+          <div class="side-content" id="runMeta">No active run.</div>
+        </section>
+        <section class="side-section">
+          <h2 class="panel-title">Plan</h2>
+          <div class="side-content" id="planView">No structured plan.</div>
+        </section>
+        <section class="side-section">
+          <h2 class="panel-title">Events</h2>
+          <div class="side-content" id="events"></div>
+        </section>
+      </aside>
+    </section>
+  </div>
+
+  <div class="approval-modal" id="approvalModal">
+    <div class="approval-card">
+      <h3 class="approval-title">Approval Required</h3>
+      <div class="approval-reason" id="approvalReason"></div>
+      <div class="approval-command" id="approvalCommand"></div>
+      <div class="approval-actions">
+        <button class="btn primary" id="approveBtn">Approve</button>
+        <button class="btn danger" id="rejectBtn">Reject</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

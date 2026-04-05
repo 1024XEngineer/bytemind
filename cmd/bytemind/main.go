@@ -60,6 +60,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return runTUI(args[1:], stdin, stdout, stderr)
 	case "tui":
 		return runTUI(args[1:], stdin, stdout, stderr)
+	case "web":
+		return runWeb(args[1:], stdin, stdout, stderr)
 	case "run":
 		return runOneShot(args[1:], stdin, stdout, stderr)
 	case "help", "-h", "--help":
@@ -383,6 +385,7 @@ func sameWorkspace(a, b string) bool {
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "go run ./cmd/bytemind chat [-config path] [-model name] [-session id] [-stream true|false] [-workspace path] [-max-iterations n]")
 	fmt.Fprintln(w, "go run ./cmd/bytemind tui [-config path] [-model name] [-session id] [-stream true|false] [-workspace path] [-max-iterations n]")
+	fmt.Fprintln(w, "go run ./cmd/bytemind web [-addr host:port] [-config path] [-model name] [-session id] [-stream true|false] [-workspace path] [-max-iterations n]")
 	fmt.Fprintln(w, "go run ./cmd/bytemind run -prompt \"task\" [-config path] [-model name] [-session id] [-stream true|false] [-max-iterations n]")
 }
 
