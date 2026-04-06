@@ -42,7 +42,7 @@ const (
 	thinkingLabel       = "Bytemind"
 	chatTitleLabel      = "Bytemind Chat"
 	tuiTitleLabel       = "Bytemind TUI"
-	footerHintText      = "tab agents | / commands | Ctrl+L sessions | Ctrl+C quit"
+	footerHintText      = "Ctrl+J newline | tab agents | / commands | Ctrl+L sessions | Ctrl+C quit"
 )
 
 type screenKind string
@@ -555,6 +555,17 @@ func normalizeKeyName(key string) string {
 	return replacer.Replace(key)
 }
 
+func isInputNewlineKey(msg tea.KeyMsg) bool {
+	if msg.Type == tea.KeyCtrlJ || normalizeKeyName(msg.String()) == "ctrl+j" {
+		return true
+	}
+	if msg.Type == tea.KeyEnter && msg.Alt {
+		return true
+	}
+	key := normalizeKeyName(msg.String())
+	return key == "shift+enter" || key == "shift+return"
+}
+
 func isPageUpKey(msg tea.KeyMsg) bool {
 	key := normalizeKeyName(msg.String())
 	return msg.Type == tea.KeyPgUp || key == "pgup" || key == "pageup" || key == "prior"
@@ -721,6 +732,21 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if isInputNewlineKey(msg) {
+		before := m.input.Value()
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if m.input.Value() != before {
+			source := msg.String()
+			if strings.TrimSpace(source) == "" {
+				source = "shift+enter"
+			}
+			m.handleInputMutation(before, m.input.Value(), source)
+			m.syncInputOverlays()
+		}
+		return m, cmd
+	}
+
 	switch msg.String() {
 	case "ctrl+l":
 		if !m.busy {
@@ -752,28 +778,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if msg.Type == tea.KeyEnter && msg.Alt {
-		before := m.input.Value()
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		if m.input.Value() != before {
-			m.handleInputMutation(before, m.input.Value(), "alt+enter")
-			m.syncInputOverlays()
-		}
-		return m, cmd
-	}
-
 	if msg.String() == "enter" {
-		if !m.lastPasteAt.IsZero() && time.Since(m.lastPasteAt) < pasteSubmitGuard {
-			before := m.input.Value()
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
-			if m.input.Value() != before {
-				m.handleInputMutation(before, m.input.Value(), "paste-enter")
-				m.syncInputOverlays()
-			}
-			return m, cmd
-		}
 		value := strings.TrimSpace(m.input.Value())
 		if value == "" {
 			return m, nil
@@ -1325,12 +1330,12 @@ func (m *model) handleAgentEvent(event agent.Event) {
 		m.appendChat(chatEntry{
 			Kind:   "tool",
 			Title:  "Tool Call | " + event.ToolName,
-			Body:   "params: " + summarizeArgs(event.ToolArguments),
+			Body:   "",
 			Status: "running",
 		})
 		m.toolRuns = append(m.toolRuns, toolRun{
 			Name:    event.ToolName,
-			Summary: "params: " + summarizeArgs(event.ToolArguments),
+			Summary: "Tool call started.",
 			Status:  "running",
 		})
 		m.statusNote = "Running tool: " + event.ToolName
@@ -2498,7 +2503,7 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 				summary, lines, status := summarizeTool(name, part.ToolResult.Content)
 				items = append(items, chatEntry{
 					Kind:   "tool",
-					Title:  "Tool | " + name,
+					Title:  "Tool Result | " + name,
 					Body:   joinSummary(summary, lines),
 					Status: status,
 				})
@@ -2523,7 +2528,7 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 			summary, lines, status := summarizeTool(name, message.Content)
 			items = append(items, chatEntry{
 				Kind:   "tool",
-				Title:  "Tool | " + name,
+				Title:  "Tool Result | " + name,
 				Body:   joinSummary(summary, lines),
 				Status: status,
 			})
@@ -2563,8 +2568,13 @@ func renderChatSection(item chatEntry, width int) string {
 	case "user":
 		title = cardTitleStyle.Foreground(colorUser)
 	case "tool":
-		title = cardTitleStyle.Foreground(colorMuted).Faint(true)
+		if strings.HasPrefix(displayTitle, "Tool Result | ") {
+			title = toolResultTitleStyle
+		} else {
+			title = toolCallTitleStyle
+		}
 		bodyStyle = toolBodyStyle
+		status = ""
 	case "system":
 		title = cardTitleStyle.Foreground(colorMuted)
 	default:
@@ -2585,6 +2595,9 @@ func renderChatSection(item chatEntry, width int) string {
 	head := lipgloss.NewStyle().
 		Width(width).
 		Render(headContent)
+	if item.Kind == "tool" && strings.TrimSpace(item.Body) == "" {
+		return head
+	}
 	body := bodyStyle.Width(width).Render(formatChatBody(item, width))
 	return lipgloss.JoinVertical(lipgloss.Left, head, body)
 }
