@@ -5,6 +5,8 @@ import (
 	"bytemind/internal/assets"
 	"bytemind/internal/config"
 	"bytemind/internal/session"
+	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -29,7 +31,24 @@ type StartupGuide struct {
 }
 
 func Run(opts Options) error {
-	program := tea.NewProgram(newModel(opts), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	programOptions := []tea.ProgramOption{tea.WithAltScreen()}
+	if shouldEnableMouseCapture() {
+		programOptions = append(programOptions, tea.WithMouseCellMotion())
+	}
+	program := tea.NewProgram(newModel(opts), programOptions...)
 	_, err := program.Run()
 	return err
+}
+
+func shouldEnableMouseCapture() bool {
+	return parseMouseCaptureEnv(os.Getenv("BYTEMIND_ENABLE_MOUSE"))
+}
+
+func parseMouseCaptureEnv(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
