@@ -157,6 +157,8 @@ func (r *Runner) GetActiveSkill(sess *session.Session) (skills.Skill, bool) {
 		return skills.Skill{}, false
 	}
 	return r.skillManager.Find(sess.ActiveSkill.Name)
+}
+
 func (r *Runner) UpdateProvider(providerCfg config.ProviderConfig, client llm.Client) {
 	r.config.Provider = providerCfg
 	if client != nil {
