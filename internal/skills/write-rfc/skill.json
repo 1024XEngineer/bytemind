@@ -2,7 +2,8 @@
     "name":  "write-rfc",
     "version":  "0.1.0",
     "title":  "Write RFC",
-    "description":  "产出结构化技术方案，明确权衡取舍与发布计划。",
+    "description":  "Produce structured technical proposals with explicit trade-offs and rollout plans.",
+    "description_zh":  "产出结构化技术方案，明确权衡取舍与发布计划。",
     "entry":  {
                   "slash":  "/write-rfc"
               },

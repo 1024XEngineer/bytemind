@@ -22,6 +22,7 @@ import (
 	planpkg "bytemind/internal/plan"
 	"bytemind/internal/provider"
 	"bytemind/internal/session"
+	"bytemind/internal/skills"
 	"bytemind/internal/tools"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -160,13 +161,13 @@ type tokenUsagePulledMsg struct {
 }
 
 var commandItems = []commandItem{
-	{Name: "/help", Usage: "/help", Description: "Show usage and supported commands.", Kind: "command"},
-	{Name: "/session", Usage: "/session", Description: "Open the recent session list.", Kind: "command"},
-	{Name: "/new", Usage: "/new", Description: "Start a fresh session in this workspace.", Kind: "command"},
-	{Name: "/btw", Usage: "/btw <message>", Description: "Interject while a run is in progress.", Kind: "command"},
-	{Name: "/quit", Usage: "/quit", Description: "Exit the current TUI window.", Kind: "command"},
-	{Name: "/skills", Usage: "/skills", Description: "List available skills and current active skill.", Kind: "command"},
-	{Name: "/skill clear", Usage: "/skill clear", Description: "Clear active skill for this session.", Kind: "command"},
+	{Name: "/help", Usage: "/help", Description: "显示使用说明和支持的命令。", Kind: "command"},
+	{Name: "/session", Usage: "/session", Description: "打开最近会话列表。", Kind: "command"},
+	{Name: "/new", Usage: "/new", Description: "在当前工作区新建会话。", Kind: "command"},
+	{Name: "/btw", Usage: "/btw <message>", Description: "任务执行中插入补充说明。", Kind: "command"},
+	{Name: "/quit", Usage: "/quit", Description: "退出当前 TUI 窗口。", Kind: "command"},
+	{Name: "/skills", Usage: "/skills", Description: "查看可用技能和当前激活技能。", Kind: "command"},
+	{Name: "/skill clear", Usage: "/skill clear", Description: "清除当前会话激活的技能。", Kind: "command"},
 }
 
 type model struct {
@@ -2183,7 +2184,7 @@ func (m model) renderSessionsModal() string {
 
 func (m model) renderHelpModal() string {
 	return modalBoxStyle.Width(min(88, max(54, m.width-16))).Render(
-		lipgloss.JoinVertical(lipgloss.Left, modalTitleStyle.Render("Help"), m.helpText()),
+		lipgloss.JoinVertical(lipgloss.Left, modalTitleStyle.Render("帮助"), m.helpText()),
 	)
 }
 
@@ -2208,7 +2209,7 @@ func (m model) renderActiveSkillBanner() string {
 		return ""
 	}
 
-	line := "Active skill: " + name
+	line := "当前技能: " + name
 	if len(m.sess.ActiveSkill.Args) > 0 {
 		keys := make([]string, 0, len(m.sess.ActiveSkill.Args))
 		for key := range m.sess.ActiveSkill.Args {
@@ -2219,7 +2220,7 @@ func (m model) renderActiveSkillBanner() string {
 		for _, key := range keys {
 			pairs = append(pairs, fmt.Sprintf("%s=%s", key, m.sess.ActiveSkill.Args[key]))
 		}
-		line += " | args: " + strings.Join(pairs, ", ")
+		line += " | 参数: " + strings.Join(pairs, ", ")
 	}
 
 	width := max(24, m.chatPanelInnerWidth())
@@ -2825,11 +2826,11 @@ func (m *model) handleSlashCommand(input string) error {
 			Status: "final",
 		})
 		m.appendChat(chatEntry{Kind: "assistant", Title: assistantLabel, Body: m.helpText(), Status: "final"})
-		m.statusNote = "Help opened in the conversation view."
+		m.statusNote = "已在会话区打开帮助。"
 		return nil
 	case "/session":
 		m.sessionsOpen = true
-		m.statusNote = "Opened recent sessions."
+		m.statusNote = "已打开最近会话列表。"
 		return nil
 	case "/skills":
 		return m.runSkillsListCommand(input)
@@ -2852,51 +2853,51 @@ func (m model) executeCommand(input string) (tea.Model, tea.Cmd, error) {
 
 func (m *model) runSkillsListCommand(input string) error {
 	if m.runner == nil {
-		return fmt.Errorf("runner is unavailable")
+		return fmt.Errorf("runner 不可用")
 	}
 	skillsList, diagnostics := m.runner.ListSkills()
 	active, hasActive := m.runner.GetActiveSkill(m.sess)
 
 	lines := make([]string, 0, len(skillsList)+8)
 	if hasActive {
-		lines = append(lines, fmt.Sprintf("Active skill: %s (%s)", active.Name, active.Scope))
+		lines = append(lines, fmt.Sprintf("当前技能: %s (%s)", active.Name, localizeSkillScope(active.Scope)))
 	} else {
-		lines = append(lines, "Active skill: none")
+		lines = append(lines, "当前技能: 无")
 	}
 	lines = append(lines, "")
 	if len(skillsList) == 0 {
-		lines = append(lines, "No skills discovered.")
+		lines = append(lines, "未发现可用技能。")
 	} else {
-		lines = append(lines, "Available skills:")
+		lines = append(lines, "可用技能：")
 		for _, skill := range skillsList {
-			lines = append(lines, fmt.Sprintf("- %s (%s): %s", skill.Name, skill.Scope, skill.Description))
+			lines = append(lines, fmt.Sprintf("- %s (%s): %s", skill.Name, localizeSkillScope(skill.Scope), skillDisplayDescription(skill)))
 		}
 	}
 	if len(diagnostics) > 0 {
-		lines = append(lines, "", "Diagnostics:")
+		lines = append(lines, "", "诊断信息：")
 		for _, diag := range diagnostics {
 			lines = append(lines, fmt.Sprintf("- [%s] %s (%s): %s", diag.Level, diag.Skill, diag.Path, diag.Message))
 		}
 	}
 
 	m.appendCommandExchange(input, strings.Join(lines, "\n"))
-	m.statusNote = fmt.Sprintf("Discovered %d skill(s).", len(skillsList))
+	m.statusNote = fmt.Sprintf("共发现 %d 个技能。", len(skillsList))
 	return nil
 }
 
 func (m *model) runSkillCommand(input string, fields []string) error {
 	if m.runner == nil {
-		return fmt.Errorf("runner is unavailable")
+		return fmt.Errorf("runner 不可用")
 	}
 	if len(fields) != 2 || fields[1] != "clear" {
-		return fmt.Errorf("usage: /skill clear")
+		return fmt.Errorf("用法: /skill clear")
 	}
 
 	if err := m.runner.ClearActiveSkill(m.sess); err != nil {
 		return err
 	}
-	m.appendCommandExchange(input, "Active skill cleared.")
-	m.statusNote = "Skill cleared."
+	m.appendCommandExchange(input, "已清除当前技能。")
+	m.statusNote = "技能已清除。"
 	return nil
 }
 
@@ -2906,7 +2907,7 @@ func (m *model) runDirectSkillCommand(input string, fields []string) error {
 	}
 	name := strings.TrimSpace(fields[0])
 	if !strings.HasPrefix(name, "/") || !m.isKnownSkillCommand(name) {
-		return fmt.Errorf("unknown command: %s", fields[0])
+		return fmt.Errorf("未知命令: %s", fields[0])
 	}
 	args, err := parseSkillArgs(fields[1:])
 	if err != nil {
@@ -2917,13 +2918,13 @@ func (m *model) runDirectSkillCommand(input string, fields []string) error {
 
 func (m *model) activateSkillCommand(input, name string, args map[string]string) error {
 	if m.runner == nil {
-		return fmt.Errorf("runner is unavailable")
+		return fmt.Errorf("runner 不可用")
 	}
 	skill, err := m.runner.ActivateSkill(m.sess, name, args)
 	if err != nil {
 		return err
 	}
-	response := fmt.Sprintf("Activated skill `%s` (%s).\nTool policy: %s\nEntry: %s", skill.Name, skill.Scope, skill.ToolPolicy.Policy, skill.Entry.Slash)
+	response := fmt.Sprintf("已激活技能 `%s`（%s）。\n工具策略: %s\n入口命令: %s", skill.Name, localizeSkillScope(skill.Scope), skill.ToolPolicy.Policy, skill.Entry.Slash)
 	if len(args) > 0 {
 		argParts := make([]string, 0, len(args))
 		keys := make([]string, 0, len(args))
@@ -2934,10 +2935,10 @@ func (m *model) activateSkillCommand(input, name string, args map[string]string)
 		for _, key := range keys {
 			argParts = append(argParts, fmt.Sprintf("%s=%s", key, args[key]))
 		}
-		response += "\nArgs: " + strings.Join(argParts, ", ")
+		response += "\n参数: " + strings.Join(argParts, ", ")
 	}
 	m.appendCommandExchange(input, response)
-	m.statusNote = "Skill activated."
+	m.statusNote = "技能已激活。"
 	return nil
 }
 
@@ -2949,12 +2950,12 @@ func parseSkillArgs(parts []string) (map[string]string, error) {
 	for _, part := range parts {
 		pieces := strings.SplitN(part, "=", 2)
 		if len(pieces) != 2 {
-			return nil, fmt.Errorf("invalid skill arg %q, expected k=v", part)
+			return nil, fmt.Errorf("无效技能参数 %q，应为 k=v", part)
 		}
 		key := strings.TrimSpace(pieces[0])
 		value := strings.TrimSpace(pieces[1])
 		if key == "" || value == "" {
-			return nil, fmt.Errorf("invalid skill arg %q, expected k=v", part)
+			return nil, fmt.Errorf("无效技能参数 %q，应为 k=v", part)
 		}
 		args[key] = value
 	}
@@ -4282,9 +4283,9 @@ func (m model) skillCommandItems() []commandItem {
 		}
 		seen[key] = struct{}{}
 
-		description := strings.TrimSpace(skill.Description)
+		description := skillDisplayDescription(skill)
 		if description == "" {
-			description = fmt.Sprintf("Activate %s for this session.", skill.Name)
+			description = fmt.Sprintf("为当前会话启用 %s。", skill.Name)
 		}
 		items = append(items, commandItem{
 			Name:        name,
@@ -4297,6 +4298,26 @@ func (m model) skillCommandItems() []commandItem {
 		return items[i].Usage < items[j].Usage
 	})
 	return items
+}
+
+func skillDisplayDescription(skill skills.Skill) string {
+	if zh := strings.TrimSpace(skill.DescriptionZH); zh != "" {
+		return zh
+	}
+	return strings.TrimSpace(skill.Description)
+}
+
+func localizeSkillScope(scope skills.Scope) string {
+	switch scope {
+	case skills.ScopeBuiltin:
+		return "内置"
+	case skills.ScopeUser:
+		return "用户"
+	case skills.ScopeProject:
+		return "项目"
+	default:
+		return string(scope)
+	}
 }
 
 func (m model) commandPaletteWidth() int {
@@ -4374,30 +4395,30 @@ func shouldExecuteFromPalette(item commandItem) bool {
 
 func (m model) helpText() string {
 	return strings.Join([]string{
-		"Entry points",
-		"Run `go run ./cmd/bytemind chat` from the repository root to open the TUI.",
-		"The chat command opens the landing screen first, then enters the conversation view after you submit a prompt.",
-		"Run `go run ./cmd/bytemind run -prompt \"...\"` for one-shot execution.",
+		"入口说明",
+		"在仓库根目录运行 `go run ./cmd/bytemind chat` 打开 TUI。",
+		"`chat` 命令会先进入启动页，提交首条消息后进入会话视图。",
+		"运行 `go run ./cmd/bytemind run -prompt \"...\"` 可执行单次任务。",
 		"",
-		"Slash commands",
-		"/help: show this help inside the conversation.",
-		"/session: open recent sessions.",
-		"/skills: list discovered skills and diagnostics.",
-		"/<skill-name> [k=v...]: activate a skill for this session.",
-		"/skill clear: clear the active skill.",
-		"/new: start a fresh session.",
-		"/btw <message>: interject while a run is in progress.",
-		"/quit: exit the TUI.",
+		"Slash 命令",
+		"/help: 在会话窗口显示这份帮助。",
+		"/session: 打开最近会话列表。",
+		"/skills: 列出已发现技能和诊断信息。",
+		"/<skill-name> [k=v...]: 为当前会话激活技能。",
+		"/skill clear: 清除当前技能。",
+		"/new: 新建会话。",
+		"/btw <message>: 任务执行中插入补充说明。",
+		"/quit: 退出 TUI。",
 		"",
-		"UI notes",
-		"Tab toggles between Build and Plan modes.",
-		"Plan mode keeps the plan panel visible and focused on structured steps.",
-		"Use Ctrl+G to open or close the help panel.",
-		"Use Ctrl+F to search prompt history and restore previous input.",
-		"If provider setup is required, paste an API key in the input and press Enter.",
-		"After restoring a session with a saved plan, type 'continue execution' to resume it.",
-		"Approval requests appear above the input area when a shell command needs confirmation.",
-		"The footer keeps only the essential shortcuts: tab agents, / commands, Ctrl+F history, Ctrl+L sessions, Ctrl+C quit.",
+		"界面说明",
+		"按 Tab 在 Build 和 Plan 模式之间切换。",
+		"Plan 模式会保持计划面板可见并聚焦结构化步骤。",
+		"按 Ctrl+G 打开或关闭帮助面板。",
+		"按 Ctrl+F 检索历史输入并恢复内容。",
+		"若需要补充 Provider 配置，可在输入框粘贴 API key 并按 Enter。",
+		"恢复包含计划的会话后，可输入 'continue execution' 继续执行。",
+		"当 shell 命令需要确认时，审批提示会显示在输入区上方。",
+		"底部仅保留关键快捷键：tab agents、/ commands、Ctrl+F history、Ctrl+L sessions、Ctrl+C quit。",
 	}, "\n")
 }
 func visibleCommandItems(group string) []commandItem {
@@ -4667,11 +4688,11 @@ func isBTWCommand(input string) bool {
 func extractBTWText(input string) (string, error) {
 	fields := strings.Fields(strings.TrimSpace(input))
 	if len(fields) == 0 || fields[0] != "/btw" {
-		return "", errors.New("usage: /btw <message>")
+		return "", errors.New("用法: /btw <message>")
 	}
 	text := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(input), fields[0]))
 	if text == "" {
-		return "", errors.New("usage: /btw <message>")
+		return "", errors.New("用法: /btw <message>")
 	}
 	return text, nil
 }

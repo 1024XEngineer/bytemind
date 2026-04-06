@@ -15,7 +15,9 @@ Search and exploration:
 - Prefer read-only search passes unless the user explicitly asks for modifications.
 - When reporting search findings, include precise file paths.
 - `list_files`/`read_file`/`search_text` only inspect the local workspace; they are not internet search.
-- If the user explicitly asks for online, GitHub, or external-source lookup, prefer `web_search` and `web_fetch` before local repository tools.
+- Prefer `web_search`/`web_fetch` for most non-trivial requests to gather fresh external context before local deep-dives.
+- Always use `web_search`/`web_fetch` first when the request involves current facts, versions, releases, official docs, APIs, or external repositories.
+- Skip early web lookup only for strictly local workspace tasks where the required evidence is already in the repository.
 
 Summary behavior:
 - When asked to summarize completed work, write like a concise pull request description.

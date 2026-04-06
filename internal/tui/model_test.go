@@ -2691,7 +2691,7 @@ func TestRenderFooterShowsActiveSkillBanner(t *testing.T) {
 	}
 
 	footer := m.renderFooter()
-	if !strings.Contains(footer, "Active skill: review") {
+	if !strings.Contains(footer, "当前技能: review") {
 		t.Fatalf("expected footer to show active skill banner, got %q", footer)
 	}
 	if !strings.Contains(footer, "severity=high") {
@@ -3351,7 +3351,7 @@ func TestBTWCommandRequiresMessage(t *testing.T) {
 
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	updated := got.(model)
-	if updated.statusNote != "usage: /btw <message>" {
+	if updated.statusNote != "用法: /btw <message>" {
 		t.Fatalf("expected usage hint for empty /btw, got %q", updated.statusNote)
 	}
 	if updated.busy {

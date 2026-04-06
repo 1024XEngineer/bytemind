@@ -156,13 +156,15 @@ func (m *Manager) Workspace() string {
 }
 
 type skillManifest struct {
-	Name        string `json:"name"`
-	Version     string `json:"version"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Scope       string `json:"scope"`
-	Entry       Entry  `json:"entry"`
-	Prompts     []struct {
+	Name          string `json:"name"`
+	Version       string `json:"version"`
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	DescriptionZH string `json:"description_zh"`
+	DescriptionCN string `json:"description_cn"`
+	Scope         string `json:"scope"`
+	Entry         Entry  `json:"entry"`
+	Prompts       []struct {
 		ID   string `json:"id"`
 		Path string `json:"path"`
 	} `json:"prompts"`
@@ -298,6 +300,16 @@ func loadSkillFromDir(scope Scope, skillDir, dirName string) (Skill, bool, []Dia
 	if description == "" {
 		description = "No description provided."
 	}
+	descriptionZH := strings.TrimSpace(manifest.DescriptionZH)
+	if descriptionZH == "" {
+		descriptionZH = strings.TrimSpace(manifest.DescriptionCN)
+	}
+	if descriptionZH == "" {
+		descriptionZH = strings.TrimSpace(frontmatter["description_zh"])
+	}
+	if descriptionZH == "" {
+		descriptionZH = strings.TrimSpace(frontmatter["description-cn"])
+	}
 
 	title := strings.TrimSpace(manifest.Title)
 	if title == "" {
@@ -361,21 +373,22 @@ func loadSkillFromDir(scope Scope, skillDir, dirName string) (Skill, bool, []Dia
 	})
 
 	skill := Skill{
-		Name:         name,
-		Version:      strings.TrimSpace(manifest.Version),
-		Title:        title,
-		Description:  description,
-		WhenToUse:    whenToUse,
-		Scope:        scope,
-		SourceDir:    skillDir,
-		Instruction:  strings.TrimSpace(body),
-		Entry:        entry,
-		Prompts:      prompts,
-		Resources:    resources,
-		ToolPolicy:   toolPolicy,
-		Args:         args,
-		Aliases:      aliases,
-		DiscoveredAt: time.Now().UTC(),
+		Name:          name,
+		Version:       strings.TrimSpace(manifest.Version),
+		Title:         title,
+		Description:   description,
+		DescriptionZH: descriptionZH,
+		WhenToUse:     whenToUse,
+		Scope:         scope,
+		SourceDir:     skillDir,
+		Instruction:   strings.TrimSpace(body),
+		Entry:         entry,
+		Prompts:       prompts,
+		Resources:     resources,
+		ToolPolicy:    toolPolicy,
+		Args:          args,
+		Aliases:       aliases,
+		DiscoveredAt:  time.Now().UTC(),
 	}
 	if !hasSkill {
 		skill.Instruction = ""

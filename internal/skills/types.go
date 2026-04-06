@@ -47,21 +47,22 @@ type Arg struct {
 }
 
 type Skill struct {
-	Name         string
-	Version      string
-	Title        string
-	Description  string
-	WhenToUse    string
-	Scope        Scope
-	SourceDir    string
-	Instruction  string
-	Entry        Entry
-	Prompts      []PromptRef
-	Resources    []ResourceRef
-	ToolPolicy   ToolPolicy
-	Args         []Arg
-	Aliases      []string
-	DiscoveredAt time.Time
+	Name          string
+	Version       string
+	Title         string
+	Description   string
+	DescriptionZH string
+	WhenToUse     string
+	Scope         Scope
+	SourceDir     string
+	Instruction   string
+	Entry         Entry
+	Prompts       []PromptRef
+	Resources     []ResourceRef
+	ToolPolicy    ToolPolicy
+	Args          []Arg
+	Aliases       []string
+	DiscoveredAt  time.Time
 }
 
 type Diagnostic struct {
