@@ -988,48 +988,20 @@ func explicitWebLookupInstruction(userInput string) string {
 
 	webSignals := []string{
 		"github", "gitlab", "bitbucket",
-		"docs", "documentation", "api", "sdk",
-		"release", "changelog", "version",
 		"联网", "上网", "互联网", "网上",
 		"源码", "源代码", "repo", "repository",
-		"文档", "接口", "版本", "发布",
 		"official website", "官网",
 	}
-	recencySignals := []string{
-		"latest", "newest", "recent", "today", "up-to-date",
-		"最新", "最近", "今天", "实时",
+	matched := false
+	for _, signal := range webSignals {
+		if strings.Contains(text, signal) {
+			matched = true
+			break
+		}
 	}
-	localOnlySignals := []string{
-		"当前仓库", "这个仓库", "本地仓库", "本地文件",
-		"in this repo", "this repository", "current workspace", "local workspace",
-		"search_text", "read_file", "list_files",
-		"apply_patch", "write_file", "replace_in_file",
-	}
-
-	hasWebSignals := containsAny(text, webSignals)
-	hasRecencySignals := containsAny(text, recencySignals)
-	hasLocalOnlySignals := containsAny(text, localOnlySignals)
-
-	if hasWebSignals {
-		return "This request likely needs external or fresh evidence. Start with web_search/web_fetch first, then continue with local tools if needed."
-	}
-
-	if hasLocalOnlySignals && !hasRecencySignals {
+	if !matched {
 		return ""
 	}
 
-	if hasRecencySignals {
-		return "This request likely needs external or fresh evidence. Start with web_search/web_fetch first, then continue with local tools if needed."
-	}
-
-	return "Default to an early web_search/web_fetch pass for this request, then combine with local workspace evidence as needed."
-}
-
-func containsAny(text string, signals []string) bool {
-	for _, signal := range signals {
-		if strings.Contains(text, signal) {
-			return true
-		}
-	}
-	return false
+	return "The user explicitly requested online or GitHub-source lookup. Use web_search/web_fetch first. Do not substitute local-workspace tools (list_files/read_file/search_text) for this request unless the user explicitly asks to inspect the current workspace repository."
 }

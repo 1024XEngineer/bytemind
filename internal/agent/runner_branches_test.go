@@ -209,14 +209,6 @@ func TestExplicitWebLookupInstruction(t *testing.T) {
 		t.Fatalf("expected explicit web lookup instruction, got %q", got)
 	}
 
-	if got := explicitWebLookupInstruction("给我看一下这个库最新版本和发布时间"); got == "" {
-		t.Fatalf("expected latest/version query to trigger web lookup instruction")
-	}
-
-	if got := explicitWebLookupInstruction("解释一下 Redis 和 Valkey 的区别"); got == "" {
-		t.Fatalf("expected non-local general query to trigger default web lookup instruction")
-	}
-
 	if got := explicitWebLookupInstruction("请在当前仓库用 search_text 找 TODO"); got != "" {
 		t.Fatalf("expected no explicit web lookup instruction, got %q", got)
 	}

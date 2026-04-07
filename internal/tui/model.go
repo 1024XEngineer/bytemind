@@ -9,9 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"bytemind/internal/agent"
 	"bytemind/internal/assets"
@@ -35,6 +35,7 @@ import (
 const (
 	defaultSessionLimit   = 8
 	scrollStep            = 3
+	scrollbarWidth        = 1
 	commandPageSize       = 3
 	mentionPageSize       = 5
 	maxPendingBTW         = 5
@@ -47,14 +48,6 @@ const (
 	chatTitleLabel        = "Bytemind Chat"
 	tuiTitleLabel         = "Bytemind TUI"
 	footerHintText        = "tab agents | / commands | Ctrl+F history | Ctrl+L sessions | Ctrl+C quit"
-)
-
-const (
-	chatEntryMotionFrames  = 8
-	modePulseMotionFrames  = 8
-	fastAnimationInterval  = 90 * time.Millisecond
-	slowAnimationInterval  = 220 * time.Millisecond
-	commandRevealStartRows = 0
 )
 
 type screenKind string
@@ -98,7 +91,6 @@ type chatEntry struct {
 	Meta   string
 	Body   string
 	Status string
-	Motion int
 }
 
 type commandItem struct {
@@ -140,8 +132,6 @@ type runFinishedMsg struct {
 	Err   error
 }
 
-type animationTickMsg struct{}
-
 type runFinishReason string
 
 const (
@@ -159,6 +149,14 @@ type approvalRequestMsg struct {
 type sessionsLoadedMsg struct {
 	Summaries []session.Summary
 	Err       error
+}
+
+type tokenUsagePulledMsg struct {
+	Used    int
+	Input   int
+	Output  int
+	Context int
+	Err     error
 }
 
 var commandItems = []commandItem{
@@ -215,6 +213,20 @@ type model struct {
 	mentionIndex          *mention.WorkspaceFileIndex
 	mentionRecent         map[string]int
 	mentionSeq            int
+	lastPasteAt           time.Time
+	lastInputAt           time.Time
+	inputBurstSize        int
+	chatAutoFollow        bool
+	draggingScrollbar     bool
+	scrollbarDragOffset   int
+	tokenUsage            tokenUsageComponent
+	tokenUsedTotal        int
+	tokenBudget           int
+	tokenInput            int
+	tokenOutput           int
+	tokenContext          int
+	tempEstimatedOutput   int
+	tokenEstimator        *realtimeTokenEstimator
 	promptHistoryLoaded   bool
 	promptHistoryEntries  []history.PromptEntry
 	promptSearchMode      promptSearchMode
@@ -227,14 +239,6 @@ type model struct {
 	orphanedImages        map[llm.AssetID]time.Time
 	nextImageID           int
 	clipboard             clipboardImageReader
-	lastPasteAt           time.Time
-	lastInputAt           time.Time
-	inputBurstSize        int
-	chatAutoFollow        bool
-	reduceMotion          bool
-	commandRevealRows     int
-	modePulseFrames       int
-	motionTick            int
 	runCancel             context.CancelFunc
 	pendingBTW            []string
 	interrupting          bool
@@ -246,7 +250,6 @@ type model struct {
 
 func newModel(opts Options) model {
 	async := make(chan tea.Msg, 128)
-	reduceMotion := resolveReduceMotion()
 
 	input := textarea.New()
 	input.Placeholder = "Ask Bytemind to inspect, change, or verify this workspace..."
@@ -272,7 +275,6 @@ func newModel(opts Options) model {
 	planVP.MouseWheelDelta = scrollStep
 
 	chatItems, toolRuns := rebuildSessionTimeline(opts.Session)
-	summaries, _, _ := opts.Store.List(defaultSessionLimit)
 
 	opts.Runner.SetObserver(agent.ObserverFunc(func(event agent.Event) {
 		async <- agentEventMsg{Event: event}
@@ -299,7 +301,7 @@ func newModel(opts Options) model {
 		chatItems:          chatItems,
 		toolRuns:           toolRuns,
 		plan:               copyPlanState(opts.Session.Plan),
-		sessions:           summaries,
+		sessions:           nil,
 		sessionLimit:       defaultSessionLimit,
 		screen:             initialScreen(opts.Session),
 		mode:               toAgentMode(opts.Session.Mode),
@@ -308,8 +310,10 @@ func newModel(opts Options) model {
 		phase:              "idle",
 		llmConnected:       true,
 		chatAutoFollow:     true,
-		reduceMotion:       reduceMotion,
 		mentionIndex:       mention.NewWorkspaceFileIndex(opts.Workspace),
+		tokenUsage:         newTokenUsageComponent(),
+		tokenBudget:        max(1, opts.Config.TokenQuota),
+		tokenEstimator:     newRealtimeTokenEstimator(opts.Config.Provider.Model),
 		inputImageRefs:     make(map[int]llm.AssetID, 8),
 		inputImageMentions: make(map[string]llm.AssetID, 8),
 		orphanedImages:     make(map[llm.AssetID]time.Time, 8),
@@ -323,9 +327,9 @@ func newModel(opts Options) model {
 		m.phase = "error"
 		m.initializeStartupGuide()
 	}
-	if reduceMotion {
-		m.commandRevealRows = commandPageSize
-	}
+	m.restoreTokenUsageFromSession(opts.Session)
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 	m.ensureSessionImageAssets()
 	m.syncInputStyle()
 	m.syncInputOverlays()
@@ -336,7 +340,13 @@ func newModel(opts Options) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, waitForAsync(m.async), animationTickCmd(m.nextAnimationTickInterval()))
+	return tea.Batch(
+		textarea.Blink,
+		waitForAsync(m.async),
+		m.tokenUsage.tickCmd(),
+		m.loadSessionsCmd(),
+		m.fetchRemoteTokenUsageCmd(),
+	)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -355,11 +365,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateThinkingCard()
 		m.refreshViewport()
 		return m, cmd
-	case animationTickMsg:
-		if m.advanceAnimations() {
-			m.refreshViewport()
-		}
-		return m, animationTickCmd(m.nextAnimationTickInterval())
 	case agentEventMsg:
 		m.handleAgentEvent(msg.Event)
 		m.refreshViewport()
@@ -369,7 +374,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitForAsync(m.async)
 		}
 		m.busy = false
-		m.streamingIndex = -1
 		m.runCancel = nil
 		m.activeRunID = 0
 		m.interruptSafe = false
@@ -395,18 +399,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendingBTW = nil
 		switch finishReason {
 		case runFinishReasonCompleted:
+			if !m.shouldKeepStreamingIndexOnRunFinished() {
+				m.streamingIndex = -1
+			}
 			m.statusNote = "Ready."
 			m.phase = "idle"
 		case runFinishReasonCanceled:
+			m.streamingIndex = -1
 			m.statusNote = "Run canceled."
 			m.phase = "idle"
 			m.llmConnected = true
 		case runFinishReasonFailed:
+			m.streamingIndex = -1
 			m.statusNote = "Run failed: " + msg.Err.Error()
 			m.phase = "error"
 			m.llmConnected = false
 			m.failLatestAssistant(msg.Err.Error())
 		default:
+			m.streamingIndex = -1
 			m.statusNote = "Ready."
 			m.phase = "idle"
 		}
@@ -429,6 +439,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case tokenUsagePulledMsg:
+		if msg.Err != nil {
+			return m, nil
+		}
+		// Prefer remotely pulled account usage, but never reduce live local counters.
+		m.tokenUsedTotal = max(m.tokenUsedTotal, msg.Used)
+		m.tokenInput = max(m.tokenInput, msg.Input)
+		m.tokenOutput = max(m.tokenOutput, msg.Output)
+		m.tokenContext = max(m.tokenContext, msg.Context)
+		_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+		m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
+		return m, nil
+	case tokenMonitorTickMsg:
+		cmd, _ := m.tokenUsage.Update(msg)
+		return m, cmd
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 	case tea.KeyMsg:
@@ -449,7 +474,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) shouldKeepStreamingIndexOnRunFinished() bool {
+	if m.streamingIndex < 0 || m.streamingIndex >= len(m.chatItems) {
+		return false
+	}
+	item := m.chatItems[m.streamingIndex]
+	if item.Kind != "assistant" {
+		return false
+	}
+	status := strings.TrimSpace(strings.ToLower(item.Status))
+	return status == "streaming" || status == "thinking" || status == "pending"
+}
+
 func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action == tea.MouseActionRelease {
+		m.draggingScrollbar = false
+	}
 	if m.helpOpen || m.commandOpen || m.mentionOpen || m.promptSearchOpen || m.approval != nil {
 		return m, nil
 	}
@@ -458,6 +498,36 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.screen == screenChat && m.sessionsOpen {
 		return m, nil
+	}
+	if cmd, consumed := m.tokenUsage.Update(msg); consumed {
+		return m, cmd
+	}
+	if m.screen == screenChat {
+		if msg.Action == tea.MouseActionMotion && m.draggingScrollbar {
+			m.dragScrollbarTo(msg.Y)
+			m.chatAutoFollow = false
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			trackX, trackTop, trackBottom, ok := m.scrollbarTrackBounds()
+			if ok && msg.X == trackX && msg.Y >= trackTop && msg.Y <= trackBottom {
+				thumbTop, thumbHeight, _, visible := m.scrollbarLayout(m.viewport.Height, m.viewport.TotalLineCount(), m.viewport.YOffset)
+				if visible && thumbHeight > 0 {
+					absoluteThumbTop := trackTop + thumbTop
+					absoluteThumbBottom := absoluteThumbTop + thumbHeight - 1
+					if msg.Y >= absoluteThumbTop && msg.Y <= absoluteThumbBottom {
+						m.scrollbarDragOffset = msg.Y - absoluteThumbTop
+					} else {
+						// Click on track should jump close to that point, then start drag.
+						m.scrollbarDragOffset = thumbHeight / 2
+						m.dragScrollbarTo(msg.Y)
+					}
+					m.draggingScrollbar = true
+					m.chatAutoFollow = false
+					return m, nil
+				}
+			}
+		}
 	}
 	if m.mouseOverInput(msg.Y) {
 		switch msg.Button {
@@ -525,6 +595,17 @@ func normalizeKeyName(key string) string {
 	key = strings.ToLower(strings.TrimSpace(key))
 	replacer := strings.NewReplacer(" ", "", "-", "", "_", "")
 	return replacer.Replace(key)
+}
+
+func isInputNewlineKey(msg tea.KeyMsg) bool {
+	if msg.Type == tea.KeyCtrlJ || normalizeKeyName(msg.String()) == "ctrl+j" {
+		return true
+	}
+	if msg.Type == tea.KeyEnter && msg.Alt {
+		return true
+	}
+	key := normalizeKeyName(msg.String())
+	return key == "shift+enter" || key == "shift+return"
 }
 
 func isPageUpKey(msg tea.KeyMsg) bool {
@@ -722,6 +803,18 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if isInputNewlineKey(msg) {
+		before := m.input.Value()
+		var cmd tea.Cmd
+		// Preserve multiline input shortcuts without triggering submit.
+		m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if m.input.Value() != before {
+			m.handleInputMutation(before, m.input.Value(), msg.String())
+			m.syncInputOverlays()
+		}
+		return m, cmd
+	}
+
 	switch msg.String() {
 	case "ctrl+l":
 		if !m.busy {
@@ -753,28 +846,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if msg.Type == tea.KeyEnter && msg.Alt {
-		before := m.input.Value()
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		if m.input.Value() != before {
-			m.handleInputMutation(before, m.input.Value(), "alt+enter")
-			m.syncInputOverlays()
-		}
-		return m, cmd
-	}
-
 	if msg.String() == "enter" {
-		if !m.lastPasteAt.IsZero() && time.Since(m.lastPasteAt) < pasteSubmitGuard {
-			before := m.input.Value()
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
-			if m.input.Value() != before {
-				m.handleInputMutation(before, m.input.Value(), "paste-enter")
-				m.syncInputOverlays()
-			}
-			return m, cmd
-		}
 		rawValue := m.input.Value()
 		value := strings.TrimSpace(rawValue)
 		if m.startupGuide.Active && !strings.HasPrefix(value, "/") {
@@ -1108,11 +1180,6 @@ func (m *model) bindMentionImageAsset(path string, assetID llm.AssetID) {
 
 func (m *model) openCommandPalette() {
 	m.commandOpen = true
-	if m.reduceMotion {
-		m.commandRevealRows = commandPageSize
-	} else {
-		m.commandRevealRows = commandRevealStartRows
-	}
 	m.commandCursor = 0
 	m.setInputValue("/")
 	m.closeMentionPalette()
@@ -1245,11 +1312,6 @@ func (m *model) toggleMode() {
 		m.mode = modeBuild
 		m.statusNote = "Switched to Build mode. Execution still requires confirmation."
 	}
-	if m.reduceMotion {
-		m.modePulseFrames = 0
-	} else {
-		m.modePulseFrames = modePulseMotionFrames
-	}
 	if m.sess != nil {
 		m.sess.Mode = planpkg.NormalizeMode(string(m.mode))
 		m.sess.Plan = copyPlanState(m.plan)
@@ -1265,7 +1327,6 @@ func (m *model) toggleMode() {
 
 func (m *model) closeCommandPalette() {
 	m.commandOpen = false
-	m.commandRevealRows = 0
 	m.commandCursor = 0
 	m.closeMentionPalette()
 	m.input.Reset()
@@ -1458,10 +1519,13 @@ func (m model) submitBTW(value string) (tea.Model, tea.Cmd) {
 
 func (m *model) handleAgentEvent(event agent.Event) {
 	switch event.Type {
+	case agent.EventRunStarted:
+		m.tempEstimatedOutput = 0
 	case agent.EventAssistantDelta:
 		m.phase = "responding"
 		m.statusNote = "LLM is responding..."
 		m.llmConnected = true
+		m.applyEstimatedUsage(event.Content)
 		m.appendAssistantDelta(event.Content)
 	case agent.EventAssistantMessage:
 		m.llmConnected = true
@@ -1473,12 +1537,12 @@ func (m *model) handleAgentEvent(event agent.Event) {
 		m.appendChat(chatEntry{
 			Kind:   "tool",
 			Title:  "Tool Call | " + event.ToolName,
-			Body:   "params: " + summarizeArgs(event.ToolArguments),
+			Body:   "",
 			Status: "running",
 		})
 		m.toolRuns = append(m.toolRuns, toolRun{
 			Name:    event.ToolName,
-			Summary: "params: " + summarizeArgs(event.ToolArguments),
+			Summary: "Tool call started.",
 			Status:  "running",
 		})
 		m.statusNote = "Running tool: " + event.ToolName
@@ -1511,12 +1575,57 @@ func (m *model) handleAgentEvent(event agent.Event) {
 			m.phase = "plan"
 		}
 		m.statusNote = fmt.Sprintf("Plan updated with %d step(s).", len(m.plan.Steps))
+	case agent.EventUsageUpdated:
+		m.applyUsage(event.Usage)
 	case agent.EventRunFinished:
 		if strings.TrimSpace(event.Content) != "" {
 			m.statusNote = "Run finished."
 		}
 		m.phase = "idle"
 	}
+}
+
+func (m *model) applyUsage(usage llm.Usage) {
+	input := max(0, usage.InputTokens)
+	output := max(0, usage.OutputTokens)
+	context := max(0, usage.ContextTokens)
+	used := usage.TotalTokens
+	if used == 0 {
+		used = input + output + context
+	}
+	used = max(0, used)
+	if used == 0 && input == 0 && output == 0 && context == 0 {
+		return
+	}
+
+	// Replace provisional stream estimate with provider-confirmed usage.
+	if m.tempEstimatedOutput > 0 {
+		m.tokenUsedTotal = max(0, m.tokenUsedTotal-m.tempEstimatedOutput)
+		m.tokenOutput = max(0, m.tokenOutput-m.tempEstimatedOutput)
+	}
+	m.tempEstimatedOutput = 0
+
+	m.tokenUsedTotal += used
+	m.tokenInput += input
+	m.tokenOutput += output
+	m.tokenContext += context
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
+}
+
+func (m *model) applyEstimatedUsage(delta string) {
+	if strings.TrimSpace(delta) == "" {
+		return
+	}
+	estimated := estimateDeltaTokens(m.tokenEstimator, delta)
+	if estimated <= 0 {
+		return
+	}
+	m.tempEstimatedOutput += estimated
+	m.tokenUsedTotal += estimated
+	m.tokenOutput += estimated
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 }
 
 func (m *model) appendAssistantDelta(delta string) {
@@ -1529,13 +1638,17 @@ func (m *model) appendAssistantDelta(delta string) {
 			m.chatItems[m.streamingIndex].Status == "thinking" ||
 			current == m.thinkingText() {
 			m.chatItems[m.streamingIndex].Body = delta
+		} else if strings.HasPrefix(delta, current) {
+			m.chatItems[m.streamingIndex].Body = delta
+		} else if strings.HasSuffix(current, delta) {
+			// Some providers may repeat the latest chunk; ignore it.
 		} else {
-			m.chatItems[m.streamingIndex].Body = mergeAssistantDelta(current, delta)
+			m.chatItems[m.streamingIndex].Body += delta
 		}
 		m.applyAssistantDeltaPresentation(&m.chatItems[m.streamingIndex])
 		return
 	}
-	m.appendChat(chatEntry{
+	m.chatItems = append(m.chatItems, chatEntry{
 		Kind:   "assistant",
 		Title:  assistantLabel,
 		Body:   delta,
@@ -1549,6 +1662,11 @@ func (m *model) applyAssistantDeltaPresentation(item *chatEntry) {
 	if item == nil || item.Kind != "assistant" {
 		return
 	}
+	if shouldRenderThinkingFromDelta(item.Body) {
+		item.Title = thinkingLabel
+		item.Status = "thinking"
+		return
+	}
 	item.Title = assistantLabel
 	item.Status = "streaming"
 }
@@ -1560,7 +1678,11 @@ func (m *model) finishAssistantMessage(content string) {
 	}
 	if m.streamingIndex >= 0 && m.streamingIndex < len(m.chatItems) {
 		current := &m.chatItems[m.streamingIndex]
-		if current.Kind != "assistant" {
+		if current.Status == "thinking" &&
+			strings.TrimSpace(current.Body) != "" &&
+			current.Body != m.thinkingText() {
+			current.Title = thinkingLabel
+			current.Status = "thinking"
 			m.streamingIndex = -1
 		} else {
 			current.Title = assistantLabel
@@ -1577,65 +1699,12 @@ func (m *model) finishAssistantMessage(content string) {
 			return
 		}
 	}
-	m.appendChat(chatEntry{
+	m.chatItems = append(m.chatItems, chatEntry{
 		Kind:   "assistant",
 		Title:  assistantLabel,
 		Body:   content,
 		Status: "final",
 	})
-}
-
-func mergeAssistantDelta(current, delta string) string {
-	if delta == "" {
-		return current
-	}
-	if current == "" {
-		return delta
-	}
-	if strings.HasPrefix(delta, current) {
-		return delta
-	}
-	if strings.HasPrefix(current, delta) ||
-		strings.HasSuffix(current, delta) ||
-		strings.Contains(current, delta) {
-		return current
-	}
-	if strings.Contains(delta, current) {
-		return delta
-	}
-	if prefix := commonPrefixLen(current, delta); prefix >= len(current)*3/4 && len(delta) > len(current) {
-		return delta
-	}
-	if overlap := suffixPrefixOverlap(current, delta); overlap > 0 {
-		return current + delta[overlap:]
-	}
-	return current + delta
-}
-
-func suffixPrefixOverlap(left, right string) int {
-	max := len(left)
-	if len(right) < max {
-		max = len(right)
-	}
-	for n := max; n > 0; n-- {
-		if strings.HasSuffix(left, right[:n]) {
-			return n
-		}
-	}
-	return 0
-}
-
-func commonPrefixLen(left, right string) int {
-	max := len(left)
-	if len(right) < max {
-		max = len(right)
-	}
-	for i := 0; i < max; i++ {
-		if left[i] != right[i] {
-			return i
-		}
-	}
-	return max
 }
 
 func (m *model) appendChat(item chatEntry) {
@@ -1756,6 +1825,7 @@ func (m *model) failLatestAssistant(errText string) {
 
 func (m *model) refreshViewport() {
 	m.syncViewportSize()
+	m.syncTokenUsageBounds()
 	chatOffset := m.viewport.YOffset
 	keepChatBottom := m.chatAutoFollow || m.viewport.AtBottom()
 	m.viewport.SetContent(m.renderConversation())
@@ -1769,6 +1839,24 @@ func (m *model) refreshViewport() {
 	planOffset := m.planView.YOffset
 	m.planView.SetContent(m.planPanelContent(max(16, m.planView.Width)))
 	m.planView.SetYOffset(planOffset)
+}
+
+func (m *model) syncTokenUsageBounds() {
+	if m.screen != screenChat || m.width <= 0 || m.height <= 0 {
+		m.tokenUsage.SetBounds(0, 0, 0, 0)
+		return
+	}
+	width := max(24, m.chatPanelInnerWidth())
+	badge := strings.TrimSpace(m.renderTokenBadge(width))
+	if badge == "" {
+		m.tokenUsage.SetBounds(0, 0, 0, 0)
+		return
+	}
+	badgeW := lipgloss.Width(badge)
+	badgeH := lipgloss.Height(badge)
+	x := panelStyle.GetHorizontalFrameSize()/2 + max(0, width-badgeW-1)
+	y := panelStyle.GetVerticalFrameSize() / 2
+	m.tokenUsage.SetBounds(x, y, badgeW, badgeH)
 }
 
 func (m *model) syncLayoutForCurrentScreen() {
@@ -1816,6 +1904,10 @@ func (m model) View() string {
 	}
 }
 
+func (m *model) SetUsage(used, total int) tea.Cmd {
+	return m.tokenUsage.SetUsage(used, total)
+}
+
 func (m model) renderConversation() string {
 	if len(m.chatItems) == 0 {
 		return mutedStyle.Render("No messages yet. Start with an instruction like \"analyze this repo\" or \"implement a TUI shell\".")
@@ -1858,13 +1950,119 @@ func (m *model) syncViewportSize() {
 	m.planView.Width = 0
 	m.planView.Height = 0
 	contentHeight := max(3, panelInnerHeight)
-	m.viewport.Width = m.conversationPanelWidth()
+	m.viewport.Width = max(8, m.conversationPanelWidth()-scrollbarWidth)
 	m.viewport.Height = contentHeight
 }
 
 func (m model) renderMainPanel() string {
-	statusBar := m.renderStatusBar()
-	return lipgloss.JoinVertical(lipgloss.Left, statusBar, "", m.viewport.View())
+	width := max(24, m.chatPanelInnerWidth())
+	badge := strings.TrimSpace(m.renderTokenBadge(width))
+	conversation := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		m.viewport.View(),
+		m.renderScrollbar(m.viewport.Height, m.viewport.TotalLineCount(), m.viewport.YOffset),
+	)
+	if badge == "" {
+		return lipgloss.JoinVertical(lipgloss.Left, m.renderStatusBar(), "", conversation)
+	}
+
+	badgeW := lipgloss.Width(badge)
+	statusW := max(12, width-badgeW-2)
+	status := m.renderStatusBarWithWidth(statusW)
+	header := lipgloss.JoinHorizontal(lipgloss.Top, status, "  ", badge)
+
+	parts := []string{header}
+	if popup := strings.TrimSpace(m.tokenUsage.PopupView()); popup != "" {
+		parts = append(parts, lipgloss.PlaceHorizontal(width, lipgloss.Right, popup))
+	}
+	parts = append(parts, "", conversation)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+func (m model) renderTokenBadge(width int) string {
+	if width < 80 {
+		return m.tokenUsage.CompactView()
+	}
+	return m.tokenUsage.View()
+}
+
+func (m model) renderScrollbar(viewHeight, contentHeight, currentOffset int) string {
+	thumbTop, thumbHeight, _, visible := m.scrollbarLayout(viewHeight, contentHeight, currentOffset)
+	if !visible {
+		return ""
+	}
+	trackStyle := scrollbarTrackStyle.Copy().Background(lipgloss.Color("#1B1D22"))
+	thumbStyle := scrollbarThumbIdleStyle.Copy().Background(lipgloss.Color("#C2C7CF"))
+	if m.draggingScrollbar {
+		thumbStyle = scrollbarThumbActiveStyle.Copy().Background(lipgloss.Color("#E5E7EB"))
+	}
+	lines := make([]string, 0, viewHeight)
+	for row := 0; row < viewHeight; row++ {
+		if row >= thumbTop && row < thumbTop+thumbHeight {
+			lines = append(lines, thumbStyle.Render(" "))
+			continue
+		}
+		lines = append(lines, trackStyle.Render(" "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) scrollbarLayout(viewHeight, contentHeight, currentOffset int) (thumbTop, thumbHeight, maxOffset int, visible bool) {
+	if viewHeight <= 0 {
+		return 0, 0, 0, false
+	}
+	if contentHeight <= 0 {
+		contentHeight = viewHeight
+	}
+	maxOffset = max(0, contentHeight-viewHeight)
+	if maxOffset == 0 {
+		return 0, viewHeight, 0, true
+	}
+
+	thumbHeight = (viewHeight*viewHeight + contentHeight/2) / contentHeight
+	thumbHeight = clamp(thumbHeight, 1, viewHeight)
+
+	trackRange := max(0, viewHeight-thumbHeight)
+	if trackRange == 0 {
+		return 0, thumbHeight, maxOffset, true
+	}
+	offset := clamp(currentOffset, 0, maxOffset)
+	thumbTop = (offset*trackRange + maxOffset/2) / maxOffset
+	thumbTop = clamp(thumbTop, 0, trackRange)
+	return thumbTop, thumbHeight, maxOffset, true
+}
+
+func (m model) scrollbarTrackBounds() (x, top, bottom int, ok bool) {
+	if m.screen != screenChat || m.viewport.Width <= 0 || m.viewport.Height <= 0 {
+		return 0, 0, 0, false
+	}
+	panelTop := panelStyle.GetVerticalFrameSize() / 2
+	panelLeft := panelStyle.GetHorizontalFrameSize() / 2
+	mainPanelHeight := lipgloss.Height(m.renderMainPanel())
+	viewportTop := panelTop + max(0, mainPanelHeight-m.viewport.Height)
+	viewportBottom := viewportTop + m.viewport.Height - 1
+	scrollbarX := panelLeft + m.viewport.Width
+	return scrollbarX, viewportTop, viewportBottom, true
+}
+
+func (m *model) dragScrollbarTo(mouseY int) {
+	_, trackTop, _, ok := m.scrollbarTrackBounds()
+	if !ok {
+		return
+	}
+	_, thumbHeight, maxOffset, visible := m.scrollbarLayout(m.viewport.Height, m.viewport.TotalLineCount(), m.viewport.YOffset)
+	if !visible || maxOffset == 0 {
+		return
+	}
+	trackRange := max(0, m.viewport.Height-thumbHeight)
+	if trackRange == 0 {
+		m.viewport.SetYOffset(0)
+		return
+	}
+	desiredTop := mouseY - trackTop - m.scrollbarDragOffset
+	desiredTop = clamp(desiredTop, 0, trackRange)
+	offset := (desiredTop*maxOffset + trackRange/2) / trackRange
+	m.viewport.SetYOffset(clamp(offset, 0, maxOffset))
 }
 
 func (m model) renderLanding() string {
@@ -2010,7 +2208,7 @@ func (m model) renderActiveSkillBanner() string {
 		return ""
 	}
 
-	line := "\u8930\u64b3\u58a0\u93b6\u20ac\u9473? " + name
+	line := "Active skill: " + name
 	if len(m.sess.ActiveSkill.Args) > 0 {
 		keys := make([]string, 0, len(m.sess.ActiveSkill.Args))
 		for key := range m.sess.ActiveSkill.Args {
@@ -2029,21 +2227,20 @@ func (m model) renderActiveSkillBanner() string {
 }
 
 func (m model) renderStatusBar() string {
-	width := max(24, m.chatPanelInnerWidth())
+	return m.renderStatusBarWithWidth(max(24, m.chatPanelInnerWidth()))
+}
+
+func (m model) renderStatusBarWithWidth(width int) string {
 	stepTitle := currentOrNextStepTitle(m.plan)
 	if stepTitle == "" {
 		stepTitle = "-"
 	}
-	pulsing := m.modePulseFrames > 0 && !m.reduceMotion
 	left := strings.Join([]string{
 		"Mode: " + strings.ToUpper(string(m.mode)),
 		"Phase: " + m.currentPhaseLabel(),
 		"Step: " + stepTitle,
 		"Skill: " + m.currentSkillLabel(),
 	}, "  |  ")
-	if pulsing {
-		left = ">> " + left
-	}
 	right := strings.Join([]string{
 		fmt.Sprintf("%d msgs", len(m.chatItems)),
 		"Session: " + m.currentSessionLabel(),
@@ -2052,15 +2249,7 @@ func (m model) renderStatusBar() string {
 	}, "  |  ")
 
 	line := m.renderTopInfoLine(left, right, width)
-	style := statusBarStyle.Width(width)
-	if pulsing {
-		if m.modePulseFrames%2 == 0 {
-			style = style.Copy().Bold(true).Foreground(colorPanel).Background(colorAccent)
-		} else {
-			style = style.Copy().Bold(true).Foreground(colorPanel).Background(colorThinking)
-		}
-	}
-	return style.Render(line)
+	return statusBarStyle.Width(width).Render(line)
 }
 
 func (m model) renderTopInfoLine(left, right string, width int) string {
@@ -2543,19 +2732,7 @@ func (m model) renderCommandPalette() string {
 	nameWidth := min(26, max(14, width/4))
 	descWidth := max(12, width-commandPaletteStyle.GetHorizontalFrameSize()-nameWidth-4)
 	rows := make([]string, 0, commandPageSize+1)
-	visibleRows := commandPageSize
-	if m.commandOpen && !m.reduceMotion {
-		visibleRows = min(commandPageSize, max(commandRevealStartRows, m.commandRevealRows))
-	}
-	if visibleRows <= 0 {
-		return commandPaletteStyle.Width(width).Render(
-			commandPaletteMetaStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render("Opening command palette..."),
-		)
-	}
 	for _, item := range m.visibleCommandItemsPage() {
-		if len(rows) >= visibleRows {
-			break
-		}
 		rowStyle := commandPaletteRowStyle
 		nameStyle := commandPaletteNameStyle
 		descStyle := commandPaletteDescStyle
@@ -2818,6 +2995,9 @@ func (m *model) newSession() error {
 	m.streamingIndex = -1
 	m.statusNote = "Started a new session."
 	m.chatAutoFollow = true
+	m.restoreTokenUsageFromSession(next)
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 	m.inputImageRefs = make(map[int]llm.AssetID, 8)
 	m.inputImageMentions = make(map[string]llm.AssetID, 8)
 	m.orphanedImages = make(map[llm.AssetID]time.Time, 8)
@@ -2856,6 +3036,9 @@ func (m *model) resumeSession(prefix string) error {
 	m.streamingIndex = -1
 	m.statusNote = "Resumed session " + shortID(next.ID)
 	m.chatAutoFollow = true
+	m.restoreTokenUsageFromSession(next)
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 	m.inputImageRefs = make(map[int]llm.AssetID, 8)
 	m.inputImageMentions = make(map[string]llm.AssetID, 8)
 	m.orphanedImages = make(map[llm.AssetID]time.Time, 8)
@@ -2886,8 +3069,73 @@ func (m model) startRunCmd(runCtx context.Context, runID int, prompt agent.RunPr
 
 func (m model) loadSessionsCmd() tea.Cmd {
 	return func() tea.Msg {
+		if m.store == nil {
+			return sessionsLoadedMsg{}
+		}
 		summaries, _, err := m.store.List(m.sessionLimit)
 		return sessionsLoadedMsg{Summaries: summaries, Err: err}
+	}
+}
+
+func (m model) fetchRemoteTokenUsageCmd() tea.Cmd {
+	return func() tea.Msg {
+		usage, err := fetchCurrentMonthUsage(m.cfg)
+		if err != nil {
+			return tokenUsagePulledMsg{Err: err}
+		}
+		return tokenUsagePulledMsg{
+			Used:    usage.Used,
+			Input:   usage.Input,
+			Output:  usage.Output,
+			Context: usage.Context,
+		}
+	}
+}
+
+func (m *model) restoreTokenUsageFromSession(sess *session.Session) {
+	m.tempEstimatedOutput = 0
+	m.tokenUsedTotal = 0
+	m.tokenInput = 0
+	m.tokenOutput = 0
+	m.tokenContext = 0
+
+	countedAny := false
+	if m.store != nil {
+		summaries, _, err := m.store.List(0)
+		if err == nil {
+			for _, summary := range summaries {
+				if !sameWorkspace(m.workspace, summary.Workspace) {
+					continue
+				}
+				stored, loadErr := m.store.Load(summary.ID)
+				if loadErr != nil || stored == nil {
+					continue
+				}
+				m.accumulateTokenUsage(stored.Messages)
+				countedAny = true
+			}
+		}
+	}
+
+	// Fallback for tests or when store data is unavailable.
+	if !countedAny && sess != nil {
+		m.accumulateTokenUsage(sess.Messages)
+	}
+}
+
+func (m *model) accumulateTokenUsage(messages []llm.Message) {
+	for _, msg := range messages {
+		if msg.Usage == nil {
+			continue
+		}
+		used := msg.Usage.TotalTokens
+		if used <= 0 {
+			used = msg.Usage.InputTokens + msg.Usage.OutputTokens + msg.Usage.ContextTokens
+		}
+		m.tokenUsedTotal += max(0, used)
+		m.tokenInput += max(0, msg.Usage.InputTokens)
+		m.tokenOutput += max(0, msg.Usage.OutputTokens)
+		m.tokenContext += max(0, msg.Usage.ContextTokens)
 	}
 }
 
@@ -2921,7 +3169,7 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 				summary, lines, status := summarizeTool(name, part.ToolResult.Content)
 				items = append(items, chatEntry{
 					Kind:   "tool",
-					Title:  "Tool | " + name,
+					Title:  "Tool Result | " + name,
 					Body:   joinSummary(summary, lines),
 					Status: status,
 				})
@@ -2946,7 +3194,7 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 			summary, lines, status := summarizeTool(name, message.Content)
 			items = append(items, chatEntry{
 				Kind:   "tool",
-				Title:  "Tool | " + name,
+				Title:  "Tool Result | " + name,
 				Body:   joinSummary(summary, lines),
 				Status: status,
 			})
@@ -2962,7 +3210,7 @@ func renderChatCard(item chatEntry, width int) string {
 	case "user":
 		border = chatUserStyle
 	case "tool":
-		border = chatToolStyle
+		border = chatAssistantStyle
 	case "system":
 		border = chatSystemStyle
 	default:
@@ -2971,12 +3219,28 @@ func renderChatCard(item chatEntry, width int) string {
 		}
 	}
 	contentWidth := max(8, width-border.GetHorizontalFrameSize())
-	return border.Width(contentWidth).Render(renderChatSection(item, contentWidth))
+	rendered := border.Width(contentWidth).Render(renderChatSection(item, contentWidth))
+	if item.Kind != "tool" {
+		return rendered
+	}
+
+	sep := lipgloss.NewStyle().Foreground(colorTool).Render("│")
+	lines := strings.Split(rendered, "\n")
+	for i := range lines {
+		if strings.TrimSpace(lines[i]) == "" {
+			lines[i] = "  " + lines[i]
+			continue
+		}
+		lines[i] = sep + " " + lines[i]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func renderChatSection(item chatEntry, width int) string {
 	title := cardTitleStyle.Foreground(colorAccent)
 	bodyStyle := chatBodyStyle
+	toolCallTitle := cardTitleStyle.Foreground(lipgloss.Color("#E5B567")).Bold(true)
+	toolResultTitle := cardTitleStyle.Foreground(lipgloss.Color("#7AC7FF")).Bold(true)
 	status := item.Status
 	displayTitle := item.Title
 	if status == "final" {
@@ -2986,8 +3250,13 @@ func renderChatSection(item chatEntry, width int) string {
 	case "user":
 		title = cardTitleStyle.Foreground(colorUser)
 	case "tool":
-		title = cardTitleStyle.Foreground(colorMuted).Faint(true)
+		if strings.HasPrefix(displayTitle, "Tool Result | ") {
+			title = toolResultTitle
+		} else {
+			title = toolCallTitle
+		}
 		bodyStyle = toolBodyStyle
+		status = ""
 	case "system":
 		title = cardTitleStyle.Foreground(colorMuted)
 	default:
@@ -3008,6 +3277,9 @@ func renderChatSection(item chatEntry, width int) string {
 	head := lipgloss.NewStyle().
 		Width(width).
 		Render(headContent)
+	if item.Kind == "tool" && strings.TrimSpace(item.Body) == "" {
+		return head
+	}
 	body := bodyStyle.Width(width).Render(formatChatBody(item, width))
 	return lipgloss.JoinVertical(lipgloss.Left, head, body)
 }
@@ -3052,7 +3324,7 @@ func formatChatBody(item chatEntry, width int) string {
 	if item.Kind != "assistant" {
 		return strings.TrimRight(wrapPlainText(text, width), "\n")
 	}
-	return strings.TrimRight(renderAssistantBody(tidyAssistantSpacing(text), width), "\n")
+	return strings.TrimRight(renderAssistantBody(text, width), "\n")
 }
 
 func wrapPlainText(text string, width int) string {
@@ -3062,18 +3334,71 @@ func wrapPlainText(text string, width int) string {
 
 	lines := strings.Split(text, "\n")
 	wrapped := make([]string, 0, len(lines))
-	style := lipgloss.NewStyle().MaxWidth(width)
 	for _, line := range lines {
 		if line == "" {
 			wrapped = append(wrapped, "")
 			continue
 		}
-		// Keep plain text within the viewport width before rendering the card.
-		for _, part := range strings.Split(style.Render(runewidth.Wrap(line, width)), "\n") {
+		for _, part := range wrapLineSmart(line, width) {
 			wrapped = append(wrapped, strings.TrimRight(part, " "))
 		}
 	}
 	return strings.Join(wrapped, "\n")
+}
+
+func wrapLineSmart(line string, width int) []string {
+	if width <= 0 {
+		return []string{line}
+	}
+	runes := []rune(line)
+	if len(runes) == 0 {
+		return []string{""}
+	}
+
+	out := make([]string, 0, 4)
+	start := 0
+	for start < len(runes) {
+		curWidth := 0
+		end := start
+		lastSpaceEnd := -1
+
+		for i := start; i < len(runes); i++ {
+			rw := runewidth.RuneWidth(runes[i])
+			if rw < 0 {
+				rw = 0
+			}
+			if curWidth+rw > width {
+				break
+			}
+			curWidth += rw
+			end = i + 1
+			if unicode.IsSpace(runes[i]) {
+				lastSpaceEnd = i + 1
+			}
+		}
+
+		if end == start {
+			// Fallback for extra-wide single rune.
+			end = start + 1
+		} else if lastSpaceEnd > start && end < len(runes) {
+			end = lastSpaceEnd
+		}
+
+		segment := strings.TrimRightFunc(string(runes[start:end]), unicode.IsSpace)
+		if segment == "" {
+			segment = string(runes[start:end])
+		}
+		out = append(out, segment)
+		start = end
+		for start < len(runes) && unicode.IsSpace(runes[start]) {
+			start++
+		}
+	}
+
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
 }
 
 func tidyAssistantSpacing(text string) string {
@@ -3138,55 +3463,191 @@ func renderAssistantBody(text string, width int) string {
 	lines := strings.Split(text, "\n")
 	out := make([]string, 0, len(lines))
 	inCodeBlock := false
-	codeLines := make([]string, 0, 8)
-
-	flushCodeBlock := func() {
-		if len(codeLines) == 0 {
-			out = append(out, codeStyle.Width(max(12, width)).Render(""))
-			return
-		}
-		out = append(out, codeStyle.Width(max(12, width)).Render(strings.Join(codeLines, "\n")))
-		codeLines = codeLines[:0]
-	}
+	prevBlank := true
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") {
-			if inCodeBlock {
-				flushCodeBlock()
-				inCodeBlock = false
-			} else {
-				inCodeBlock = true
+			inCodeBlock = !inCodeBlock
+			continue
+		}
+
+		plainLine := line
+		if !inCodeBlock {
+			plainLine = normalizeAssistantMarkdownLine(line)
+		}
+		if strings.TrimSpace(plainLine) == "" {
+			if !prevBlank {
+				out = append(out, "")
 			}
+			prevBlank = true
 			continue
 		}
-
-		if inCodeBlock {
-			codeLines = append(codeLines, line)
-			continue
-		}
-
-		switch {
-		case trimmed == "":
-			out = append(out, "")
-		case isMarkdownHeading(trimmed):
-			out = append(out, renderMarkdownHeading(trimmed, width))
-		case isMarkdownListItem(trimmed):
-			out = append(out, renderMarkdownListItem(line, width))
-		case strings.HasPrefix(trimmed, ">"):
-			out = append(out, renderMarkdownQuote(trimmed, width))
-		case looksLikeMarkdownTable(trimmed):
-			out = append(out, tableLineStyle.Render(trimmed))
-		default:
-			out = append(out, wrapPlainText(line, width))
-		}
-	}
-
-	if inCodeBlock {
-		flushCodeBlock()
+		out = append(out, wrapPlainText(plainLine, width))
+		prevBlank = false
 	}
 
 	return strings.Join(out, "\n")
+}
+
+var assistantInlineTokenReplacer = strings.NewReplacer(
+	"**", "",
+	"__", "",
+	"~~", "",
+	"`", "",
+)
+
+func normalizeAssistantMarkdownLine(line string) string {
+	indentWidth := len(line) - len(strings.TrimLeft(line, " \t"))
+	indent := line[:indentWidth]
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return ""
+	}
+
+	for strings.HasPrefix(trimmed, ">") {
+		trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, ">"))
+	}
+	if trimmed == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(trimmed, "#") {
+		level := 0
+		for level < len(trimmed) && trimmed[level] == '#' {
+			level++
+		}
+		if level > 0 && (level == len(trimmed) || trimmed[level] == ' ') {
+			trimmed = strings.TrimSpace(trimmed[level:])
+		}
+	}
+
+	if isMarkdownTableDivider(trimmed) {
+		return ""
+	}
+
+	prefix := ""
+	switch {
+	case strings.HasPrefix(trimmed, "- [ ] "):
+		prefix = "- [ ] "
+		trimmed = strings.TrimSpace(trimmed[len("- [ ] "):])
+	case strings.HasPrefix(strings.ToLower(trimmed), "- [x] "):
+		prefix = "- [x] "
+		trimmed = strings.TrimSpace(trimmed[len("- [x] "):])
+	case strings.HasPrefix(trimmed, "- "), strings.HasPrefix(trimmed, "* "), strings.HasPrefix(trimmed, "+ "):
+		prefix = "- "
+		trimmed = strings.TrimSpace(trimmed[2:])
+	default:
+		if marker, rest, ok := splitOrderedListItem(trimmed); ok {
+			prefix = marker + " "
+			trimmed = rest
+		}
+	}
+
+	if looksLikeMarkdownTable(trimmed) {
+		parts := make([]string, 0, 8)
+		for _, cell := range strings.Split(trimmed, "|") {
+			cell = strings.TrimSpace(cell)
+			if cell == "" {
+				continue
+			}
+			parts = append(parts, cell)
+		}
+		trimmed = strings.Join(parts, " | ")
+	}
+
+	trimmed = stripMarkdownLinks(trimmed)
+	trimmed = assistantInlineTokenReplacer.Replace(trimmed)
+	trimmed = strings.TrimSpace(trimmed)
+	if trimmed == "" {
+		return ""
+	}
+	return indent + prefix + trimmed
+}
+
+func splitOrderedListItem(line string) (marker string, rest string, ok bool) {
+	if len(line) < 3 {
+		return "", "", false
+	}
+	index := 0
+	for index < len(line) && line[index] >= '0' && line[index] <= '9' {
+		index++
+	}
+	if index == 0 || len(line) <= index+1 || line[index] != '.' || line[index+1] != ' ' {
+		return "", "", false
+	}
+	return line[:index+1], strings.TrimSpace(line[index+2:]), true
+}
+
+func isMarkdownTableDivider(line string) bool {
+	compact := strings.ReplaceAll(strings.TrimSpace(line), " ", "")
+	if compact == "" || strings.Count(compact, "|") < 1 {
+		return false
+	}
+	for _, ch := range compact {
+		switch ch {
+		case '|', '-', ':':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func stripMarkdownLinks(line string) string {
+	if line == "" {
+		return line
+	}
+
+	var b strings.Builder
+	b.Grow(len(line))
+	for i := 0; i < len(line); {
+		start := -1
+		isImage := false
+		switch {
+		case i+1 < len(line) && line[i] == '!' && line[i+1] == '[':
+			start = i + 2
+			isImage = true
+		case line[i] == '[':
+			start = i + 1
+		}
+
+		if start < 0 {
+			b.WriteByte(line[i])
+			i++
+			continue
+		}
+
+		mid := strings.Index(line[start:], "](")
+		if mid < 0 {
+			b.WriteByte(line[i])
+			i++
+			continue
+		}
+		textEnd := start + mid
+		urlStart := textEnd + 2
+		urlEndRel := strings.IndexByte(line[urlStart:], ')')
+		if urlEndRel < 0 {
+			b.WriteByte(line[i])
+			i++
+			continue
+		}
+		urlEnd := urlStart + urlEndRel
+		label := strings.TrimSpace(line[start:textEnd])
+		url := strings.TrimSpace(line[urlStart:urlEnd])
+		if label != "" {
+			b.WriteString(label)
+		}
+		if url != "" {
+			if !isImage {
+				b.WriteString(" (")
+				b.WriteString(url)
+				b.WriteString(")")
+			}
+		}
+		i = urlEnd + 1
+	}
+	return b.String()
 }
 
 func isMarkdownHeading(line string) bool {
@@ -3550,17 +4011,17 @@ func isMeaningfulThinking(body, toolName string) bool {
 	}
 
 	cnPrefixes := []string{
-		"我将调用",
-		"我会调用",
-		"我先调用",
-		"我要调用",
+		"鎴戝皢璋冪敤",
+		"鎴戜細璋冪敤",
+		"鎴戝厛璋冪敤",
+		"鎴戣璋冪敤",
 		"先调用",
-		"我将使用",
-		"我会使用",
-		"我先使用",
-		"我将运行",
-		"我会运行",
-		"先检查相关上下文",
+		"鎴戝皢浣跨敤",
+		"鎴戜細浣跨敤",
+		"鎴戝厛浣跨敤",
+		"鎴戝皢杩愯",
+		"鎴戜細杩愯",
+		"鍏堟鏌ョ浉鍏充笂涓嬫枃",
 	}
 	for _, prefix := range cnPrefixes {
 		if strings.HasPrefix(raw, prefix) {
@@ -3590,7 +4051,7 @@ func shouldRenderThinkingFromDelta(body string) bool {
 		"through build and test",
 		"我会先",
 		"先了解",
-		"然后",
+		"鐒跺悗",
 		"最后",
 		"通过构建和测试",
 		"系统性",
@@ -3604,97 +4065,17 @@ func shouldRenderThinkingFromDelta(body string) bool {
 }
 
 func (m model) thinkingText() string {
-	if m.reduceMotion {
-		return fmt.Sprintf("%s Thinking... request already sent to the LLM, waiting for response.", m.spinner.View())
-	}
-	dots := []string{".  ", ".. ", "..."}
-	sweep := []string{"-", "\\", "|", "/", "-", "\\", "|", "/"}
-	return fmt.Sprintf(
-		"%s Thinking%s [%s] request already sent to the LLM, waiting for response.",
-		m.spinner.View(),
-		dots[m.motionTick%len(dots)],
-		sweep[m.motionTick%len(sweep)],
-	)
-}
-
-func animationTickCmd(delay time.Duration) tea.Cmd {
-	return tea.Tick(delay, func(time.Time) tea.Msg {
-		return animationTickMsg{}
-	})
-}
-
-func resolveReduceMotion() bool {
-	value := strings.TrimSpace(strings.ToLower(os.Getenv("BYTEMIND_TUI_REDUCE_MOTION")))
-	if value == "" {
-		return false
-	}
-	parsed, err := strconv.ParseBool(value)
-	if err != nil {
-		return false
-	}
-	return parsed
-}
-
-func (m model) nextAnimationTickInterval() time.Duration {
-	if m.reduceMotion {
-		return slowAnimationInterval
-	}
-	if m.busy || m.commandOpen || m.modePulseFrames > 0 {
-		return fastAnimationInterval
-	}
-	return slowAnimationInterval
-}
-
-func (m *model) advanceAnimations() bool {
-	changed := false
-	m.motionTick++
-
-	if !m.reduceMotion {
-		if m.commandOpen && m.commandRevealRows < commandPageSize && m.motionTick%2 == 0 {
-			m.commandRevealRows++
-			changed = true
-		}
-
-		if m.modePulseFrames > 0 {
-			m.modePulseFrames--
-			changed = true
-		}
-	}
-
-	if m.busy && m.streamingIndex >= 0 && m.streamingIndex < len(m.chatItems) {
-		before := m.chatItems[m.streamingIndex].Body
-		m.updateThinkingCard()
-		if before != m.chatItems[m.streamingIndex].Body {
-			changed = true
-		}
-	}
-
-	return changed
+	return fmt.Sprintf("%s Thinking... request already sent to the LLM, waiting for response.", m.spinner.View())
 }
 
 func (m *model) syncCommandPalette() {
 	value := strings.TrimSpace(m.input.Value())
-	wasOpen := m.commandOpen
 	if !strings.HasPrefix(value, "/") {
 		m.commandOpen = false
-		m.commandRevealRows = 0
 		m.commandCursor = 0
 		return
 	}
 	m.commandOpen = true
-	if !wasOpen {
-		if m.reduceMotion {
-			m.commandRevealRows = commandPageSize
-		} else {
-			m.commandRevealRows = commandRevealStartRows
-		}
-	} else if m.commandRevealRows <= 0 {
-		if m.reduceMotion {
-			m.commandRevealRows = commandPageSize
-		} else {
-			m.commandRevealRows = commandRevealStartRows
-		}
-	}
 	m.closeMentionPalette()
 	items := m.filteredCommands()
 	if len(items) == 0 {
@@ -4578,7 +4959,7 @@ func (m model) sessionText() string {
 func statusGlyph(status string) string {
 	switch planpkg.NormalizeStepStatus(status) {
 	case planpkg.StepCompleted:
-		return doneStyle.Render("v")
+		return doneStyle.Render("✓")
 	case planpkg.StepInProgress:
 		return accentStyle.Render(">")
 	case planpkg.StepBlocked:

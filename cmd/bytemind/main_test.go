@@ -25,19 +25,6 @@ func TestCompleteSlashCommand(t *testing.T) {
 	}
 }
 
-func TestRedactSensitiveTextMasksCommonSecrets(t *testing.T) {
-	input := `Authorization: Bearer sk-secret-token api_key="plain-key" x-api-key: test-header`
-	redacted := redactSensitiveText(input)
-	for _, leaked := range []string{"sk-secret-token", "plain-key", "test-header"} {
-		if strings.Contains(redacted, leaked) {
-			t.Fatalf("expected sensitive token %q to be redacted, got %q", leaked, redacted)
-		}
-	}
-	if !strings.Contains(redacted, "***") {
-		t.Fatalf("expected redaction marker in output, got %q", redacted)
-	}
-}
-
 func TestPrintUsageIncludesInstallCommand(t *testing.T) {
 	var out bytes.Buffer
 	printUsage(&out)

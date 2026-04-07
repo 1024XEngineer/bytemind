@@ -50,24 +50,6 @@ go run ./cmd/bytemind chat -max-iterations 64
 go run ./cmd/bytemind run -prompt "refactor this module" -max-iterations 64
 ```
 
-## 首次运行自动配置
-
-新环境首次执行 `go run ./cmd/bytemind chat` 或 `go run ./cmd/bytemind tui` 时，程序会先检查 API 配置。
-
-- 如果已存在可用配置：直接进入程序。
-- 如果缺少配置：会提示并按 OpenAI-compatible 格式输入三项：
-
-```text
-url:
-key:
-model:
-```
-
-输入完成后会自动写入配置文件：
-
-- 指定了 `-config`：写入该路径。
-- 未指定 `-config`：写入当前 workspace 的 `config.json`。
-
 ## 配置文件
 
 在工作区根目录下寻找配置文件 `config.json`，直接从仓库根目录复制示例模板开始：
@@ -107,13 +89,6 @@ Anthropic 示例：
   }
 }
 ```
-安全行为：
-
-- `config.json` 不再保存明文 `api_key`。
-- 配置会保存 `provider.api_key_env`（默认 `BYTEMIND_API_KEY`）。
-- 输入的 key 只注入当前进程环境变量，用于本次启动。
-- 检测到旧配置中有明文 `provider.api_key` 时，会自动迁移并移除明文。
-
 
 ## 交互命令
 

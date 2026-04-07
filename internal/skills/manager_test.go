@@ -88,33 +88,6 @@ func TestManagerAppliesScopePriority(t *testing.T) {
 	}
 }
 
-func TestManagerLoadsLocalizedDescriptionFromManifest(t *testing.T) {
-	root := t.TempDir()
-	builtin := filepath.Join(root, "builtin")
-	if err := os.MkdirAll(filepath.Join(builtin, "review"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(builtin, "review", "skill.json"), []byte(`{
-  "name":"review",
-  "description":"english description",
-  "description_zh":"中文描述"
-}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	manager := NewManagerWithDirs(root, builtin, filepath.Join(root, "user"), filepath.Join(root, "project"))
-	skill, ok := manager.Find("review")
-	if !ok {
-		t.Fatal("expected review skill to resolve")
-	}
-	if skill.Description != "english description" {
-		t.Fatalf("expected english description, got %q", skill.Description)
-	}
-	if skill.DescriptionZH != "中文描述" {
-		t.Fatalf("expected localized chinese description, got %q", skill.DescriptionZH)
-	}
-}
-
 func TestManagerKeepsWorkingWhenManifestIsInvalid(t *testing.T) {
 	root := t.TempDir()
 	builtin := filepath.Join(root, "builtin")

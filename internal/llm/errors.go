@@ -3,7 +3,6 @@ package llm
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 )
 
@@ -51,7 +50,7 @@ func WrapError(provider string, code ErrorCode, err error) *ProviderError {
 	return &ProviderError{
 		Code:     code,
 		Provider: strings.TrimSpace(provider),
-		Message:  sanitizeProviderMessage(err.Error()),
+		Message:  err.Error(),
 	}
 }
 
@@ -71,7 +70,6 @@ func MapProviderError(provider string, status int, body string, fallback error) 
 	if message == "" {
 		message = fmt.Sprintf("provider request failed with status %d", status)
 	}
-	message = sanitizeProviderMessage(message)
 
 	return &ProviderError{
 		Code:      code,
@@ -80,20 +78,6 @@ func MapProviderError(provider string, status int, body string, fallback error) 
 		Status:    status,
 		Retryable: retryable,
 	}
-}
-
-var providerSensitivePatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(bearer\s+)[^\s"']+`),
-	regexp.MustCompile(`(?i)(api[_-]?key["']?\s*[:=]\s*["']?)[^"'\s,}]+`),
-	regexp.MustCompile(`(?i)(x-api-key["']?\s*[:=]\s*["']?)[^"'\s,}]+`),
-}
-
-func sanitizeProviderMessage(raw string) string {
-	value := raw
-	for _, pattern := range providerSensitivePatterns {
-		value = pattern.ReplaceAllString(value, "${1}***")
-	}
-	return value
 }
 
 var errInvalidRole = errors.New("invalid role")

@@ -2,8 +2,7 @@
     "name":  "repo-onboarding",
     "version":  "0.1.0",
     "title":  "Repo Onboarding",
-    "description":  "Build a quick overall understanding of repo structure, entrypoints, and runtime flow.",
-    "description_zh":  "快速建立对仓库结构、入口与运行流程的整体理解。",
+    "description":  "快速建立对仓库结构、入口与运行流程的整体理解。",
     "entry":  {
                   "slash":  "/repo-onboarding"
               },

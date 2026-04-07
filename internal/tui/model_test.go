@@ -3,13 +3,13 @@ package tui
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"bytemind/internal/agent"
 	"bytemind/internal/config"
@@ -188,6 +188,260 @@ func TestHandleMouseWheelScrollsLandingInputWhenPointerIsOverInput(t *testing.T)
 
 	if updated.input.Line() >= beforeLine {
 		t.Fatalf("expected landing input cursor to move up, got line %d -> %d", beforeLine, updated.input.Line())
+	}
+}
+
+func TestWrapPlainTextPrefersWordBoundariesForEnglish(t *testing.T) {
+	text := "Risks - this section should keep words intact"
+	got := wrapPlainText(text, 8)
+	lines := strings.Split(got, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "Ris") && !strings.Contains(line, "Risks") {
+			t.Fatalf("expected not to split 'Risks' across lines, got %q", got)
+		}
+		if strings.Contains(line, "Act") && !strings.Contains(line, "Action") {
+			t.Fatalf("expected not to split words abruptly, got %q", got)
+		}
+	}
+}
+
+func TestRenderMainPanelShowsTokenUsageBadge(t *testing.T) {
+	m := model{
+		screen:     screenChat,
+		width:      120,
+		height:     28,
+		input:      textarea.New(),
+		viewport:   viewport.New(60, 10),
+		tokenUsage: newTokenUsageComponent(),
+	}
+	m.viewport.SetContent(strings.Repeat("line\n", 40))
+	m.tokenUsage.displayUsed = 1234
+	_ = m.tokenUsage.SetUsage(1234, 5000)
+
+	panel := m.renderMainPanel()
+	if !strings.Contains(panel, "1,234 / 5,000") {
+		t.Fatalf("expected token usage badge text in main panel, got %q", panel)
+	}
+}
+
+func TestHandleMouseHoverTokenUsageConsumesEvent(t *testing.T) {
+	m := model{
+		screen:     screenChat,
+		width:      120,
+		height:     28,
+		input:      textarea.New(),
+		viewport:   viewport.New(60, 10),
+		tokenUsage: newTokenUsageComponent(),
+	}
+	m.viewport.SetContent(strings.Repeat("line\n", 60))
+	_ = m.tokenUsage.SetUsage(1500, 5000)
+	m.refreshViewport()
+
+	x := m.tokenUsage.bounds.x + max(0, m.tokenUsage.bounds.w/2)
+	y := m.tokenUsage.bounds.y
+	got, _ := m.handleMouse(tea.MouseMsg{
+		Action: tea.MouseActionMotion,
+		X:      x,
+		Y:      y,
+	})
+	updated := got.(model)
+	if !updated.tokenUsage.hover {
+		t.Fatalf("expected hover state to activate over token badge")
+	}
+}
+
+func TestHandleAgentEventUsageUpdatedAccumulatesRealTokens(t *testing.T) {
+	m := model{
+		tokenUsage:  newTokenUsageComponent(),
+		tokenBudget: 5000,
+	}
+
+	m.handleAgentEvent(agent.Event{
+		Type: agent.EventUsageUpdated,
+		Usage: llm.Usage{
+			InputTokens:   120,
+			OutputTokens:  40,
+			ContextTokens: 30,
+			TotalTokens:   190,
+		},
+	})
+
+	if m.tokenUsedTotal != 190 {
+		t.Fatalf("expected cumulative used tokens 190, got %d", m.tokenUsedTotal)
+	}
+	if m.tokenInput != 120 || m.tokenOutput != 40 || m.tokenContext != 30 {
+		t.Fatalf("unexpected token breakdown input=%d output=%d context=%d", m.tokenInput, m.tokenOutput, m.tokenContext)
+	}
+	if m.tokenUsage.used != 190 {
+		t.Fatalf("expected token component used value 190, got %d", m.tokenUsage.used)
+	}
+}
+
+func TestAssistantDeltaEstimationsAreCalibratedByOfficialUsage(t *testing.T) {
+	m := model{
+		tokenUsage:  newTokenUsageComponent(),
+		tokenBudget: 5000,
+	}
+
+	m.handleAgentEvent(agent.Event{Type: agent.EventRunStarted})
+	m.handleAgentEvent(agent.Event{
+		Type:    agent.EventAssistantDelta,
+		Content: "This is a streamed delta chunk for token estimation.",
+	})
+
+	estimated := m.tempEstimatedOutput
+	if estimated <= 0 {
+		t.Fatalf("expected temporary estimated output tokens to increase")
+	}
+	if m.tokenUsedTotal != estimated || m.tokenOutput != estimated {
+		t.Fatalf("expected provisional usage to be reflected immediately, used=%d output=%d estimated=%d", m.tokenUsedTotal, m.tokenOutput, estimated)
+	}
+
+	m.handleAgentEvent(agent.Event{
+		Type: agent.EventUsageUpdated,
+		Usage: llm.Usage{
+			InputTokens:   20,
+			OutputTokens:  7,
+			ContextTokens: 3,
+			TotalTokens:   30,
+		},
+	})
+
+	if m.tempEstimatedOutput != 0 {
+		t.Fatalf("expected temporary estimate to be cleared after calibration, got %d", m.tempEstimatedOutput)
+	}
+	if m.tokenUsedTotal != 30 {
+		t.Fatalf("expected total tokens to be calibrated to official total 30, got %d", m.tokenUsedTotal)
+	}
+	if m.tokenInput != 20 || m.tokenOutput != 7 || m.tokenContext != 3 {
+		t.Fatalf("expected official breakdown after calibration, got input=%d output=%d context=%d", m.tokenInput, m.tokenOutput, m.tokenContext)
+	}
+}
+
+func TestApplyUsageFallsBackToBreakdownWhenTotalIsZero(t *testing.T) {
+	m := model{
+		tokenUsage:  newTokenUsageComponent(),
+		tokenBudget: 5000,
+	}
+
+	m.handleAgentEvent(agent.Event{
+		Type: agent.EventUsageUpdated,
+		Usage: llm.Usage{
+			InputTokens:   11,
+			OutputTokens:  5,
+			ContextTokens: 4,
+			TotalTokens:   0,
+		},
+	})
+
+	if m.tokenUsedTotal != 20 {
+		t.Fatalf("expected fallback sum of usage breakdown (20), got %d", m.tokenUsedTotal)
+	}
+}
+
+func TestFetchRemoteTokenUsageCmdReturnsErrorMsgWhenConfigMissing(t *testing.T) {
+	m := model{cfg: config.Config{}}
+	cmd := m.fetchRemoteTokenUsageCmd()
+	if cmd == nil {
+		t.Fatalf("expected remote usage command")
+	}
+	msg := cmd()
+	pulled, ok := msg.(tokenUsagePulledMsg)
+	if !ok {
+		t.Fatalf("expected tokenUsagePulledMsg, got %T", msg)
+	}
+	if pulled.Err == nil || !strings.Contains(pulled.Err.Error(), "missing base url or api key") {
+		t.Fatalf("expected missing config error, got %v", pulled.Err)
+	}
+}
+
+func TestFetchRemoteTokenUsageCmdReturnsUsageMsgOnSuccess(t *testing.T) {
+	orig := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = orig })
+
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{"data":[{"results":[{"input_tokens":12,"output_tokens":8,"input_cached_tokens":3}]}]}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	m := model{
+		cfg: config.Config{
+			Provider: config.ProviderConfig{
+				BaseURL: "https://api.openai.com/v1",
+				APIKey:  "test-key",
+			},
+		},
+	}
+
+	cmd := m.fetchRemoteTokenUsageCmd()
+	msg := cmd()
+	pulled, ok := msg.(tokenUsagePulledMsg)
+	if !ok {
+		t.Fatalf("expected tokenUsagePulledMsg, got %T", msg)
+	}
+	if pulled.Err != nil {
+		t.Fatalf("expected successful usage pull message, got %v", pulled.Err)
+	}
+	if pulled.Used != 23 || pulled.Input != 12 || pulled.Output != 8 || pulled.Context != 3 {
+		t.Fatalf("unexpected pulled usage payload: %+v", pulled)
+	}
+}
+
+func TestUpdateTokenUsagePulledMsgUsesMaxAndIgnoresErrors(t *testing.T) {
+	m := model{
+		tokenUsage:     newTokenUsageComponent(),
+		tokenBudget:    5000,
+		tokenUsedTotal: 100,
+		tokenInput:     60,
+		tokenOutput:    20,
+		tokenContext:   5,
+	}
+
+	got, _ := m.Update(tokenUsagePulledMsg{
+		Used:    90,
+		Input:   40,
+		Output:  30,
+		Context: 10,
+	})
+	updated := got.(model)
+	if updated.tokenUsedTotal != 100 {
+		t.Fatalf("expected used total to keep local max 100, got %d", updated.tokenUsedTotal)
+	}
+	if updated.tokenInput != 60 {
+		t.Fatalf("expected input to keep local max 60, got %d", updated.tokenInput)
+	}
+	if updated.tokenOutput != 30 || updated.tokenContext != 10 {
+		t.Fatalf("expected output/context to use remote max values, got output=%d context=%d", updated.tokenOutput, updated.tokenContext)
+	}
+	if updated.tokenUsage.used != 100 {
+		t.Fatalf("expected token component to sync used=100, got %d", updated.tokenUsage.used)
+	}
+
+	got, _ = updated.Update(tokenUsagePulledMsg{Err: errors.New("boom")})
+	still := got.(model)
+	if still.tokenUsedTotal != updated.tokenUsedTotal || still.tokenInput != updated.tokenInput || still.tokenOutput != updated.tokenOutput || still.tokenContext != updated.tokenContext {
+		t.Fatalf("expected error usage message to leave counters unchanged, got %+v", still)
+	}
+}
+
+func TestAccumulateTokenUsageFallbackAndClamp(t *testing.T) {
+	m := model{}
+	m.accumulateTokenUsage([]llm.Message{
+		{},
+		{Usage: &llm.Usage{InputTokens: 10, OutputTokens: 4, ContextTokens: 1, TotalTokens: 0}},
+		{Usage: &llm.Usage{InputTokens: -5, OutputTokens: 8, ContextTokens: 0, TotalTokens: -1}},
+		{Usage: &llm.Usage{InputTokens: 1, OutputTokens: 1, ContextTokens: 1, TotalTokens: 20}},
+	})
+
+	if m.tokenUsedTotal != 38 {
+		t.Fatalf("expected used total 38, got %d", m.tokenUsedTotal)
+	}
+	if m.tokenInput != 11 || m.tokenOutput != 13 || m.tokenContext != 2 {
+		t.Fatalf("unexpected breakdown input=%d output=%d context=%d", m.tokenInput, m.tokenOutput, m.tokenContext)
 	}
 }
 
@@ -810,7 +1064,7 @@ func TestContinueExecutionInputPreparesPlanAndSubmitsPrompt(t *testing.T) {
 }
 
 func TestIsContinueExecutionInputSupportsPlanAlias(t *testing.T) {
-	for _, input := range []string{"continue plan", "\u7ee7\u7eed\u6267\u884c"} {
+	for _, input := range []string{"continue plan", "继续做"} {
 		if !isContinueExecutionInput(input) {
 			t.Fatalf("expected %q to be treated as continue input", input)
 		}
@@ -987,6 +1241,57 @@ func TestAltEnterInsertsNewlineWithoutSubmitting(t *testing.T) {
 	}
 }
 
+func TestShiftEnterInsertsNewlineWithoutSubmitting(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetWidth(40)
+	input.SetHeight(3)
+	input.SetValue("first line")
+	input.CursorEnd()
+
+	m := model{
+		screen:    screenChat,
+		input:     input,
+		workspace: "E:\\bytemind",
+		sess:      session.New("E:\\bytemind"),
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("shift+enter")})
+	updated := got.(model)
+
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected shift+enter not to submit")
+	}
+	if updated.input.Value() != "first line\n" {
+		t.Fatalf("expected shift+enter to insert newline, got %q", updated.input.Value())
+	}
+}
+func TestCtrlJInsertsNewlineWithoutSubmitting(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetWidth(40)
+	input.SetHeight(3)
+	input.SetValue("first line")
+	input.CursorEnd()
+
+	m := model{
+		screen:    screenChat,
+		input:     input,
+		workspace: "E:\\bytemind",
+		sess:      session.New("E:\\bytemind"),
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	updated := got.(model)
+
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected ctrl+j not to submit prompt")
+	}
+	if updated.input.Value() != "first line\n" {
+		t.Fatalf("expected ctrl+j to insert newline, got %q", updated.input.Value())
+	}
+}
+
 func TestAltVPastesClipboardImage(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
@@ -1058,7 +1363,7 @@ func TestRapidRuneInputForImagePathTriggersFallbackPlaceholder(t *testing.T) {
 	}
 }
 
-func TestImmediateEnterAfterPasteDoesNotSubmit(t *testing.T) {
+func TestImmediateEnterAfterPasteStillSubmits(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	input.SetWidth(40)
@@ -1067,25 +1372,24 @@ func TestImmediateEnterAfterPasteDoesNotSubmit(t *testing.T) {
 	input.CursorEnd()
 
 	m := model{
-		screen:      screenChat,
-		input:       input,
-		workspace:   "E:\\bytemind",
-		sess:        session.New("E:\\bytemind"),
-		lastPasteAt: time.Now(),
+		screen:    screenChat,
+		input:     input,
+		workspace: "E:\\bytemind",
+		sess:      session.New("E:\\bytemind"),
 	}
 
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	updated := got.(model)
 
-	if len(updated.chatItems) != 0 {
-		t.Fatalf("expected immediate enter after paste not to submit")
+	if len(updated.chatItems) < 1 {
+		t.Fatalf("expected enter to submit immediately, got %d chat items", len(updated.chatItems))
 	}
-	if updated.input.Value() != "first line\n" {
-		t.Fatalf("expected pasted enter to stay inside input, got %q", updated.input.Value())
+	if updated.chatItems[0].Body != "first line" {
+		t.Fatalf("expected submitted body to match input text, got %q", updated.chatItems[0].Body)
 	}
 }
 
-func TestEnterSubmitsAfterPasteGuardExpires(t *testing.T) {
+func TestEnterSubmitsMultilinePrompt(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	input.SetWidth(40)
@@ -1094,18 +1398,20 @@ func TestEnterSubmitsAfterPasteGuardExpires(t *testing.T) {
 	input.CursorEnd()
 
 	m := model{
-		screen:      screenChat,
-		input:       input,
-		workspace:   "E:\\bytemind",
-		sess:        session.New("E:\\bytemind"),
-		lastPasteAt: time.Now().Add(-time.Second),
+		screen:    screenChat,
+		input:     input,
+		workspace: "E:\\bytemind",
+		sess:      session.New("E:\\bytemind"),
 	}
 
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	updated := got.(model)
 
 	if len(updated.chatItems) < 1 {
-		t.Fatalf("expected enter to submit after paste guard expires, got %d chat items", len(updated.chatItems))
+		t.Fatalf("expected enter to submit multiline prompt, got %d chat items", len(updated.chatItems))
+	}
+	if updated.chatItems[0].Body != "first line\nsecond line" {
+		t.Fatalf("expected multiline body to be preserved, got %q", updated.chatItems[0].Body)
 	}
 }
 
@@ -1619,7 +1925,6 @@ func TestViewRendersCommandPaletteAsOverlaySection(t *testing.T) {
 		},
 	}
 	m.syncCommandPalette()
-	m.commandRevealRows = commandPageSize
 
 	view := m.View()
 	if !strings.Contains(view, "/help") {
@@ -1641,7 +1946,6 @@ func TestLandingViewRendersCommandPaletteAboveInput(t *testing.T) {
 		commandOpen: true,
 	}
 	m.syncCommandPalette()
-	m.commandRevealRows = commandPageSize
 
 	view := m.View()
 	if !strings.Contains(view, "Build") || !strings.Contains(view, "Plan") {
@@ -1989,7 +2293,6 @@ func TestRenderCommandPaletteDoesNotCorruptChineseDescriptions(t *testing.T) {
 		commandOpen: true,
 	}
 	m.syncCommandPalette()
-	m.commandRevealRows = commandPageSize
 
 	got := m.renderCommandPalette()
 	if strings.Contains(got, string('\uFFFD')) {
@@ -1999,279 +2302,6 @@ func TestRenderCommandPaletteDoesNotCorruptChineseDescriptions(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected command palette to contain %q, got %q", want, got)
 		}
-	}
-}
-
-func TestCommandPaletteRevealAnimationExpandsRows(t *testing.T) {
-	input := textarea.New()
-	input.SetValue("/")
-	m := model{
-		screen:            screenChat,
-		width:             90,
-		input:             input,
-		commandOpen:       true,
-		commandRevealRows: commandRevealStartRows,
-	}
-	m.syncCommandPalette()
-	m.commandRevealRows = commandRevealStartRows
-
-	first := m.renderCommandPalette()
-	if !strings.Contains(first, "Opening command palette") {
-		t.Fatalf("expected opening frame hint, got %q", first)
-	}
-
-	m.advanceAnimations()
-	m.advanceAnimations()
-	second := m.renderCommandPalette()
-	if !strings.Contains(second, "/help") {
-		t.Fatalf("expected reveal step to show first command row, got %q", second)
-	}
-
-	for i := 0; i < 6; i++ {
-		m.advanceAnimations()
-	}
-	expanded := m.renderCommandPalette()
-	for _, want := range []string{"/help", "/session", "/new"} {
-		if !strings.Contains(expanded, want) {
-			t.Fatalf("expected expanded palette to contain %q, got %q", want, expanded)
-		}
-	}
-}
-
-func TestToggleModeStartsAndExpiresPulseAnimation(t *testing.T) {
-	m := model{mode: modeBuild}
-	m.toggleMode()
-	if m.modePulseFrames <= 0 {
-		t.Fatalf("expected mode switch to start pulse animation, got %d", m.modePulseFrames)
-	}
-
-	for i := 0; i < modePulseMotionFrames; i++ {
-		m.advanceAnimations()
-	}
-	if m.modePulseFrames != 0 {
-		t.Fatalf("expected pulse frames to decay to zero, got %d", m.modePulseFrames)
-	}
-}
-
-func TestOpenCommandPaletteRespectsReduceMotion(t *testing.T) {
-	t.Run("animated reveal", func(t *testing.T) {
-		input := textarea.New()
-		m := model{
-			reduceMotion: true,
-			commandOpen:  false,
-			mentionOpen:  true,
-			input:        input,
-		}
-		m.openCommandPalette()
-
-		if !m.commandOpen {
-			t.Fatalf("expected command palette to open")
-		}
-		if m.commandRevealRows != commandPageSize {
-			t.Fatalf("expected reduce-motion open to reveal all rows, got %d", m.commandRevealRows)
-		}
-		if m.input.Value() != "/" {
-			t.Fatalf("expected command opener to seed slash input, got %q", m.input.Value())
-		}
-		if m.mentionOpen {
-			t.Fatalf("expected mention palette to close when command palette opens")
-		}
-	})
-
-	t.Run("progressive reveal", func(t *testing.T) {
-		input := textarea.New()
-		m := model{
-			reduceMotion: false,
-			commandOpen:  false,
-			mentionOpen:  true,
-			input:        input,
-		}
-		m.openCommandPalette()
-		if m.commandRevealRows != commandRevealStartRows {
-			t.Fatalf("expected animated open to start from reveal row %d, got %d", commandRevealStartRows, m.commandRevealRows)
-		}
-	})
-}
-
-func TestStatusBarPulsePrefixAppearsDuringModePulse(t *testing.T) {
-	m := model{
-		width:           120,
-		mode:            modeBuild,
-		modePulseFrames: 2,
-		reduceMotion:    false,
-		llmConnected:    true,
-		chatItems: []chatEntry{
-			{Kind: "assistant", Title: assistantLabel, Body: "ok", Status: "final"},
-		},
-	}
-
-	bar := m.renderStatusBar()
-	if !strings.Contains(bar, ">> Mode: BUILD") {
-		t.Fatalf("expected status bar pulse prefix while mode pulse is active, got %q", bar)
-	}
-}
-
-func TestResolveReduceMotionFromEnv(t *testing.T) {
-	key := "BYTEMIND_TUI_REDUCE_MOTION"
-	original, existed := os.LookupEnv(key)
-	t.Cleanup(func() {
-		if existed {
-			_ = os.Setenv(key, original)
-		} else {
-			_ = os.Unsetenv(key)
-		}
-	})
-
-	_ = os.Unsetenv(key)
-	if resolveReduceMotion() {
-		t.Fatalf("expected empty env to disable reduce motion")
-	}
-
-	if err := os.Setenv(key, "true"); err != nil {
-		t.Fatalf("setenv failed: %v", err)
-	}
-	if !resolveReduceMotion() {
-		t.Fatalf("expected true env to enable reduce motion")
-	}
-
-	if err := os.Setenv(key, "nope"); err != nil {
-		t.Fatalf("setenv failed: %v", err)
-	}
-	if resolveReduceMotion() {
-		t.Fatalf("expected invalid env value to fall back to disabled reduce motion")
-	}
-}
-
-func TestAnimationTickHelpers(t *testing.T) {
-	msg := animationTickCmd(0)()
-	if _, ok := msg.(animationTickMsg); !ok {
-		t.Fatalf("expected animation tick cmd to return animationTickMsg, got %T", msg)
-	}
-
-	m := model{}
-	if got := m.nextAnimationTickInterval(); got != slowAnimationInterval {
-		t.Fatalf("expected idle animation interval %v, got %v", slowAnimationInterval, got)
-	}
-
-	m.busy = true
-	if got := m.nextAnimationTickInterval(); got != fastAnimationInterval {
-		t.Fatalf("expected busy animation interval %v, got %v", fastAnimationInterval, got)
-	}
-
-	m.busy = false
-	m.commandOpen = true
-	if got := m.nextAnimationTickInterval(); got != fastAnimationInterval {
-		t.Fatalf("expected command palette interval %v, got %v", fastAnimationInterval, got)
-	}
-
-	m.commandOpen = false
-	m.modePulseFrames = 1
-	if got := m.nextAnimationTickInterval(); got != fastAnimationInterval {
-		t.Fatalf("expected pulse interval %v, got %v", fastAnimationInterval, got)
-	}
-
-	m.reduceMotion = true
-	m.modePulseFrames = 0
-	if got := m.nextAnimationTickInterval(); got != slowAnimationInterval {
-		t.Fatalf("expected reduce-motion interval %v, got %v", slowAnimationInterval, got)
-	}
-}
-
-func TestUpdateAnimationTickSchedulesNextTick(t *testing.T) {
-	m := model{
-		width:  80,
-		height: 24,
-	}
-
-	got, cmd := m.Update(animationTickMsg{})
-	if cmd == nil {
-		t.Fatalf("expected animation tick update to schedule next tick")
-	}
-	updated := got.(model)
-	if updated.motionTick == 0 {
-		t.Fatalf("expected animation tick to advance motion counter")
-	}
-}
-
-func TestNewModelAppliesReduceMotionDefaults(t *testing.T) {
-	key := "BYTEMIND_TUI_REDUCE_MOTION"
-	original, existed := os.LookupEnv(key)
-	t.Cleanup(func() {
-		if existed {
-			_ = os.Setenv(key, original)
-		} else {
-			_ = os.Unsetenv(key)
-		}
-	})
-	if err := os.Setenv(key, "true"); err != nil {
-		t.Fatalf("setenv failed: %v", err)
-	}
-
-	workspace := t.TempDir()
-	store, err := session.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := session.New(workspace)
-	runner := agent.NewRunner(agent.Options{
-		Workspace: workspace,
-		Config: config.Config{
-			Provider: config.ProviderConfig{Model: "test-model"},
-		},
-		Store:    store,
-		Registry: tools.DefaultRegistry(),
-	})
-
-	m := newModel(Options{
-		Runner:    runner,
-		Store:     store,
-		Session:   sess,
-		Workspace: workspace,
-	})
-	if !m.reduceMotion {
-		t.Fatalf("expected new model to respect reduce-motion env")
-	}
-	if m.Init() == nil {
-		t.Fatalf("expected init command to be configured")
-	}
-}
-
-func TestAppendChatKeepsMotionValueUntouched(t *testing.T) {
-	m := model{}
-	m.appendChat(chatEntry{Kind: "assistant", Title: "Bytemind", Body: "hi", Status: "final"})
-	if len(m.chatItems) != 1 {
-		t.Fatalf("expected one chat item, got %d", len(m.chatItems))
-	}
-	if m.chatItems[0].Motion != 0 {
-		t.Fatalf("expected appendChat not to inject motion, got %d", m.chatItems[0].Motion)
-	}
-
-	m.appendChat(chatEntry{Kind: "assistant", Title: "Bytemind", Body: "hi", Status: "final", Motion: 2})
-	if len(m.chatItems) != 2 {
-		t.Fatalf("expected two chat items, got %d", len(m.chatItems))
-	}
-	if m.chatItems[1].Motion != 2 {
-		t.Fatalf("expected appendChat to preserve explicit motion value, got %d", m.chatItems[1].Motion)
-	}
-}
-
-func TestThinkingTextAnimatesAcrossMotionTicks(t *testing.T) {
-	m := model{
-		busy:           true,
-		streamingIndex: 0,
-		chatItems: []chatEntry{
-			{Kind: "assistant", Title: thinkingLabel, Status: "thinking"},
-		},
-	}
-	m.motionTick = 0
-	m.updateThinkingCard()
-	first := m.chatItems[0].Body
-	m.motionTick = 1
-	m.updateThinkingCard()
-	second := m.chatItems[0].Body
-
-	if first == second {
-		t.Fatalf("expected thinking text to animate across ticks, got %q", first)
 	}
 }
 
@@ -2339,12 +2369,12 @@ func TestRenderConversationIncludesToolEntries(t *testing.T) {
 		}(),
 		chatItems: []chatEntry{
 			{Kind: "user", Title: "You", Body: "check repo", Status: "final"},
-			{Kind: "tool", Title: "Tool | read_file", Body: "Read internal/tui/model.go lines 1-20", Status: "done"},
+			{Kind: "tool", Title: "Tool Result | read_file", Body: "Read internal/tui/model.go lines 1-20", Status: "done"},
 		},
 	}
 
 	got := m.renderConversation()
-	if !strings.Contains(got, "Tool | read_file") {
+	if !strings.Contains(got, "Tool Result | read_file") {
 		t.Fatalf("expected conversation to show tool entry, got %q", got)
 	}
 	if !strings.Contains(got, "Read internal/tui/model.go lines 1-20") {
@@ -2375,7 +2405,7 @@ func TestRebuildSessionTimelineParsesUserToolResultParts(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("expected user + tool items, got %#v", items)
 	}
-	if items[1].Kind != "tool" || !strings.Contains(items[1].Title, "Tool | read_file") {
+	if items[1].Kind != "tool" || !strings.Contains(items[1].Title, "Tool Result | read_file") {
 		t.Fatalf("expected tool item from tool_result part, got %#v", items[1])
 	}
 	if len(runs) != 1 || runs[0].Name != "read_file" {
@@ -2405,6 +2435,9 @@ func TestHandleAgentEventShowsToolProgressInChat(t *testing.T) {
 	}
 	if m.chatItems[2].Kind != "tool" || m.chatItems[2].Status != "running" || !strings.Contains(m.chatItems[2].Title, "Tool Call | read_file") {
 		t.Fatalf("expected running tool call chat item, got %+v", m.chatItems[2])
+	}
+	if strings.TrimSpace(m.chatItems[2].Body) != "" {
+		t.Fatalf("expected tool call body to hide params, got %q", m.chatItems[2].Body)
 	}
 
 	m.handleAgentEvent(agent.Event{
@@ -2527,6 +2560,9 @@ func TestToolStartWithoutAssistantDeltaDoesNotInjectThinkingCard(t *testing.T) {
 	if m.chatItems[1].Kind != "tool" || !strings.Contains(m.chatItems[1].Title, "Tool Call | list_files") {
 		t.Fatalf("expected tool call entry, got %+v", m.chatItems[1])
 	}
+	if strings.TrimSpace(m.chatItems[1].Body) != "" {
+		t.Fatalf("expected tool call entry to omit params body, got %q", m.chatItems[1].Body)
+	}
 }
 
 func TestToolStartWithGenericToolIntentDoesNotShowThinkingCard(t *testing.T) {
@@ -2550,29 +2586,49 @@ func TestToolStartWithGenericToolIntentDoesNotShowThinkingCard(t *testing.T) {
 	if m.chatItems[1].Kind != "tool" || !strings.Contains(m.chatItems[1].Title, "Tool Call | list_files") {
 		t.Fatalf("expected tool call entry after removing placeholder, got %+v", m.chatItems[1])
 	}
+	if strings.TrimSpace(m.chatItems[1].Body) != "" {
+		t.Fatalf("expected tool call entry to omit params body, got %q", m.chatItems[1].Body)
+	}
 }
 
-func TestAssistantDeltaPlanningTextStaysStreaming(t *testing.T) {
+func TestRenderChatSectionToolHeaderOmitsStatusWords(t *testing.T) {
+	got := renderChatSection(chatEntry{
+		Kind:   "tool",
+		Title:  "Tool Call | list_files",
+		Body:   "",
+		Status: "running",
+	}, 64)
+
+	if strings.Contains(got, "running") || strings.Contains(got, "done") || strings.Contains(got, "pending") {
+		t.Fatalf("expected tool header to omit status words, got %q", got)
+	}
+	if strings.Contains(got, "params:") || strings.Contains(got, "{\"") {
+		t.Fatalf("expected tool section to hide params content, got %q", got)
+	}
+}
+
+func TestAssistantDeltaPlanningTextRendersAsThinking(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
-			{Kind: "user", Title: "You", Body: "inspect the project", Status: "final"},
+			{Kind: "user", Title: "You", Body: "please inspect this project", Status: "final"},
 		},
 		streamingIndex: -1,
 	}
 
 	m.handleAgentEvent(agent.Event{
 		Type:    agent.EventAssistantDelta,
-		Content: "I will first inspect the project structure, then validate the build.",
+		Content: "I will first inspect structure and config, then code organization and dependencies, and finally verify with build and tests.",
 	})
 
 	if len(m.chatItems) != 2 {
 		t.Fatalf("expected assistant delta to append one assistant item, got %d", len(m.chatItems))
 	}
-	if m.chatItems[1].Title != assistantLabel || m.chatItems[1].Status != "streaming" {
-		t.Fatalf("expected planning delta to stay as streaming assistant output, got %+v", m.chatItems[1])
+	if m.chatItems[1].Title != thinkingLabel || m.chatItems[1].Status != "thinking" {
+		t.Fatalf("expected planning delta to render as thinking, got %+v", m.chatItems[1])
 	}
 }
-func TestFinishAssistantMessageReplacesThinkingStreamingCard(t *testing.T) {
+
+func TestFinishAssistantMessageAppendsFinalCardAfterThinking(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
 			{Kind: "user", Title: "You", Body: "what project is this", Status: "final"},
@@ -2583,13 +2639,17 @@ func TestFinishAssistantMessageReplacesThinkingStreamingCard(t *testing.T) {
 
 	m.finishAssistantMessage("This is a Go TUI project.")
 
-	if len(m.chatItems) != 2 {
-		t.Fatalf("expected final answer to replace streaming thinking card, got %d items", len(m.chatItems))
+	if len(m.chatItems) != 3 {
+		t.Fatalf("expected final answer to be appended after thinking, got %d items", len(m.chatItems))
 	}
-	if m.chatItems[1].Title != assistantLabel || m.chatItems[1].Status != "final" || m.chatItems[1].Body != "This is a Go TUI project." {
-		t.Fatalf("expected final assistant card to replace thinking stream, got %+v", m.chatItems[1])
+	if m.chatItems[1].Title != thinkingLabel || m.chatItems[1].Status != "thinking" {
+		t.Fatalf("expected thinking card to remain visible, got %+v", m.chatItems[1])
+	}
+	if m.chatItems[2].Title != assistantLabel || m.chatItems[2].Status != "final" || m.chatItems[2].Body != "This is a Go TUI project." {
+		t.Fatalf("expected final assistant card after thinking, got %+v", m.chatItems[2])
 	}
 }
+
 func TestApprovalBannerRendersAboveInput(t *testing.T) {
 	input := textarea.New()
 	m := model{
@@ -2631,7 +2691,7 @@ func TestRenderFooterShowsActiveSkillBanner(t *testing.T) {
 	}
 
 	footer := m.renderFooter()
-	if !strings.Contains(footer, "review") {
+	if !strings.Contains(footer, "Active skill: review") {
 		t.Fatalf("expected footer to show active skill banner, got %q", footer)
 	}
 	if !strings.Contains(footer, "severity=high") {
@@ -2794,6 +2854,36 @@ func TestUpdateRunFinishedMsgResetsBusyState(t *testing.T) {
 	})
 }
 
+func TestRunFinishedKeepsStreamingSlotForLateAssistantMessage(t *testing.T) {
+	m := model{
+		async: make(chan tea.Msg, 1),
+		busy:  true,
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "test", Status: "final"},
+			{Kind: "assistant", Title: assistantLabel, Body: "received,", Status: "streaming"},
+		},
+		streamingIndex: 1,
+	}
+
+	got, _ := m.Update(runFinishedMsg{})
+	updated := got.(model)
+	if updated.streamingIndex != 1 {
+		t.Fatalf("expected run finished to keep streaming index for late final message, got %d", updated.streamingIndex)
+	}
+
+	updated.handleAgentEvent(agent.Event{
+		Type:    agent.EventAssistantMessage,
+		Content: "received, response looks good.",
+	})
+
+	if len(updated.chatItems) != 2 {
+		t.Fatalf("expected late final message to update existing assistant card, got %d items", len(updated.chatItems))
+	}
+	last := updated.chatItems[1]
+	if last.Status != "final" || strings.TrimSpace(last.Body) != "received, response looks good." {
+		t.Fatalf("expected assistant card to be finalized in place, got %+v", last)
+	}
+}
 func TestBusyInputStillEditable(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
@@ -2879,6 +2969,22 @@ func TestBusyEnterInToolPhaseDefersBTWCancel(t *testing.T) {
 	}
 	if updated.statusNote != "BTW queued. Waiting for current tool step to finish..." {
 		t.Fatalf("expected deferred tool note, got %q", updated.statusNote)
+	}
+}
+
+func TestRenderChatCardToolUsesVisualSeparator(t *testing.T) {
+	got := renderChatCard(chatEntry{
+		Kind:   "tool",
+		Title:  "Tool Result | read_file",
+		Body:   "Read internal/tui/model.go lines 1-20",
+		Status: "done",
+	}, 64)
+
+	if !strings.Contains(got, "│") && !strings.Contains(got, "|") {
+		t.Fatalf("expected tool card to include a left border separator, got %q", got)
+	}
+	if !strings.Contains(got, "Tool Result | read_file") {
+		t.Fatalf("expected tool card title to render, got %q", got)
 	}
 }
 
@@ -3250,6 +3356,7 @@ func TestBTWCommandRequiresMessage(t *testing.T) {
 	}
 	if updated.busy {
 		t.Fatalf("expected empty /btw not to start a run")
+
 	}
 }
 
@@ -3339,8 +3446,11 @@ func TestFormatChatBodySeparatesParagraphAndList(t *testing.T) {
 	}
 
 	got := formatChatBody(item, 80)
-	if !strings.Contains(got, "Explanation\n\n- first") {
-		t.Fatalf("expected list to be separated from paragraph, got %q", got)
+	if !strings.Contains(got, "Explanation") {
+		t.Fatalf("expected explanation text to remain, got %q", got)
+	}
+	if !strings.Contains(got, "- first") {
+		t.Fatalf("expected markdown list marker to be normalized, got %q", got)
 	}
 }
 
@@ -3374,6 +3484,29 @@ func TestFormatChatBodyRendersCodeBlockWithoutFences(t *testing.T) {
 	}
 }
 
+func TestFormatChatBodyStripsInlineMarkdownTokens(t *testing.T) {
+	item := chatEntry{
+		Kind: "assistant",
+		Body: "我是 **ByteMind** 项目，支持 `go test ./...` 与 [文档](https://example.com/docs)。",
+	}
+
+	got := formatChatBody(item, 120)
+	for _, unwanted := range []string{"**", "`", "[", "]("} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("expected inline markdown token %q to be removed, got %q", unwanted, got)
+		}
+	}
+	if !strings.Contains(got, "ByteMind") {
+		t.Fatalf("expected bold content to remain after normalization, got %q", got)
+	}
+	if !strings.Contains(got, "go test ./...") {
+		t.Fatalf("expected inline code content to remain after normalization, got %q", got)
+	}
+	if !strings.Contains(got, "文档 (https://example.com/docs)") {
+		t.Fatalf("expected markdown link to be normalized to plain text, got %q", got)
+	}
+}
+
 func TestFinishAssistantMessageDoesNotAppendDuplicateCard(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
@@ -3397,27 +3530,364 @@ func TestFinishAssistantMessageDoesNotAppendDuplicateCard(t *testing.T) {
 	}
 }
 
-func TestAppendAssistantDeltaMergesOverlappingChunks(t *testing.T) {
+func TestShouldKeepStreamingIndexOnRunFinishedBranches(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
-			{
-				Kind:   "assistant",
-				Title:  assistantLabel,
-				Body:   "The result is stream",
-				Status: "streaming",
-			},
+			{Kind: "assistant", Status: "streaming"},
+			{Kind: "assistant", Status: "thinking"},
+			{Kind: "assistant", Status: "pending"},
+			{Kind: "assistant", Status: "final"},
+			{Kind: "tool", Status: "streaming"},
 		},
-		streamingIndex: 0,
 	}
 
-	m.appendAssistantDelta("streaming mode.")
-	if m.chatItems[0].Body != "The result is streaming mode." {
-		t.Fatalf("expected overlap-aware merge, got %q", m.chatItems[0].Body)
+	for i, want := range []bool{true, true, true, false, false} {
+		m.streamingIndex = i
+		if got := m.shouldKeepStreamingIndexOnRunFinished(); got != want {
+			t.Fatalf("unexpected keep-streaming result at index %d: got %v want %v", i, got, want)
+		}
 	}
 
-	m.appendAssistantDelta("The result is streaming mode with details.")
-	if m.chatItems[0].Body != "The result is streaming mode with details." {
-		t.Fatalf("expected cumulative chunk to replace content, got %q", m.chatItems[0].Body)
+	m.streamingIndex = -1
+	if m.shouldKeepStreamingIndexOnRunFinished() {
+		t.Fatalf("expected negative streaming index to return false")
+	}
+	m.streamingIndex = len(m.chatItems)
+	if m.shouldKeepStreamingIndexOnRunFinished() {
+		t.Fatalf("expected out-of-range streaming index to return false")
+	}
+}
+
+func TestScrollbarTrackBoundsAndDragScrollbarTo(t *testing.T) {
+	input := textarea.New()
+	input.SetWidth(80)
+	input.SetHeight(3)
+
+	m := model{
+		screen:     screenChat,
+		width:      120,
+		height:     32,
+		input:      input,
+		viewport:   viewport.New(60, 10),
+		tokenUsage: newTokenUsageComponent(),
+		chatItems: []chatEntry{
+			{Kind: "assistant", Body: strings.Repeat("line\n", 260), Status: "final"},
+		},
+	}
+	m.refreshViewport()
+
+	x, top, bottom, ok := m.scrollbarTrackBounds()
+	if !ok {
+		t.Fatalf("expected scrollbar track bounds to be available")
+	}
+	if x < 0 || bottom < top {
+		t.Fatalf("unexpected scrollbar bounds: x=%d top=%d bottom=%d", x, top, bottom)
+	}
+
+	m.scrollbarDragOffset = 0
+	m.dragScrollbarTo(bottom)
+	if m.viewport.YOffset == 0 {
+		t.Fatalf("expected dragging to scrollbar bottom to increase viewport offset")
+	}
+	afterBottom := m.viewport.YOffset
+	m.dragScrollbarTo(top)
+	if m.viewport.YOffset >= afterBottom {
+		t.Fatalf("expected dragging to top to reduce offset, got %d -> %d", afterBottom, m.viewport.YOffset)
+	}
+
+	// Guard branch: track bounds unavailable.
+	before := m.viewport.YOffset
+	m.screen = screenLanding
+	m.dragScrollbarTo(bottom)
+	if m.viewport.YOffset != before {
+		t.Fatalf("expected drag to no-op when track bounds are unavailable")
+	}
+
+	// Guard branch: no scrollable range (maxOffset == 0).
+	m.screen = screenChat
+	m.chatItems = []chatEntry{{Kind: "assistant", Body: "single line", Status: "final"}}
+	m.refreshViewport()
+	before = m.viewport.YOffset
+	m.dragScrollbarTo(top)
+	if m.viewport.YOffset != before {
+		t.Fatalf("expected drag to no-op when content has no scrollable range")
+	}
+}
+
+func TestHandleMouseScrollbarDragLifecycle(t *testing.T) {
+	input := textarea.New()
+	input.SetWidth(80)
+	input.SetHeight(3)
+
+	m := model{
+		screen:         screenChat,
+		width:          120,
+		height:         32,
+		input:          input,
+		viewport:       viewport.New(60, 10),
+		tokenUsage:     newTokenUsageComponent(),
+		chatAutoFollow: true,
+		chatItems: []chatEntry{
+			{Kind: "assistant", Body: strings.Repeat("row\n", 280), Status: "final"},
+		},
+	}
+	m.refreshViewport()
+
+	x, top, bottom, ok := m.scrollbarTrackBounds()
+	if !ok {
+		t.Fatalf("expected scrollbar bounds for drag test")
+	}
+
+	// Click near track bottom so we exercise "track click jump + start drag" branch.
+	got, _ := m.handleMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      x,
+		Y:      bottom,
+	})
+	pressed := got.(model)
+	if !pressed.draggingScrollbar {
+		t.Fatalf("expected dragging mode after pressing scrollbar track")
+	}
+	if pressed.chatAutoFollow {
+		t.Fatalf("expected auto-follow to be disabled once dragging starts")
+	}
+
+	beforeOffset := pressed.viewport.YOffset
+	got, _ = pressed.handleMouse(tea.MouseMsg{
+		Action: tea.MouseActionMotion,
+		X:      x,
+		Y:      top,
+	})
+	moved := got.(model)
+	if moved.viewport.YOffset == beforeOffset {
+		t.Fatalf("expected motion while dragging to update viewport offset")
+	}
+
+	got, _ = moved.handleMouse(tea.MouseMsg{
+		Action: tea.MouseActionRelease,
+		Button: tea.MouseButtonLeft,
+		X:      x,
+		Y:      top,
+	})
+	released := got.(model)
+	if released.draggingScrollbar {
+		t.Fatalf("expected release to end scrollbar dragging")
+	}
+}
+
+func TestHandleMouseGuardBranchesAndThumbPress(t *testing.T) {
+	input := textarea.New()
+	input.SetWidth(80)
+	input.SetHeight(3)
+
+	// Release should clear dragging even when another overlay short-circuits later logic.
+	m := model{
+		screen:            screenChat,
+		width:             120,
+		height:            28,
+		input:             input,
+		viewport:          viewport.New(60, 10),
+		tokenUsage:        newTokenUsageComponent(),
+		draggingScrollbar: true,
+		helpOpen:          true,
+	}
+	got, _ := m.handleMouse(tea.MouseMsg{
+		Action: tea.MouseActionRelease,
+		Button: tea.MouseButtonLeft,
+	})
+	updated := got.(model)
+	if updated.draggingScrollbar {
+		t.Fatalf("expected release to clear dragging even when help modal is open")
+	}
+
+	// Unsupported screen should return without changes.
+	m = model{screen: screenKind("other"), viewport: viewport.New(20, 4)}
+	before := m.viewport.YOffset
+	got, _ = m.handleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	updated = got.(model)
+	if updated.viewport.YOffset != before {
+		t.Fatalf("expected unsupported screen to ignore mouse event")
+	}
+
+	// Sessions modal open on chat screen should block viewport scrolling.
+	m = model{
+		screen:       screenChat,
+		sessionsOpen: true,
+		viewport: func() (vp viewport.Model) {
+			vp = viewport.New(40, 5)
+			vp.SetContent(strings.Repeat("line\n", 60))
+			return vp
+		}(),
+	}
+	before = m.viewport.YOffset
+	got, _ = m.handleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	updated = got.(model)
+	if updated.viewport.YOffset != before {
+		t.Fatalf("expected sessions-open state to ignore mouse wheel scrolling")
+	}
+
+	// Clicking directly on thumb should use the direct-offset branch.
+	m = model{
+		screen:     screenChat,
+		width:      120,
+		height:     32,
+		input:      input,
+		viewport:   viewport.New(60, 10),
+		tokenUsage: newTokenUsageComponent(),
+		chatItems: []chatEntry{
+			{Kind: "assistant", Body: strings.Repeat("thumb\n", 220), Status: "final"},
+		},
+	}
+	m.refreshViewport()
+	x, trackTop, _, ok := m.scrollbarTrackBounds()
+	if !ok {
+		t.Fatalf("expected scrollbar bounds for thumb click")
+	}
+	thumbTop, thumbHeight, _, visible := m.scrollbarLayout(m.viewport.Height, m.viewport.TotalLineCount(), m.viewport.YOffset)
+	if !visible || thumbHeight <= 0 {
+		t.Fatalf("expected visible thumb for thumb-click branch")
+	}
+	insideThumbY := trackTop + thumbTop
+	got, _ = m.handleMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      x,
+		Y:      insideThumbY,
+	})
+	updated = got.(model)
+	if !updated.draggingScrollbar {
+		t.Fatalf("expected thumb press to start dragging")
+	}
+	if updated.scrollbarDragOffset != 0 {
+		t.Fatalf("expected thumb-top press to use zero drag offset, got %d", updated.scrollbarDragOffset)
+	}
+}
+
+func TestRenderTokenBadgeAndScrollbarHelpers(t *testing.T) {
+	m := model{
+		screen:     screenChat,
+		width:      110,
+		height:     30,
+		input:      textarea.New(),
+		viewport:   viewport.New(50, 8),
+		tokenUsage: newTokenUsageComponent(),
+	}
+	m.viewport.SetContent(strings.Repeat("line\n", 120))
+	m.tokenUsage.displayUsed = 2345
+	_ = m.tokenUsage.SetUsage(2345, 5000)
+	m.refreshViewport()
+
+	compact := m.renderTokenBadge(79)
+	if strings.Contains(compact, "/") {
+		t.Fatalf("expected compact badge under width threshold, got %q", compact)
+	}
+	full := m.renderTokenBadge(80)
+	if !strings.Contains(full, "/") {
+		t.Fatalf("expected full badge at width threshold, got %q", full)
+	}
+
+	if got := m.renderScrollbar(0, 10, 0); got != "" {
+		t.Fatalf("expected empty scrollbar when view height is zero, got %q", got)
+	}
+	bar := m.renderScrollbar(8, 120, 5)
+	if lines := strings.Count(bar, "\n") + 1; lines != 8 {
+		t.Fatalf("expected scrollbar to have 8 visual rows, got %d", lines)
+	}
+
+	thumbTop, thumbHeight, maxOffset, visible := m.scrollbarLayout(8, 200, 9999)
+	if !visible || thumbHeight <= 0 || maxOffset <= 0 {
+		t.Fatalf("expected visible scrollbar layout with valid dimensions")
+	}
+	if thumbTop < 0 || thumbTop > 8-thumbHeight {
+		t.Fatalf("expected clamped thumb top, got top=%d height=%d", thumbTop, thumbHeight)
+	}
+
+	thumbTop, thumbHeight, maxOffset, visible = m.scrollbarLayout(8, 0, 0)
+	if !visible || thumbTop != 0 || thumbHeight != 8 || maxOffset != 0 {
+		t.Fatalf("expected zero-content layout fallback, got top=%d height=%d max=%d visible=%v", thumbTop, thumbHeight, maxOffset, visible)
+	}
+}
+
+func TestWrapLineSmartBranchCoverage(t *testing.T) {
+	if got := wrapLineSmart("abc", 0); len(got) != 1 || got[0] != "abc" {
+		t.Fatalf("expected width<=0 to return original line, got %#v", got)
+	}
+	if got := wrapLineSmart("", 10); len(got) != 1 || got[0] != "" {
+		t.Fatalf("expected empty line to remain empty, got %#v", got)
+	}
+
+	wideRune := wrapLineSmart("你a", 1)
+	if len(wideRune) < 2 || wideRune[0] != "你" {
+		t.Fatalf("expected wide-rune fallback split, got %#v", wideRune)
+	}
+
+	words := wrapLineSmart("hello world", 6)
+	if len(words) < 2 || words[0] != "hello" {
+		t.Fatalf("expected split at word boundary, got %#v", words)
+	}
+}
+
+func TestMarkdownNormalizationHelpers(t *testing.T) {
+	if got := normalizeAssistantMarkdownLine(""); got != "" {
+		t.Fatalf("expected empty line to normalize to empty, got %q", got)
+	}
+	if got := normalizeAssistantMarkdownLine("> ## Heading"); got != "Heading" {
+		t.Fatalf("expected quote heading to normalize, got %q", got)
+	}
+	if got := normalizeAssistantMarkdownLine(" - [x] done **item** "); got != " - [x] done item" {
+		t.Fatalf("expected checkbox normalization, got %q", got)
+	}
+	if got := normalizeAssistantMarkdownLine("1. [Doc](https://example.com)"); got != "1. Doc (https://example.com)" {
+		t.Fatalf("expected ordered list with markdown link normalization, got %q", got)
+	}
+	if got := normalizeAssistantMarkdownLine("| --- | :---: |"); got != "" {
+		t.Fatalf("expected table divider to be stripped, got %q", got)
+	}
+	if got := normalizeAssistantMarkdownLine("| a | b |"); got != "a | b" {
+		t.Fatalf("expected table row to normalize, got %q", got)
+	}
+
+	if marker, rest, ok := splitOrderedListItem("12. step one"); !ok || marker != "12." || rest != "step one" {
+		t.Fatalf("expected ordered list split, got marker=%q rest=%q ok=%v", marker, rest, ok)
+	}
+	if _, _, ok := splitOrderedListItem("a. not-ordered"); ok {
+		t.Fatalf("expected invalid ordered-list marker to fail split")
+	}
+
+	if !isMarkdownTableDivider("| --- | :---: |") {
+		t.Fatalf("expected markdown table divider to be detected")
+	}
+	if isMarkdownTableDivider("| a | b |") {
+		t.Fatalf("expected non-divider row not to be treated as divider")
+	}
+
+	normalizedLinks := stripMarkdownLinks("see [Doc](https://x.test) and ![img](https://img.test)")
+	if !strings.Contains(normalizedLinks, "Doc (https://x.test)") {
+		t.Fatalf("expected standard link to preserve URL in text, got %q", normalizedLinks)
+	}
+	if !strings.Contains(normalizedLinks, "img") || strings.Contains(normalizedLinks, "img.test") {
+		t.Fatalf("expected image link to keep label only, got %q", normalizedLinks)
+	}
+
+	broken := "[Doc](https://example.com"
+	if got := stripMarkdownLinks(broken); got != broken {
+		t.Fatalf("expected malformed markdown link to remain unchanged, got %q", got)
+	}
+}
+
+func TestThinkingFilters(t *testing.T) {
+	if isMeaningfulThinking("I will call read_file first.", "read_file") {
+		t.Fatalf("expected generic tool-intent phrase not to be treated as meaningful thinking")
+	}
+	if !isMeaningfulThinking("I will first inspect the code and then patch tests.", "") {
+		t.Fatalf("expected concrete planning thought to be meaningful")
+	}
+	if shouldRenderThinkingFromDelta("I will call read_file now.") {
+		t.Fatalf("expected generic call text not to render as thinking delta")
+	}
+	if !shouldRenderThinkingFromDelta("First, I will inspect the failing branch and then patch tests.") {
+		t.Fatalf("expected structured reasoning marker to trigger thinking rendering")
 	}
 }
 

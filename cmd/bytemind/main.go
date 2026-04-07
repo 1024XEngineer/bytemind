@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -46,23 +45,9 @@ var slashCommands = []slashCommand{
 func main() {
 	configureConsoleEncoding()
 	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", redactSensitiveText(err.Error()))
+		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
-}
-
-var sensitiveOutputPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(bearer\s+)[^\s"']+`),
-	regexp.MustCompile(`(?i)(api[_-]?key["']?\s*[:=]\s*["']?)[^"'\s,}]+`),
-	regexp.MustCompile(`(?i)(x-api-key["']?\s*[:=]\s*["']?)[^"'\s,}]+`),
-}
-
-func redactSensitiveText(raw string) string {
-	value := raw
-	for _, pattern := range sensitiveOutputPatterns {
-		value = pattern.ReplaceAllString(value, "${1}***")
-	}
-	return value
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -169,7 +154,7 @@ func bootstrapWithOptions(configPath, modelOverride, sessionID, streamOverride, 
 
 	apiKey := cfg.Provider.ResolveAPIKey()
 	if requireAPIKey && apiKey == "" {
-		return nil, nil, nil, errors.New("missing API key; run `go run ./cmd/bytemind chat` to configure once, or set BYTEMIND_API_KEY")
+		return nil, nil, nil, errors.New("missing API key; configure provider.api_key in the config file")
 	}
 
 	store, err := session.NewStore(sessionDir)

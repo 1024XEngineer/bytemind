@@ -2,8 +2,7 @@
     "name":  "github-pr",
     "version":  "0.1.0",
     "title":  "GitHub PR Analysis",
-    "description":  "Analyze PR diffs, review feedback, and merge risk based on evidence.",
-    "description_zh":  "基于证据分析 PR 差异、评审意见与合并风险。",
+    "description":  "基于证据分析 PR 差异、评审意见与合并风险。",
     "entry":  {
                   "slash":  "/github-pr"
               },

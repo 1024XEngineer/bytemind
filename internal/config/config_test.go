@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"bytemind/internal/secretstore"
 )
 
 func TestLoadUsesEnvOverrides(t *testing.T) {
@@ -61,25 +59,6 @@ func TestLoadIgnoresInvalidTokenQuotaEnv(t *testing.T) {
 	}
 	if cfg.TokenQuota != 5000 {
 		t.Fatalf("expected invalid token quota to fall back to default 5000, got %d", cfg.TokenQuota)
-	}
-}
-
-func TestResolveAPIKeyFallsBackToSecretStore(t *testing.T) {
-	workspace := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("BYTEMIND_HOME", home)
-	t.Setenv("BYTEMIND_API_KEY", "")
-
-	if err := secretstore.Save("BYTEMIND_API_KEY", "persisted-key"); err != nil {
-		t.Fatalf("save secret failed: %v", err)
-	}
-
-	cfg, err := Load(workspace, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Provider.ResolveAPIKey() != "persisted-key" {
-		t.Fatalf("expected secret from store, got %q", cfg.Provider.ResolveAPIKey())
 	}
 }
 

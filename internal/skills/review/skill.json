@@ -2,8 +2,7 @@
     "name":  "review",
     "version":  "0.1.0",
     "title":  "Code Review",
-    "description":  "Review code changes with a focus on correctness, regression risk, and test gaps.",
-    "description_zh":  "以正确性、回归风险和测试缺口为重点进行代码评审。",
+    "description":  "以正确性、回归风险和测试缺口为重点进行代码评审。",
     "entry":  {
                   "slash":  "/review"
               },

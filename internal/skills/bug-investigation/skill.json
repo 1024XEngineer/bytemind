@@ -2,8 +2,7 @@
     "name":  "bug-investigation",
     "version":  "0.1.0",
     "title":  "Bug Investigation",
-    "description":  "Locate and analyze issues with reproducible evidence before proposing a fix.",
-    "description_zh":  "通过可复现证据定位并分析问题，再提出修复方案。",
+    "description":  "通过可复现证据定位并分析问题，再提出修复方案。",
     "entry":  {
                   "slash":  "/bug-investigation"
               },

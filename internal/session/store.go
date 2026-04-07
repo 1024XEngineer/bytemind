@@ -104,7 +104,7 @@ func New(workspace string) *Session {
 }
 
 func NewStore(dir string) (*Store, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
 	return &Store{dir: dir}, nil
@@ -368,7 +368,7 @@ func writeSessionSnapshot(path string, session *Session) error {
 
 func writeAtomicFile(path string, content []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 
@@ -384,7 +384,7 @@ func writeAtomicFile(path string, content []byte) error {
 		}
 	}()
 
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := tmp.Chmod(0o644); err != nil {
 		_ = tmp.Close()
 		return err
 	}
