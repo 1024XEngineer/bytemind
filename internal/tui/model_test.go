@@ -987,6 +987,57 @@ func TestAltEnterInsertsNewlineWithoutSubmitting(t *testing.T) {
 	}
 }
 
+func TestShiftEnterInsertsNewlineWithoutSubmitting(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetWidth(40)
+	input.SetHeight(3)
+	input.SetValue("first line")
+	input.CursorEnd()
+
+	m := model{
+		screen:    screenChat,
+		input:     input,
+		workspace: "E:\\bytemind",
+		sess:      session.New("E:\\bytemind"),
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("shift+enter")})
+	updated := got.(model)
+
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected shift+enter not to submit")
+	}
+	if updated.input.Value() != "first line\n" {
+		t.Fatalf("expected shift+enter to insert newline, got %q", updated.input.Value())
+	}
+}
+func TestCtrlJInsertsNewlineWithoutSubmitting(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetWidth(40)
+	input.SetHeight(3)
+	input.SetValue("first line")
+	input.CursorEnd()
+
+	m := model{
+		screen:    screenChat,
+		input:     input,
+		workspace: "E:\\bytemind",
+		sess:      session.New("E:\\bytemind"),
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	updated := got.(model)
+
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected ctrl+j not to submit prompt")
+	}
+	if updated.input.Value() != "first line\n" {
+		t.Fatalf("expected ctrl+j to insert newline, got %q", updated.input.Value())
+	}
+}
+
 func TestAltVPastesClipboardImage(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
@@ -2553,6 +2604,28 @@ func TestToolStartWithGenericToolIntentDoesNotShowThinkingCard(t *testing.T) {
 }
 
 func TestAssistantDeltaPlanningTextStaysStreaming(t *testing.T) {
+	if strings.TrimSpace(m.chatItems[1].Body) != "" {
+		t.Fatalf("expected tool call entry to omit params body, got %q", m.chatItems[1].Body)
+	}
+}
+
+func TestRenderChatSectionToolHeaderOmitsStatusWords(t *testing.T) {
+	got := renderChatSection(chatEntry{
+		Kind:   "tool",
+		Title:  "Tool Call | list_files",
+		Body:   "",
+		Status: "running",
+	}, 64)
+
+	if strings.Contains(got, "running") || strings.Contains(got, "done") || strings.Contains(got, "pending") {
+		t.Fatalf("expected tool header to omit status words, got %q", got)
+	}
+	if strings.Contains(got, "params:") || strings.Contains(got, "{\"") {
+		t.Fatalf("expected tool section to hide params content, got %q", got)
+	}
+}
+
+func TestAssistantDeltaPlanningTextRendersAsThinking(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
 			{Kind: "user", Title: "You", Body: "inspect the project", Status: "final"},
@@ -2879,6 +2952,22 @@ func TestBusyEnterInToolPhaseDefersBTWCancel(t *testing.T) {
 	}
 	if updated.statusNote != "BTW queued. Waiting for current tool step to finish..." {
 		t.Fatalf("expected deferred tool note, got %q", updated.statusNote)
+	}
+}
+
+func TestRenderChatCardToolUsesVisualSeparator(t *testing.T) {
+	got := renderChatCard(chatEntry{
+		Kind:   "tool",
+		Title:  "Tool Result | read_file",
+		Body:   "Read internal/tui/model.go lines 1-20",
+		Status: "done",
+	}, 64)
+
+	if !strings.Contains(got, "│") && !strings.Contains(got, "|") {
+		t.Fatalf("expected tool card to include a left border separator, got %q", got)
+	}
+	if !strings.Contains(got, "Tool Result | read_file") {
+		t.Fatalf("expected tool card title to render, got %q", got)
 	}
 }
 

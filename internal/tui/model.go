@@ -722,6 +722,18 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if isInputNewlineKey(msg) {
+		before := m.input.Value()
+		var cmd tea.Cmd
+		// Preserve multiline input shortcuts without triggering submit.
+		m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if m.input.Value() != before {
+			m.handleInputMutation(before, m.input.Value(), msg.String())
+			m.syncInputOverlays()
+		}
+		return m, cmd
+	}
+
 	switch msg.String() {
 	case "ctrl+l":
 		if !m.busy {
