@@ -1,29 +1,29 @@
 {
-    "name":  "write-rfc",
-    "version":  "0.1.0",
-    "title":  "Write RFC",
-    "description":  "产出结构化技术方案，明确权衡取舍与发布计划。",
-    "entry":  {
-                  "slash":  "/write-rfc"
-              },
-    "tools":  {
-                  "policy":  "allowlist",
-                  "items":  [
-                                "list_files",
-                                "read_file",
-                                "search_text",
-                                "write_file",
-                                "replace_in_file",
-                                "apply_patch",
-                                "update_plan"
-                            ]
-              },
-    "args":  [
-                 {
-                     "name":  "path",
-                     "type":  "string",
-                     "required":  false,
-                     "description":  "Optional RFC output path, for example docs/rfc/feature.md."
-                 }
-             ]
+  "name": "write-rfc",
+  "version": "0.1.0",
+  "title": "Write RFC",
+  "description": "Produce a structured technical proposal with clear tradeoffs and a rollout plan.",
+  "entry": {
+    "slash": "/write-rfc"
+  },
+  "tools": {
+    "policy": "allowlist",
+    "items": [
+      "list_files",
+      "read_file",
+      "search_text",
+      "write_file",
+      "replace_in_file",
+      "apply_patch",
+      "update_plan"
+    ]
+  },
+  "args": [
+    {
+      "name": "path",
+      "type": "string",
+      "required": false,
+      "description": "Optional RFC output path, for example docs/rfc/feature.md."
+    }
+  ]
 }

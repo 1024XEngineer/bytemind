@@ -1,27 +1,27 @@
 {
-    "name":  "bug-investigation",
-    "version":  "0.1.0",
-    "title":  "Bug Investigation",
-    "description":  "通过可复现证据定位并分析问题，再提出修复方案。",
-    "entry":  {
-                  "slash":  "/bug-investigation"
-              },
-    "tools":  {
-                  "policy":  "allowlist",
-                  "items":  [
-                                "list_files",
-                                "read_file",
-                                "search_text",
-                                "run_shell",
-                                "update_plan"
-                            ]
-              },
-    "args":  [
-                 {
-                     "name":  "symptom",
-                     "type":  "string",
-                     "required":  false,
-                     "description":  "Optional symptom summary or error keyword."
-                 }
-             ]
+  "name": "bug-investigation",
+  "version": "0.1.0",
+  "title": "Bug Investigation",
+  "description": "Locate and analyze issues with reproducible evidence, then propose a fix.",
+  "entry": {
+    "slash": "/bug-investigation"
+  },
+  "tools": {
+    "policy": "allowlist",
+    "items": [
+      "list_files",
+      "read_file",
+      "search_text",
+      "run_shell",
+      "update_plan"
+    ]
+  },
+  "args": [
+    {
+      "name": "symptom",
+      "type": "string",
+      "required": false,
+      "description": "Optional symptom summary or error keyword."
+    }
+  ]
 }

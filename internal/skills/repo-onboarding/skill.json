@@ -1,19 +1,19 @@
 {
-    "name":  "repo-onboarding",
-    "version":  "0.1.0",
-    "title":  "Repo Onboarding",
-    "description":  "快速建立对仓库结构、入口与运行流程的整体理解。",
-    "entry":  {
-                  "slash":  "/repo-onboarding"
-              },
-    "tools":  {
-                  "policy":  "allowlist",
-                  "items":  [
-                                "list_files",
-                                "read_file",
-                                "search_text",
-                                "run_shell",
-                                "update_plan"
-                            ]
-              }
+  "name": "repo-onboarding",
+  "version": "0.1.0",
+  "title": "Repo Onboarding",
+  "description": "Build a quick understanding of repository structure, entry points, and run flow.",
+  "entry": {
+    "slash": "/repo-onboarding"
+  },
+  "tools": {
+    "policy": "allowlist",
+    "items": [
+      "list_files",
+      "read_file",
+      "search_text",
+      "run_shell",
+      "update_plan"
+    ]
+  }
 }

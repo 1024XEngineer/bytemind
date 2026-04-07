@@ -1,27 +1,27 @@
 {
-    "name":  "review",
-    "version":  "0.1.0",
-    "title":  "Code Review",
-    "description":  "以正确性、回归风险和测试缺口为重点进行代码评审。",
-    "entry":  {
-                  "slash":  "/review"
-              },
-    "tools":  {
-                  "policy":  "allowlist",
-                  "items":  [
-                                "list_files",
-                                "read_file",
-                                "search_text",
-                                "run_shell",
-                                "update_plan"
-                            ]
-              },
-    "args":  [
-                 {
-                     "name":  "base_ref",
-                     "type":  "string",
-                     "required":  false,
-                     "description":  "Optional baseline branch, for example main."
-                 }
-             ]
+  "name": "review",
+  "version": "0.1.0",
+  "title": "Code Review",
+  "description": "Focus code review on correctness, regression risk, and testing gaps.",
+  "entry": {
+    "slash": "/review"
+  },
+  "tools": {
+    "policy": "allowlist",
+    "items": [
+      "list_files",
+      "read_file",
+      "search_text",
+      "run_shell",
+      "update_plan"
+    ]
+  },
+  "args": [
+    {
+      "name": "base_ref",
+      "type": "string",
+      "required": false,
+      "description": "Optional baseline branch, for example main."
+    }
+  ]
 }

@@ -1542,6 +1542,9 @@ func TestHelpTextOnlyMentionsSupportedEntryPoints(t *testing.T) {
 		"go run ./cmd/bytemind chat",
 		"go run ./cmd/bytemind run -prompt",
 		"/session",
+		"/skill author",
+		"/skill clear",
+		"/skill delete <name>",
 		"/quit",
 		"/new",
 		"Ctrl+G",
@@ -1802,6 +1805,7 @@ func TestHandleSlashSkillsListsDiscoveredSkills(t *testing.T) {
 		sess:      sess,
 		workspace: workspace,
 		screen:    screenChat,
+		input:     textarea.New(),
 	}
 	if err := m.handleSlashCommand("/skills"); err != nil {
 		t.Fatalf("expected /skills to succeed, got %v", err)
@@ -1814,7 +1818,7 @@ func TestHandleSlashSkillsListsDiscoveredSkills(t *testing.T) {
 	}
 }
 
-func TestHandleSlashSkillActivateAndClear(t *testing.T) {
+func TestHandleSlashSkillActivateAndSwitch(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, "internal", "skills", "bug-investigation"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1861,6 +1865,7 @@ func TestHandleSlashSkillActivateAndClear(t *testing.T) {
 		sess:      sess,
 		workspace: workspace,
 		screen:    screenChat,
+		input:     textarea.New(),
 	}
 	if err := m.handleSlashCommand("/bug-investigation"); err != nil {
 		t.Fatalf("expected /bug-investigation to succeed, got %v", err)
@@ -1877,11 +1882,290 @@ func TestHandleSlashSkillActivateAndClear(t *testing.T) {
 	if got := m.sess.ActiveSkill.Args["severity"]; got != "high" {
 		t.Fatalf("expected skill arg severity=high, got %q", got)
 	}
+}
+
+func TestHandleSlashSkillAuthorCreatesProjectSkill(t *testing.T) {
+	workspace := t.TempDir()
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	runner := agent.NewRunner(agent.Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+		},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	m := model{
+		runner:    runner,
+		store:     store,
+		sess:      sess,
+		workspace: workspace,
+		screen:    screenChat,
+		input:     textarea.New(),
+	}
+
+	if err := m.handleSlashCommand("/skill author review-plus review backend changes and report risks"); err != nil {
+		t.Fatalf("expected /skill author to succeed, got %v", err)
+	}
+
+	skillDir := filepath.Join(workspace, ".bytemind", "skills", "review-plus")
+	if _, err := os.Stat(filepath.Join(skillDir, "skill.json")); err != nil {
+		t.Fatalf("expected generated skill.json, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(skillDir, "SKILL.md")); err != nil {
+		t.Fatalf("expected generated SKILL.md, got %v", err)
+	}
+
+	if len(m.chatItems) < 2 {
+		t.Fatalf("expected command exchange in chat, got %#v", m.chatItems)
+	}
+	response := m.chatItems[len(m.chatItems)-1].Body
+	if !strings.Contains(response, "技能 `review-plus`") {
+		t.Fatalf("expected response to reference authored skill, got %q", response)
+	}
+	if !strings.Contains(response, "可通过 `/review-plus` 激活") {
+		t.Fatalf("expected response to include activation hint, got %q", response)
+	}
+
+	if err := m.handleSlashCommand("/review-plus"); err != nil {
+		t.Fatalf("expected /review-plus activation to succeed, got %v", err)
+	}
+	if m.sess.ActiveSkill == nil || m.sess.ActiveSkill.Name != "review-plus" {
+		t.Fatalf("expected active skill review-plus, got %#v", m.sess.ActiveSkill)
+	}
+}
+
+func TestHandleSlashSkillDeleteDeletesProjectSkill(t *testing.T) {
+	workspace := t.TempDir()
+	skillDir := filepath.Join(workspace, ".bytemind", "skills", "review-plus")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "skill.json"), []byte(`{"name":"review-plus","description":"review"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# review-plus"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	runner := agent.NewRunner(agent.Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+		},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	m := model{
+		runner:    runner,
+		store:     store,
+		sess:      sess,
+		workspace: workspace,
+		screen:    screenChat,
+		input:     textarea.New(),
+	}
+
+	if _, err := runner.ActivateSkill(sess, "/review-plus", nil); err != nil {
+		t.Fatalf("expected activate before clear, got %v", err)
+	}
+	if err := m.handleSlashCommand("/skill delete review-plus"); err != nil {
+		t.Fatalf("expected /skill delete to succeed, got %v", err)
+	}
+	if _, err := os.Stat(skillDir); !os.IsNotExist(err) {
+		t.Fatalf("expected skill directory removed, stat err=%v", err)
+	}
+	if m.sess.ActiveSkill != nil {
+		t.Fatalf("expected active skill cleared, got %#v", m.sess.ActiveSkill)
+	}
+	if len(m.chatItems) < 2 || !strings.Contains(m.chatItems[len(m.chatItems)-1].Body, "已删除项目技能") {
+		t.Fatalf("expected clear command response, got %#v", m.chatItems)
+	}
+}
+
+func TestHandleSlashSkillClearOnlyClearsActiveSkill(t *testing.T) {
+	workspace := t.TempDir()
+	skillDir := filepath.Join(workspace, ".bytemind", "skills", "review-plus")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "skill.json"), []byte(`{"name":"review-plus","description":"review"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# review-plus"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	runner := agent.NewRunner(agent.Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+		},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	m := model{
+		runner:    runner,
+		store:     store,
+		sess:      sess,
+		workspace: workspace,
+		screen:    screenChat,
+		input:     textarea.New(),
+	}
+
+	if _, err := runner.ActivateSkill(sess, "/review-plus", nil); err != nil {
+		t.Fatalf("expected activate before clear, got %v", err)
+	}
 	if err := m.handleSlashCommand("/skill clear"); err != nil {
 		t.Fatalf("expected /skill clear to succeed, got %v", err)
 	}
+	if _, err := os.Stat(skillDir); err != nil {
+		t.Fatalf("expected skill directory to remain after clear, got %v", err)
+	}
 	if m.sess.ActiveSkill != nil {
-		t.Fatalf("expected active skill to be cleared, got %#v", m.sess.ActiveSkill)
+		t.Fatalf("expected active skill cleared, got %#v", m.sess.ActiveSkill)
+	}
+	if len(m.chatItems) < 2 || !strings.Contains(m.chatItems[len(m.chatItems)-1].Body, "已清除当前会话激活技能") {
+		t.Fatalf("expected clear status response, got %#v", m.chatItems)
+	}
+}
+
+func TestHandleSlashSkillAuthorWithoutNameEntersAuthorMode(t *testing.T) {
+	workspace := t.TempDir()
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	runner := agent.NewRunner(agent.Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+		},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	input := textarea.New()
+	m := model{
+		runner:    runner,
+		store:     store,
+		sess:      sess,
+		workspace: workspace,
+		screen:    screenChat,
+		input:     input,
+	}
+
+	if err := m.handleSlashCommand("/skill author"); err != nil {
+		t.Fatalf("expected /skill author to enable mode, got %v", err)
+	}
+	if !m.skillAuthorMode {
+		t.Fatalf("expected skillAuthorMode enabled")
+	}
+	if strings.TrimSpace(m.skillAuthorName) != "" {
+		t.Fatalf("expected no skillAuthorName yet, got %q", m.skillAuthorName)
+	}
+	if !strings.Contains(m.input.Placeholder, "阶段 1/2") {
+		t.Fatalf("expected author-mode placeholder, got %q", m.input.Placeholder)
+	}
+
+	m.input.SetValue("review-ops")
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if !updated.skillAuthorMode {
+		t.Fatalf("expected author mode to stay active")
+	}
+	if updated.skillAuthorName != "review-ops" {
+		t.Fatalf("expected target skill name review-ops, got %q", updated.skillAuthorName)
+	}
+	if !strings.Contains(updated.input.Placeholder, "阶段 2/2") || !strings.Contains(updated.input.Placeholder, "review-ops") {
+		t.Fatalf("expected author-mode placeholder to track skill name, got %q", updated.input.Placeholder)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".bytemind", "skills", "review-ops", "skill.json")); err != nil {
+		t.Fatalf("expected generated skill scaffold, got %v", err)
+	}
+
+	updated.input.SetValue("用于代码评审，优先关注回归风险和测试缺口。")
+	next, _ := updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated2 := next.(model)
+	if !updated2.skillAuthorMode {
+		t.Fatalf("expected author mode to stay active after content update")
+	}
+	if !strings.Contains(updated2.chatItems[len(updated2.chatItems)-1].Body, "2/2（编辑内容）") {
+		t.Fatalf("expected stage 2 guidance after content update, got %q", updated2.chatItems[len(updated2.chatItems)-1].Body)
+	}
+
+	if err := updated2.handleSlashCommand("/skill author done"); err != nil {
+		t.Fatalf("expected /skill author done to exit mode, got %v", err)
+	}
+	if updated2.skillAuthorMode {
+		t.Fatalf("expected skillAuthorMode disabled")
+	}
+}
+
+func TestSkillAuthorModeShowsVisibleGuidanceOnInvalidName(t *testing.T) {
+	workspace := t.TempDir()
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	runner := agent.NewRunner(agent.Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+		},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	input := textarea.New()
+	m := model{
+		runner:    runner,
+		store:     store,
+		sess:      sess,
+		workspace: workspace,
+		screen:    screenChat,
+		input:     input,
+	}
+
+	if err := m.handleSlashCommand("/skill author"); err != nil {
+		t.Fatalf("expected /skill author to enable mode, got %v", err)
+	}
+
+	m.input.SetValue("我想做一个评审技能")
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if !updated.skillAuthorMode {
+		t.Fatalf("expected author mode to remain enabled")
+	}
+	if len(updated.chatItems) < 2 {
+		t.Fatalf("expected visible assistant guidance, got %#v", updated.chatItems)
+	}
+	body := updated.chatItems[len(updated.chatItems)-1].Body
+	if !strings.Contains(body, "技能名称不合法") {
+		t.Fatalf("expected invalid-name guidance in chat, got %q", body)
 	}
 }
 
@@ -2843,7 +3127,7 @@ func TestRenderFooterShowsActiveSkillBanner(t *testing.T) {
 	}
 
 	footer := m.renderFooter()
-	if !strings.Contains(footer, "Active skill: review") {
+	if !strings.Contains(footer, "当前激活技能：review") {
 		t.Fatalf("expected footer to show active skill banner, got %q", footer)
 	}
 	if !strings.Contains(footer, "severity=high") {

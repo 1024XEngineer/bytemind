@@ -86,3 +86,22 @@ type Catalog struct {
 	Overrides   []Override
 	LoadedAt    time.Time
 }
+
+type AuthorResult struct {
+	Name         string
+	Scope        Scope
+	Dir          string
+	ManifestPath string
+	SkillPath    string
+	Created      bool
+	Updated      bool
+}
+
+type ClearResult struct {
+	Name      string
+	Scope     Scope
+	Dir       string
+	Removed   bool
+	NotFound  bool
+	WasActive bool
+}

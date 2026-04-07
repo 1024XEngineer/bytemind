@@ -162,6 +162,20 @@ func (r *Runner) ListSkills() ([]skills.Skill, []skills.Diagnostic) {
 	return r.skillManager.List()
 }
 
+func (r *Runner) AuthorSkill(name, brief string) (skills.AuthorResult, error) {
+	if r.skillManager == nil {
+		return skills.AuthorResult{}, fmt.Errorf("skill manager is unavailable")
+	}
+	return r.skillManager.Author(name, skills.ScopeProject, brief)
+}
+
+func (r *Runner) ClearSkill(name string) (skills.ClearResult, error) {
+	if r.skillManager == nil {
+		return skills.ClearResult{}, fmt.Errorf("skill manager is unavailable")
+	}
+	return r.skillManager.Clear(name)
+}
+
 func (r *Runner) ActivateSkill(sess *session.Session, name string, args map[string]string) (skills.Skill, error) {
 	if sess == nil {
 		return skills.Skill{}, fmt.Errorf("session is required")
