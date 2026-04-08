@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -143,6 +144,81 @@ func TestSameWorkspaceNormalizesPaths(t *testing.T) {
 	workspace := t.TempDir()
 	if !sameWorkspace(workspace, filepath.Join(workspace, ".")) {
 		t.Fatal("expected normalized paths to match")
+	}
+}
+
+func TestDetectProjectRootFindsAncestorMarker(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := detectProjectRoot(nested)
+	if !sameWorkspace(got, root) {
+		t.Fatalf("expected project root %q, got %q", root, got)
+	}
+}
+
+func TestResolveWorkspaceAutoDetectsProjectRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "pkg", "sub")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(nested)
+
+	got, err := resolveWorkspace("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameWorkspace(got, root) {
+		t.Fatalf("expected workspace %q, got %q", root, got)
+	}
+}
+
+func TestIsBroadWorkspacePathWithHomeFlagsKnownBroadRoots(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	for _, dir := range []string{
+		home,
+		filepath.Join(home, "Desktop"),
+		filepath.Join(home, "Documents"),
+		filepath.Join(home, "Downloads"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if !isBroadWorkspacePathWithHome(dir, home) {
+			t.Fatalf("expected %q to be treated as broad workspace", dir)
+		}
+	}
+}
+
+func TestIsBroadWorkspacePathWithHomeFlagsLargeDirectory(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < defaultBroadWorkspaceEntryThreshold; i++ {
+		if err := os.Mkdir(filepath.Join(dir, fmt.Sprintf("entry-%03d", i)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !isBroadWorkspacePathWithHome(dir, "") {
+		t.Fatalf("expected directory with %d entries to be broad", defaultBroadWorkspaceEntryThreshold)
+	}
+}
+
+func TestIsBroadWorkspacePathWithHomeAllowsSmallDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if isBroadWorkspacePathWithHome(dir, "") {
+		t.Fatalf("did not expect %q to be treated as broad workspace", dir)
 	}
 }
 

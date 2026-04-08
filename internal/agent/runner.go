@@ -471,11 +471,20 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 				Path string `json:"path"`
 				Type string `json:"type"`
 			} `json:"items"`
+			Truncated bool   `json:"truncated"`
+			Reason    string `json:"reason"`
 		}
 		if err := json.Unmarshal([]byte(payload), &result); err == nil {
 			fmt.Fprintf(out, "  %slisted%s %d entries under %s\n", ansiGreen, ansiReset, len(result.Items), emptyDot(result.Root))
 			for _, item := range previewPaths(result.Items) {
 				fmt.Fprintf(out, "    %s\n", item)
+			}
+			if result.Truncated {
+				reason := strings.TrimSpace(result.Reason)
+				if reason == "" {
+					reason = "visit_limit"
+				}
+				fmt.Fprintf(out, "    %sstopped early%s (%s); narrow path/depth for large trees\n", ansiDim, ansiReset, reason)
 			}
 		}
 	case "read_file":
@@ -501,11 +510,20 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 				Line int    `json:"line"`
 				Text string `json:"text"`
 			} `json:"matches"`
+			Truncated bool   `json:"truncated"`
+			Reason    string `json:"reason"`
 		}
 		if err := json.Unmarshal([]byte(payload), &result); err == nil {
 			fmt.Fprintf(out, "  %sfound%s %d matches for %q\n", ansiGreen, ansiReset, len(result.Matches), result.Query)
 			for _, match := range previewMatches(result.Matches) {
 				fmt.Fprintf(out, "    %s\n", match)
+			}
+			if result.Truncated {
+				reason := strings.TrimSpace(result.Reason)
+				if reason == "" {
+					reason = "scan_budget"
+				}
+				fmt.Fprintf(out, "    %sstopped early%s (%s); narrow the search path and retry\n", ansiDim, ansiReset, reason)
 			}
 		}
 	case "web_search":
