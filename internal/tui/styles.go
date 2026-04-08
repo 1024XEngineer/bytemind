@@ -71,6 +71,16 @@ var (
 	footerHintStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "246", Dark: "240"})
 
+	footerHintKeyStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#F5F5F5")).
+				Bold(true)
+
+	footerHintLabelStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#8D97A6"))
+
+	footerHintDividerStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#5C6675"))
+
 	modeBuildActiveStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#6CB6FF")).
 				Bold(true)

@@ -50,6 +50,19 @@ const (
 	footerHintText        = "tab agents | / commands | Ctrl+F history | Ctrl+L sessions | Ctrl+C quit"
 )
 
+type footerShortcutHint struct {
+	Key   string
+	Label string
+}
+
+var footerShortcutHints = []footerShortcutHint{
+	{Key: "tab", Label: "agents"},
+	{Key: "/", Label: "commands"},
+	{Key: "Ctrl+F", Label: "history"},
+	{Key: "Ctrl+L", Label: "sessions"},
+	{Key: "Ctrl+C", Label: "quit"},
+}
+
 type screenKind string
 
 const (
@@ -709,7 +722,7 @@ func (m model) mouseOverLandingInput(y int) bool {
 			Width(m.landingInputShellWidth()).
 			Render(m.input.View()),
 	)
-	hintHeight := lipgloss.Height(mutedStyle.Render(footerHintText))
+	hintHeight := lipgloss.Height(renderFooterShortcutHints())
 	contentHeight := logoHeight + 1 + titleHeight + subtitleHeight + 1 + overlayHeight + inputHeight + 1 + hintHeight
 	contentTop := max(0, (m.height-contentHeight)/2)
 	inputTop := contentTop + logoHeight + 1 + titleHeight + subtitleHeight + 1 + overlayHeight
@@ -2108,7 +2121,7 @@ func (m model) renderLanding() string {
 	} else if m.commandOpen {
 		parts = append(parts, m.renderCommandPalette(), "")
 	}
-	parts = append(parts, inputBox, "", mutedStyle.Render(footerHintText))
+	parts = append(parts, inputBox, "", renderFooterShortcutHints())
 	content := lipgloss.JoinVertical(lipgloss.Center, parts...)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }
@@ -2155,12 +2168,12 @@ func (m model) renderModeTabs() string {
 func (m model) renderFooterInfoLine() string {
 	width := max(24, m.chatPanelInnerWidth())
 	left := m.renderModeTabs()
-	rightParts := []string{footerHintText}
+	rightRaw := footerHintText
+	right := renderFooterShortcutHints()
 	if modelName := strings.TrimSpace(m.currentModelLabel()); modelName != "" && modelName != "-" {
-		rightParts = append([]string{modelName}, rightParts...)
+		rightRaw = modelName + "  |  " + rightRaw
+		right = mutedStyle.Render(modelName) + footerHintDividerStyle.Render("  |  ") + right
 	}
-	rightRaw := strings.Join(rightParts, "  |  ")
-	right := mutedStyle.Render(rightRaw)
 
 	leftW := lipgloss.Width(left)
 	rightW := lipgloss.Width(right)
@@ -2177,6 +2190,15 @@ func (m model) renderFooterInfoLine() string {
 
 	return lipgloss.NewStyle().Width(width).Render(left + strings.Repeat(" ", gap) + right)
 }
+
+func renderFooterShortcutHints() string {
+	parts := make([]string, 0, len(footerShortcutHints))
+	for _, hint := range footerShortcutHints {
+		parts = append(parts, footerHintKeyStyle.Render(hint.Key)+" "+footerHintLabelStyle.Render(hint.Label))
+	}
+	return strings.Join(parts, footerHintDividerStyle.Render("  |  "))
+}
+
 func (m model) renderSessionsModal() string {
 	lines := []string{modalTitleStyle.Render("Recent Sessions"), mutedStyle.Render("Up/Down to select, Enter to resume, Esc to close"), ""}
 	if len(m.sessions) == 0 {
