@@ -14,7 +14,6 @@ import (
 
 const (
 	tokenMonitorTickInterval = 20 * time.Millisecond
-	tokenPopupLifetime       = 4 * time.Second
 )
 
 type tokenMonitorTickMsg time.Time
@@ -23,6 +22,7 @@ type tokenUsageComponent struct {
 	used        int
 	total       int
 	displayUsed float64
+	unavailable bool
 	input       int
 	output      int
 	context     int
@@ -58,23 +58,24 @@ func newTokenUsageComponent() tokenUsageComponent {
 }
 
 func (c *tokenUsageComponent) SetUsage(used, total int) tea.Cmd {
-	if total < 1 {
-		total = 1
+	if total < 0 {
+		total = 0
 	}
 	used = max(0, used)
 	c.used = used
 	c.total = total
-	if math.Abs(c.displayUsed-float64(c.used)) < 0.5 {
-		c.displayUsed = float64(c.used)
-		return nil
-	}
-	return c.tickCmd()
+	c.displayUsed = float64(c.used)
+	return nil
 }
 
 func (c *tokenUsageComponent) SetBreakdown(input, output, context int) {
 	c.input = max(0, input)
 	c.output = max(0, output)
 	c.context = max(0, context)
+}
+
+func (c *tokenUsageComponent) SetUnavailable(unavailable bool) {
+	c.unavailable = unavailable
 }
 
 // SetPrice sets token prices per 1M tokens.
@@ -88,34 +89,21 @@ func (c *tokenUsageComponent) SetBounds(x, y, width, height int) {
 }
 
 func (c tokenUsageComponent) View() string {
-	if c.total <= 0 {
-		return ""
-	}
 	text := c.usageText()
 	return c.badgeStyle().Render(text)
 }
 
 func (c tokenUsageComponent) CompactView() string {
-	if c.total <= 0 {
-		return ""
-	}
 	return c.badgeStyle().Render(c.compactUsageText())
 }
 
 func (c tokenUsageComponent) PopupView() string {
-	if !c.popup {
-		return ""
-	}
-	return c.popupStyle().Render(c.popupText())
+	return ""
 }
 
 func (c *tokenUsageComponent) Update(msg tea.Msg) (tea.Cmd, bool) {
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
-		if c.total <= 0 {
-			c.hover = false
-			return nil, false
-		}
 		inside := c.contains(msg.X, msg.Y)
 		switch msg.Action {
 		case tea.MouseActionMotion:
@@ -124,9 +112,7 @@ func (c *tokenUsageComponent) Update(msg tea.Msg) (tea.Cmd, bool) {
 		case tea.MouseActionPress:
 			if msg.Button == tea.MouseButtonLeft && inside {
 				c.hover = true
-				c.popup = true
-				c.popupUntil = time.Now().Add(tokenPopupLifetime)
-				return c.tickCmd(), true
+				return nil, true
 			}
 			if msg.Button == tea.MouseButtonLeft && !inside && c.popup {
 				c.popup = false
@@ -190,29 +176,26 @@ func (c tokenUsageComponent) contains(x, y int) bool {
 }
 
 func (c tokenUsageComponent) usageText() string {
-	pad := max(5, len(formatInt(c.total)))
-	if c.hover {
-		percent := 0.0
-		if c.total > 0 {
-			percent = clampFloat(c.displayUsed/float64(c.total), 0, 1) * 100
-		}
-		return lipgloss.NewStyle().Width(pad*2 + 3).Align(lipgloss.Right).Render(fmt.Sprintf("%5.1f%%", percent))
+	if c.unavailable {
+		return "token: unavailable"
 	}
-	used := max(0, int(math.Round(c.displayUsed)))
-	text := fmt.Sprintf("%*s / %*s", pad, formatInt(used), pad, formatInt(c.total))
-	return lipgloss.NewStyle().Width(pad*2 + 3).Render(text)
+	text := "token: " + formatInt(max(0, int(math.Round(c.displayUsed))))
+	pad := max(8, len(text))
+	if c.hover {
+		text = "Used " + text
+		pad = max(pad, len(text))
+	}
+	return lipgloss.NewStyle().Width(pad).Render(text)
 }
 
 func (c tokenUsageComponent) compactUsageText() string {
-	if c.hover {
-		percent := 0.0
-		if c.total > 0 {
-			percent = clampFloat(c.displayUsed/float64(c.total), 0, 1) * 100
-		}
-		return fmt.Sprintf("%5.1f%%", percent)
+	if c.unavailable {
+		return "token: unavailable"
 	}
-	used := max(0, int(math.Round(c.displayUsed)))
-	return formatInt(used)
+	if c.hover {
+		return "used token: " + formatInt(max(0, int(math.Round(c.displayUsed))))
+	}
+	return "token: " + formatInt(max(0, int(math.Round(c.displayUsed))))
 }
 
 func (c tokenUsageComponent) ratio() float64 {
@@ -337,15 +320,7 @@ func ringGlyph(level int, full, half string) string {
 }
 
 func (c tokenUsageComponent) popupText() string {
-	cost := c.estimatedCost()
-	lines := []string{
-		"Token Breakdown",
-		"Input:   " + formatInt(c.input),
-		"Output:  " + formatInt(c.output),
-		"Context: " + formatInt(c.context),
-		fmt.Sprintf("Estimated Cost: $%.6f", cost),
-	}
-	return strings.Join(lines, "\n")
+	return ""
 }
 
 func (c tokenUsageComponent) estimatedCost() float64 {

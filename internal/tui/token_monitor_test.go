@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"math"
 	"os"
 	"strings"
 	"testing"
@@ -23,7 +22,7 @@ func TestTokenUsageSetUsageClampsValues(t *testing.T) {
 	}
 }
 
-func TestTokenUsageHoverShowsPercentage(t *testing.T) {
+func TestTokenUsageHoverShowsUsageLabel(t *testing.T) {
 	c := newTokenUsageComponent()
 	c.displayUsed = 1250
 	_ = c.SetUsage(1250, 5000)
@@ -37,12 +36,12 @@ func TestTokenUsageHoverShowsPercentage(t *testing.T) {
 	if !consumed {
 		t.Fatalf("expected hover motion over badge to be consumed")
 	}
-	if !strings.Contains(c.usageText(), "%") {
-		t.Fatalf("expected percentage text on hover, got %q", c.usageText())
+	if !strings.Contains(c.usageText(), "Used token: 1,250") {
+		t.Fatalf("expected usage label text on hover, got %q", c.usageText())
 	}
 }
 
-func TestTokenUsageClickShowsPopupAndTickHides(t *testing.T) {
+func TestTokenUsageClickDoesNotShowPopup(t *testing.T) {
 	c := newTokenUsageComponent()
 	c.displayUsed = 1000
 	_ = c.SetUsage(1000, 5000)
@@ -57,31 +56,14 @@ func TestTokenUsageClickShowsPopupAndTickHides(t *testing.T) {
 	if !consumed {
 		t.Fatalf("expected click on badge to be consumed")
 	}
-	if cmd == nil {
-		t.Fatalf("expected click to schedule follow-up tick")
+	if cmd != nil {
+		t.Fatalf("expected click not to schedule follow-up tick")
 	}
-	if !c.popup {
-		t.Fatalf("expected popup to be visible after click")
-	}
-
-	c.popupUntil = time.Now().Add(-time.Millisecond)
-	_, _ = c.Update(tokenMonitorTickMsg(time.Now()))
 	if c.popup {
-		t.Fatalf("expected popup to auto-hide after timeout")
+		t.Fatalf("expected popup to stay disabled after click")
 	}
-}
-
-func TestTokenUsagePopupUsesRealBreakdown(t *testing.T) {
-	c := newTokenUsageComponent()
-	_ = c.SetUsage(300, 5000)
-	c.SetBreakdown(120, 140, 40)
-	c.popup = true
-
-	view := c.PopupView()
-	for _, want := range []string{"Input:   120", "Output:  140", "Context: 40"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("expected popup to contain %q, got %q", want, view)
-		}
+	if c.PopupView() != "" {
+		t.Fatalf("expected PopupView to remain empty when disabled")
 	}
 }
 
@@ -102,35 +84,21 @@ func TestNewTokenUsageComponentEnvFlags(t *testing.T) {
 	}
 }
 
-func TestTokenUsageSetPriceAndEstimatedCost(t *testing.T) {
-	c := newTokenUsageComponent()
-	c.SetPrice(1.2, 2.4)
-	c.SetBreakdown(1_000_000, 500_000, 0)
-	c.popup = true
-
-	got := c.estimatedCost()
-	if math.Abs(got-2.4) > 1e-9 {
-		t.Fatalf("expected estimated cost 2.4, got %f", got)
-	}
-	if !strings.Contains(c.popupText(), "Estimated Cost: $2.400000") {
-		t.Fatalf("expected popup text to include estimated cost, got %q", c.popupText())
-	}
-}
-
 func TestTokenUsageUpdateMouseBranches(t *testing.T) {
 	c := newTokenUsageComponent()
-	c.total = 0
-	c.hover = true
+	_ = c.SetUsage(0, 5000)
+	c.SetBounds(0, 0, 10, 1)
+	c.hover = false
 	cmd, consumed := c.Update(tea.MouseMsg{
 		Action: tea.MouseActionMotion,
 		X:      2,
-		Y:      2,
+		Y:      0,
 	})
-	if cmd != nil || consumed {
-		t.Fatalf("expected zero-total motion to be ignored")
+	if cmd != nil {
+		t.Fatalf("expected hover motion not to schedule command")
 	}
-	if c.hover {
-		t.Fatalf("expected zero-total motion to clear hover state")
+	if !consumed || !c.hover {
+		t.Fatalf("expected motion inside badge to set hover state")
 	}
 
 	_ = c.SetUsage(100, 5000)
@@ -163,17 +131,11 @@ func TestTokenUsageTickAnimationProgress(t *testing.T) {
 	c := newTokenUsageComponent()
 	c.displayUsed = 0
 	_ = c.SetUsage(1000, 5000)
-	cmd, _ := c.Update(tokenMonitorTickMsg(time.Now()))
-	if cmd == nil {
-		t.Fatalf("expected tick to continue while display value is catching up")
-	}
-	if c.displayUsed <= 0 || c.displayUsed >= 1000 {
-		t.Fatalf("expected display value to move toward used amount, got %f", c.displayUsed)
+	if c.displayUsed != 1000 {
+		t.Fatalf("expected display value to sync immediately, got %f", c.displayUsed)
 	}
 
-	c.displayUsed = float64(c.used)
-	c.popup = false
-	cmd, _ = c.Update(tokenMonitorTickMsg(time.Now()))
+	cmd, _ := c.Update(tokenMonitorTickMsg(time.Now()))
 	if cmd != nil {
 		t.Fatalf("expected no follow-up tick when display is already synchronized")
 	}
@@ -251,13 +213,21 @@ func TestTokenUsageCompactViewAndText(t *testing.T) {
 	c := newTokenUsageComponent()
 	_ = c.SetUsage(1234, 5000)
 	c.displayUsed = 1234
-	if got := c.CompactView(); !strings.Contains(got, "1,234") {
+	if got := c.CompactView(); !strings.Contains(got, "token: 1,234") {
 		t.Fatalf("expected compact view to include compact usage text, got %q", got)
 	}
 
 	c.hover = true
-	if got := c.compactUsageText(); !strings.Contains(got, "%") {
-		t.Fatalf("expected compact usage text to show percent while hovered, got %q", got)
+	if got := c.compactUsageText(); !strings.Contains(got, "used token: 1,234") {
+		t.Fatalf("expected compact usage text to show hovered usage while hovered, got %q", got)
+	}
+}
+
+func TestTokenUsageUnavailableText(t *testing.T) {
+	c := newTokenUsageComponent()
+	c.SetUnavailable(true)
+	if got := c.usageText(); !strings.Contains(got, "token: unavailable") {
+		t.Fatalf("expected unavailable text, got %q", got)
 	}
 }
 

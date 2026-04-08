@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"bytemind/internal/agent"
 	"bytemind/internal/config"
@@ -219,7 +220,7 @@ func TestRenderMainPanelShowsTokenUsageBadge(t *testing.T) {
 	_ = m.tokenUsage.SetUsage(1234, 5000)
 
 	panel := m.renderMainPanel()
-	if !strings.Contains(panel, "1,234 / 5,000") {
+	if !strings.Contains(panel, "token: 1,234") {
 		t.Fatalf("expected token usage badge text in main panel, got %q", panel)
 	}
 }
@@ -277,7 +278,7 @@ func TestHandleAgentEventUsageUpdatedAccumulatesRealTokens(t *testing.T) {
 	}
 }
 
-func TestAssistantDeltaEstimationsAreCalibratedByOfficialUsage(t *testing.T) {
+func TestAssistantDeltaDoesNotChangeUsageWithoutOfficialUsage(t *testing.T) {
 	m := model{
 		tokenUsage:  newTokenUsageComponent(),
 		tokenBudget: 5000,
@@ -286,15 +287,11 @@ func TestAssistantDeltaEstimationsAreCalibratedByOfficialUsage(t *testing.T) {
 	m.handleAgentEvent(agent.Event{Type: agent.EventRunStarted})
 	m.handleAgentEvent(agent.Event{
 		Type:    agent.EventAssistantDelta,
-		Content: "This is a streamed delta chunk for token estimation.",
+		Content: "This streamed delta should not change usage counters.",
 	})
 
-	estimated := m.tempEstimatedOutput
-	if estimated <= 0 {
-		t.Fatalf("expected temporary estimated output tokens to increase")
-	}
-	if m.tokenUsedTotal != estimated || m.tokenOutput != estimated {
-		t.Fatalf("expected provisional usage to be reflected immediately, used=%d output=%d estimated=%d", m.tokenUsedTotal, m.tokenOutput, estimated)
+	if m.tokenUsedTotal != 0 || m.tokenOutput != 0 {
+		t.Fatalf("expected no provisional usage without official usage, used=%d output=%d", m.tokenUsedTotal, m.tokenOutput)
 	}
 
 	m.handleAgentEvent(agent.Event{
@@ -307,11 +304,8 @@ func TestAssistantDeltaEstimationsAreCalibratedByOfficialUsage(t *testing.T) {
 		},
 	})
 
-	if m.tempEstimatedOutput != 0 {
-		t.Fatalf("expected temporary estimate to be cleared after calibration, got %d", m.tempEstimatedOutput)
-	}
 	if m.tokenUsedTotal != 30 {
-		t.Fatalf("expected total tokens to be calibrated to official total 30, got %d", m.tokenUsedTotal)
+		t.Fatalf("expected total tokens to follow official total 30, got %d", m.tokenUsedTotal)
 	}
 	if m.tokenInput != 20 || m.tokenOutput != 7 || m.tokenContext != 3 {
 		t.Fatalf("expected official breakdown after calibration, got input=%d output=%d context=%d", m.tokenInput, m.tokenOutput, m.tokenContext)
@@ -391,7 +385,7 @@ func TestFetchRemoteTokenUsageCmdReturnsUsageMsgOnSuccess(t *testing.T) {
 	}
 }
 
-func TestUpdateTokenUsagePulledMsgUsesMaxAndIgnoresErrors(t *testing.T) {
+func TestUpdateTokenUsagePulledMsgIgnoredForSessionOnly(t *testing.T) {
 	m := model{
 		tokenUsage:     newTokenUsageComponent(),
 		tokenBudget:    5000,
@@ -408,17 +402,8 @@ func TestUpdateTokenUsagePulledMsgUsesMaxAndIgnoresErrors(t *testing.T) {
 		Context: 10,
 	})
 	updated := got.(model)
-	if updated.tokenUsedTotal != 100 {
-		t.Fatalf("expected used total to keep local max 100, got %d", updated.tokenUsedTotal)
-	}
-	if updated.tokenInput != 60 {
-		t.Fatalf("expected input to keep local max 60, got %d", updated.tokenInput)
-	}
-	if updated.tokenOutput != 30 || updated.tokenContext != 10 {
-		t.Fatalf("expected output/context to use remote max values, got output=%d context=%d", updated.tokenOutput, updated.tokenContext)
-	}
-	if updated.tokenUsage.used != 100 {
-		t.Fatalf("expected token component to sync used=100, got %d", updated.tokenUsage.used)
+	if updated.tokenUsedTotal != 100 || updated.tokenInput != 60 || updated.tokenOutput != 20 || updated.tokenContext != 5 {
+		t.Fatalf("expected remote usage pull to be ignored, got used=%d input=%d output=%d context=%d", updated.tokenUsedTotal, updated.tokenInput, updated.tokenOutput, updated.tokenContext)
 	}
 
 	got, _ = updated.Update(tokenUsagePulledMsg{Err: errors.New("boom")})
@@ -441,6 +426,42 @@ func TestAccumulateTokenUsageFallbackAndClamp(t *testing.T) {
 		t.Fatalf("expected used total 38, got %d", m.tokenUsedTotal)
 	}
 	if m.tokenInput != 11 || m.tokenOutput != 13 || m.tokenContext != 2 {
+		t.Fatalf("unexpected breakdown input=%d output=%d context=%d", m.tokenInput, m.tokenOutput, m.tokenContext)
+	}
+}
+
+func TestRestoreTokenUsageFromSessionUsesCurrentSessionOnly(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create session store: %v", err)
+	}
+
+	workspace := t.TempDir()
+	current := session.New(workspace)
+	current.Messages = []llm.Message{
+		{Role: "assistant", Parts: []llm.Part{{Type: llm.PartText, Text: &llm.TextPart{Value: "ok"}}}, Usage: &llm.Usage{InputTokens: 30, OutputTokens: 20, ContextTokens: 10, TotalTokens: 60}},
+	}
+	other := session.New(workspace)
+	other.Messages = []llm.Message{
+		{Role: "assistant", Parts: []llm.Part{{Type: llm.PartText, Text: &llm.TextPart{Value: "ok"}}}, Usage: &llm.Usage{InputTokens: 200, OutputTokens: 100, ContextTokens: 50, TotalTokens: 350}},
+	}
+	if err := store.Save(current); err != nil {
+		t.Fatalf("failed to save current session: %v", err)
+	}
+	if err := store.Save(other); err != nil {
+		t.Fatalf("failed to save other session: %v", err)
+	}
+
+	m := model{
+		store:     store,
+		workspace: workspace,
+	}
+	m.restoreTokenUsageFromSession(current)
+
+	if m.tokenUsedTotal != 60 {
+		t.Fatalf("expected current session total 60, got %d", m.tokenUsedTotal)
+	}
+	if m.tokenInput != 30 || m.tokenOutput != 20 || m.tokenContext != 10 {
 		t.Fatalf("unexpected breakdown input=%d output=%d context=%d", m.tokenInput, m.tokenOutput, m.tokenContext)
 	}
 }
@@ -2958,6 +2979,70 @@ func TestBusyEnterQueuesBTWAndCancelsRun(t *testing.T) {
 	}
 }
 
+func TestBusyEnterSuppressedAfterRecentMultilinePaste(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("请完成一个企业级插件化平台框架\n•动态加载插件\n•插件权限隔离")
+	input.CursorEnd()
+
+	canceled := false
+	m := model{
+		screen:      screenChat,
+		busy:        true,
+		input:       input,
+		lastPasteAt: time.Now(),
+		sess:        session.New("E:\\bytemind"),
+		workspace:   "E:\\bytemind",
+		runCancel:   func() { canceled = true },
+	}
+
+	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if cmd != nil {
+		t.Fatalf("expected suppressed enter not to schedule a command")
+	}
+	if canceled {
+		t.Fatalf("expected suppressed enter not to cancel current run")
+	}
+	if updated.interrupting || len(updated.pendingBTW) != 0 || len(updated.chatItems) != 0 {
+		t.Fatalf("expected no BTW side effects, got interrupting=%v pending=%#v chat=%#v", updated.interrupting, updated.pendingBTW, updated.chatItems)
+	}
+}
+
+func TestBusyEnterSuppressedForRecentPasteBurstSingleLine(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("•动态加载插件")
+	input.CursorEnd()
+
+	canceled := false
+	now := time.Now()
+	m := model{
+		screen:      screenChat,
+		busy:        true,
+		input:       input,
+		lastPasteAt: now,
+		lastInputAt: now,
+		sess:        session.New("E:\\bytemind"),
+		workspace:   "E:\\bytemind",
+		runCancel:   func() { canceled = true },
+	}
+
+	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if cmd != nil {
+		t.Fatalf("expected suppressed burst enter not to schedule a command")
+	}
+	if canceled {
+		t.Fatalf("expected suppressed burst enter not to cancel current run")
+	}
+	if updated.interrupting || len(updated.pendingBTW) != 0 || len(updated.chatItems) != 0 {
+		t.Fatalf("expected no BTW side effects, got interrupting=%v pending=%#v chat=%#v", updated.interrupting, updated.pendingBTW, updated.chatItems)
+	}
+}
+
 func TestBusyEnterInToolPhaseDefersBTWCancel(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
@@ -3784,8 +3869,8 @@ func TestRenderTokenBadgeAndScrollbarHelpers(t *testing.T) {
 		t.Fatalf("expected compact badge under width threshold, got %q", compact)
 	}
 	full := m.renderTokenBadge(80)
-	if !strings.Contains(full, "/") {
-		t.Fatalf("expected full badge at width threshold, got %q", full)
+	if !strings.Contains(full, "token: 2,345") {
+		t.Fatalf("expected full badge to show token count, got %q", full)
 	}
 
 	if got := m.renderScrollbar(0, 10, 0); got != "" {

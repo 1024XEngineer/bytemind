@@ -225,6 +225,7 @@ type model struct {
 	tokenInput            int
 	tokenOutput           int
 	tokenContext          int
+	tokenHasOfficialUsage bool
 	tempEstimatedOutput   int
 	tokenEstimator        *realtimeTokenEstimator
 	promptHistoryLoaded   bool
@@ -328,7 +329,8 @@ func newModel(opts Options) model {
 		m.initializeStartupGuide()
 	}
 	m.restoreTokenUsageFromSession(opts.Session)
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, 0)
+	m.tokenUsage.SetUnavailable(!m.tokenHasOfficialUsage)
 	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 	m.ensureSessionImageAssets()
 	m.syncInputStyle()
@@ -345,7 +347,6 @@ func (m model) Init() tea.Cmd {
 		waitForAsync(m.async),
 		m.tokenUsage.tickCmd(),
 		m.loadSessionsCmd(),
-		m.fetchRemoteTokenUsageCmd(),
 	)
 }
 
@@ -440,16 +441,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tokenUsagePulledMsg:
-		if msg.Err != nil {
-			return m, nil
-		}
-		// Prefer remotely pulled account usage, but never reduce live local counters.
-		m.tokenUsedTotal = max(m.tokenUsedTotal, msg.Used)
-		m.tokenInput = max(m.tokenInput, msg.Input)
-		m.tokenOutput = max(m.tokenOutput, msg.Output)
-		m.tokenContext = max(m.tokenContext, msg.Context)
-		_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
-		m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
+		// Account-level usage is not session-accurate; ignore in session-only mode.
 		return m, nil
 	case tokenMonitorTickMsg:
 		cmd, _ := m.tokenUsage.Update(msg)
@@ -850,6 +842,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.String() == "enter" {
+		if m.shouldSuppressEnterAfterPaste() {
+			return m, nil
+		}
 		rawValue := m.input.Value()
 		value := strings.TrimSpace(rawValue)
 		if m.startupGuide.Active && !strings.HasPrefix(value, "/") {
@@ -940,6 +935,19 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.syncInputOverlays()
 	return m, cmd
+}
+
+func (m model) shouldSuppressEnterAfterPaste() bool {
+	if m.lastPasteAt.IsZero() {
+		return false
+	}
+	if time.Since(m.lastPasteAt) > pasteSubmitGuard {
+		return false
+	}
+	if strings.Contains(m.input.Value(), "\n") {
+		return true
+	}
+	return time.Since(m.lastInputAt) <= 120*time.Millisecond
 }
 
 func (m model) handleCommandPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1528,7 +1536,6 @@ func (m *model) handleAgentEvent(event agent.Event) {
 		m.phase = "responding"
 		m.statusNote = "LLM is responding..."
 		m.llmConnected = true
-		m.applyEstimatedUsage(event.Content)
 		m.appendAssistantDelta(event.Content)
 	case agent.EventAssistantMessage:
 		m.llmConnected = true
@@ -1589,6 +1596,7 @@ func (m *model) handleAgentEvent(event agent.Event) {
 }
 
 func (m *model) applyUsage(usage llm.Usage) {
+	m.tokenHasOfficialUsage = true
 	input := max(0, usage.InputTokens)
 	output := max(0, usage.OutputTokens)
 	context := max(0, usage.ContextTokens)
@@ -1612,22 +1620,8 @@ func (m *model) applyUsage(usage llm.Usage) {
 	m.tokenInput += input
 	m.tokenOutput += output
 	m.tokenContext += context
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
-	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
-}
-
-func (m *model) applyEstimatedUsage(delta string) {
-	if strings.TrimSpace(delta) == "" {
-		return
-	}
-	estimated := estimateDeltaTokens(m.tokenEstimator, delta)
-	if estimated <= 0 {
-		return
-	}
-	m.tempEstimatedOutput += estimated
-	m.tokenUsedTotal += estimated
-	m.tokenOutput += estimated
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, 0)
+	m.tokenUsage.SetUnavailable(false)
 	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 }
 
@@ -1908,7 +1902,9 @@ func (m model) View() string {
 }
 
 func (m *model) SetUsage(used, total int) tea.Cmd {
-	return m.tokenUsage.SetUsage(used, total)
+	m.tokenHasOfficialUsage = true
+	m.tokenUsage.SetUnavailable(false)
+	return m.tokenUsage.SetUsage(used, 0)
 }
 
 func (m model) renderConversation() string {
@@ -1983,9 +1979,6 @@ func (m model) renderMainPanel() string {
 }
 
 func (m model) renderTokenBadge(width int) string {
-	if width < 80 {
-		return m.tokenUsage.CompactView()
-	}
 	return m.tokenUsage.View()
 }
 
@@ -2999,7 +2992,8 @@ func (m *model) newSession() error {
 	m.statusNote = "Started a new session."
 	m.chatAutoFollow = true
 	m.restoreTokenUsageFromSession(next)
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, 0)
+	m.tokenUsage.SetUnavailable(!m.tokenHasOfficialUsage)
 	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 	m.inputImageRefs = make(map[int]llm.AssetID, 8)
 	m.inputImageMentions = make(map[string]llm.AssetID, 8)
@@ -3040,7 +3034,8 @@ func (m *model) resumeSession(prefix string) error {
 	m.statusNote = "Resumed session " + shortID(next.ID)
 	m.chatAutoFollow = true
 	m.restoreTokenUsageFromSession(next)
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, 0)
+	m.tokenUsage.SetUnavailable(!m.tokenHasOfficialUsage)
 	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 	m.inputImageRefs = make(map[int]llm.AssetID, 8)
 	m.inputImageMentions = make(map[string]llm.AssetID, 8)
@@ -3097,31 +3092,13 @@ func (m model) fetchRemoteTokenUsageCmd() tea.Cmd {
 
 func (m *model) restoreTokenUsageFromSession(sess *session.Session) {
 	m.tempEstimatedOutput = 0
+	m.tokenHasOfficialUsage = false
 	m.tokenUsedTotal = 0
 	m.tokenInput = 0
 	m.tokenOutput = 0
 	m.tokenContext = 0
 
-	countedAny := false
-	if m.store != nil {
-		summaries, _, err := m.store.List(0)
-		if err == nil {
-			for _, summary := range summaries {
-				if !sameWorkspace(m.workspace, summary.Workspace) {
-					continue
-				}
-				stored, loadErr := m.store.Load(summary.ID)
-				if loadErr != nil || stored == nil {
-					continue
-				}
-				m.accumulateTokenUsage(stored.Messages)
-				countedAny = true
-			}
-		}
-	}
-
-	// Fallback for tests or when store data is unavailable.
-	if !countedAny && sess != nil {
+	if sess != nil {
 		m.accumulateTokenUsage(sess.Messages)
 	}
 }
@@ -3131,6 +3108,7 @@ func (m *model) accumulateTokenUsage(messages []llm.Message) {
 		if msg.Usage == nil {
 			continue
 		}
+		m.tokenHasOfficialUsage = true
 		used := msg.Usage.TotalTokens
 		if used <= 0 {
 			used = msg.Usage.InputTokens + msg.Usage.OutputTokens + msg.Usage.ContextTokens
