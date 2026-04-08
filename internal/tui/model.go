@@ -48,6 +48,7 @@ const (
 	promptSearchLoadLimit      = 50000
 	promptSearchResultCap      = 200
 	pasteSubmitGuard           = 400 * time.Millisecond
+	mouseSelectionScrollTick   = 60 * time.Millisecond
 	assistantLabel             = "Bytemind"
 	thinkingLabel              = "Bytemind"
 	chatTitleLabel             = "Bytemind Chat"
@@ -176,6 +177,10 @@ type selectionToastExpiredMsg struct {
 	ID int
 }
 
+type mouseSelectionScrollTickMsg struct {
+	ID int
+}
+
 var commandItems = []commandItem{
 	{Name: "/help", Usage: "/help", Description: "Show usage and supported commands.", Kind: "command"},
 	{Name: "/session", Usage: "/session", Description: "Open the recent session list.", Kind: "command"},
@@ -204,6 +209,7 @@ type model struct {
 	input    textarea.Model
 	spinner  spinner.Model
 
+	viewportContentCache  string
 	chatItems             []chatEntry
 	toolRuns              []toolRun
 	plan                  planpkg.State
@@ -238,6 +244,9 @@ type model struct {
 	draggingScrollbar     bool
 	scrollbarDragOffset   int
 	mouseSelecting        bool
+	mouseSelectionMouseX  int
+	mouseSelectionMouseY  int
+	mouseSelectionTickID  int
 	mouseSelectionActive  bool
 	mouseSelectionStart   viewportSelectionPoint
 	mouseSelectionEnd     viewportSelectionPoint
@@ -499,6 +508,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectionToast = ""
 		}
 		return m, nil
+	case mouseSelectionScrollTickMsg:
+		return m.handleMouseSelectionScrollTick(msg)
 	case tokenMonitorTickMsg:
 		cmd, _ := m.tokenUsage.Update(msg)
 		return m, cmd
@@ -1825,7 +1836,9 @@ func (m *model) refreshViewport() {
 	m.syncTokenUsageBounds()
 	chatOffset := m.viewport.YOffset
 	keepChatBottom := m.chatAutoFollow || m.viewport.AtBottom()
-	m.viewport.SetContent(m.renderConversation())
+	conversationContent := m.renderConversation()
+	m.viewportContentCache = conversationContent
+	m.viewport.SetContent(conversationContent)
 	m.copyView.SetContent(m.renderConversationCopy())
 	if keepChatBottom {
 		m.viewport.GotoBottom()

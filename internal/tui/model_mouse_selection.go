@@ -11,19 +11,22 @@ import (
 )
 
 func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	ensureZoneManager()
 	msg = m.normalizeMouseMsg(msg)
 
 	if m.mouseSelecting {
+		m.mouseSelectionMouseX = msg.X
+		m.mouseSelectionMouseY = msg.Y
 		switch msg.Action {
 		case tea.MouseActionMotion:
-			if point, ok := m.viewportPointFromMouse(msg.X, msg.Y); ok {
+			if point, ok := m.viewportPointFromMouseWithAutoScroll(msg.X, msg.Y); ok {
 				m.mouseSelectionEnd = point
 			} else {
 				m.clearMouseSelection()
 			}
 			return m, nil
 		case tea.MouseActionRelease:
-			if point, ok := m.viewportPointFromMouse(msg.X, msg.Y); ok && selectionHasRange(m.mouseSelectionStart, point) {
+			if point, ok := m.viewportPointFromMouseWithAutoScroll(msg.X, msg.Y); ok && selectionHasRange(m.mouseSelectionStart, point) {
 				m.mouseSelectionEnd = point
 				m.mouseSelectionActive = true
 				m.statusNote = "Selection ready. Press Ctrl+C to copy."
@@ -31,6 +34,7 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.clearMouseSelection()
 			}
 			m.mouseSelecting = false
+			m.stopMouseSelectionScrollTicker()
 			m.draggingScrollbar = false
 			return m, nil
 		}
@@ -50,6 +54,21 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if cmd, consumed := m.tokenUsage.Update(msg); consumed {
 		return m, cmd
+	}
+	if m.mouseOverInput(msg.Y) {
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && (m.mouseSelecting || m.mouseSelectionActive) {
+			m.clearMouseSelection()
+		}
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.scrollInput(-scrollStep)
+			return m, nil
+		case tea.MouseButtonWheelDown:
+			m.scrollInput(scrollStep)
+			return m, nil
+		default:
+			return m, nil
+		}
 	}
 	if m.screen == screenChat {
 		if msg.Action == tea.MouseActionMotion && m.draggingScrollbar {
@@ -82,25 +101,12 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			if point, ok := m.viewportPointFromMouse(msg.X, msg.Y); ok {
 				m.mouseSelecting = true
 				m.mouseSelectionActive = false
+				m.mouseSelectionMouseX = msg.X
+				m.mouseSelectionMouseY = msg.Y
 				m.mouseSelectionStart = point
 				m.mouseSelectionEnd = point
-				return m, nil
+				return m, m.startMouseSelectionScrollTicker()
 			}
-		}
-	}
-	if m.mouseOverInput(msg.Y) {
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && m.hasCopyableSelection() {
-			m.clearMouseSelection()
-		}
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
-			m.scrollInput(-scrollStep)
-			return m, nil
-		case tea.MouseButtonWheelDown:
-			m.scrollInput(scrollStep)
-			return m, nil
-		default:
-			return m, nil
 		}
 	}
 	if m.screen == screenChat {
@@ -142,6 +148,93 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) handleMouseSelectionScrollTick(msg mouseSelectionScrollTickMsg) (tea.Model, tea.Cmd) {
+	if !m.mouseSelecting || msg.ID != m.mouseSelectionTickID {
+		return m, nil
+	}
+	cmd := mouseSelectionScrollTickCmd(msg.ID)
+	if !selectionHasRange(m.mouseSelectionStart, m.mouseSelectionEnd) {
+		return m, cmd
+	}
+	left, right, top, bottom, ok := m.conversationViewportBounds()
+	if !ok {
+		return m, cmd
+	}
+	if m.mouseSelectionMouseX < left-1 || m.mouseSelectionMouseX > right+1 {
+		return m, cmd
+	}
+
+	targetY := 0
+	switch {
+	case m.mouseSelectionMouseY >= bottom:
+		targetY = bottom + 1
+	case m.mouseSelectionMouseY <= top:
+		targetY = top - 1
+	default:
+		return m, cmd
+	}
+	if point, ok := m.viewportPointFromMouseWithAutoScroll(m.mouseSelectionMouseX, targetY); ok {
+		m.mouseSelectionEnd = point
+	}
+	return m, cmd
+}
+
+func (m *model) startMouseSelectionScrollTicker() tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	m.mouseSelectionTickID++
+	return mouseSelectionScrollTickCmd(m.mouseSelectionTickID)
+}
+
+func (m *model) stopMouseSelectionScrollTicker() {
+	if m == nil {
+		return
+	}
+	m.mouseSelectionTickID++
+}
+
+func mouseSelectionScrollTickCmd(id int) tea.Cmd {
+	return tea.Tick(mouseSelectionScrollTick, func(time.Time) tea.Msg {
+		return mouseSelectionScrollTickMsg{ID: id}
+	})
+}
+
+func (m *model) viewportPointFromMouseWithAutoScroll(x, y int) (viewportSelectionPoint, bool) {
+	if m == nil {
+		return viewportSelectionPoint{}, false
+	}
+	left, right, top, bottom, ok := m.conversationViewportBounds()
+	if !ok {
+		return viewportSelectionPoint{}, false
+	}
+	if x < left-1 || x > right+1 {
+		return viewportSelectionPoint{}, false
+	}
+
+	edgeX := clamp(x, left, right)
+	switch {
+	case y > bottom:
+		steps := y - bottom
+		for i := 0; i < steps; i++ {
+			m.viewport.LineDown(1)
+		}
+		m.syncCopyViewOffset()
+		m.chatAutoFollow = false
+		return m.viewportPointFromMouse(edgeX, bottom)
+	case y < top:
+		steps := top - y
+		for i := 0; i < steps; i++ {
+			m.viewport.LineUp(1)
+		}
+		m.syncCopyViewOffset()
+		m.chatAutoFollow = false
+		return m.viewportPointFromMouse(edgeX, top)
+	default:
+		return m.viewportPointFromMouse(x, y)
+	}
+}
+
 func (m *model) copyCurrentSelection() tea.Cmd {
 	if m == nil {
 		return nil
@@ -180,8 +273,11 @@ func (m *model) clearMouseSelection() {
 	if m == nil {
 		return
 	}
+	m.stopMouseSelectionScrollTicker()
 	m.mouseSelecting = false
 	m.mouseSelectionActive = false
+	m.mouseSelectionMouseX = 0
+	m.mouseSelectionMouseY = 0
 	m.mouseSelectionStart = viewportSelectionPoint{}
 	m.mouseSelectionEnd = viewportSelectionPoint{}
 }
@@ -211,14 +307,17 @@ func (m model) renderActiveSelectionPreview() string {
 	}
 
 	start, end := normalizeViewportSelectionPoints(m.mouseSelectionStart, m.mouseSelectionEnd)
-	maxRow := len(lines) - 1
+	sourceLines := m.selectionSourceLines()
+	maxRow := len(sourceLines) - 1
 	start.Row = clamp(start.Row, 0, maxRow)
 	end.Row = clamp(end.Row, 0, maxRow)
 
 	rendered := make([]string, 0, len(lines))
+	visibleStartRow := max(0, m.viewport.YOffset)
 	for row, raw := range lines {
 		lineWidth := max(xansi.StringWidth(raw), m.viewport.Width)
-		rangeStart, rangeEnd, ok := selectionColumnsForRow(row, lineWidth, start, end, false)
+		absRow := visibleStartRow + row
+		rangeStart, rangeEnd, ok := selectionColumnsForRow(absRow, lineWidth, start, end, false)
 		if !ok {
 			rendered = append(rendered, raw)
 			continue
@@ -264,7 +363,7 @@ func (m model) viewportPointFromMouse(x, y int) (viewportSelectionPoint, bool) {
 	row := clamp(y-top, 0, max(0, m.viewport.Height-1))
 	return viewportSelectionPoint{
 		Col: col,
-		Row: row,
+		Row: max(0, m.viewport.YOffset) + row,
 	}, true
 }
 
@@ -275,7 +374,7 @@ func (m model) viewportPointFromZone(z *zone.ZoneInfo, x, y int) (viewportSelect
 	}
 	return viewportSelectionPoint{
 		Col: clamp(col, 0, max(0, m.viewport.Width-1)),
-		Row: clamp(row, 0, max(0, m.viewport.Height-1)),
+		Row: max(0, m.viewport.YOffset) + clamp(row, 0, max(0, m.viewport.Height-1)),
 	}, true
 }
 
@@ -285,8 +384,7 @@ func (m model) viewportSelectionText() string {
 		return ""
 	}
 
-	view := strings.ReplaceAll(m.viewport.View(), "\r\n", "\n")
-	lines := strings.Split(view, "\n")
+	lines := m.selectionSourceLines()
 	if len(lines) == 0 {
 		return ""
 	}
@@ -309,6 +407,15 @@ func (m model) viewportSelectionText() string {
 		parts = append(parts, sliceViewportLineByCells(raw, rangeStart, rangeEnd))
 	}
 	return strings.Join(parts, "\n")
+}
+
+func (m model) selectionSourceLines() []string {
+	content := m.viewportContentCache
+	if content == "" {
+		content = m.viewport.View()
+	}
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	return strings.Split(content, "\n")
 }
 
 func sliceViewportLineByCells(line string, startCol, endCol int) string {
