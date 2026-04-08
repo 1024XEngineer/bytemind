@@ -1816,6 +1816,9 @@ func TestHandleSlashSkillsListsDiscoveredSkills(t *testing.T) {
 	if !strings.Contains(m.chatItems[len(m.chatItems)-1].Body, "review") {
 		t.Fatalf("expected skills output to contain review, got %q", m.chatItems[len(m.chatItems)-1].Body)
 	}
+	if !strings.Contains(m.chatItems[len(m.chatItems)-1].Body, "以正确性、回归风险和测试缺口为重点进行代码评审。") {
+		t.Fatalf("expected builtin review description to be localized in /skills output, got %q", m.chatItems[len(m.chatItems)-1].Body)
+	}
 }
 
 func TestHandleSlashSkillActivateAndSwitch(t *testing.T) {
@@ -2210,6 +2213,9 @@ func TestFilteredCommandsIncludeSkillSlashCommands(t *testing.T) {
 	found := false
 	for _, item := range items {
 		if item.Name == "/review" && item.Kind == "skill" {
+			if !strings.Contains(item.Description, "以正确性、回归风险和测试缺口为重点进行代码评审。") {
+				t.Fatalf("expected /review command description localized in command palette, got %+v", item)
+			}
 			found = true
 			break
 		}

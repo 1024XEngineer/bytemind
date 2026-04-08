@@ -1,4 +1,4 @@
-package agent
+﻿package agent
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"bytemind/internal/config"
 	"bytemind/internal/llm"
@@ -441,7 +442,7 @@ func TestGetTokenRealtimeSnapshotReturnsSessionAndGlobalStats(t *testing.T) {
 }
 
 func TestCompactWhitespacePreservesUTF8WhenTruncating(t *testing.T) {
-	text := "继续刚才的上下文，给我列一下当前主 MVP 最关键的测试点"
+	text := "缁х画鍒氭墠鐨勪笂涓嬫枃锛岀粰鎴戝垪涓€涓嬪綋鍓嶄富 MVP 鏈€鍏抽敭鐨勬祴璇曠偣"
 	got := compactWhitespace(text, 18)
 	if strings.ContainsRune(got, '\uFFFD') {
 		t.Fatalf("expected valid utf-8 preview, got %q", got)
@@ -697,3 +698,87 @@ func TestActivateAndClearSkillPersistsSessionState(t *testing.T) {
 		t.Fatalf("expected active skill to be cleared, got %#v", sess.ActiveSkill)
 	}
 }
+
+func TestAuthorSkillTranslatesChineseBriefToEnglish(t *testing.T) {
+	workspace := t.TempDir()
+	client := &fakeClient{
+		replies: []llm.Message{
+			llm.NewAssistantTextMessage("Review backend changes and highlight regression risks."),
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+			Stream:   false,
+		},
+		Client:   client,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	result, err := runner.AuthorSkill("review-plus", "鐢ㄤ簬浠ｇ爜璇勫锛岄噸鐐瑰叧娉ㄥ洖褰掗闄?)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(result.ManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, "Review backend changes and highlight regression risks.") {
+		t.Fatalf("expected translated english description in manifest, got %q", text)
+	}
+	if containsHanForTest(text) {
+		t.Fatalf("expected no Han text in authored manifest, got %q", text)
+	}
+	if len(client.requests) == 0 {
+		t.Fatal("expected translation request to be sent to llm client")
+	}
+	if len(client.requests[0].Messages) < 2 || !strings.Contains(client.requests[0].Messages[0].Text(), "Translate the user's skill description") {
+		t.Fatalf("expected translation system instruction in first request, got %#v", client.requests[0].Messages)
+	}
+}
+
+func TestAuthorSkillFallsBackToEnglishWhenTranslationFails(t *testing.T) {
+	workspace := t.TempDir()
+	client := &fakeClient{
+		replies: []llm.Message{
+			llm.NewAssistantTextMessage("鐢ㄤ簬浠ｇ爜璇勫"),
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+			Stream:   false,
+		},
+		Client:   client,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	result, err := runner.AuthorSkill("review-plus", "鐢ㄤ簬浠ｇ爜璇勫")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(result.ManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, skillAuthorEnglishFallback) {
+		t.Fatalf("expected english fallback description in manifest, got %q", text)
+	}
+	if containsHanForTest(text) {
+		t.Fatalf("expected no Han text in fallback manifest, got %q", text)
+	}
+}
+
+func containsHanForTest(text string) bool {
+	for _, r := range text {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
+}
+

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"bytemind/internal/config"
 	"bytemind/internal/history"
@@ -25,6 +26,8 @@ const (
 	maxActiveSkillInstructionsChars = 3600
 	emptyAllowlistSentinel          = "__bytemind__no_tools__"
 	emptyReplyFallback              = "Model returned an empty response (no text and no tool calls). Retry the request or switch model if this persists."
+	skillAuthorEnglishFallback      = "Describe the skill goals, workflow, and expected output in concise English."
+	skillAuthorTranslatePrompt      = "Translate the user's skill description into concise English for backend metadata. Return only plain English text with no markdown or quotes."
 )
 
 const (
@@ -166,6 +169,7 @@ func (r *Runner) AuthorSkill(name, brief string) (skills.AuthorResult, error) {
 	if r.skillManager == nil {
 		return skills.AuthorResult{}, fmt.Errorf("skill manager is unavailable")
 	}
+	brief = r.normalizeSkillAuthorBrief(brief)
 	return r.skillManager.Author(name, skills.ScopeProject, brief)
 }
 
@@ -1163,4 +1167,62 @@ func explicitWebLookupInstruction(userInput string) string {
 	}
 
 	return "The user explicitly requested online or GitHub-source lookup. Use web_search/web_fetch first. Do not substitute local-workspace tools (list_files/read_file/search_text) for this request unless the user explicitly asks to inspect the current workspace repository."
+}
+
+func (r *Runner) normalizeSkillAuthorBrief(brief string) string {
+	brief = strings.TrimSpace(brief)
+	if brief == "" {
+		return ""
+	}
+	if !containsHanRune(brief) {
+		return brief
+	}
+
+	translated, err := r.translateSkillBriefToEnglish(brief)
+	if err != nil {
+		return skillAuthorEnglishFallback
+	}
+	translated = strings.TrimSpace(translated)
+	if translated == "" || containsHanRune(translated) {
+		return skillAuthorEnglishFallback
+	}
+	return translated
+}
+
+func (r *Runner) translateSkillBriefToEnglish(brief string) (string, error) {
+	if strings.TrimSpace(brief) == "" {
+		return "", nil
+	}
+	if r.client == nil {
+		return "", fmt.Errorf("llm client is unavailable")
+	}
+	model := strings.TrimSpace(r.config.Provider.Model)
+	if model == "" {
+		return "", fmt.Errorf("model is required for translation")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+
+	reply, err := r.client.CreateMessage(ctx, llm.ChatRequest{
+		Model: model,
+		Messages: []llm.Message{
+			llm.NewTextMessage(llm.RoleSystem, skillAuthorTranslatePrompt),
+			llm.NewUserTextMessage(strings.TrimSpace(brief)),
+		},
+		Temperature: 0,
+	})
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(reply.Text()), nil
+}
+
+func containsHanRune(text string) bool {
+	for _, r := range text {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
 }

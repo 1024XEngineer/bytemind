@@ -186,15 +186,23 @@ type tokenUsagePulledMsg struct {
 }
 
 var commandItems = []commandItem{
-	{Name: "/help", Usage: "/help", Description: "Show usage and supported commands.", Kind: "command"},
-	{Name: "/session", Usage: "/session", Description: "Open the recent session list.", Kind: "command"},
-	{Name: "/new", Usage: "/new", Description: "Start a fresh session in this workspace.", Kind: "command"},
-	{Name: "/btw", Usage: "/btw <message>", Description: "Interject while a run is in progress.", Kind: "command"},
-	{Name: "/quit", Usage: "/quit", Description: "Exit the current TUI window.", Kind: "command"},
+	{Name: "/help", Usage: "/help", Description: "显示用法和支持的命令。", Kind: "command"},
+	{Name: "/session", Usage: "/session", Description: "打开最近会话列表。", Kind: "command"},
+	{Name: "/new", Usage: "/new", Description: "在当前工作区创建新会话。", Kind: "command"},
+	{Name: "/btw", Usage: "/btw <message>", Description: "在运行中插入一条补充指令。", Kind: "command"},
+	{Name: "/quit", Usage: "/quit", Description: "退出当前 TUI 窗口。", Kind: "command"},
 	{Name: "/skills", Usage: "/skills", Description: "查看可用技能与当前激活技能。", Kind: "command"},
 	{Name: "/skill author", Usage: "/skill author [name]", Description: "进入技能编辑模式并创建/更新模板。", Kind: "command"},
 	{Name: "/skill clear", Usage: "/skill clear", Description: "清除当前会话的激活技能状态。", Kind: "command"},
 	{Name: "/skill delete", Usage: "/skill delete <name>", Description: "删除项目里的指定技能。", Kind: "command"},
+}
+
+var builtinSkillDescriptionsCN = map[string]string{
+	"bug-investigation": "通过可复现证据定位并分析问题，再提出修复方案。",
+	"github-pr":         "基于证据分析 PR 差异、评审意见与合并风险。",
+	"repo-onboarding":   "快速建立对仓库结构、入口与运行流程的整体理解。",
+	"review":            "以正确性、回归风险和测试缺口为重点进行代码评审。",
+	"write-rfc":         "产出结构化技术方案，明确权衡取舍与发布计划。",
 }
 
 type model struct {
@@ -2913,7 +2921,7 @@ func (m model) renderCommandPalette() string {
 	for len(rows) < commandPageSize {
 		rows = append(rows, commandPaletteRowStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render(""))
 	}
-	rows = append(rows, commandPaletteMetaStyle.Render("Up/Down move  PgUp/PgDn page  Enter run  Esc close"))
+	rows = append(rows, commandPaletteMetaStyle.Render("上/下 移动  PgUp/PgDn 翻页  Enter 执行  Esc 关闭"))
 	return commandPaletteStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
 
@@ -3031,7 +3039,8 @@ func (m *model) runSkillsListCommand(input string) error {
 	} else {
 		lines = append(lines, "可用技能：")
 		for _, skill := range skillsList {
-			lines = append(lines, fmt.Sprintf("- %s (%s): %s", skill.Name, skill.Scope, skill.Description))
+			description := localizedSkillDescriptionForTUI(skill.Name, string(skill.Scope), skill.Description)
+			lines = append(lines, fmt.Sprintf("- %s (%s): %s", skill.Name, skill.Scope, description))
 		}
 	}
 	if len(diagnostics) > 0 {
@@ -4680,7 +4689,7 @@ func (m model) skillCommandItems() []commandItem {
 		}
 		seen[key] = struct{}{}
 
-		description := strings.TrimSpace(skill.Description)
+		description := localizedSkillDescriptionForTUI(skill.Name, string(skill.Scope), skill.Description)
 		if description == "" {
 			description = fmt.Sprintf("在当前会话激活 %s。", skill.Name)
 		}
@@ -4695,6 +4704,18 @@ func (m model) skillCommandItems() []commandItem {
 		return items[i].Usage < items[j].Usage
 	})
 	return items
+}
+
+func localizedSkillDescriptionForTUI(name, scope, fallback string) string {
+	fallback = strings.TrimSpace(fallback)
+	if !strings.EqualFold(strings.TrimSpace(scope), "builtin") {
+		return fallback
+	}
+	key := strings.ToLower(strings.TrimSpace(name))
+	if localized, ok := builtinSkillDescriptionsCN[key]; ok {
+		return localized
+	}
+	return fallback
 }
 
 func (m model) commandPaletteWidth() int {
