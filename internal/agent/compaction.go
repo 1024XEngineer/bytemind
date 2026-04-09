@@ -104,6 +104,9 @@ func (r *Runner) compactSession(ctx context.Context, sess *session.Session, keep
 	}
 	summary = strings.TrimSpace(truncateRunes(summary, maxCompactionSummaryRunes))
 	if summary == "" {
+		summary = fallbackCompactionSummary(history)
+	}
+	if summary == "" {
 		return "", false, fmt.Errorf("compaction returned empty summary")
 	}
 
@@ -172,6 +175,39 @@ func (r *Runner) requestCompactionSummary(ctx context.Context, history []llm.Mes
 	}
 	reply.Normalize()
 	return strings.TrimSpace(reply.Text()), nil
+}
+
+func fallbackCompactionSummary(history []llm.Message) string {
+	if len(history) == 0 {
+		return ""
+	}
+
+	goal := strings.TrimSpace(firstUserGoal(history))
+	if goal == "" {
+		goal = "(unknown)"
+	}
+
+	const recentCount = 6
+	start := 0
+	if len(history) > recentCount {
+		start = len(history) - recentCount
+	}
+
+	lines := []string{
+		"Compaction fallback summary (model returned empty summary).",
+		"User goal: " + truncateRunes(goal, 320),
+		"Recent context:",
+	}
+
+	for i := start; i < len(history); i++ {
+		entry := strings.TrimSpace(formatCompactionMessage(i+1, history[i]))
+		if entry == "" {
+			continue
+		}
+		lines = append(lines, "- "+truncateRunes(entry, 420))
+	}
+
+	return strings.TrimSpace(truncateRunes(strings.Join(lines, "\n"), maxCompactionSummaryRunes))
 }
 
 func buildCompactionTranscript(messages []llm.Message, limit int) string {

@@ -171,7 +171,7 @@ func addInstallDirToUserPath(targetDir string) (bool, error) {
 }
 
 var windowsUserPathGetter = func() (string, error) {
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", "[Environment]::GetEnvironmentVariable('Path','User')")
+	cmd := windowsPowerShellCommand("-NoProfile", "-Command", "[Environment]::GetEnvironmentVariable('Path','User')")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("read user PATH via PowerShell: %w (%s)", err, strings.TrimSpace(string(output)))
@@ -180,13 +180,82 @@ var windowsUserPathGetter = func() (string, error) {
 }
 
 var windowsUserPathSetter = func(newPath string) error {
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", "[Environment]::SetEnvironmentVariable('Path', $env:BYTEMIND_USER_PATH, 'User')")
+	cmd := windowsPowerShellCommand("-NoProfile", "-Command", "[Environment]::SetEnvironmentVariable('Path', $env:BYTEMIND_USER_PATH, 'User')")
 	cmd.Env = append(os.Environ(), "BYTEMIND_USER_PATH="+newPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("write user PATH via PowerShell: %w (%s)", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func windowsPowerShellCommand(args ...string) *exec.Cmd {
+	executable := resolveWindowsPowerShellExecutable(exec.LookPath, os.Stat, os.Getenv)
+	return exec.Command(executable, args...)
+}
+
+func resolveWindowsPowerShellExecutable(
+	lookPath func(file string) (string, error),
+	statFn func(name string) (os.FileInfo, error),
+	getenv func(key string) string,
+) string {
+	for _, candidate := range windowsPowerShellCandidates(getenv) {
+		if filepath.IsAbs(candidate) {
+			info, err := statFn(candidate)
+			if err == nil && info != nil && !info.IsDir() {
+				return candidate
+			}
+			continue
+		}
+		resolved, err := lookPath(candidate)
+		if err == nil && strings.TrimSpace(resolved) != "" {
+			return resolved
+		}
+	}
+	return "powershell"
+}
+
+func windowsPowerShellCandidates(getenv func(key string) string) []string {
+	candidates := []string{
+		"powershell.exe",
+		"powershell",
+		"pwsh.exe",
+		"pwsh",
+	}
+
+	appendWindowsRoot := func(root string) {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			return
+		}
+		candidates = append(candidates,
+			filepath.Join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+			filepath.Join(root, "Sysnative", "WindowsPowerShell", "v1.0", "powershell.exe"),
+		)
+	}
+
+	appendWindowsRoot(getenv("SystemRoot"))
+	appendWindowsRoot(getenv("WINDIR"))
+
+	if programFiles := strings.TrimSpace(getenv("ProgramFiles")); programFiles != "" {
+		candidates = append(candidates, filepath.Join(programFiles, "PowerShell", "7", "pwsh.exe"))
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	uniq := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		key := strings.ToLower(candidate)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		uniq = append(uniq, candidate)
+	}
+	return uniq
 }
 
 func addToWindowsUserPath(targetDir string) (bool, error) {

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefaultBinaryName(t *testing.T) {
@@ -119,6 +121,69 @@ func TestAddToWindowsUserPathUsesGetterAndSetter(t *testing.T) {
 	}
 }
 
+func TestResolveWindowsPowerShellExecutablePrefersLookPathCandidate(t *testing.T) {
+	got := resolveWindowsPowerShellExecutable(
+		func(file string) (string, error) {
+			if file == "powershell.exe" {
+				return `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, nil
+			}
+			return "", errors.New("not found")
+		},
+		func(name string) (os.FileInfo, error) {
+			return nil, os.ErrNotExist
+		},
+		func(key string) string { return "" },
+	)
+	if !strings.EqualFold(got, `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`) {
+		t.Fatalf("expected lookPath candidate, got %q", got)
+	}
+}
+
+func TestResolveWindowsPowerShellExecutableFallsBackToAbsoluteCandidate(t *testing.T) {
+	windowsRoot := `C:\Windows`
+	expected := filepath.Join(windowsRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	got := resolveWindowsPowerShellExecutable(
+		func(file string) (string, error) {
+			return "", errors.New("not found")
+		},
+		func(name string) (os.FileInfo, error) {
+			if strings.EqualFold(name, expected) {
+				return stubInstallFileInfo{}, nil
+			}
+			return nil, os.ErrNotExist
+		},
+		func(key string) string {
+			if key == "SystemRoot" {
+				return windowsRoot
+			}
+			return ""
+		},
+	)
+	if !strings.EqualFold(got, expected) {
+		t.Fatalf("expected absolute fallback %q, got %q", expected, got)
+	}
+}
+
+func TestResolveWindowsPowerShellExecutableFallbacksToPowerShellLiteral(t *testing.T) {
+	got := resolveWindowsPowerShellExecutable(
+		func(file string) (string, error) { return "", errors.New("not found") },
+		func(name string) (os.FileInfo, error) { return nil, os.ErrNotExist },
+		func(key string) string { return "" },
+	)
+	if got != "powershell" {
+		t.Fatalf("expected final fallback powershell, got %q", got)
+	}
+}
+
 func samePath(a, b string) bool {
 	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
 }
+
+type stubInstallFileInfo struct{}
+
+func (stubInstallFileInfo) Name() string       { return "powershell.exe" }
+func (stubInstallFileInfo) Size() int64        { return 0 }
+func (stubInstallFileInfo) Mode() os.FileMode  { return 0o644 }
+func (stubInstallFileInfo) ModTime() time.Time { return time.Time{} }
+func (stubInstallFileInfo) IsDir() bool        { return false }
+func (stubInstallFileInfo) Sys() any           { return nil }

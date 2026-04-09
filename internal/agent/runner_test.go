@@ -329,6 +329,116 @@ func TestCompactSessionManualRewritesHistory(t *testing.T) {
 	}
 }
 
+func TestRunPromptAutoCompactionFallsBackWhenSummaryIsEmpty(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	for i := 0; i < 8; i++ {
+		sess.Messages = append(sess.Messages,
+			llm.NewUserTextMessage(strings.Repeat("history user segment ", 30)),
+			llm.NewAssistantTextMessage(strings.Repeat("history assistant segment ", 30)),
+		)
+	}
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &fakeClient{
+		replies: []llm.Message{
+			{Role: llm.RoleAssistant, Content: "   "},
+			{Role: llm.RoleAssistant, Content: "done"},
+		},
+	}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 2,
+			Stream:        false,
+			TokenQuota:    220,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "continue implementation", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "done" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("expected one compaction request + one turn request, got %d", len(client.requests))
+	}
+	if len(sess.Messages) != 3 {
+		t.Fatalf("expected compacted session to keep summary + latest user + final assistant, got %#v", sess.Messages)
+	}
+	if !strings.Contains(sess.Messages[0].Text(), "Compaction fallback summary") {
+		t.Fatalf("expected fallback summary content, got %#v", sess.Messages[0])
+	}
+}
+
+func TestCompactSessionManualFallsBackWhenSummaryIsEmpty(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Messages = append(sess.Messages,
+		llm.NewUserTextMessage("first ask"),
+		llm.NewAssistantTextMessage("first answer"),
+		llm.NewUserTextMessage("second ask"),
+		llm.NewAssistantTextMessage("second answer"),
+	)
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &fakeClient{
+		replies: []llm.Message{
+			{Role: llm.RoleAssistant, Content: "   "},
+		},
+	}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 2,
+			Stream:        false,
+			TokenQuota:    5000,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	summary, changed, err := runner.CompactSession(context.Background(), sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatalf("expected compaction to change session state")
+	}
+	if strings.TrimSpace(summary) == "" {
+		t.Fatalf("expected non-empty fallback summary")
+	}
+	if !strings.Contains(summary, "Compaction fallback summary") {
+		t.Fatalf("expected fallback marker in summary, got %q", summary)
+	}
+}
+
 func TestRunPromptEncodesToolExecutionErrorsAndContinues(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
