@@ -186,23 +186,24 @@ type tokenUsagePulledMsg struct {
 }
 
 var commandItems = []commandItem{
-	{Name: "/help", Usage: "/help", Description: "显示用法和支持的命令。", Kind: "command"},
-	{Name: "/session", Usage: "/session", Description: "打开最近会话列表。", Kind: "command"},
-	{Name: "/new", Usage: "/new", Description: "在当前工作区创建新会话。", Kind: "command"},
-	{Name: "/btw", Usage: "/btw <message>", Description: "在运行中插入一条补充指令。", Kind: "command"},
-	{Name: "/quit", Usage: "/quit", Description: "退出当前 TUI 窗口。", Kind: "command"},
-	{Name: "/skills", Usage: "/skills", Description: "查看可用技能与当前激活技能。", Kind: "command"},
-	{Name: "/skill author", Usage: "/skill author [name]", Description: "进入技能编辑模式并创建/更新模板。", Kind: "command"},
-	{Name: "/skill clear", Usage: "/skill clear", Description: "清除当前会话的激活技能状态。", Kind: "command"},
-	{Name: "/skill delete", Usage: "/skill delete <name>", Description: "删除项目里的指定技能。", Kind: "command"},
+	{Name: "/help", Usage: "/help", Description: "Show usage and supported commands.", Kind: "command"},
+	{Name: "/session", Usage: "/session", Description: "Open the recent session list.", Kind: "command"},
+	{Name: "/new", Usage: "/new", Description: "Start a fresh session in this workspace.", Kind: "command"},
+	{Name: "/compact", Usage: "/compact", Description: "Compress long session history into a continuation summary.", Kind: "command"},
+	{Name: "/btw", Usage: "/btw <message>", Description: "Interject while a run is in progress.", Kind: "command"},
+	{Name: "/quit", Usage: "/quit", Description: "Exit the current TUI window.", Kind: "command"},
+	{Name: "/skills", Usage: "/skills", Description: "List available skills and current active skill.", Kind: "command"},
+	{Name: "/skill author", Usage: "/skill author [name]", Description: "Enter skill author mode and create/update a scaffold.", Kind: "command"},
+	{Name: "/skill clear", Usage: "/skill clear", Description: "Clear active skill for this session.", Kind: "command"},
+	{Name: "/skill delete", Usage: "/skill delete <name>", Description: "Delete a project skill by name.", Kind: "command"},
 }
 
 var builtinSkillDescriptionsCN = map[string]string{
-	"bug-investigation": "通过可复现证据定位并分析问题，再提出修复方案。",
-	"github-pr":         "基于证据分析 PR 差异、评审意见与合并风险。",
-	"repo-onboarding":   "快速建立对仓库结构、入口与运行流程的整体理解。",
-	"review":            "以正确性、回归风险和测试缺口为重点进行代码评审。",
-	"write-rfc":         "产出结构化技术方案，明确权衡取舍与发布计划。",
+	"bug-investigation": "Investigate reproducible issues and propose concrete fixes.",
+	"github-pr":         "Analyze PR diffs, review comments, and merge risk with evidence.",
+	"repo-onboarding":   "Build a fast understanding of repository structure and execution flow.",
+	"review":            "Review code for correctness, regression risk, and missing tests.",
+	"write-rfc":         "Draft a structured technical proposal with tradeoffs and rollout plan.",
 }
 
 type model struct {
@@ -275,6 +276,11 @@ type model struct {
 	inputImageMentions    map[string]llm.AssetID
 	orphanedImages        map[llm.AssetID]time.Time
 	nextImageID           int
+	pastedContents        map[string]pastedContent
+	pastedOrder           []string
+	nextPasteID           int
+	pastedStateLoaded     bool
+	lastCompressedPasteAt time.Time
 	clipboard             clipboardImageReader
 	runCancel             context.CancelFunc
 	pendingBTW            []string
@@ -357,6 +363,9 @@ func newModel(opts Options) model {
 		inputImageMentions: make(map[string]llm.AssetID, 8),
 		orphanedImages:     make(map[llm.AssetID]time.Time, 8),
 		nextImageID:        nextSessionImageID(opts.Session),
+		pastedContents:     make(map[string]pastedContent, maxStoredPastedContents),
+		pastedOrder:        make([]string, 0, maxStoredPastedContents),
+		nextPasteID:        1,
 		clipboard:          defaultClipboardImageReader{},
 		startupGuide:       opts.StartupGuide,
 	}
@@ -371,6 +380,7 @@ func newModel(opts Options) model {
 	m.tokenUsage.SetUnavailable(!m.tokenHasOfficialUsage)
 	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 	m.ensureSessionImageAssets()
+	m.ensurePastedContentState()
 	m.syncInputStyle()
 	m.syncInputOverlays()
 	if m.mentionIndex != nil {
@@ -648,6 +658,17 @@ func isCtrlVPasteKey(msg tea.KeyMsg) bool {
 	return normalizeKeyName(msg.String()) == "ctrl+v"
 }
 
+func inputMutationSource(msg tea.KeyMsg) string {
+	source := strings.TrimSpace(msg.String())
+	if !msg.Paste {
+		return source
+	}
+	if source == "" {
+		return "paste"
+	}
+	return source + ":paste"
+}
+
 func isClipboardNoImageNote(note string) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(note)), "clipboard has no image")
 }
@@ -853,7 +874,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Preserve multiline input shortcuts without triggering submit.
 		m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
 		if m.input.Value() != before {
-			m.handleInputMutation(before, m.input.Value(), msg.String())
+			m.handleInputMutation(before, m.input.Value(), inputMutationSource(msg))
 			m.syncInputOverlays()
 		}
 		return m, cmd
@@ -905,11 +926,59 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if msg.String() == "enter" {
+	if msg.String() == "enter" && !msg.Paste {
 		if m.shouldSuppressEnterAfterPaste() {
-			return m, nil
+			if m.busy {
+				return m, nil
+			}
+			before := m.input.Value()
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			if m.input.Value() != before {
+				m.handleInputMutation(before, m.input.Value(), "paste-enter")
+				m.syncInputOverlays()
+			}
+			return m, cmd
 		}
 		rawValue := m.input.Value()
+		if markerChain, ok := extractLeadingCompressedMarker(rawValue); ok {
+			tail := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rawValue), markerChain))
+			if tail != "" {
+				if m.shouldCompressPastedText(tail, "paste-enter") {
+					marker, content, err := m.compressPastedText(tail)
+					if err != nil {
+						m.statusNote = err.Error()
+						return m, nil
+					}
+					combined := strings.TrimSpace(markerChain) + marker
+					m.setInputValue(combined)
+					m.syncInputOverlays()
+					m.statusNote = fmt.Sprintf("Detected another pasted block and compressed it as %s (%d lines). Press Enter again to send.", marker, content.Lines)
+					return m, nil
+				}
+				if len(tail) >= 24 || strings.Contains(tail, "\n") {
+					m.setInputValue(strings.TrimSpace(markerChain))
+					m.syncInputOverlays()
+					m.statusNote = "Detected continued paste chunk after compressed marker. Kept compressed markers only; press Enter again to send."
+					return m, nil
+				}
+			}
+		}
+		// Check whether the input has already been compressed.
+		isAlreadyCompressed := strings.Contains(rawValue, "[Paste #") || strings.Contains(rawValue, "[Pasted #")
+
+		// Compress long pasted content before sending.
+		if !isAlreadyCompressed && m.shouldCompressPastedText(rawValue, inputMutationSource(msg)) {
+			marker, content, err := m.compressPastedText(rawValue)
+			if err != nil {
+				m.statusNote = err.Error()
+				return m, nil
+			}
+			m.setInputValue(marker)
+			m.syncInputOverlays()
+			m.statusNote = fmt.Sprintf("Long pasted text (%d lines) compressed as %s. Press Enter again to send. Use [Paste #%s] or [Paste #%s line10~line20] later.", content.Lines, marker, content.ID, content.ID)
+			return m, nil
+		}
 		value := strings.TrimSpace(rawValue)
 		if m.startupGuide.Active && !strings.HasPrefix(value, "/") {
 			if err := m.handleStartupGuideSubmission(rawValue); err != nil {
@@ -980,11 +1049,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	after := m.input.Value()
+	mutationSource := inputMutationSource(msg)
 	if after != before {
-		m.handleInputMutation(before, after, msg.String())
+		m.handleInputMutation(before, after, mutationSource)
 		after = m.input.Value()
 	}
-	triggerClipboardImagePaste := shouldTriggerClipboardImagePaste(before, after, msg.String())
+	triggerClipboardImagePaste := shouldTriggerClipboardImagePaste(before, after, mutationSource)
 	if ctrlVPasteDetected {
 		triggerClipboardImagePaste = false
 	}
@@ -1447,6 +1517,7 @@ func (m *model) noteInputMutation(before, after, source string) {
 
 func (m *model) handleInputMutation(before, after, source string) {
 	m.noteInputMutation(before, after, source)
+
 	updated, note := m.applyInputImagePipeline(before, after, source)
 	if updated == after {
 		fallbackUpdated, fallbackNote := m.applyWholeInputImagePathFallback(after, source)
@@ -1457,6 +1528,15 @@ func (m *model) handleInputMutation(before, after, source string) {
 			note = fallbackNote
 		}
 	}
+
+	pasteUpdated, pasteNote := m.applyLongPastedTextPipeline(before, updated, source)
+	if pasteUpdated != updated {
+		updated = pasteUpdated
+	}
+	if strings.TrimSpace(note) == "" {
+		note = pasteNote
+	}
+
 	if updated != after {
 		m.setInputValue(updated)
 	}
@@ -2369,7 +2449,7 @@ func (m model) renderActiveSkillBanner() string {
 		return ""
 	}
 
-	line := "当前激活技能：" + name
+	line := "Active skill: " + name
 	if len(m.sess.ActiveSkill.Args) > 0 {
 		keys := make([]string, 0, len(m.sess.ActiveSkill.Args))
 		for key := range m.sess.ActiveSkill.Args {
@@ -2380,7 +2460,7 @@ func (m model) renderActiveSkillBanner() string {
 		for _, key := range keys {
 			pairs = append(pairs, fmt.Sprintf("%s=%s", key, m.sess.ActiveSkill.Args[key]))
 		}
-		line += " | 参数：" + strings.Join(pairs, ", ")
+		line += " | args: " + strings.Join(pairs, ", ")
 	}
 
 	width := max(24, m.chatPanelInnerWidth())
@@ -2400,7 +2480,7 @@ func (m model) renderStatusBarWithWidth(width int) string {
 		"Mode: " + strings.ToUpper(string(m.mode)),
 		"Phase: " + m.currentPhaseLabel(),
 		"Step: " + stepTitle,
-		"技能: " + m.currentSkillLabel(),
+		"Skill: " + m.currentSkillLabel(),
 	}, "  |  ")
 	right := strings.Join([]string{
 		fmt.Sprintf("%d msgs", len(m.chatItems)),
@@ -2921,7 +3001,7 @@ func (m model) renderCommandPalette() string {
 	for len(rows) < commandPageSize {
 		rows = append(rows, commandPaletteRowStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render(""))
 	}
-	rows = append(rows, commandPaletteMetaStyle.Render("上/下 移动  PgUp/PgDn 翻页  Enter 执行  Esc 关闭"))
+	rows = append(rows, commandPaletteMetaStyle.Render("Up/Down move  PgUp/PgDn page  Enter run  Esc close"))
 	return commandPaletteStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
 
@@ -3007,6 +3087,8 @@ func (m *model) handleSlashCommand(input string) error {
 		return m.runSkillCommand(input, fields)
 	case "/new":
 		return m.newSession()
+	case "/compact":
+		return m.runCompactCommand(input)
 	default:
 		return m.runDirectSkillCommand(input, fields)
 	}
@@ -3029,29 +3111,29 @@ func (m *model) runSkillsListCommand(input string) error {
 
 	lines := make([]string, 0, len(skillsList)+8)
 	if hasActive {
-		lines = append(lines, fmt.Sprintf("当前激活技能：%s（%s）", active.Name, active.Scope))
+		lines = append(lines, fmt.Sprintf("Active skill: %s (%s)", active.Name, active.Scope))
 	} else {
-		lines = append(lines, "当前激活技能：无")
+		lines = append(lines, "Active skill: none")
 	}
 	lines = append(lines, "")
 	if len(skillsList) == 0 {
-		lines = append(lines, "未发现可用技能。")
+		lines = append(lines, "No skills discovered.")
 	} else {
-		lines = append(lines, "可用技能：")
+		lines = append(lines, "Available skills:")
 		for _, skill := range skillsList {
 			description := localizedSkillDescriptionForTUI(skill.Name, string(skill.Scope), skill.Description)
 			lines = append(lines, fmt.Sprintf("- %s (%s): %s", skill.Name, skill.Scope, description))
 		}
 	}
 	if len(diagnostics) > 0 {
-		lines = append(lines, "", "诊断信息：")
+		lines = append(lines, "", "Diagnostics:")
 		for _, diag := range diagnostics {
 			lines = append(lines, fmt.Sprintf("- [%s] %s (%s): %s", diag.Level, diag.Skill, diag.Path, diag.Message))
 		}
 	}
 
 	m.appendCommandExchange(input, strings.Join(lines, "\n"))
-	m.statusNote = fmt.Sprintf("已发现 %d 个技能。", len(skillsList))
+	m.statusNote = fmt.Sprintf("Discovered %d skills.", len(skillsList))
 	return nil
 }
 
@@ -3060,7 +3142,7 @@ func (m *model) runSkillCommand(input string, fields []string) error {
 		return fmt.Errorf("runner is unavailable")
 	}
 	if len(fields) < 2 {
-		return fmt.Errorf("用法：/skill <author|clear|delete> ...")
+		return fmt.Errorf("usage: /skill <author|clear|delete> ...")
 	}
 	switch strings.ToLower(strings.TrimSpace(fields[1])) {
 	case "author":
@@ -3070,7 +3152,7 @@ func (m *model) runSkillCommand(input string, fields []string) error {
 	case "delete":
 		return m.runSkillDeleteCommand(input, fields)
 	default:
-		return fmt.Errorf("用法：/skill <author|clear|delete> ...")
+		return fmt.Errorf("usage: /skill <author|clear|delete> ...")
 	}
 }
 
@@ -3080,12 +3162,12 @@ func (m *model) runSkillAuthorCommand(input string, fields []string) error {
 		m.skillAuthorName = ""
 		m.syncInputStyle()
 		m.appendCommandExchange(input, strings.Join([]string{
-			"已进入技能编辑模式。",
-			"阶段 1/2（设置名称）：请先只输入技能名称，例如 `review-plus`。",
-			"阶段 2/2（编辑内容）：名称设置完成后，再输入技能内容与要求。",
-			"输入 `/skill author done` 可退出编辑模式。",
+			"Skill author mode enabled.",
+			"Step 1/2 (name): send only the skill name, for example `review-plus`.",
+			"Step 2/2 (content): after the name is set, send requirements to refine that skill.",
+			"Use `/skill author done` to exit this mode.",
 		}, "\n"))
-		m.statusNote = "技能编辑模式：阶段 1/2（设置名称）"
+		m.statusNote = "Skill author mode: step 1/2 (name)"
 		return nil
 	}
 
@@ -3094,8 +3176,8 @@ func (m *model) runSkillAuthorCommand(input string, fields []string) error {
 		m.skillAuthorMode = false
 		m.skillAuthorName = ""
 		m.syncInputStyle()
-		m.appendCommandExchange(input, "已退出技能编辑模式。")
-		m.statusNote = "技能编辑模式已关闭"
+		m.appendCommandExchange(input, "Skill author mode closed.")
+		m.statusNote = "Skill author mode closed"
 		return nil
 	}
 
@@ -3111,14 +3193,14 @@ func (m *model) runSkillAuthorCommand(input string, fields []string) error {
 	m.skillAuthorName = name
 	m.syncInputStyle()
 
-	m.appendCommandExchange(input, response+"\n当前已锁定技能：`"+name+"`。\n现在是阶段 2/2（编辑内容），请继续输入技能内容。")
-	m.statusNote = "技能编辑模式：阶段 2/2（编辑内容）"
+	m.appendCommandExchange(input, response+"\nCurrent skill locked: `"+name+"`.\nNow in step 2/2 (content), keep sending requirements.")
+	m.statusNote = "Skill author mode: step 2/2 (content)"
 	return nil
 }
 
 func (m *model) runSkillStateClearCommand(input string, fields []string) error {
 	if len(fields) != 2 {
-		return fmt.Errorf("用法：/skill clear")
+		return fmt.Errorf("usage: /skill clear")
 	}
 
 	activeName := ""
@@ -3129,22 +3211,22 @@ func (m *model) runSkillStateClearCommand(input string, fields []string) error {
 		return err
 	}
 
-	message := "当前会话没有激活技能，状态已保持为空。"
+	message := "No active skill in this session; state remains empty."
 	if activeName != "" {
-		message = fmt.Sprintf("已清除当前会话激活技能 `%s`。", activeName)
+		message = fmt.Sprintf("Cleared active skill `%s` from this session.", activeName)
 	}
 	m.appendCommandExchange(input, message)
-	m.statusNote = "技能状态已清空"
+	m.statusNote = "Skill state cleared"
 	return nil
 }
 
 func (m *model) runSkillDeleteCommand(input string, fields []string) error {
 	if len(fields) < 3 {
-		return fmt.Errorf("用法：/skill delete <name>")
+		return fmt.Errorf("usage: /skill delete <name>")
 	}
 	name := strings.TrimSpace(strings.TrimPrefix(fields[2], "/"))
 	if name == "" {
-		return fmt.Errorf("用法：/skill delete <name>")
+		return fmt.Errorf("usage: /skill delete <name>")
 	}
 
 	result, err := m.runner.ClearSkill(name)
@@ -3153,24 +3235,58 @@ func (m *model) runSkillDeleteCommand(input string, fields []string) error {
 	}
 
 	lines := []string{
-		fmt.Sprintf("已删除项目技能 `%s`。", result.Name),
-		fmt.Sprintf("目录：%s", result.Dir),
+		fmt.Sprintf("Deleted project skill `%s`.", result.Name),
+		fmt.Sprintf("Dir: %s", result.Dir),
 	}
 
 	if m.sess != nil && m.sess.ActiveSkill != nil && strings.EqualFold(strings.TrimSpace(m.sess.ActiveSkill.Name), strings.TrimSpace(result.Name)) {
 		if clearErr := m.runner.ClearActiveSkill(m.sess); clearErr == nil {
-			lines = append(lines, "当前会话中的激活技能已一并清除。")
+			lines = append(lines, "Cleared active skill in this session as well.")
 		}
 	}
 	if strings.EqualFold(strings.TrimSpace(m.skillAuthorName), strings.TrimSpace(result.Name)) {
 		m.skillAuthorName = ""
 		m.skillAuthorMode = false
 		m.syncInputStyle()
-		lines = append(lines, "目标技能已删除，技能编辑模式已自动关闭。")
+		lines = append(lines, "Deleted skill matched author mode target; author mode closed.")
 	}
 
 	m.appendCommandExchange(input, strings.Join(lines, "\n"))
-	m.statusNote = "技能已删除"
+	m.statusNote = "Skill deleted"
+	return nil
+}
+
+func (m *model) runCompactCommand(input string) error {
+	if m.runner == nil {
+		return fmt.Errorf("runner is unavailable")
+	}
+	if m.sess == nil {
+		return fmt.Errorf("session is unavailable")
+	}
+	type sessionCompactor interface {
+		CompactSession(ctx context.Context, sess *session.Session) (string, bool, error)
+	}
+	compactor, ok := any(m.runner).(sessionCompactor)
+	if !ok {
+		return fmt.Errorf("compact is unavailable in this build")
+	}
+	summary, changed, err := compactor.CompactSession(context.Background(), m.sess)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		m.appendCommandExchange(input, "No compaction needed yet. Start a longer conversation first.")
+		m.statusNote = "No compaction needed."
+		return nil
+	}
+	preview := compact(summary, 360)
+	response := "Conversation compacted for long-context continuation."
+	if strings.TrimSpace(preview) != "" {
+		response += "\nSummary preview: " + preview
+	}
+	m.chatItems, m.toolRuns = rebuildSessionTimeline(m.sess)
+	m.appendCommandExchange(input, response)
+	m.statusNote = "Conversation compacted."
 	return nil
 }
 
@@ -3197,7 +3313,7 @@ func (m *model) activateSkillCommand(input, name string, args map[string]string)
 	if err != nil {
 		return err
 	}
-	response := fmt.Sprintf("已激活技能 `%s`（%s）。\n工具策略：%s\n命令入口：%s", skill.Name, skill.Scope, skill.ToolPolicy.Policy, skill.Entry.Slash)
+	response := fmt.Sprintf("Activated skill `%s` (%s).\nTool policy: %s\nEntry: %s", skill.Name, skill.Scope, skill.ToolPolicy.Policy, skill.Entry.Slash)
 	if len(args) > 0 {
 		argParts := make([]string, 0, len(args))
 		keys := make([]string, 0, len(args))
@@ -3208,10 +3324,10 @@ func (m *model) activateSkillCommand(input, name string, args map[string]string)
 		for _, key := range keys {
 			argParts = append(argParts, fmt.Sprintf("%s=%s", key, args[key]))
 		}
-		response += "\n参数：" + strings.Join(argParts, ", ")
+		response += "\nArgs: " + strings.Join(argParts, ", ")
 	}
 	m.appendCommandExchange(input, response)
-	m.statusNote = "技能已激活"
+	m.statusNote = "Skill activated"
 	return nil
 }
 
@@ -3223,12 +3339,12 @@ func parseSkillArgs(parts []string) (map[string]string, error) {
 	for _, part := range parts {
 		pieces := strings.SplitN(part, "=", 2)
 		if len(pieces) != 2 {
-			return nil, fmt.Errorf("技能参数 %q 格式错误，应为 k=v", part)
+			return nil, fmt.Errorf("invalid skill arg %q, expected k=v", part)
 		}
 		key := strings.TrimSpace(pieces[0])
 		value := strings.TrimSpace(pieces[1])
 		if key == "" || value == "" {
-			return nil, fmt.Errorf("技能参数 %q 格式错误，应为 k=v", part)
+			return nil, fmt.Errorf("invalid skill arg %q, expected k=v", part)
 		}
 		args[key] = value
 	}
@@ -3240,11 +3356,11 @@ func parseSkillArgs(parts []string) (map[string]string, error) {
 
 func parseSkillAuthorArgs(fields []string) (string, string, error) {
 	if len(fields) < 3 {
-		return "", "", fmt.Errorf("用法：/skill author [name]")
+		return "", "", fmt.Errorf("usage: /skill author [name]")
 	}
 	name := strings.TrimSpace(strings.TrimPrefix(fields[2], "/"))
 	if name == "" {
-		return "", "", fmt.Errorf("用法：/skill author [name]")
+		return "", "", fmt.Errorf("usage: /skill author [name]")
 	}
 	brief := strings.TrimSpace(strings.Join(fields[3:], " "))
 	return name, brief, nil
@@ -3253,18 +3369,18 @@ func parseSkillAuthorArgs(fields []string) (string, string, error) {
 func parseSkillAuthorModeInput(value string) (string, string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "", "", fmt.Errorf("请先输入技能名称（只输入名称，不要带内容）")
+		return "", "", fmt.Errorf("please provide a skill name first, for example: review-plus")
 	}
 	fields := strings.Fields(value)
 	if len(fields) == 0 {
-		return "", "", fmt.Errorf("请先输入技能名称（只输入名称，不要带内容）")
+		return "", "", fmt.Errorf("please provide a skill name first, for example: review-plus")
 	}
 	if len(fields) > 1 {
-		return "", "", fmt.Errorf("当前是阶段 1/2：请先只输入技能名称。例如：review-plus")
+		return "", "", fmt.Errorf("stage 1/2 expects only a skill name, for example: review-plus")
 	}
 	name := strings.TrimSpace(strings.TrimPrefix(fields[0], "/"))
 	if !isValidSkillAuthorName(name) {
-		return "", "", fmt.Errorf("技能名称不合法：仅支持字母、数字和 . _ : -，例如 `review-plus`")
+		return "", "", fmt.Errorf("invalid skill name: use letters, digits, or . _ : - , for example `review-plus`")
 	}
 	brief := strings.TrimSpace(strings.TrimPrefix(value, fields[0]))
 	return name, brief, nil
@@ -3305,37 +3421,37 @@ func (m model) submitSkillAuthorInput(value string) (tea.Model, tea.Cmd) {
 		name, brief, err = parseSkillAuthorModeInput(value)
 		if err != nil {
 			m.statusNote = err.Error()
-			m.appendCommandExchange(value, "技能编辑模式提示：\n"+err.Error())
+			m.appendCommandExchange(value, "Skill author mode notice:\n"+err.Error())
 			return m, nil
 		}
 		response, err := m.authorSkill(name, "")
 		if err != nil {
 			m.statusNote = err.Error()
-			m.appendCommandExchange(value, "技能编辑模式提示：\n"+err.Error())
+			m.appendCommandExchange(value, "Skill author mode notice:\n"+err.Error())
 			return m, nil
 		}
 		m.skillAuthorMode = true
 		m.skillAuthorName = name
 		m.syncInputStyle()
-		response += "\n已进入阶段 2/2（编辑内容）。\n请继续输入该技能的内容与要求；输入 `/skill author done` 退出。"
+		response += "\nEntered step 2/2 (content).\nContinue describing requirements; use `/skill author done` to exit."
 		m.appendCommandExchange(value, response)
-		m.statusNote = "技能编辑模式：阶段 2/2（编辑内容）"
+		m.statusNote = "Skill author mode: step 2/2 (content)"
 		return m, m.loadSessionsCmd()
 	}
 
 	response, err := m.authorSkill(name, brief)
 	if err != nil {
 		m.statusNote = err.Error()
-		m.appendCommandExchange(value, "技能编辑模式提示：\n"+err.Error())
+		m.appendCommandExchange(value, "Skill author mode notice:\n"+err.Error())
 		return m, nil
 	}
 
 	m.skillAuthorMode = true
 	m.skillAuthorName = name
 	m.syncInputStyle()
-	response += "\n当前阶段：2/2（编辑内容）。继续输入可持续优化；输入 `/skill author done` 退出。"
+	response += "\nCurrent step: 2/2 (content). Keep sending updates to refine; use `/skill author done` to exit."
 	m.appendCommandExchange(value, response)
-	m.statusNote = "技能编辑模式：阶段 2/2（编辑内容）"
+	m.statusNote = "Skill author mode: step 2/2 (content)"
 	return m, m.loadSessionsCmd()
 }
 
@@ -3347,19 +3463,19 @@ func (m *model) authorSkill(name, brief string) (string, error) {
 
 	state := "updated"
 	if result.Created {
-		state = "已创建"
+		state = "created"
 	} else {
-		state = "已更新"
+		state = "updated"
 	}
 	lines := []string{
-		fmt.Sprintf("技能 `%s` %s。", result.Name, state),
-		fmt.Sprintf("目录：%s", result.Dir),
-		fmt.Sprintf("配置文件：%s", result.ManifestPath),
-		fmt.Sprintf("说明文件：%s", result.SkillPath),
-		fmt.Sprintf("可通过 `/%s` 激活该技能。", result.Name),
+		fmt.Sprintf("Skill `%s` %s.", result.Name, state),
+		fmt.Sprintf("Dir: %s", result.Dir),
+		fmt.Sprintf("Manifest: %s", result.ManifestPath),
+		fmt.Sprintf("Skill doc: %s", result.SkillPath),
+		fmt.Sprintf("Activate with `/%s`.", result.Name),
 	}
 	if strings.TrimSpace(brief) == "" {
-		lines = append(lines, "下一步：请用自然语言描述技能内容，我会继续优化生成文件。")
+		lines = append(lines, "Next: describe requirements in natural language and continue refining this skill.")
 	}
 
 	skillsList, diagnostics := m.runner.ListSkills()
@@ -3367,14 +3483,14 @@ func (m *model) authorSkill(name, brief string) (string, error) {
 		if !strings.EqualFold(strings.TrimSpace(skill.Name), strings.TrimSpace(result.Name)) {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("当前解析结果：`%s`（%s）。", skill.Name, skill.Scope))
+		lines = append(lines, fmt.Sprintf("Resolved as: `%s` (%s).", skill.Name, skill.Scope))
 		break
 	}
 	for _, diag := range diagnostics {
 		if !strings.EqualFold(strings.TrimSpace(diag.Skill), strings.TrimSpace(result.Name)) {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("诊断 [%s] %s：%s", diag.Level, diag.Path, diag.Message))
+		lines = append(lines, fmt.Sprintf("Diagnostic [%s] %s: %s", diag.Level, diag.Path, diag.Message))
 	}
 	return strings.Join(lines, "\n"), nil
 }
@@ -3419,6 +3535,12 @@ func (m *model) newSession() error {
 	m.orphanedImages = make(map[llm.AssetID]time.Time, 8)
 	m.nextImageID = nextSessionImageID(next)
 	m.ensureSessionImageAssets()
+	m.pastedContents = make(map[string]pastedContent, maxStoredPastedContents)
+	m.pastedOrder = make([]string, 0, maxStoredPastedContents)
+	m.nextPasteID = 1
+	m.pastedStateLoaded = false
+	m.lastCompressedPasteAt = time.Time{}
+	m.ensurePastedContentState()
 	m.pendingBTW = nil
 	m.interrupting = false
 	m.interruptSafe = false
@@ -3464,6 +3586,12 @@ func (m *model) resumeSession(prefix string) error {
 	m.orphanedImages = make(map[llm.AssetID]time.Time, 8)
 	m.nextImageID = nextSessionImageID(next)
 	m.ensureSessionImageAssets()
+	m.pastedContents = make(map[string]pastedContent, maxStoredPastedContents)
+	m.pastedOrder = make([]string, 0, maxStoredPastedContents)
+	m.nextPasteID = 1
+	m.pastedStateLoaded = false
+	m.lastCompressedPasteAt = time.Time{}
+	m.ensurePastedContentState()
 	m.syncInputImageRefs("")
 	m.pendingBTW = nil
 	m.interrupting = false
@@ -3630,7 +3758,7 @@ func renderChatCard(item chatEntry, width int) string {
 		return rendered
 	}
 
-	sep := lipgloss.NewStyle().Foreground(colorTool).Render("│")
+	sep := lipgloss.NewStyle().Foreground(colorTool).Render("|")
 	lines := strings.Split(rendered, "\n")
 	for i := range lines {
 		if strings.TrimSpace(lines[i]) == "" {
@@ -4417,18 +4545,12 @@ func isMeaningfulThinking(body, toolName string) bool {
 	}
 
 	cnPrefixes := []string{
-		"我将调用",
-		"我会调用",
-		"我先调用",
-		"我要调用",
-		"先调用",
-		"我将使用",
-		"我会使用",
-		"我先使用",
-		"我将运行",
-		"我会运行",
-		"先检查相关上下文",
-		"我会先检查相关上下文",
+		"i will call",
+		"i will use",
+		"let me call",
+		"let me use",
+		"let me run",
+		"tool result",
 	}
 	for _, prefix := range cnPrefixes {
 		if strings.HasPrefix(raw, prefix) {
@@ -4456,12 +4578,6 @@ func shouldRenderThinkingFromDelta(body string) bool {
 		"approach",
 		"systematically",
 		"through build and test",
-		"我会先",
-		"先了解",
-		"然后",
-		"最后",
-		"通过构建和测试",
-		"系统性",
 	}
 	for _, marker := range reasoningMarkers {
 		if strings.Contains(lower, marker) || strings.Contains(text, marker) {
@@ -4691,7 +4807,7 @@ func (m model) skillCommandItems() []commandItem {
 
 		description := localizedSkillDescriptionForTUI(skill.Name, string(skill.Scope), skill.Description)
 		if description == "" {
-			description = fmt.Sprintf("在当前会话激活 %s。", skill.Name)
+			description = fmt.Sprintf("Activate %s in this session.", skill.Name)
 		}
 		items = append(items, commandItem{
 			Name:        name,
@@ -4784,7 +4900,7 @@ func shouldExecuteFromPalette(item commandItem) bool {
 		return true
 	}
 	switch item.Name {
-	case "/help", "/session", "/skills", "/skill author", "/skill clear", "/new", "/quit":
+	case "/help", "/session", "/skills", "/skill author", "/skill clear", "/new", "/compact", "/quit":
 		return true
 	default:
 		return false
@@ -4801,14 +4917,15 @@ func (m model) helpText() string {
 		"Slash commands",
 		"/help: show this help inside the conversation.",
 		"/session: open recent sessions.",
-		"/skills: 查看可用技能和诊断信息。",
-		"/<skill-name> [k=v...]: 在当前会话激活技能。",
-		"/skill author: 进入技能编辑模式（先设置名称，再编辑内容）。",
-		"/skill author [name]: 直接创建/更新该技能并进入编辑阶段。",
-		"/skill author done: 退出技能编辑模式。",
-		"/skill clear: 清除当前会话的激活技能状态。",
-		"/skill delete <name>: 删除项目里的指定技能。",
+		"/skills: list available skills and diagnostics.",
+		"/<skill-name> [k=v...]: activate a skill for this session.",
+		"/skill author: enter skill author mode (name first, then content).",
+		"/skill author [name]: create/update the skill and enter content stage.",
+		"/skill author done: exit skill author mode.",
+		"/skill clear: clear the active skill in this session.",
+		"/skill delete <name>: delete the specified project skill.",
 		"/new: start a fresh session.",
+		"/compact: summarize long history into a compact continuation context.",
 		"/btw <message>: interject while a run is in progress.",
 		"/quit: exit the TUI.",
 		"",
@@ -4818,6 +4935,8 @@ func (m model) helpText() string {
 		"Use Ctrl+G to open or close the help panel.",
 		"Use Ctrl+F to search prompt history and restore previous input.",
 		"If provider setup is required, paste an API key in the input and press Enter.",
+		"Long pasted code/text is compressed to [Paste #N ~X lines].",
+		"Use [Paste], [Paste #N], [Paste line3], or [Paste #N line3~line7] to expand references.",
 		"After restoring a session with a saved plan, type 'continue execution' to resume it.",
 		"Approval requests appear above the input area when a shell command needs confirmation.",
 		"The footer keeps only the essential shortcuts: tab agents, / commands, Ctrl+F history, Ctrl+L sessions, Ctrl+C quit.",
@@ -4983,9 +5102,9 @@ func (m *model) syncInputStyle() {
 
 func (m model) skillAuthorInputPlaceholder() string {
 	if strings.TrimSpace(m.skillAuthorName) == "" {
-		return "技能编辑模式 阶段 1/2：请输入技能名称（仅名称），例如：review-plus"
+		return "Skill author mode step 1/2: enter only the skill name, for example: review-plus"
 	}
-	return "技能编辑模式 阶段 2/2（" + strings.TrimSpace(m.skillAuthorName) + "）：请输入技能内容与要求..."
+	return "Skill author mode step 2/2 (" + strings.TrimSpace(m.skillAuthorName) + "): enter skill content and requirements..."
 }
 
 func setInputHeightSafe(input *textarea.Model, height int) {
@@ -5229,11 +5348,11 @@ func (m model) currentModelLabel() string {
 
 func (m model) currentSkillLabel() string {
 	if m.sess == nil || m.sess.ActiveSkill == nil {
-		return "无"
+		return "none"
 	}
 	name := strings.TrimSpace(m.sess.ActiveSkill.Name)
 	if name == "" {
-		return "无"
+		return "none"
 	}
 	return name
 }
@@ -5401,7 +5520,7 @@ func (m model) sessionText() string {
 func statusGlyph(status string) string {
 	switch planpkg.NormalizeStepStatus(status) {
 	case planpkg.StepCompleted:
-		return doneStyle.Render("✓")
+		return doneStyle.Render("v")
 	case planpkg.StepInProgress:
 		return accentStyle.Render(">")
 	case planpkg.StepBlocked:

@@ -27,6 +27,36 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+type compactCommandTestClient struct {
+	replies  []llm.Message
+	requests []llm.ChatRequest
+	index    int
+}
+
+func (c *compactCommandTestClient) CreateMessage(_ context.Context, req llm.ChatRequest) (llm.Message, error) {
+	c.requests = append(c.requests, req)
+	if len(c.replies) == 0 {
+		return llm.Message{}, nil
+	}
+	if c.index >= len(c.replies) {
+		return c.replies[len(c.replies)-1], nil
+	}
+	reply := c.replies[c.index]
+	c.index++
+	return reply, nil
+}
+
+func (c *compactCommandTestClient) StreamMessage(ctx context.Context, req llm.ChatRequest, onDelta func(string)) (llm.Message, error) {
+	reply, err := c.CreateMessage(ctx, req)
+	if err != nil {
+		return llm.Message{}, err
+	}
+	if onDelta != nil && strings.TrimSpace(reply.Content) != "" {
+		onDelta(reply.Content)
+	}
+	return reply, nil
+}
+
 func TestHandleMouseScrollsViewport(t *testing.T) {
 	m := model{
 		screen: screenChat,
@@ -1120,7 +1150,7 @@ func TestContinueExecutionInputPreparesPlanAndSubmitsPrompt(t *testing.T) {
 }
 
 func TestIsContinueExecutionInputSupportsPlanAlias(t *testing.T) {
-	for _, input := range []string{"continue plan", "继续做"} {
+	for _, input := range []string{"continue plan", "resume execution"} {
 		if !isContinueExecutionInput(input) {
 			t.Fatalf("expected %q to be treated as continue input", input)
 		}
@@ -1496,6 +1526,61 @@ func TestImmediateEnterAfterPasteStillSubmits(t *testing.T) {
 	}
 }
 
+func TestPasteEnterDoesNotSubmitAndKeepsNewline(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetWidth(40)
+	input.SetHeight(3)
+	input.SetValue("first line")
+	input.CursorEnd()
+
+	m := model{
+		screen:    screenChat,
+		input:     input,
+		workspace: "E:\\bytemind",
+		sess:      session.New("E:\\bytemind"),
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter, Paste: true})
+	updated := got.(model)
+
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected paste enter not to submit, got %d chat items", len(updated.chatItems))
+	}
+	if !strings.Contains(updated.input.Value(), "\n") {
+		t.Fatalf("expected pasted enter to be inserted as newline, got %q", updated.input.Value())
+	}
+}
+
+func TestSuppressedEnterAfterPasteIsInsertedAsNewline(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetWidth(40)
+	input.SetHeight(3)
+	input.SetValue("line1")
+	input.CursorEnd()
+
+	m := model{
+		screen:         screenChat,
+		input:          input,
+		workspace:      "E:\\bytemind",
+		sess:           session.New("E:\\bytemind"),
+		lastPasteAt:    time.Now(),
+		lastInputAt:    time.Now(),
+		inputBurstSize: 12,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected suppressed enter not to submit, got %d chat items", len(updated.chatItems))
+	}
+	if updated.input.Value() != "line1\n" {
+		t.Fatalf("expected suppressed enter to become newline, got %q", updated.input.Value())
+	}
+}
+
 func TestEnterSubmitsMultilinePrompt(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
@@ -1750,7 +1835,7 @@ func TestFilteredCommandsShowsRootSelectorGroups(t *testing.T) {
 		usages = append(usages, item.Usage)
 	}
 
-	for _, want := range []string{"/help", "/session", "/new", "/quit"} {
+	for _, want := range []string{"/help", "/session", "/new", "/compact", "/quit"} {
 		if !containsString(usages, want) {
 			t.Fatalf("expected root selector to contain %q, got %v", want, usages)
 		}
@@ -1759,6 +1844,65 @@ func TestFilteredCommandsShowsRootSelectorGroups(t *testing.T) {
 		if containsString(usages, unwanted) {
 			t.Fatalf("did not expect root selector to contain %q", unwanted)
 		}
+	}
+}
+
+func TestHandleSlashCompactCompactsSession(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Messages = append(sess.Messages,
+		llm.NewUserTextMessage("first ask"),
+		llm.NewAssistantTextMessage(strings.Repeat("history details ", 30)),
+		llm.NewUserTextMessage("second ask"),
+		llm.NewAssistantTextMessage(strings.Repeat("more details ", 30)),
+	)
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &compactCommandTestClient{
+		replies: []llm.Message{
+			{Role: llm.RoleAssistant, Content: "Goal: keep building\nDone: reviewed history\nPending: continue coding"},
+		},
+	}
+	runner := agent.NewRunner(agent.Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+			Stream:   false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	m := model{
+		runner:    runner,
+		store:     store,
+		sess:      sess,
+		workspace: workspace,
+		screen:    screenChat,
+	}
+	if err := m.handleSlashCommand("/compact"); err != nil {
+		t.Fatalf("expected /compact to succeed, got %v", err)
+	}
+	if m.statusNote != "Conversation compacted." {
+		t.Fatalf("expected compacted status note, got %q", m.statusNote)
+	}
+	if len(sess.Messages) != 1 || sess.Messages[0].Role != llm.RoleAssistant {
+		t.Fatalf("expected compacted session summary message, got %#v", sess.Messages)
+	}
+	if !strings.Contains(sess.Messages[0].Text(), "Goal: keep building") {
+		t.Fatalf("expected persisted summary content, got %q", sess.Messages[0].Text())
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("expected one compaction LLM request, got %d", len(client.requests))
 	}
 }
 
@@ -1816,7 +1960,7 @@ func TestHandleSlashSkillsListsDiscoveredSkills(t *testing.T) {
 	if !strings.Contains(m.chatItems[len(m.chatItems)-1].Body, "review") {
 		t.Fatalf("expected skills output to contain review, got %q", m.chatItems[len(m.chatItems)-1].Body)
 	}
-	if !strings.Contains(m.chatItems[len(m.chatItems)-1].Body, "以正确性、回归风险和测试缺口为重点进行代码评审。") {
+	if !strings.Contains(m.chatItems[len(m.chatItems)-1].Body, "Review code for correctness, regression risk, and missing tests.") {
 		t.Fatalf("expected builtin review description to be localized in /skills output, got %q", m.chatItems[len(m.chatItems)-1].Body)
 	}
 }
@@ -1929,10 +2073,10 @@ func TestHandleSlashSkillAuthorCreatesProjectSkill(t *testing.T) {
 		t.Fatalf("expected command exchange in chat, got %#v", m.chatItems)
 	}
 	response := m.chatItems[len(m.chatItems)-1].Body
-	if !strings.Contains(response, "技能 `review-plus`") {
+	if !strings.Contains(response, "Skill `review-plus`") {
 		t.Fatalf("expected response to reference authored skill, got %q", response)
 	}
-	if !strings.Contains(response, "可通过 `/review-plus` 激活") {
+	if !strings.Contains(response, "Activate with `/review-plus`") {
 		t.Fatalf("expected response to include activation hint, got %q", response)
 	}
 
@@ -1992,7 +2136,7 @@ func TestHandleSlashSkillDeleteDeletesProjectSkill(t *testing.T) {
 	if m.sess.ActiveSkill != nil {
 		t.Fatalf("expected active skill cleared, got %#v", m.sess.ActiveSkill)
 	}
-	if len(m.chatItems) < 2 || !strings.Contains(m.chatItems[len(m.chatItems)-1].Body, "已删除项目技能") {
+	if len(m.chatItems) < 2 || !strings.Contains(m.chatItems[len(m.chatItems)-1].Body, "Deleted project skill") {
 		t.Fatalf("expected clear command response, got %#v", m.chatItems)
 	}
 }
@@ -2045,7 +2189,7 @@ func TestHandleSlashSkillClearOnlyClearsActiveSkill(t *testing.T) {
 	if m.sess.ActiveSkill != nil {
 		t.Fatalf("expected active skill cleared, got %#v", m.sess.ActiveSkill)
 	}
-	if len(m.chatItems) < 2 || !strings.Contains(m.chatItems[len(m.chatItems)-1].Body, "已清除当前会话激活技能") {
+	if len(m.chatItems) < 2 || !strings.Contains(m.chatItems[len(m.chatItems)-1].Body, "Cleared active skill") {
 		t.Fatalf("expected clear status response, got %#v", m.chatItems)
 	}
 }
@@ -2086,7 +2230,7 @@ func TestHandleSlashSkillAuthorWithoutNameEntersAuthorMode(t *testing.T) {
 	if strings.TrimSpace(m.skillAuthorName) != "" {
 		t.Fatalf("expected no skillAuthorName yet, got %q", m.skillAuthorName)
 	}
-	if !strings.Contains(m.input.Placeholder, "阶段 1/2") {
+	if !strings.Contains(m.input.Placeholder, "step 1/2") {
 		t.Fatalf("expected author-mode placeholder, got %q", m.input.Placeholder)
 	}
 
@@ -2100,20 +2244,20 @@ func TestHandleSlashSkillAuthorWithoutNameEntersAuthorMode(t *testing.T) {
 	if updated.skillAuthorName != "review-ops" {
 		t.Fatalf("expected target skill name review-ops, got %q", updated.skillAuthorName)
 	}
-	if !strings.Contains(updated.input.Placeholder, "阶段 2/2") || !strings.Contains(updated.input.Placeholder, "review-ops") {
+	if !strings.Contains(updated.input.Placeholder, "step 2/2") || !strings.Contains(updated.input.Placeholder, "review-ops") {
 		t.Fatalf("expected author-mode placeholder to track skill name, got %q", updated.input.Placeholder)
 	}
 	if _, err := os.Stat(filepath.Join(workspace, ".bytemind", "skills", "review-ops", "skill.json")); err != nil {
 		t.Fatalf("expected generated skill scaffold, got %v", err)
 	}
 
-	updated.input.SetValue("用于代码评审，优先关注回归风险和测试缺口。")
+	updated.input.SetValue("Used for code review, prioritizing regression risk and missing tests.")
 	next, _ := updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	updated2 := next.(model)
 	if !updated2.skillAuthorMode {
 		t.Fatalf("expected author mode to stay active after content update")
 	}
-	if !strings.Contains(updated2.chatItems[len(updated2.chatItems)-1].Body, "2/2（编辑内容）") {
+	if !strings.Contains(updated2.chatItems[len(updated2.chatItems)-1].Body, "Current step: 2/2 (content)") {
 		t.Fatalf("expected stage 2 guidance after content update, got %q", updated2.chatItems[len(updated2.chatItems)-1].Body)
 	}
 
@@ -2156,7 +2300,7 @@ func TestSkillAuthorModeShowsVisibleGuidanceOnInvalidName(t *testing.T) {
 		t.Fatalf("expected /skill author to enable mode, got %v", err)
 	}
 
-	m.input.SetValue("我想做一个评审技能")
+	m.input.SetValue("review+skill")
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	updated := got.(model)
 
@@ -2167,7 +2311,7 @@ func TestSkillAuthorModeShowsVisibleGuidanceOnInvalidName(t *testing.T) {
 		t.Fatalf("expected visible assistant guidance, got %#v", updated.chatItems)
 	}
 	body := updated.chatItems[len(updated.chatItems)-1].Body
-	if !strings.Contains(body, "技能名称不合法") {
+	if !strings.Contains(body, "invalid skill name") {
 		t.Fatalf("expected invalid-name guidance in chat, got %q", body)
 	}
 }
@@ -2213,7 +2357,7 @@ func TestFilteredCommandsIncludeSkillSlashCommands(t *testing.T) {
 	found := false
 	for _, item := range items {
 		if item.Name == "/review" && item.Kind == "skill" {
-			if !strings.Contains(item.Description, "以正确性、回归风险和测试缺口为重点进行代码评审。") {
+			if !strings.Contains(item.Description, "Review code for correctness, regression risk, and missing tests.") {
 				t.Fatalf("expected /review command description localized in command palette, got %+v", item)
 			}
 			found = true
@@ -3133,7 +3277,7 @@ func TestRenderFooterShowsActiveSkillBanner(t *testing.T) {
 	}
 
 	footer := m.renderFooter()
-	if !strings.Contains(footer, "当前激活技能：review") {
+	if !strings.Contains(footer, "Active skill: review") {
 		t.Fatalf("expected footer to show active skill banner, got %q", footer)
 	}
 	if !strings.Contains(footer, "severity=high") {
@@ -3386,7 +3530,7 @@ func TestBusyEnterQueuesBTWAndCancelsRun(t *testing.T) {
 func TestBusyEnterSuppressedAfterRecentMultilinePaste(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
-	input.SetValue("请完成一个企业级插件化平台框架\n•动态加载插件\n•插件权限隔离")
+	input.SetValue("Build an enterprise plugin platform\n- dynamic plugin loading\n- plugin permission isolation")
 	input.CursorEnd()
 
 	canceled := false
@@ -3417,7 +3561,7 @@ func TestBusyEnterSuppressedAfterRecentMultilinePaste(t *testing.T) {
 func TestBusyEnterSuppressedForRecentPasteBurstSingleLine(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
-	input.SetValue("•动态加载插件")
+	input.SetValue("- dynamic plugin loading")
 	input.CursorEnd()
 
 	canceled := false
@@ -3486,7 +3630,7 @@ func TestRenderChatCardToolUsesVisualSeparator(t *testing.T) {
 		Status: "done",
 	}, 64)
 
-	if !strings.Contains(got, "│") && !strings.Contains(got, "|") {
+	if !strings.Contains(got, "\u2502") && !strings.Contains(got, "|") {
 		t.Fatalf("expected tool card to include a left border separator, got %q", got)
 	}
 	if !strings.Contains(got, "Tool Call | read_file") {
@@ -3993,7 +4137,7 @@ func TestFormatChatBodyRendersCodeBlockWithoutFences(t *testing.T) {
 func TestFormatChatBodyStripsInlineMarkdownTokens(t *testing.T) {
 	item := chatEntry{
 		Kind: "assistant",
-		Body: "我是 **ByteMind** 项目，支持 `go test ./...` 与 [文档](https://example.com/docs)。",
+		Body: "I am **ByteMind** project, supporting `go test ./...` and [docs](https://example.com/docs).",
 	}
 
 	got := formatChatBody(item, 120)
@@ -4008,7 +4152,7 @@ func TestFormatChatBodyStripsInlineMarkdownTokens(t *testing.T) {
 	if !strings.Contains(got, "go test ./...") {
 		t.Fatalf("expected inline code content to remain after normalization, got %q", got)
 	}
-	if !strings.Contains(got, "文档 (https://example.com/docs)") {
+	if !strings.Contains(got, "docs (https://example.com/docs)") {
 		t.Fatalf("expected markdown link to be normalized to plain text, got %q", got)
 	}
 }
@@ -4323,8 +4467,8 @@ func TestWrapLineSmartBranchCoverage(t *testing.T) {
 		t.Fatalf("expected empty line to remain empty, got %#v", got)
 	}
 
-	wideRune := wrapLineSmart("你a", 1)
-	if len(wideRune) < 2 || wideRune[0] != "你" {
+	wideRune := wrapLineSmart("\uFF38a", 1)
+	if len(wideRune) < 2 || wideRune[0] != "\uFF38" {
 		t.Fatalf("expected wide-rune fallback split, got %#v", wideRune)
 	}
 
@@ -4395,22 +4539,22 @@ func TestThinkingFilters(t *testing.T) {
 	if !shouldRenderThinkingFromDelta("First, I will inspect the failing branch and then patch tests.") {
 		t.Fatalf("expected structured reasoning marker to trigger thinking rendering")
 	}
-	if isMeaningfulThinking("我会调用 read_file 先检查相关上下文。", "read_file") {
+	if isMeaningfulThinking("I will use read_file to inspect context first.", "read_file") {
 		t.Fatalf("expected generic Chinese tool-intent phrase not to be treated as meaningful thinking")
 	}
-	if !shouldRenderThinkingFromDelta("我会先检查失败分支，然后补充测试。") {
+	if !shouldRenderThinkingFromDelta("I will first inspect the failing branch, then add tests.") {
 		t.Fatalf("expected Chinese structured reasoning marker to trigger thinking rendering")
 	}
 }
 
 func TestCurrentSkillLabelBranches(t *testing.T) {
 	m := model{}
-	if got := m.currentSkillLabel(); got != "无" {
-		t.Fatalf("expected 无 for nil session, got %q", got)
+	if got := m.currentSkillLabel(); got != "none" {
+		t.Fatalf("expected none for nil session, got %q", got)
 	}
 	m.sess = &session.Session{ActiveSkill: &session.ActiveSkill{}}
-	if got := m.currentSkillLabel(); got != "无" {
-		t.Fatalf("expected 无 for blank skill name, got %q", got)
+	if got := m.currentSkillLabel(); got != "none" {
+		t.Fatalf("expected none for blank skill name, got %q", got)
 	}
 	m.sess.ActiveSkill.Name = "review"
 	if got := m.currentSkillLabel(); got != "review" {

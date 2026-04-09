@@ -599,13 +599,17 @@ func (m *model) buildPromptInput(raw string) (agent.RunPromptInput, string, erro
 		return agent.RunPromptInput{}, "", fmt.Errorf("prompt is empty")
 	}
 	m.syncInputImageRefs(raw)
+	resolvedRaw, err := m.resolvePastedLineReference(raw)
+	if err != nil {
+		return agent.RunPromptInput{}, "", err
+	}
 
-	placeholderMatches := imagePlaceholderPattern.FindAllStringSubmatchIndex(raw, -1)
-	mentionMatches := extractMentionImageSpans(raw, m.inputImageMentions)
+	placeholderMatches := imagePlaceholderPattern.FindAllStringSubmatchIndex(resolvedRaw, -1)
+	mentionMatches := extractMentionImageSpans(resolvedRaw, m.inputImageMentions)
 	if len(placeholderMatches) == 0 && len(mentionMatches) == 0 {
 		assets := m.hydrateHistoricalRequestAssets(nil)
 		return agent.RunPromptInput{
-			UserMessage: llm.NewUserTextMessage(raw),
+			UserMessage: llm.NewUserTextMessage(resolvedRaw),
 			Assets:      assets,
 			DisplayText: raw,
 		}, raw, nil
@@ -677,7 +681,7 @@ func (m *model) buildPromptInput(raw string) (agent.RunPromptInput, string, erro
 
 	last := 0
 	for _, span := range filtered {
-		appendTextPart(raw[last:span.Start])
+		appendTextPart(resolvedRaw[last:span.Start])
 		if m.imageStore == nil || strings.TrimSpace(string(span.AssetID)) == "" {
 			appendTextPart(span.Fallback)
 			last = span.End
@@ -693,10 +697,10 @@ func (m *model) buildPromptInput(raw string) (agent.RunPromptInput, string, erro
 		parts = append(parts, llm.Part{Type: llm.PartImageRef, Image: &llm.ImagePartRef{AssetID: span.AssetID}})
 		last = span.End
 	}
-	appendTextPart(raw[last:])
+	appendTextPart(resolvedRaw[last:])
 
 	if len(parts) == 0 {
-		parts = append(parts, llm.Part{Type: llm.PartText, Text: &llm.TextPart{Value: raw}})
+		parts = append(parts, llm.Part{Type: llm.PartText, Text: &llm.TextPart{Value: resolvedRaw}})
 	}
 
 	userMessage := llm.Message{Role: llm.RoleUser, Parts: parts}

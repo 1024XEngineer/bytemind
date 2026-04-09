@@ -1,0 +1,689 @@
+package tui
+
+import (
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/mattn/go-runewidth"
+)
+
+const (
+	pastedContentMetaKey        = "pasted_contents"
+	maxStoredPastedContents     = 10
+	longPasteLineThreshold      = 10
+	longPasteCharThreshold      = 500
+	pasteQuickCharThreshold     = 80
+	flattenedPasteCharThreshold = 180
+	pasteBurstCharThreshold     = 120
+	pasteBurstWindow            = 80 * time.Millisecond
+	pasteContinuationWindow     = 900 * time.Millisecond
+	maxSinglePastedCharLength   = 200000
+	pasteSoftWrapWidth          = 72
+)
+
+var pastedRefPattern = regexp.MustCompile(`\[(?:Paste|Pasted)(?:\s+#(\d+))?(?:\s+~(\d+)\s+lines)?(?:\s+line(\d+)(?:~line(\d+))?)?\]`)
+var compressedPasteMarkerPattern = regexp.MustCompile(`^\[(?:Paste|Pasted)\s+#\d+\s+~\d+\s+lines\]$`)
+var compressedPasteMarkerPrefixPattern = regexp.MustCompile(`^\[(?:Paste|Pasted)\s+#\d+\s+~\d+\s+lines\]`)
+var compressedPasteMarkerChainPrefixPattern = regexp.MustCompile(`^(?:(?:\[(?:Paste|Pasted)\s+#\d+\s+~\d+\s+lines\])\s*)+`)
+var compressedPasteMarkerAnyPattern = regexp.MustCompile(`\[(?:Paste|Pasted)\s+#\d+\s+~\d+\s+lines\]`)
+var compressedPasteMarkerDetailsPattern = regexp.MustCompile(`\[(?:Paste|Pasted)\s+#(\d+)\s+~(\d+)\s+lines\]`)
+
+const (
+	pasteRefGroupID        = 2
+	pasteRefGroupLineCount = 4
+	pasteRefGroupLineStart = 6
+	pasteRefGroupLineEnd   = 8
+)
+
+type pastedContent struct {
+	ID      string    `json:"id"`
+	Content string    `json:"content"`
+	Lines   int       `json:"lines"`
+	Time    time.Time `json:"time"`
+	Preview string    `json:"preview"`
+}
+
+type persistedPastedContents struct {
+	Version  int                      `json:"version"`
+	NextID   int                      `json:"next_id"`
+	Order    []string                 `json:"order"`
+	Contents map[string]pastedContent `json:"contents"`
+}
+
+func normalizeNewlines(input string) string {
+	input = strings.ReplaceAll(input, "\r\n", "\n")
+	input = strings.ReplaceAll(input, "\r", "\n")
+	return input
+}
+
+func (m *model) ensurePastedContentState() {
+	if m == nil || m.pastedStateLoaded {
+		return
+	}
+	if m.pastedContents == nil {
+		m.pastedContents = make(map[string]pastedContent, maxStoredPastedContents)
+	}
+	if m.pastedOrder == nil {
+		m.pastedOrder = make([]string, 0, maxStoredPastedContents)
+	}
+	if m.nextPasteID <= 0 {
+		m.nextPasteID = 1
+	}
+	m.pastedStateLoaded = true
+
+	if m.sess == nil || m.sess.Conversation.Meta == nil {
+		return
+	}
+	raw, ok := m.sess.Conversation.Meta[pastedContentMetaKey]
+	if !ok || raw == nil {
+		return
+	}
+	blob, err := json.Marshal(raw)
+	if err != nil {
+		return
+	}
+	var persisted persistedPastedContents
+	if err := json.Unmarshal(blob, &persisted); err != nil {
+		return
+	}
+	if len(persisted.Contents) == 0 {
+		return
+	}
+
+	m.pastedContents = make(map[string]pastedContent, len(persisted.Contents))
+	for id, content := range persisted.Contents {
+		id = strings.TrimSpace(id)
+		if id == "" || strings.TrimSpace(content.Content) == "" {
+			continue
+		}
+		content.ID = id
+		m.pastedContents[id] = content
+	}
+
+	order := make([]string, 0, len(persisted.Order))
+	seen := make(map[string]struct{}, len(persisted.Order))
+	for _, id := range persisted.Order {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := m.pastedContents[id]; !ok {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		order = append(order, id)
+	}
+	if len(order) < len(m.pastedContents) {
+		missing := make([]string, 0, len(m.pastedContents)-len(order))
+		for id := range m.pastedContents {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			missing = append(missing, id)
+		}
+		sort.Strings(missing)
+		order = append(order, missing...)
+	}
+	m.pastedOrder = order
+
+	m.nextPasteID = persisted.NextID
+	if m.nextPasteID <= 0 {
+		m.nextPasteID = 1
+	}
+	for _, id := range m.pastedOrder {
+		if n, err := strconv.Atoi(id); err == nil && n >= m.nextPasteID {
+			m.nextPasteID = n + 1
+		}
+	}
+}
+
+func (m *model) persistPastedContentState() error {
+	if m == nil || m.sess == nil {
+		return nil
+	}
+	if m.sess.Conversation.Meta == nil {
+		m.sess.Conversation.Meta = make(map[string]any, 4)
+	}
+	payload := persistedPastedContents{
+		Version:  1,
+		NextID:   m.nextPasteID,
+		Order:    append([]string(nil), m.pastedOrder...),
+		Contents: m.pastedContents,
+	}
+	m.sess.Conversation.Meta[pastedContentMetaKey] = payload
+	if m.store != nil {
+		return m.store.Save(m.sess)
+	}
+	return nil
+}
+
+func (m *model) isLongPastedText(input string) bool {
+	normalized := normalizeNewlines(input)
+	trimmed := strings.TrimSpace(normalized)
+	if trimmed == "" {
+		return false
+	}
+	if isLikelyPathInput(trimmed) {
+		return false
+	}
+
+	lines := strings.Split(normalized, "\n")
+	lineCount := len(lines)
+	newlineCount := strings.Count(normalized, "\n")
+
+	if lineCount > longPasteLineThreshold || len(normalized) > longPasteCharThreshold {
+		return true
+	}
+
+	if lineCount <= 2 && len(normalized) >= flattenedPasteCharThreshold {
+		return true
+	}
+
+	if newlineCount >= 3 && len(normalized) >= pasteQuickCharThreshold {
+		return true
+	}
+
+	return false
+}
+
+func isCtrlVSource(source string) bool {
+	source = strings.ToLower(strings.TrimSpace(source))
+	return source == "ctrl+v" || source == "ctrl+shift+v"
+}
+
+func isPasteLikeSource(source string) bool {
+	source = strings.ToLower(strings.TrimSpace(source))
+	return isCtrlVSource(source) || strings.Contains(source, "paste")
+}
+
+func (m *model) shouldCompressPastedText(input, source string) bool {
+	if m == nil {
+		return false
+	}
+	trimmed := strings.TrimSpace(input)
+	if isLikelyPathInput(trimmed) || len(extractImagePathsFromChunk(input, m.workspace)) > 0 || len(extractInlineImagePathSpans(input)) > 0 {
+		return false
+	}
+	if m.isLongPastedText(input) {
+		return true
+	}
+	if trimmed == "" || len(trimmed) < pasteQuickCharThreshold {
+		return false
+	}
+	if isPasteLikeSource(source) {
+		return true
+	}
+	if !m.lastPasteAt.IsZero() && time.Since(m.lastPasteAt) <= 2*pasteSubmitGuard {
+		return true
+	}
+	if isSplitPasteContinuation(input, source, m.lastPasteAt) {
+		return true
+	}
+	if !m.lastInputAt.IsZero() && time.Since(m.lastInputAt) <= pasteBurstWindow && m.inputBurstSize >= pasteBurstCharThreshold {
+		return true
+	}
+	return m.inputBurstSize >= pasteBurstCharThreshold
+}
+
+func isLikelyPathInput(value string) bool {
+	if strings.TrimSpace(value) == "" {
+		return false
+	}
+	if len(value) >= 3 && value[1] == ':' && (value[2] == '\\' || value[2] == '/') {
+		return true
+	}
+	if strings.HasPrefix(value, `\\`) || strings.HasPrefix(value, `/`) || strings.HasPrefix(value, `./`) || strings.HasPrefix(value, `../`) {
+		return true
+	}
+	separatorCount := strings.Count(value, `\`) + strings.Count(value, `/`)
+	if separatorCount >= 3 && !strings.Contains(value, "\n") {
+		return true
+	}
+	return false
+}
+
+func (m *model) storePastedContent(content pastedContent) error {
+	if m == nil {
+		return nil
+	}
+	m.ensurePastedContentState()
+	if strings.TrimSpace(content.ID) == "" {
+		return fmt.Errorf("invalid pasted content id")
+	}
+	if len(content.Content) > maxSinglePastedCharLength {
+		return fmt.Errorf("pasted content too large (%d chars), please attach a file instead", len(content.Content))
+	}
+	if _, exists := m.pastedContents[content.ID]; exists {
+		m.pastedContents[content.ID] = content
+		return m.persistPastedContentState()
+	}
+	m.pastedContents[content.ID] = content
+	m.pastedOrder = append(m.pastedOrder, content.ID)
+	if len(m.pastedOrder) > maxStoredPastedContents {
+		drop := len(m.pastedOrder) - maxStoredPastedContents
+		for i := 0; i < drop; i++ {
+			oldest := m.pastedOrder[i]
+			delete(m.pastedContents, oldest)
+		}
+		m.pastedOrder = append([]string(nil), m.pastedOrder[drop:]...)
+	}
+	return m.persistPastedContentState()
+}
+
+func (m *model) compressPastedText(input string) (string, pastedContent, error) {
+	m.ensurePastedContentState()
+	normalized := normalizeNewlines(input)
+	lines := strings.Split(normalized, "\n")
+	lineCount := countPastedDisplayLines(normalized)
+	id := strconv.Itoa(m.nextPasteID)
+	m.nextPasteID++
+	now := time.Now().UTC()
+
+	preview := ""
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		preview = line
+		break
+	}
+	if preview == "" {
+		preview = "(empty)"
+	}
+	if len(preview) > 80 {
+		preview = preview[:80] + "..."
+	}
+
+	content := pastedContent{
+		ID:      id,
+		Content: normalized,
+		Lines:   lineCount,
+		Time:    now,
+		Preview: preview,
+	}
+	if err := m.storePastedContent(content); err != nil {
+		return "", pastedContent{}, err
+	}
+	m.lastCompressedPasteAt = now
+	return fmt.Sprintf("[Paste #%s ~%d lines]", id, lineCount), content, nil
+}
+
+func countPastedDisplayLines(content string) int {
+	normalized := normalizeNewlines(content)
+	physicalLines := strings.Split(normalized, "\n")
+	if len(physicalLines) > 1 {
+		return len(physicalLines)
+	}
+
+	single := strings.TrimSpace(normalized)
+	if single == "" {
+		return 1
+	}
+	width := runewidth.StringWidth(single)
+	if width <= 0 {
+		return 1
+	}
+	estimated := (width + pasteSoftWrapWidth - 1) / pasteSoftWrapWidth
+	if estimated < 1 {
+		return 1
+	}
+	return estimated
+}
+
+func (m *model) applyLongPastedTextPipeline(before, after, source string) (string, string) {
+	if m == nil {
+		return after, ""
+	}
+	class, prefix, inserted, suffix := classifyInputMutation(before, after, source)
+	_, beforeHasMarkerChain := extractLeadingCompressedMarker(before)
+	if chain, ok := extractLeadingCompressedMarker(before); ok {
+		afterTrimmed := strings.TrimSpace(after)
+		if strings.HasPrefix(afterTrimmed, chain) {
+			rawTail := strings.TrimPrefix(afterTrimmed, chain)
+			tail := strings.TrimSpace(rawTail)
+			if tail != "" && !compressedPasteMarkerPattern.MatchString(tail) && !compressedPasteMarkerChainPrefixPattern.MatchString(tail) {
+				safeTail := len(extractImagePathsFromChunk(tail, m.workspace)) == 0 &&
+					len(extractInlineImagePathSpans(tail)) == 0
+				// Some terminals split one clipboard paste into multiple non-paste rune bursts.
+				// Merge those bursts into the latest marker to avoid leaking trailing raw text.
+				if safeTail && shouldMergeIntoLatestMarker(source, m.lastCompressedPasteAt) {
+					merged, ok, err := m.mergeTailIntoLatestMarker(chain, rawTail)
+					if err != nil {
+						return after, err.Error()
+					}
+					if ok {
+						return merged, ""
+					}
+				}
+				if safeTail && m.isLongPastedText(tail) {
+					marker, content, err := m.compressPastedText(tail)
+					if err != nil {
+						return after, err.Error()
+					}
+					updated := strings.TrimSpace(chain) + marker
+					note := fmt.Sprintf("Detected another pasted block and compressed it as %s (%d lines).",
+						marker, content.Lines)
+					return updated, note
+				}
+				// Keep tail as-is so split paste chunks can accumulate and then
+				// compress into the next marker once they cross thresholds.
+				return after, ""
+			}
+		}
+	}
+	if class == inputMutationPasteFilled {
+		candidate := strings.ReplaceAll(inserted, ctrlVMarkerRune, "")
+		if m.isLongPastedText(candidate) {
+			if !beforeHasMarkerChain && strings.TrimSpace(before) != "" && isSplitPasteContinuation(before, source, m.lastPasteAt) {
+				// Looks like the same clipboard paste still streaming in chunks.
+				// Defer compression so we can fold the whole paste into one marker.
+				candidate = ""
+			}
+		}
+		if strings.TrimSpace(candidate) != "" && m.isLongPastedText(candidate) {
+			marker, content, err := m.compressPastedText(candidate)
+			if err != nil {
+				return after, err.Error()
+			}
+			updated := after[:prefix] + marker + after[len(after)-suffix:]
+			note := fmt.Sprintf("Long pasted text (%d lines) compressed as %s. Use [Paste #%s], [Paste #%s line10], or [Paste #%s line10~line20].",
+				content.Lines, marker, content.ID, content.ID, content.ID)
+			return updated, note
+		}
+	}
+	if strings.Contains(after, "[Paste #") || strings.Contains(after, "[Pasted #") {
+		return after, ""
+	}
+	if !m.isLongPastedText(after) {
+		return after, ""
+	}
+	marker, content, err := m.compressPastedText(after)
+	if err != nil {
+		return after, err.Error()
+	}
+	note := fmt.Sprintf("Long pasted text (%d lines) compressed as %s. Use [Paste #%s], [Paste #%s line10], or [Paste #%s line10~line20].",
+		content.Lines, marker, content.ID, content.ID, content.ID)
+	return marker, note
+}
+
+func countCompressedMarkers(value string) int {
+	if strings.TrimSpace(value) == "" {
+		return 0
+	}
+	return len(compressedPasteMarkerAnyPattern.FindAllString(value, -1))
+}
+
+func shouldMergeIntoLatestMarker(source string, lastCompressedAt time.Time) bool {
+	if isPasteLikeSource(source) {
+		return false
+	}
+	if lastCompressedAt.IsZero() {
+		return false
+	}
+	return time.Since(lastCompressedAt) <= 300*time.Millisecond
+}
+
+func (m *model) mergeTailIntoLatestMarker(chain, tail string) (string, bool, error) {
+	if m == nil {
+		return chain, false, nil
+	}
+	rawTail := normalizeNewlines(tail)
+	if strings.TrimSpace(rawTail) == "" {
+		return chain, false, nil
+	}
+
+	loc := latestCompressedMarkerInChain(chain)
+	if !loc.ok {
+		return chain, false, nil
+	}
+	content, ok := m.findPastedContent(loc.id)
+	if !ok {
+		return chain, false, nil
+	}
+
+	if strings.TrimSpace(content.Content) == "" {
+		content.Content = rawTail
+	} else {
+		content.Content = content.Content + rawTail
+	}
+	content.Content = normalizeNewlines(content.Content)
+	content.Lines = len(strings.Split(content.Content, "\n"))
+	content.Time = time.Now().UTC()
+
+	if err := m.storePastedContent(content); err != nil {
+		return chain, false, err
+	}
+	m.lastCompressedPasteAt = time.Now().UTC()
+
+	updatedMarker := fmt.Sprintf("[Paste #%s ~%d lines]", content.ID, content.Lines)
+	updatedChain := chain[:loc.start] + updatedMarker + chain[loc.end:]
+	return strings.TrimSpace(updatedChain), true, nil
+}
+
+type compressedMarkerLoc struct {
+	id    string
+	start int
+	end   int
+	ok    bool
+}
+
+func latestCompressedMarkerInChain(chain string) compressedMarkerLoc {
+	matches := compressedPasteMarkerDetailsPattern.FindAllStringSubmatchIndex(chain, -1)
+	if len(matches) == 0 {
+		return compressedMarkerLoc{}
+	}
+	last := matches[len(matches)-1]
+	if len(last) < 4 {
+		return compressedMarkerLoc{}
+	}
+	idStart, idEnd := last[2], last[3]
+	if idStart < 0 || idEnd < 0 || idStart >= idEnd || idEnd > len(chain) {
+		return compressedMarkerLoc{}
+	}
+	return compressedMarkerLoc{
+		id:    chain[idStart:idEnd],
+		start: last[0],
+		end:   last[1],
+		ok:    true,
+	}
+}
+
+func shouldHoldCompressedMarker(before, after, source string, lastPasteAt time.Time, burst int) bool {
+	before = strings.TrimSpace(before)
+	after = strings.TrimSpace(after)
+	marker, ok := extractLeadingCompressedMarker(before)
+	if !ok {
+		return false
+	}
+	if len(after) <= len(marker) || !strings.HasPrefix(after, marker) {
+		return false
+	}
+	tail := strings.TrimSpace(strings.TrimPrefix(after, marker))
+	if tail == "" {
+		return false
+	}
+	if compressedPasteMarkerPattern.MatchString(tail) || compressedPasteMarkerChainPrefixPattern.MatchString(tail) {
+		return false
+	}
+	// If a compressed marker is followed by a sizeable tail, this is almost
+	// always a continuation chunk of the same clipboard paste.
+	if len(tail) >= 24 || strings.Contains(tail, "\n") {
+		return true
+	}
+	if isPasteLikeSource(source) || burst >= 8 {
+		return true
+	}
+	if !lastPasteAt.IsZero() && time.Since(lastPasteAt) <= pasteContinuationWindow {
+		return true
+	}
+	return false
+}
+
+func extractLeadingCompressedMarker(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	marker := compressedPasteMarkerChainPrefixPattern.FindString(value)
+	if marker == "" {
+		return "", false
+	}
+	marker = strings.TrimSpace(marker)
+	if !strings.HasPrefix(value, marker) {
+		return "", false
+	}
+	return marker, true
+}
+
+func isSplitPasteContinuation(input, source string, lastPasteAt time.Time) bool {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" || isLikelyPathInput(trimmed) {
+		return false
+	}
+	if !isPasteLikeSource(source) {
+		return false
+	}
+	if strings.Contains(trimmed, "[Paste #") || strings.Contains(trimmed, "[Pasted #") {
+		return false
+	}
+	if !lastPasteAt.IsZero() && time.Since(lastPasteAt) <= pasteContinuationWindow {
+		return true
+	}
+	return strings.Contains(trimmed, "\n") || len(trimmed) >= pasteQuickCharThreshold
+}
+
+func (m *model) resolvePastedLineReference(input string) (string, error) {
+	if m == nil || (!strings.Contains(input, "[Paste") && !strings.Contains(input, "[Pasted")) {
+		return input, nil
+	}
+	m.ensurePastedContentState()
+	if len(m.pastedOrder) == 0 {
+		return input, nil
+	}
+
+	matches := pastedRefPattern.FindAllStringSubmatchIndex(input, -1)
+	if len(matches) == 0 {
+		return input, nil
+	}
+
+	var out strings.Builder
+	last := 0
+	for _, idx := range matches {
+		start, end := idx[0], idx[1]
+		out.WriteString(input[last:start])
+
+		full := input[start:end]
+		pasteID := submatchString(input, idx, pasteRefGroupID)
+		lineCount := submatchString(input, idx, pasteRefGroupLineCount)
+		startLineStr := submatchString(input, idx, pasteRefGroupLineStart)
+		endLineStr := submatchString(input, idx, pasteRefGroupLineEnd)
+
+		if strings.TrimSpace(startLineStr) == "" && strings.TrimSpace(lineCount) != "" {
+			content, ok := m.findPastedContent(pasteID)
+			if !ok {
+				out.WriteString(full)
+			} else {
+				out.WriteString("```\n")
+				out.WriteString(content.Content)
+				out.WriteString("\n```")
+			}
+		} else if strings.TrimSpace(startLineStr) == "" {
+			content, ok := m.findPastedContent(pasteID)
+			if !ok {
+				out.WriteString(full)
+			} else {
+				out.WriteString("```\n")
+				out.WriteString(content.Content)
+				out.WriteString("\n```")
+			}
+		} else {
+			content, err := m.resolvePastedSelection(pasteID, startLineStr, endLineStr)
+			if err != nil {
+				out.WriteString(full)
+			} else {
+				out.WriteString("```\n")
+				out.WriteString(content)
+				out.WriteString("\n```")
+			}
+		}
+		last = end
+	}
+	out.WriteString(input[last:])
+	return out.String(), nil
+}
+
+func (m *model) resolvePastedSelection(pasteID, startLineStr, endLineStr string) (string, error) {
+	content, ok := m.findPastedContent(pasteID)
+	if !ok {
+		return "", fmt.Errorf("pasted reference not found")
+	}
+	if strings.TrimSpace(startLineStr) == "" {
+		return content.Content, nil
+	}
+	startLine, err := strconv.Atoi(startLineStr)
+	if err != nil {
+		return "", fmt.Errorf("invalid start line")
+	}
+	endLine := startLine
+	if strings.TrimSpace(endLineStr) != "" {
+		if v, err := strconv.Atoi(endLineStr); err == nil {
+			endLine = v
+		}
+	}
+	return extractLineRange(content.Content, startLine, endLine), nil
+}
+
+func (m *model) findPastedContent(pasteID string) (pastedContent, bool) {
+	m.ensurePastedContentState()
+	if strings.TrimSpace(pasteID) == "" {
+		if len(m.pastedOrder) == 0 {
+			return pastedContent{}, false
+		}
+		latestID := m.pastedOrder[len(m.pastedOrder)-1]
+		content, ok := m.pastedContents[latestID]
+		return content, ok
+	}
+	content, ok := m.pastedContents[strings.TrimSpace(pasteID)]
+	return content, ok
+}
+
+func extractLineRange(content string, startLine, endLine int) string {
+	normalized := normalizeNewlines(content)
+	lines := strings.Split(normalized, "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	if startLine <= 0 {
+		startLine = 1
+	}
+	if endLine <= 0 {
+		endLine = startLine
+	}
+	if startLine > len(lines) {
+		startLine = len(lines)
+	}
+	if endLine > len(lines) {
+		endLine = len(lines)
+	}
+	if endLine < startLine {
+		endLine = startLine
+	}
+	return strings.Join(lines[startLine-1:endLine], "\n")
+}
+
+func submatchString(input string, indexes []int, groupOffset int) string {
+	if len(indexes) <= groupOffset+1 {
+		return ""
+	}
+	start, end := indexes[groupOffset], indexes[groupOffset+1]
+	if start < 0 || end < 0 || start > end || end > len(input) {
+		return ""
+	}
+	return input[start:end]
+}

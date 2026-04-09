@@ -15,6 +15,10 @@ import (
 )
 
 const defaultSearchLimit = 15
+const (
+	mentionTrieRecallMultiplier = 8
+	mentionTrieMinRecall        = 64
+)
 
 var (
 	mentionIndexRefreshInterval = 10 * time.Second
@@ -45,6 +49,15 @@ type mentionIgnoreMatcher struct {
 	globs []string
 }
 
+type mentionTrieNode struct {
+	children map[rune]*mentionTrieNode
+	indices  []int
+}
+
+type mentionTrie struct {
+	root *mentionTrieNode
+}
+
 type WorkspaceFileIndex struct {
 	mu        sync.RWMutex
 	root      string
@@ -52,6 +65,7 @@ type WorkspaceFileIndex struct {
 	building  bool
 	lastBuild time.Time
 	files     []Candidate
+	trie      *mentionTrie
 	truncated bool
 	maxFiles  int
 }
@@ -89,6 +103,7 @@ func NewStaticWorkspaceFileIndex(candidates []Candidate, maxFiles int, truncated
 	return &WorkspaceFileIndex{
 		ready:     true,
 		files:     copied,
+		trie:      newMentionTrie(copied),
 		truncated: truncated,
 		maxFiles:  maxFiles,
 	}
@@ -108,20 +123,23 @@ func (idx *WorkspaceFileIndex) SearchWithRecency(query string, limit int, recenc
 
 	idx.ensureInitialBuild()
 	idx.ensureFreshAsync()
-	files := idx.snapshotFiles()
+	files, trie := idx.snapshotSearchData()
 	if len(files) == 0 {
 		return nil
 	}
 
 	q := strings.ToLower(filepath.ToSlash(strings.TrimSpace(query)))
+	candidateIndices, prefixSet := mentionCandidateIndices(files, trie, q, limit)
 	type rankedMention struct {
 		candidate Candidate
 		score     int
 		recency   int
 	}
-	ranked := make([]rankedMention, 0, len(files))
-	for _, file := range files {
-		score, ok := scoreCandidate(file, q)
+	ranked := make([]rankedMention, 0, len(candidateIndices))
+	for _, idx := range candidateIndices {
+		file := files[idx]
+		_, prefixHit := prefixSet[idx]
+		score, ok := scoreCandidate(file, q, prefixHit)
 		if !ok {
 			continue
 		}
@@ -176,15 +194,15 @@ func (idx *WorkspaceFileIndex) Stats() IndexStats {
 	}
 }
 
-func (idx *WorkspaceFileIndex) snapshotFiles() []Candidate {
+func (idx *WorkspaceFileIndex) snapshotSearchData() ([]Candidate, *mentionTrie) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	if len(idx.files) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]Candidate, len(idx.files))
 	copy(out, idx.files)
-	return out
+	return out, idx.trie
 }
 
 func (idx *WorkspaceFileIndex) ensureInitialBuild() {
@@ -238,6 +256,7 @@ func (idx *WorkspaceFileIndex) rebuildBlocking() {
 
 	idx.mu.Lock()
 	idx.files = files
+	idx.trie = newMentionTrie(files)
 	idx.truncated = truncated
 	idx.ready = true
 	idx.lastBuild = time.Now()
@@ -324,25 +343,256 @@ func buildMentionIndex(root string, maxFiles int, matcher mentionIgnoreMatcher) 
 	return files, truncated
 }
 
-func scoreCandidate(file Candidate, query string) (int, bool) {
-	path := strings.ToLower(file.Path)
-	base := strings.ToLower(file.BaseName)
-	switch {
-	case query == "":
-		return 100, true
-	case base == query:
-		return 980 - len(path), true
-	case strings.HasPrefix(base, query):
-		return 900 - len(path), true
-	case strings.Contains(base, query):
-		return 800 - len(path), true
-	case strings.HasPrefix(path, query):
-		return 700 - len(path), true
-	case strings.Contains(path, query):
-		return 600 - len(path), true
-	default:
+func mentionCandidateIndices(files []Candidate, trie *mentionTrie, query string, limit int) ([]int, map[int]struct{}) {
+	if len(files) == 0 {
+		return nil, nil
+	}
+	if query == "" {
+		all := make([]int, 0, len(files))
+		for i := range files {
+			all = append(all, i)
+		}
+		return all, nil
+	}
+
+	// Trie provides fast basename prefix recall; fuzzy matching is then
+	// applied on recalled candidates, with full fallback when recall is small.
+	recall := maxInt(mentionTrieMinRecall, limit*mentionTrieRecallMultiplier)
+	prefixHits := []int{}
+	if trie != nil {
+		prefixHits = trie.prefixIndices(query, recall)
+	}
+	prefixSet := make(map[int]struct{}, len(prefixHits))
+	candidates := make([]int, 0, len(prefixHits))
+	for _, idx := range prefixHits {
+		if idx < 0 || idx >= len(files) {
+			continue
+		}
+		if _, exists := prefixSet[idx]; exists {
+			continue
+		}
+		prefixSet[idx] = struct{}{}
+		candidates = append(candidates, idx)
+	}
+
+	// For short or low-recall queries, widen to full set so fuzzy subsequence
+	// matching can still recover useful hits.
+	if len(candidates) < limit*2 || len([]rune(query)) <= 1 {
+		for i := range files {
+			if _, exists := prefixSet[i]; exists {
+				continue
+			}
+			candidates = append(candidates, i)
+		}
+	}
+	if len(prefixSet) == 0 {
+		return candidates, nil
+	}
+	return candidates, prefixSet
+}
+
+func scoreCandidate(file Candidate, query string, prefixHit bool) (int, bool) {
+	path := strings.ToLower(filepath.ToSlash(strings.TrimSpace(file.Path)))
+	base := strings.ToLower(strings.TrimSpace(file.BaseName))
+	if base == "" {
+		base = strings.ToLower(filepath.Base(path))
+	}
+	if path == "" {
 		return 0, false
 	}
+
+	if query == "" {
+		score := 1000 - len([]rune(path))
+		if prefixHit {
+			score += 60
+		}
+		return score, true
+	}
+
+	score := 0
+	matched := false
+
+	if base == query {
+		score += 6000
+		matched = true
+	} else if strings.HasPrefix(base, query) {
+		score += 4200
+		matched = true
+	}
+	if strings.HasPrefix(path, query) {
+		score += 1200
+		matched = true
+	}
+
+	if fuzzyBase, ok := mentionFuzzyScore(query, base); ok {
+		score += 3000 + fuzzyBase
+		matched = true
+	}
+	if fuzzyPath, ok := mentionFuzzyScore(query, path); ok {
+		score += 1200 + fuzzyPath
+		matched = true
+	}
+
+	if !matched {
+		return 0, false
+	}
+	if prefixHit {
+		score += 480
+	}
+	score -= len([]rune(path)) / 3
+	return score, true
+}
+
+func mentionFuzzyScore(query, target string) (int, bool) {
+	queryRunes := []rune(strings.TrimSpace(query))
+	targetRunes := []rune(strings.TrimSpace(target))
+	if len(queryRunes) == 0 {
+		return 0, true
+	}
+	if len(targetRunes) == 0 {
+		return 0, false
+	}
+
+	positions, ok := mentionFuzzyPositions(queryRunes, targetRunes)
+	if !ok {
+		return 0, false
+	}
+
+	score := 0
+	baseStart := basenameStartIndex(targetRunes)
+	prev := -1
+	for i, pos := range positions {
+		score += 12
+		if i == 0 && pos == 0 {
+			score += 30
+		}
+		if mentionBoundary(targetRunes, pos) {
+			score += 14
+		}
+		if pos >= baseStart {
+			score += 8
+		}
+		if prev >= 0 {
+			gap := pos - prev - 1
+			if gap == 0 {
+				score += 18
+			} else {
+				score -= minInt(gap*2, 30)
+			}
+		}
+		prev = pos
+	}
+	score -= len(targetRunes) / 2
+	return score, true
+}
+
+func mentionFuzzyPositions(query, target []rune) ([]int, bool) {
+	if len(query) == 0 {
+		return nil, true
+	}
+	positions := make([]int, 0, len(query))
+	searchFrom := 0
+	for _, want := range query {
+		found := -1
+		for i := searchFrom; i < len(target); i++ {
+			if target[i] == want {
+				found = i
+				searchFrom = i + 1
+				break
+			}
+		}
+		if found == -1 {
+			return nil, false
+		}
+		positions = append(positions, found)
+	}
+	return positions, true
+}
+
+func mentionBoundary(target []rune, pos int) bool {
+	if pos <= 0 {
+		return true
+	}
+	switch target[pos-1] {
+	case '/', '\\', '_', '-', '.', ' ', '[', '(', '{':
+		return true
+	default:
+		return false
+	}
+}
+
+func basenameStartIndex(path []rune) int {
+	if len(path) == 0 {
+		return 0
+	}
+	last := 0
+	for i, r := range path {
+		if r == '/' || r == '\\' {
+			last = i + 1
+		}
+	}
+	return last
+}
+
+func newMentionTrie(files []Candidate) *mentionTrie {
+	trie := &mentionTrie{
+		root: &mentionTrieNode{children: map[rune]*mentionTrieNode{}},
+	}
+	for i, candidate := range files {
+		key := strings.ToLower(strings.TrimSpace(candidate.BaseName))
+		if key == "" {
+			key = strings.ToLower(filepath.Base(candidate.Path))
+		}
+		if key == "" {
+			continue
+		}
+		trie.insert(key, i)
+	}
+	return trie
+}
+
+func (t *mentionTrie) insert(key string, idx int) {
+	if t == nil || t.root == nil || key == "" {
+		return
+	}
+	node := t.root
+	for _, r := range []rune(key) {
+		if node.children == nil {
+			node.children = map[rune]*mentionTrieNode{}
+		}
+		child := node.children[r]
+		if child == nil {
+			child = &mentionTrieNode{children: map[rune]*mentionTrieNode{}}
+			node.children[r] = child
+		}
+		node = child
+		node.indices = append(node.indices, idx)
+	}
+}
+
+func (t *mentionTrie) prefixIndices(prefix string, limit int) []int {
+	if t == nil || t.root == nil || strings.TrimSpace(prefix) == "" {
+		return nil
+	}
+	if limit <= 0 {
+		limit = mentionTrieMinRecall
+	}
+	node := t.root
+	for _, r := range []rune(strings.ToLower(strings.TrimSpace(prefix))) {
+		next := node.children[r]
+		if next == nil {
+			return nil
+		}
+		node = next
+	}
+	if len(node.indices) <= limit {
+		out := make([]int, len(node.indices))
+		copy(out, node.indices)
+		return out
+	}
+	out := make([]int, limit)
+	copy(out, node.indices[:limit])
+	return out
 }
 
 func shouldSkipMentionDir(name string) bool {
@@ -531,6 +781,13 @@ func mentionTypeTag(path string) string {
 
 func minInt(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b

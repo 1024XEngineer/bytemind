@@ -187,6 +187,46 @@ func TestWorkspaceFileIndexSearchWithRecencyPrioritizesRecent(t *testing.T) {
 	}
 }
 
+func TestWorkspaceFileIndexUsesTriePrefixRecall(t *testing.T) {
+	idx := NewStaticWorkspaceFileIndex([]Candidate{
+		{Path: "README.md"},
+		{Path: "internal/tui/model.go"},
+		{Path: "internal/tui/module.go"},
+	}, 0, false)
+
+	if idx.trie == nil {
+		t.Fatal("expected trie to be initialized")
+	}
+	prefixHits := idx.trie.prefixIndices("rea", 5)
+	if len(prefixHits) == 0 {
+		t.Fatal("expected trie prefix recall to return hits")
+	}
+	if idx.files[prefixHits[0]].Path != "README.md" {
+		t.Fatalf("expected README.md to be first trie prefix hit, got %q", idx.files[prefixHits[0]].Path)
+	}
+
+	results := idx.Search("rea", 5)
+	if len(results) == 0 || results[0].Path != "README.md" {
+		t.Fatalf("expected README.md to rank first for prefix query, got %#v", results)
+	}
+}
+
+func TestWorkspaceFileIndexSupportsFuzzyAbbreviation(t *testing.T) {
+	idx := NewStaticWorkspaceFileIndex([]Candidate{
+		{Path: "internal/tui/model.go"},
+		{Path: "internal/tui/module.go"},
+		{Path: "internal/tui/monitor.go"},
+	}, 0, false)
+
+	results := idx.Search("modl", 5)
+	if len(results) == 0 {
+		t.Fatal("expected fuzzy abbreviation to return matches")
+	}
+	if results[0].Path != "internal/tui/model.go" {
+		t.Fatalf("expected model.go to rank first for modl, got %q", results[0].Path)
+	}
+}
+
 func TestWorkspaceFileIndexSupportsConfigurableIgnoreRules(t *testing.T) {
 	workspace := t.TempDir()
 	mustWriteMentionFile(t, filepath.Join(workspace, "keep.go"), "package main")

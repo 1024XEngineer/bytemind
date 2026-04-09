@@ -25,7 +25,21 @@ const (
 	ansiDim   = "\x1b[2m"
 	ansiBlue  = "\x1b[94m"
 	ansiGray  = "\x1b[90m"
+
+	defaultBroadWorkspaceEntryThreshold = 300
 )
+
+var workspaceProjectMarkers = []string{
+	".git",
+	"go.mod",
+	"package.json",
+	"pnpm-workspace.yaml",
+	"pyproject.toml",
+	"Cargo.toml",
+	"pom.xml",
+	"build.gradle",
+	"Makefile",
+}
 
 type slashCommand struct {
 	Name        string
@@ -414,8 +428,115 @@ func commandNames() []string {
 }
 
 func resolveWorkspace(workspaceOverride string) (string, error) {
-	if strings.TrimSpace(workspaceOverride) == "" {
-		return os.Getwd()
+	workspaceOverride = strings.TrimSpace(workspaceOverride)
+	if workspaceOverride != "" {
+		workspace, err := filepath.Abs(workspaceOverride)
+		if err != nil {
+			return "", err
+		}
+		info, err := os.Stat(workspace)
+		if err != nil {
+			return "", err
+		}
+		if !info.IsDir() {
+			return "", fmt.Errorf("workspace must be a directory: %s", workspace)
+		}
+		return workspace, nil
 	}
-	return filepath.Abs(workspaceOverride)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	cwd, err = filepath.Abs(cwd)
+	if err != nil {
+		return "", err
+	}
+
+	if projectRoot := detectProjectRoot(cwd); projectRoot != "" {
+		return projectRoot, nil
+	}
+	if isBroadWorkspacePath(cwd) {
+		return "", fmt.Errorf("current directory %s is too broad for default workspace; rerun with -workspace <project-dir> (or set BYTEMIND_ALLOW_BROAD_WORKSPACE=true)", cwd)
+	}
+	return cwd, nil
+}
+
+func detectProjectRoot(start string) string {
+	current := strings.TrimSpace(start)
+	if current == "" {
+		return ""
+	}
+	current = filepath.Clean(current)
+	for {
+		if hasProjectMarker(current) {
+			return current
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return ""
+		}
+		current = parent
+	}
+}
+
+func hasProjectMarker(dir string) bool {
+	for _, marker := range workspaceProjectMarkers {
+		if marker == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func isBroadWorkspacePath(dir string) bool {
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_ALLOW_BROAD_WORKSPACE")); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil && parsed {
+			return false
+		}
+	}
+	home, _ := os.UserHomeDir()
+	return isBroadWorkspacePathWithHome(dir, home)
+}
+
+func isBroadWorkspacePathWithHome(dir, home string) bool {
+	dir = filepath.Clean(strings.TrimSpace(dir))
+	if dir == "" {
+		return false
+	}
+
+	if isFilesystemRoot(dir) {
+		return true
+	}
+
+	home = strings.TrimSpace(home)
+	if home != "" {
+		home = filepath.Clean(home)
+		if sameWorkspace(dir, home) {
+			return true
+		}
+		for _, name := range []string{"Desktop", "Documents", "Downloads"} {
+			if sameWorkspace(dir, filepath.Join(home, name)) {
+				return true
+			}
+		}
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	return len(entries) >= defaultBroadWorkspaceEntryThreshold
+}
+
+func isFilesystemRoot(path string) bool {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" {
+		return false
+	}
+	parent := filepath.Dir(path)
+	return parent == path
 }

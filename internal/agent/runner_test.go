@@ -198,6 +198,137 @@ func TestRunPromptCompletesMinimalToolLoop(t *testing.T) {
 	}
 }
 
+func TestRunPromptAutoCompactsLongHistory(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	for i := 0; i < 8; i++ {
+		sess.Messages = append(sess.Messages,
+			llm.NewUserTextMessage(strings.Repeat("history user segment ", 30)),
+			llm.NewAssistantTextMessage(strings.Repeat("history assistant segment ", 30)),
+		)
+	}
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &fakeClient{
+		replies: []llm.Message{
+			{Role: llm.RoleAssistant, Content: "Goal: keep working\nDecisions: use go tests\nPending: continue implementation"},
+			{Role: llm.RoleAssistant, Content: "done"},
+		},
+	}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 2,
+			Stream:        false,
+			TokenQuota:    220,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "continue implementation", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "done" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("expected one compaction request + one turn request, got %d", len(client.requests))
+	}
+	if len(client.requests[0].Tools) != 0 {
+		t.Fatalf("expected compaction request to disable tools, got %#v", client.requests[0].Tools)
+	}
+	if len(client.requests[0].Messages) < 2 || client.requests[0].Messages[0].Role != llm.RoleSystem {
+		t.Fatalf("expected compaction request with system prompt, got %#v", client.requests[0].Messages)
+	}
+	if !strings.Contains(strings.ToLower(client.requests[0].Messages[0].Text()), "compaction") {
+		t.Fatalf("expected compaction system prompt, got %q", client.requests[0].Messages[0].Text())
+	}
+	if len(sess.Messages) != 3 {
+		t.Fatalf("expected compacted session to keep summary + latest user + final assistant, got %#v", sess.Messages)
+	}
+	if sess.Messages[0].Role != llm.RoleAssistant || !strings.Contains(sess.Messages[0].Text(), "Goal: keep working") {
+		t.Fatalf("expected first message to be compaction summary, got %#v", sess.Messages[0])
+	}
+	if sess.Messages[1].Role != llm.RoleUser || strings.TrimSpace(sess.Messages[1].Text()) != "continue implementation" {
+		t.Fatalf("expected latest user message to be preserved, got %#v", sess.Messages[1])
+	}
+}
+
+func TestCompactSessionManualRewritesHistory(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Messages = append(sess.Messages,
+		llm.NewUserTextMessage("first ask"),
+		llm.NewAssistantTextMessage("first answer"),
+		llm.NewUserTextMessage("second ask"),
+		llm.NewAssistantTextMessage("second answer"),
+	)
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &fakeClient{
+		replies: []llm.Message{
+			{Role: llm.RoleAssistant, Content: "Goal: first ask\nCompleted: first answer\nPending: second ask"},
+		},
+	}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 2,
+			Stream:        false,
+			TokenQuota:    5000,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	summary, changed, err := runner.CompactSession(context.Background(), sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatalf("expected compaction to change session state")
+	}
+	if strings.TrimSpace(summary) == "" {
+		t.Fatalf("expected non-empty compaction summary")
+	}
+	if len(sess.Messages) != 1 {
+		t.Fatalf("expected compacted session to keep one summary message, got %#v", sess.Messages)
+	}
+	if sess.Messages[0].Role != llm.RoleAssistant {
+		t.Fatalf("expected compacted summary role assistant, got %#v", sess.Messages[0])
+	}
+	if !strings.Contains(sess.Messages[0].Text(), "Goal: first ask") {
+		t.Fatalf("expected summary content to be persisted, got %#v", sess.Messages[0])
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("expected one compaction request, got %d", len(client.requests))
+	}
+}
+
 func TestRunPromptEncodesToolExecutionErrorsAndContinues(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())

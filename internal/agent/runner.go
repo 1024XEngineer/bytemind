@@ -308,8 +308,9 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 	availableTools := toolNames(r.registry.DefinitionsForMode(runMode))
 	instructionText := loadAGENTSInstruction(r.workspace)
 	webLookupInstruction := explicitWebLookupInstruction(userInput)
+	promptTokens := int(tokenusage.ApproximateRequestTokens([]llm.Message{userMessage}))
 
-	for step := 0; step < r.config.MaxIterations; step++ {
+	buildTurnMessages := func() ([]llm.Message, error) {
 		messages := make([]llm.Message, 0, len(sess.Messages)+2)
 		systemMessage := llm.NewTextMessage(llm.RoleSystem, systemPrompt(PromptInput{
 			Workspace:      r.workspace,
@@ -322,17 +323,41 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 			Instruction:    instructionText,
 		}))
 		if err := llm.ValidateMessage(systemMessage); err != nil {
-			return "", err
+			return nil, err
 		}
 		messages = append(messages, systemMessage)
 		if webLookupInstruction != "" {
 			webLookupMessage := llm.NewTextMessage(llm.RoleSystem, webLookupInstruction)
 			if err := llm.ValidateMessage(webLookupMessage); err != nil {
-				return "", err
+				return nil, err
 			}
 			messages = append(messages, webLookupMessage)
 		}
 		messages = append(messages, sess.Messages...)
+		return messages, nil
+	}
+
+	for step := 0; step < r.config.MaxIterations; step++ {
+		messages, err := buildTurnMessages()
+		if err != nil {
+			return "", err
+		}
+		if step == 0 {
+			requestTokens := int(tokenusage.ApproximateRequestTokens(messages))
+			compacted, compactErr := r.maybeAutoCompactSession(ctx, sess, promptTokens, requestTokens)
+			if compactErr != nil {
+				return "", compactErr
+			}
+			if compacted {
+				if out != nil {
+					fmt.Fprintf(out, "%scontext compacted to fit long-history budget%s\n", ansiDim, ansiReset)
+				}
+				messages, err = buildTurnMessages()
+				if err != nil {
+					return "", err
+				}
+			}
+		}
 
 		filteredTools := r.registry.DefinitionsForModeWithFilters(runMode, allowedToolNames, deniedToolNames)
 		caps := llm.DefaultModelCapabilities.Resolve(r.config.Provider.Model)
@@ -634,11 +659,20 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 				Path string `json:"path"`
 				Type string `json:"type"`
 			} `json:"items"`
+			Truncated bool   `json:"truncated"`
+			Reason    string `json:"reason"`
 		}
 		if err := json.Unmarshal([]byte(payload), &result); err == nil {
 			fmt.Fprintf(out, "  %slisted%s %d entries under %s\n", ansiGreen, ansiReset, len(result.Items), emptyDot(result.Root))
 			for _, item := range previewPaths(result.Items) {
 				fmt.Fprintf(out, "    %s\n", item)
+			}
+			if result.Truncated {
+				reason := strings.TrimSpace(result.Reason)
+				if reason == "" {
+					reason = "visit_limit"
+				}
+				fmt.Fprintf(out, "    %sstopped early%s (%s); narrow path/depth for large trees\n", ansiDim, ansiReset, reason)
 			}
 		}
 	case "read_file":
@@ -664,11 +698,20 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 				Line int    `json:"line"`
 				Text string `json:"text"`
 			} `json:"matches"`
+			Truncated bool   `json:"truncated"`
+			Reason    string `json:"reason"`
 		}
 		if err := json.Unmarshal([]byte(payload), &result); err == nil {
 			fmt.Fprintf(out, "  %sfound%s %d matches for %q\n", ansiGreen, ansiReset, len(result.Matches), result.Query)
 			for _, match := range previewMatches(result.Matches) {
 				fmt.Fprintf(out, "    %s\n", match)
+			}
+			if result.Truncated {
+				reason := strings.TrimSpace(result.Reason)
+				if reason == "" {
+					reason = "scan_budget"
+				}
+				fmt.Fprintf(out, "    %sstopped early%s (%s); narrow the search path and retry\n", ansiDim, ansiReset, reason)
 			}
 		}
 	case "web_search":
