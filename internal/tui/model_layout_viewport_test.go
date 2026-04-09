@@ -222,8 +222,8 @@ func TestConversationViewportBoundsStableWhileSelectionPreviewActive(t *testing.
 		viewport:   viewport.New(70, 14),
 		tokenUsage: newTokenUsageComponent(),
 		chatItems: []chatEntry{
-			{Kind: "user", Title: "You", Body: "浣犲ソ锛屼綘鏄皝锛?", Status: "final"},
-			{Kind: "assistant", Title: assistantLabel, Body: "浣犲ソ锛屾垜鏄?ByteMind锛屼綘鐨勪氦浜掑紡 CLI 缂栫爜鍔╂墜銆?", Status: "final"},
+			{Kind: "user", Title: "You", Body: "Hello, who are you?", Status: "final"},
+			{Kind: "assistant", Title: assistantLabel, Body: "Hello, I am ByteMind, your interactive CLI coding assistant.", Status: "final"},
 		},
 		mouseSelecting:      true,
 		mouseSelectionStart: viewportSelectionPoint{Row: 0, Col: 0},
