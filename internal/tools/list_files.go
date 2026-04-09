@@ -42,7 +42,7 @@ func (ListFilesTool) Definition() llm.ToolDefinition {
 	}
 }
 
-func (ListFilesTool) Run(_ context.Context, raw json.RawMessage, execCtx *ExecutionContext) (string, error) {
+func (ListFilesTool) Run(ctx context.Context, raw json.RawMessage, execCtx *ExecutionContext) (string, error) {
 	var args struct {
 		Path          string `json:"path"`
 		Depth         int    `json:"depth"`
@@ -55,14 +55,21 @@ func (ListFilesTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execut
 	if args.Depth <= 0 {
 		args.Depth = 4
 	}
+	if args.Depth > 12 {
+		args.Depth = 12
+	}
 	if args.Limit <= 0 {
 		args.Limit = 200
+	}
+	if args.Limit > 1000 {
+		args.Limit = 1000
 	}
 
 	root, err := resolvePath(execCtx.Workspace, args.Path)
 	if err != nil {
 		return "", err
 	}
+	maxVisits := maxListFilesVisits()
 
 	type entry struct {
 		Path string `json:"path"`
@@ -71,12 +78,27 @@ func (ListFilesTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execut
 	}
 
 	items := make([]entry, 0, args.Limit)
+	visits := 0
+	truncated := false
+	stopReason := ""
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			return err
 		}
 		if path == root {
 			return nil
+		}
+		visits++
+		if visits > maxVisits {
+			truncated = true
+			stopReason = "visit_limit"
+			return fs.SkipAll
+		}
+		if d.IsDir() && shouldSkipToolDir(d.Name()) {
+			return filepath.SkipDir
 		}
 		if !args.IncludeHidden && isHidden(d.Name()) {
 			if d.IsDir() {
@@ -114,9 +136,15 @@ func (ListFilesTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execut
 		return "", walkErr
 	}
 
-	return toJSON(map[string]any{
+	result := map[string]any{
 		"ok":    true,
 		"root":  filepath.ToSlash(mustRel(execCtx.Workspace, root)),
 		"items": items,
-	})
+	}
+	if truncated {
+		result["truncated"] = true
+		result["reason"] = stopReason
+		result["max_visits"] = maxVisits
+	}
+	return toJSON(result)
 }

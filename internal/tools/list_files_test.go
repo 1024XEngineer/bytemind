@@ -98,3 +98,38 @@ func TestListFilesToolRejectsEscapedPath(t *testing.T) {
 		t.Fatal("expected escaped path error")
 	}
 }
+
+func TestListFilesToolStopsWhenVisitBudgetExceeded(t *testing.T) {
+	workspace := t.TempDir()
+	for i := 0; i < 12; i++ {
+		mustWriteFile(t, filepath.Join(workspace, "dir", "nested", "f"+string(rune('a'+i))+".txt"), "x")
+	}
+	t.Setenv("BYTEMIND_LIST_FILES_MAX_VISITS", "4")
+
+	tool := ListFilesTool{}
+	payload, _ := json.Marshal(map[string]any{
+		"depth": 4,
+		"limit": 100,
+	})
+	result, err := tool.Run(context.Background(), payload, &ExecutionContext{Workspace: workspace})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var parsed struct {
+		Items []struct {
+			Path string `json:"path"`
+		} `json:"items"`
+		Truncated bool   `json:"truncated"`
+		Reason    string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if !parsed.Truncated {
+		t.Fatalf("expected truncated result, got %s", result)
+	}
+	if parsed.Reason != "visit_limit" {
+		t.Fatalf("expected visit_limit reason, got %q", parsed.Reason)
+	}
+}

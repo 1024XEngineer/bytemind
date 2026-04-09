@@ -5,7 +5,16 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+)
+
+const (
+	defaultListFilesMaxVisits     = 6000
+	defaultSearchTextMaxVisits    = 12000
+	defaultSearchTextMaxFiles     = 2000
+	defaultSearchTextMaxBytes     = 24 * 1024 * 1024
+	defaultSearchTextMaxFileBytes = 1 * 1024 * 1024
 )
 
 func resolvePath(workspace, input string) (string, error) {
@@ -78,4 +87,49 @@ func depthFromRoot(root, path string) int {
 		return 0
 	}
 	return len(strings.Split(filepath.ToSlash(rel), "/"))
+}
+
+func maxListFilesVisits() int {
+	return positiveEnvInt("BYTEMIND_LIST_FILES_MAX_VISITS", defaultListFilesMaxVisits)
+}
+
+func maxSearchTextVisits() int {
+	return positiveEnvInt("BYTEMIND_SEARCH_MAX_VISITS", defaultSearchTextMaxVisits)
+}
+
+func maxSearchTextFiles() int {
+	return positiveEnvInt("BYTEMIND_SEARCH_MAX_FILES", defaultSearchTextMaxFiles)
+}
+
+func maxSearchTextBytes() int64 {
+	return int64(positiveEnvInt("BYTEMIND_SEARCH_MAX_BYTES", defaultSearchTextMaxBytes))
+}
+
+func maxSearchTextFileBytes() int64 {
+	return int64(positiveEnvInt("BYTEMIND_SEARCH_MAX_FILE_BYTES", defaultSearchTextMaxFileBytes))
+}
+
+func shouldSkipToolDir(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "" {
+		return false
+	}
+	switch lower {
+	case "node_modules", "vendor", "dist", "build", "target", "coverage", ".next", ".nuxt", "out", "bin", "obj":
+		return true
+	default:
+		return false
+	}
+}
+
+func positiveEnvInt(name string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }
