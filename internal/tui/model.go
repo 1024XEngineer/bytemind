@@ -3144,7 +3144,14 @@ func (m *model) runCompactCommand(input string) error {
 	if m.sess == nil {
 		return fmt.Errorf("session is unavailable")
 	}
-	summary, changed, err := m.runner.CompactSession(context.Background(), m.sess)
+	type sessionCompactor interface {
+		CompactSession(ctx context.Context, sess *session.Session) (string, bool, error)
+	}
+	compactor, ok := any(m.runner).(sessionCompactor)
+	if !ok {
+		return fmt.Errorf("compact is unavailable in this build")
+	}
+	summary, changed, err := compactor.CompactSession(context.Background(), m.sess)
 	if err != nil {
 		return err
 	}
