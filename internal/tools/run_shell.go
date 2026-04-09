@@ -509,7 +509,7 @@ func resolveWindowsShellExecutable(
 	getenv func(key string) string,
 ) string {
 	for _, candidate := range windowsShellCandidates(getenv) {
-		if filepath.IsAbs(candidate) {
+		if isWindowsAbsolutePath(candidate) {
 			info, err := statFn(candidate)
 			if err == nil && info != nil && !info.IsDir() {
 				return candidate
@@ -565,4 +565,21 @@ func windowsShellCandidates(getenv func(key string) string) []string {
 		uniq = append(uniq, candidate)
 	}
 	return uniq
+}
+
+func isWindowsAbsolutePath(path string) bool {
+	if filepath.IsAbs(path) {
+		return true
+	}
+	if len(path) >= 3 && isASCIIAlpha(path[0]) && path[1] == ':' && (path[2] == '\\' || path[2] == '/') {
+		return true
+	}
+	if len(path) >= 2 && path[0] == '\\' && path[1] == '\\' {
+		return true
+	}
+	return false
+}
+
+func isASCIIAlpha(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
