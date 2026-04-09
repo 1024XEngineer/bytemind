@@ -8,5 +8,16 @@
   },
   "approval_policy": "on-request",
   "max_iterations": 32,
-  "stream": true
+  "stream": true,
+  "token_usage": {
+    "storage_type": "file",
+    "storage_path": "./.bytemind/token_usage.json",
+    "backup_interval": "1m",
+    "max_sessions": 10000,
+    "alert_threshold": 1000000,
+    "enable_realtime": true,
+    "retention_days": 30,
+    "monitor_interval": "30s",
+    "database_driver": "sqlite3"
+  }
 }

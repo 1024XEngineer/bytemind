@@ -50,6 +50,32 @@ const (
 	footerHintText        = "tab agents | / commands | Ctrl+F history | Ctrl+L sessions | Ctrl+C quit"
 )
 
+type footerShortcutHint struct {
+	Key   string
+	Label string
+}
+
+var footerShortcutHints = []footerShortcutHint{
+	{Key: "tab", Label: "agents"},
+	{Key: "/", Label: "commands"},
+	{Key: "Ctrl+F", Label: "history"},
+	{Key: "Ctrl+L", Label: "sessions"},
+	{Key: "Ctrl+C", Label: "quit"},
+}
+
+var promptSearchFilterHints = []footerShortcutHint{
+	{Key: "ws:<kw>", Label: "workspace"},
+	{Key: "sid:<kw>", Label: "session"},
+}
+
+var promptSearchActionHints = []footerShortcutHint{
+	{Key: "PgUp/PgDn", Label: "page"},
+	{Key: "Ctrl+F", Label: "next"},
+	{Key: "Ctrl+S", Label: "prev"},
+	{Key: "Enter", Label: "apply"},
+	{Key: "Esc", Label: "close"},
+}
+
 type screenKind string
 
 const (
@@ -225,6 +251,7 @@ type model struct {
 	tokenInput            int
 	tokenOutput           int
 	tokenContext          int
+	tokenHasOfficialUsage bool
 	tempEstimatedOutput   int
 	tokenEstimator        *realtimeTokenEstimator
 	promptHistoryLoaded   bool
@@ -328,7 +355,8 @@ func newModel(opts Options) model {
 		m.initializeStartupGuide()
 	}
 	m.restoreTokenUsageFromSession(opts.Session)
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, 0)
+	m.tokenUsage.SetUnavailable(!m.tokenHasOfficialUsage)
 	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 	m.ensureSessionImageAssets()
 	m.syncInputStyle()
@@ -345,7 +373,6 @@ func (m model) Init() tea.Cmd {
 		waitForAsync(m.async),
 		m.tokenUsage.tickCmd(),
 		m.loadSessionsCmd(),
-		m.fetchRemoteTokenUsageCmd(),
 	)
 }
 
@@ -440,16 +467,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tokenUsagePulledMsg:
-		if msg.Err != nil {
-			return m, nil
-		}
-		// Prefer remotely pulled account usage, but never reduce live local counters.
-		m.tokenUsedTotal = max(m.tokenUsedTotal, msg.Used)
-		m.tokenInput = max(m.tokenInput, msg.Input)
-		m.tokenOutput = max(m.tokenOutput, msg.Output)
-		m.tokenContext = max(m.tokenContext, msg.Context)
-		_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
-		m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
+		// Account-level usage is not session-accurate; ignore in session-only mode.
 		return m, nil
 	case tokenMonitorTickMsg:
 		cmd, _ := m.tokenUsage.Update(msg)
@@ -717,7 +735,7 @@ func (m model) mouseOverLandingInput(y int) bool {
 			Width(m.landingInputShellWidth()).
 			Render(m.input.View()),
 	)
-	hintHeight := lipgloss.Height(mutedStyle.Render(footerHintText))
+	hintHeight := lipgloss.Height(renderFooterShortcutHints())
 	contentHeight := logoHeight + 1 + titleHeight + subtitleHeight + 1 + overlayHeight + inputHeight + 1 + hintHeight
 	contentTop := max(0, (m.height-contentHeight)/2)
 	inputTop := contentTop + logoHeight + 1 + titleHeight + subtitleHeight + 1 + overlayHeight
@@ -876,6 +894,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.String() == "enter" {
+		if m.shouldSuppressEnterAfterPaste() {
+			return m, nil
+		}
 		rawValue := m.input.Value()
 		value := strings.TrimSpace(rawValue)
 		if m.startupGuide.Active && !strings.HasPrefix(value, "/") {
@@ -969,6 +990,19 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.syncInputOverlays()
 	return m, cmd
+}
+
+func (m model) shouldSuppressEnterAfterPaste() bool {
+	if m.lastPasteAt.IsZero() {
+		return false
+	}
+	if time.Since(m.lastPasteAt) > pasteSubmitGuard {
+		return false
+	}
+	if strings.Contains(m.input.Value(), "\n") {
+		return true
+	}
+	return time.Since(m.lastInputAt) <= 120*time.Millisecond
 }
 
 func (m model) handleCommandPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1557,7 +1591,6 @@ func (m *model) handleAgentEvent(event agent.Event) {
 		m.phase = "responding"
 		m.statusNote = "LLM is responding..."
 		m.llmConnected = true
-		m.applyEstimatedUsage(event.Content)
 		m.appendAssistantDelta(event.Content)
 	case agent.EventAssistantMessage:
 		m.llmConnected = true
@@ -1580,12 +1613,7 @@ func (m *model) handleAgentEvent(event agent.Event) {
 		m.statusNote = "Running tool: " + event.ToolName
 	case agent.EventToolCallCompleted:
 		summary, lines, status := summarizeTool(event.ToolName, event.ToolResult)
-		m.appendChat(chatEntry{
-			Kind:   "tool",
-			Title:  "Tool Result | " + event.ToolName,
-			Body:   joinSummary(summary, lines),
-			Status: status,
-		})
+		m.finishLatestToolCall(event.ToolName, joinSummary(summary, lines), status)
 		if len(m.toolRuns) > 0 {
 			index := len(m.toolRuns) - 1
 			m.toolRuns[index].Summary = summary
@@ -1618,6 +1646,7 @@ func (m *model) handleAgentEvent(event agent.Event) {
 }
 
 func (m *model) applyUsage(usage llm.Usage) {
+	m.tokenHasOfficialUsage = true
 	input := max(0, usage.InputTokens)
 	output := max(0, usage.OutputTokens)
 	context := max(0, usage.ContextTokens)
@@ -1641,22 +1670,8 @@ func (m *model) applyUsage(usage llm.Usage) {
 	m.tokenInput += input
 	m.tokenOutput += output
 	m.tokenContext += context
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
-	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
-}
-
-func (m *model) applyEstimatedUsage(delta string) {
-	if strings.TrimSpace(delta) == "" {
-		return
-	}
-	estimated := estimateDeltaTokens(m.tokenEstimator, delta)
-	if estimated <= 0 {
-		return
-	}
-	m.tempEstimatedOutput += estimated
-	m.tokenUsedTotal += estimated
-	m.tokenOutput += estimated
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, 0)
+	m.tokenUsage.SetUnavailable(false)
 	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 }
 
@@ -1937,7 +1952,9 @@ func (m model) View() string {
 }
 
 func (m *model) SetUsage(used, total int) tea.Cmd {
-	return m.tokenUsage.SetUsage(used, total)
+	m.tokenHasOfficialUsage = true
+	m.tokenUsage.SetUnavailable(false)
+	return m.tokenUsage.SetUsage(used, 0)
 }
 
 func (m model) renderConversation() string {
@@ -2012,9 +2029,6 @@ func (m model) renderMainPanel() string {
 }
 
 func (m model) renderTokenBadge(width int) string {
-	if width < 80 {
-		return m.tokenUsage.CompactView()
-	}
 	return m.tokenUsage.View()
 }
 
@@ -2120,7 +2134,7 @@ func (m model) renderLanding() string {
 	} else if m.commandOpen {
 		parts = append(parts, m.renderCommandPalette(), "")
 	}
-	parts = append(parts, inputBox, "", mutedStyle.Render(footerHintText))
+	parts = append(parts, inputBox, "", renderFooterShortcutHints())
 	content := lipgloss.JoinVertical(lipgloss.Center, parts...)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }
@@ -2167,12 +2181,11 @@ func (m model) renderModeTabs() string {
 func (m model) renderFooterInfoLine() string {
 	width := max(24, m.chatPanelInnerWidth())
 	left := m.renderModeTabs()
-	rightParts := []string{footerHintText}
-	if modelName := strings.TrimSpace(m.currentModelLabel()); modelName != "" && modelName != "-" {
-		rightParts = append([]string{modelName}, rightParts...)
+	modelName := strings.TrimSpace(m.currentModelLabel())
+	if modelName == "-" {
+		modelName = ""
 	}
-	rightRaw := strings.Join(rightParts, "  |  ")
-	right := mutedStyle.Render(rightRaw)
+	right := renderFooterInfoRight(modelName, 1<<30)
 
 	leftW := lipgloss.Width(left)
 	rightW := lipgloss.Width(right)
@@ -2180,15 +2193,116 @@ func (m model) renderFooterInfoLine() string {
 	if gap < 2 {
 		available := max(10, width-leftW-2)
 		if available <= 10 {
-			return lipgloss.NewStyle().Width(width).Render(mutedStyle.Render(compact(rightRaw, width)))
+			return lipgloss.NewStyle().Width(width).Render(renderFooterInfoRight(modelName, width))
 		}
-		compacted := mutedStyle.Render(compact(rightRaw, available))
+		compacted := renderFooterInfoRight(modelName, available)
 		gap = width - leftW - lipgloss.Width(compacted)
 		return lipgloss.NewStyle().Width(width).Render(left + strings.Repeat(" ", max(2, gap)) + compacted)
 	}
 
 	return lipgloss.NewStyle().Width(width).Render(left + strings.Repeat(" ", gap) + right)
 }
+
+func renderFooterInfoRight(modelName string, maxWidth int) string {
+	maxWidth = max(1, maxWidth)
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return renderInlineShortcutHintsCompacted(footerShortcutHints, maxWidth)
+	}
+	modelText := compact(modelName, maxWidth)
+	modelWidth := runewidth.StringWidth(modelText)
+	if modelWidth >= maxWidth {
+		return mutedStyle.Render(modelText)
+	}
+	dividerPlain := "  |  "
+	dividerWidth := runewidth.StringWidth(dividerPlain)
+	remaining := maxWidth - modelWidth - dividerWidth
+	if remaining <= 0 {
+		return mutedStyle.Render(modelText)
+	}
+	hints := renderInlineShortcutHintsCompacted(footerShortcutHints, remaining)
+	if strings.TrimSpace(hints) == "" {
+		return mutedStyle.Render(modelText)
+	}
+	return mutedStyle.Render(modelText) + footerHintDividerStyle.Render(dividerPlain) + hints
+}
+
+func renderFooterShortcutHints() string {
+	return renderInlineShortcutHints(footerShortcutHints)
+}
+
+func renderInlineShortcutHints(hints []footerShortcutHint) string {
+	parts := make([]string, 0, len(hints))
+	for _, hint := range hints {
+		parts = append(parts, footerHintKeyStyle.Render(hint.Key)+" "+footerHintLabelStyle.Render(hint.Label))
+	}
+	return strings.Join(parts, footerHintDividerStyle.Render("  |  "))
+}
+
+func renderInlineShortcutHintsCompacted(hints []footerShortcutHint, maxWidth int) string {
+	maxWidth = max(1, maxWidth)
+	dividerPlain := "  |  "
+	dividerWidth := runewidth.StringWidth(dividerPlain)
+
+	used := 0
+	parts := make([]string, 0, len(hints)*2)
+	for _, hint := range hints {
+		key := strings.TrimSpace(hint.Key)
+		label := strings.TrimSpace(hint.Label)
+		if key == "" {
+			continue
+		}
+		segmentPlain := key
+		segmentStyled := footerHintKeyStyle.Render(key)
+		if label != "" {
+			segmentPlain += " " + label
+			segmentStyled += " " + footerHintLabelStyle.Render(label)
+		}
+		needDivider := len(parts) > 0
+		prefixWidth := 0
+		if needDivider {
+			prefixWidth = dividerWidth
+		}
+		segmentWidth := runewidth.StringWidth(segmentPlain)
+		if used+prefixWidth+segmentWidth <= maxWidth {
+			if needDivider {
+				parts = append(parts, footerHintDividerStyle.Render(dividerPlain))
+				used += dividerWidth
+			}
+			parts = append(parts, segmentStyled)
+			used += segmentWidth
+			continue
+		}
+
+		remaining := maxWidth - used - prefixWidth
+		if remaining <= 0 {
+			break
+		}
+		if needDivider {
+			parts = append(parts, footerHintDividerStyle.Render(dividerPlain))
+			used += dividerWidth
+		}
+
+		keyWidth := runewidth.StringWidth(key)
+		if keyWidth >= remaining {
+			parts = append(parts, footerHintKeyStyle.Render(compact(key, remaining)))
+			break
+		}
+		if label == "" {
+			parts = append(parts, footerHintKeyStyle.Render(key))
+			break
+		}
+		labelSpace := remaining - keyWidth - 1
+		if labelSpace <= 0 {
+			parts = append(parts, footerHintKeyStyle.Render(key))
+			break
+		}
+		parts = append(parts, footerHintKeyStyle.Render(key)+" "+footerHintLabelStyle.Render(compact(label, labelSpace)))
+		break
+	}
+	return strings.Join(parts, "")
+}
+
 func (m model) renderSessionsModal() string {
 	lines := []string{modalTitleStyle.Render("Recent Sessions"), mutedStyle.Render("Up/Down to select, Enter to resume, Esc to close"), ""}
 	if len(m.sessions) == 0 {
@@ -2314,9 +2428,14 @@ func (m model) renderPromptSearchPalette() string {
 		}
 		content := []string{
 			commandPaletteMetaStyle.Render("Prompt history " + modeLabel),
-			commandPaletteMetaStyle.Render("query: " + query + "  (filters: ws:<kw> sid:<kw>)"),
+			commandPaletteMetaStyle.Render("query: "+query+"  (filters: ") + renderInlineShortcutHints(promptSearchFilterHints) + commandPaletteMetaStyle.Render(")"),
 			commandPaletteMetaStyle.Render("No matching prompts."),
-			commandPaletteMetaStyle.Render("Type to filter  PgUp/PgDn page  Enter apply  Esc close"),
+			commandPaletteMetaStyle.Render("Type to filter  ") +
+				renderInlineShortcutHints([]footerShortcutHint{
+					{Key: "PgUp/PgDn", Label: "page"},
+					{Key: "Enter", Label: "apply"},
+					{Key: "Esc", Label: "close"},
+				}),
 		}
 		return commandPaletteStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, content...))
 	}
@@ -2351,8 +2470,12 @@ func (m model) renderPromptSearchPalette() string {
 	if query == "" {
 		query = "(all)"
 	}
-	meta := fmt.Sprintf("%s  query:%s  |  ws:<kw> sid:<kw>  PgUp/PgDn page  Ctrl+F next  Ctrl+S prev  Enter apply  Esc close", modeLabel, compact(query, 24))
-	rows = append(rows, commandPaletteMetaStyle.Render(meta))
+	meta := commandPaletteMetaStyle.Render(fmt.Sprintf("%s  query:%s", modeLabel, compact(query, 24))) +
+		footerHintDividerStyle.Render("  |  ") +
+		renderInlineShortcutHints(promptSearchFilterHints) +
+		footerHintDividerStyle.Render("  |  ") +
+		renderInlineShortcutHints(promptSearchActionHints)
+	rows = append(rows, meta)
 	return commandPaletteStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
 
@@ -3028,7 +3151,8 @@ func (m *model) newSession() error {
 	m.statusNote = "Started a new session."
 	m.chatAutoFollow = true
 	m.restoreTokenUsageFromSession(next)
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, 0)
+	m.tokenUsage.SetUnavailable(!m.tokenHasOfficialUsage)
 	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 	m.inputImageRefs = make(map[int]llm.AssetID, 8)
 	m.inputImageMentions = make(map[string]llm.AssetID, 8)
@@ -3069,7 +3193,8 @@ func (m *model) resumeSession(prefix string) error {
 	m.statusNote = "Resumed session " + shortID(next.ID)
 	m.chatAutoFollow = true
 	m.restoreTokenUsageFromSession(next)
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, 0)
+	m.tokenUsage.SetUnavailable(!m.tokenHasOfficialUsage)
 	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 	m.inputImageRefs = make(map[int]llm.AssetID, 8)
 	m.inputImageMentions = make(map[string]llm.AssetID, 8)
@@ -3126,31 +3251,13 @@ func (m model) fetchRemoteTokenUsageCmd() tea.Cmd {
 
 func (m *model) restoreTokenUsageFromSession(sess *session.Session) {
 	m.tempEstimatedOutput = 0
+	m.tokenHasOfficialUsage = false
 	m.tokenUsedTotal = 0
 	m.tokenInput = 0
 	m.tokenOutput = 0
 	m.tokenContext = 0
 
-	countedAny := false
-	if m.store != nil {
-		summaries, _, err := m.store.List(0)
-		if err == nil {
-			for _, summary := range summaries {
-				if !sameWorkspace(m.workspace, summary.Workspace) {
-					continue
-				}
-				stored, loadErr := m.store.Load(summary.ID)
-				if loadErr != nil || stored == nil {
-					continue
-				}
-				m.accumulateTokenUsage(stored.Messages)
-				countedAny = true
-			}
-		}
-	}
-
-	// Fallback for tests or when store data is unavailable.
-	if !countedAny && sess != nil {
+	if sess != nil {
 		m.accumulateTokenUsage(sess.Messages)
 	}
 }
@@ -3160,6 +3267,7 @@ func (m *model) accumulateTokenUsage(messages []llm.Message) {
 		if msg.Usage == nil {
 			continue
 		}
+		m.tokenHasOfficialUsage = true
 		used := msg.Usage.TotalTokens
 		if used <= 0 {
 			used = msg.Usage.InputTokens + msg.Usage.OutputTokens + msg.Usage.ContextTokens
@@ -3201,7 +3309,7 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 				summary, lines, status := summarizeTool(name, part.ToolResult.Content)
 				items = append(items, chatEntry{
 					Kind:   "tool",
-					Title:  "Tool Result | " + name,
+					Title:  "Tool Call | " + name,
 					Body:   joinSummary(summary, lines),
 					Status: status,
 				})
@@ -3226,7 +3334,7 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 			summary, lines, status := summarizeTool(name, message.Content)
 			items = append(items, chatEntry{
 				Kind:   "tool",
-				Title:  "Tool Result | " + name,
+				Title:  "Tool Call | " + name,
 				Body:   joinSummary(summary, lines),
 				Status: status,
 			})

@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"bytemind/internal/assets"
 	"bytemind/internal/agent"
+	"bytemind/internal/assets"
 	"bytemind/internal/config"
 	"bytemind/internal/provider"
 	"bytemind/internal/session"
@@ -74,6 +74,7 @@ func runTUI(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if app == nil || store == nil || sess == nil {
 		return errors.New("internal error: bootstrap returned nil runtime")
 	}
+	defer func() { _ = app.Close() }()
 	home, err := config.EnsureHomeLayout()
 	if err != nil {
 		return err

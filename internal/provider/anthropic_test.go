@@ -38,6 +38,12 @@ func TestAnthropicCreateMessageParsesTextAndToolUse(t *testing.T) {
 				{"type": "text", "text": "Plan ready. "},
 				{"type": "tool_use", "id": "tool-1", "name": "list_files", "input": map[string]any{"path": "."}},
 			},
+			"usage": map[string]any{
+				"input_tokens":                42,
+				"output_tokens":               11,
+				"cache_read_input_tokens":     3,
+				"cache_creation_input_tokens": 2,
+			},
 		})
 	}))
 	defer server.Close()
@@ -85,6 +91,9 @@ func TestAnthropicCreateMessageParsesTextAndToolUse(t *testing.T) {
 	}
 	if msg.ToolCalls[0].Function.Name != "list_files" || msg.ToolCalls[0].Function.Arguments != "{\"path\":\".\"}" {
 		t.Fatalf("unexpected tool call: %#v", msg.ToolCalls[0])
+	}
+	if msg.Usage == nil || msg.Usage.InputTokens != 42 || msg.Usage.OutputTokens != 11 || msg.Usage.ContextTokens != 5 || msg.Usage.TotalTokens != 58 {
+		t.Fatalf("unexpected usage parse result: %#v", msg.Usage)
 	}
 }
 

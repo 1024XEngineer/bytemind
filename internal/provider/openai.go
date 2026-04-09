@@ -58,6 +58,7 @@ func (c *OpenAICompatible) CreateMessage(ctx context.Context, req llm.ChatReques
 		Choices []struct {
 			Message json.RawMessage `json:"message"`
 		} `json:"choices"`
+		Usage json.RawMessage `json:"usage"`
 	}
 	if err := json.Unmarshal(respBody, &completion); err != nil {
 		return llm.Message{}, err
@@ -65,7 +66,9 @@ func (c *OpenAICompatible) CreateMessage(ctx context.Context, req llm.ChatReques
 	if len(completion.Choices) == 0 {
 		return llm.Message{}, fmt.Errorf("provider returned no choices")
 	}
-	return parseOpenAIMessage(completion.Choices[0].Message), nil
+	msg := parseOpenAIMessage(completion.Choices[0].Message)
+	msg.Usage = parseOpenAIUsage(completion.Usage)
+	return msg, nil
 }
 
 func (c *OpenAICompatible) StreamMessage(ctx context.Context, req llm.ChatRequest, onDelta func(string)) (llm.Message, error) {
@@ -115,6 +118,7 @@ func (c *OpenAICompatible) StreamMessage(ctx context.Context, req llm.ChatReques
 			Choices []struct {
 				Delta json.RawMessage `json:"delta"`
 			} `json:"choices"`
+			Usage json.RawMessage `json:"usage"`
 		}
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 			return llm.Message{}, err
@@ -154,6 +158,9 @@ func (c *OpenAICompatible) StreamMessage(ctx context.Context, req llm.ChatReques
 				}
 			}
 		}
+		if usage := parseOpenAIUsage(chunk.Usage); usage != nil {
+			assembled.Usage = usage
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return llm.Message{}, err
@@ -190,6 +197,43 @@ func (c *OpenAICompatible) StreamMessage(ctx context.Context, req llm.ChatReques
 
 	assembled.Normalize()
 	return assembled, nil
+}
+
+func parseOpenAIUsage(raw json.RawMessage) *llm.Usage {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil
+	}
+	var usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+		PromptDetails    struct {
+			CachedTokens int `json:"cached_tokens"`
+			AudioTokens  int `json:"audio_tokens"`
+		} `json:"prompt_tokens_details"`
+		CompletionDetails struct {
+			AudioTokens int `json:"audio_tokens"`
+		} `json:"completion_tokens_details"`
+	}
+	if err := json.Unmarshal(raw, &usage); err != nil {
+		return nil
+	}
+	input := max(0, usage.PromptTokens) + max(0, usage.PromptDetails.AudioTokens)
+	output := max(0, usage.CompletionTokens) + max(0, usage.CompletionDetails.AudioTokens)
+	context := max(0, usage.PromptDetails.CachedTokens)
+	total := usage.TotalTokens
+	if total <= 0 {
+		total = input + output + context
+	}
+	if input == 0 && output == 0 && context == 0 && total == 0 {
+		return nil
+	}
+	return &llm.Usage{
+		InputTokens:   input,
+		OutputTokens:  output,
+		ContextTokens: context,
+		TotalTokens:   max(0, total),
+	}
 }
 
 type streamDelta struct {

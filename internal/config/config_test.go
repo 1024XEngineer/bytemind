@@ -62,6 +62,27 @@ func TestLoadIgnoresInvalidTokenQuotaEnv(t *testing.T) {
 	}
 }
 
+func TestLoadAppliesTokenUsageDefaults(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "secret")
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TokenUsage.StorageType != "file" {
+		t.Fatalf("expected default token_usage.storage_type=file, got %q", cfg.TokenUsage.StorageType)
+	}
+	if cfg.TokenUsage.RetentionDays != 30 {
+		t.Fatalf("expected default token_usage.retention_days=30, got %d", cfg.TokenUsage.RetentionDays)
+	}
+	if strings.TrimSpace(cfg.TokenUsage.BackupInterval) == "" {
+		t.Fatalf("expected default token_usage.backup_interval to be set")
+	}
+}
+
 func TestResolveConfigPathExplicit(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(file, []byte(`{}`), 0o644); err != nil {
@@ -276,6 +297,9 @@ func TestEnsureHomeLayoutCreatesStandardDirectories(t *testing.T) {
 	}
 	if strings.TrimSpace(cfg.Provider.Model) == "" {
 		t.Fatalf("expected default provider model to be present")
+	}
+	if cfg.TokenUsage.StorageType == "" || cfg.TokenUsage.BackupInterval == "" {
+		t.Fatalf("expected default token_usage config to be present, got %#v", cfg.TokenUsage)
 	}
 }
 

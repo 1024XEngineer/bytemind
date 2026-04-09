@@ -15,11 +15,12 @@ const (
 )
 
 type Config struct {
-	Provider       ProviderConfig `json:"provider"`
-	ApprovalPolicy string         `json:"approval_policy"`
-	MaxIterations  int            `json:"max_iterations"`
-	Stream         bool           `json:"stream"`
-	TokenQuota     int            `json:"token_quota"`
+	Provider       ProviderConfig   `json:"provider"`
+	ApprovalPolicy string           `json:"approval_policy"`
+	MaxIterations  int              `json:"max_iterations"`
+	Stream         bool             `json:"stream"`
+	TokenQuota     int              `json:"token_quota"`
+	TokenUsage     TokenUsageConfig `json:"token_usage"`
 }
 
 type ProviderConfig struct {
@@ -36,6 +37,18 @@ type ProviderConfig struct {
 	AnthropicVersion string            `json:"anthropic_version"`
 }
 
+type TokenUsageConfig struct {
+	StorageType     string `json:"storage_type"`
+	StoragePath     string `json:"storage_path"`
+	BackupInterval  string `json:"backup_interval"`
+	MaxSessions     int    `json:"max_sessions"`
+	AlertThreshold  int64  `json:"alert_threshold"`
+	EnableRealtime  bool   `json:"enable_realtime"`
+	RetentionDays   int    `json:"retention_days"`
+	MonitorInterval string `json:"monitor_interval"`
+	DatabaseDriver  string `json:"database_driver"`
+}
+
 func Default(workspace string) Config {
 	return Config{
 		Provider: ProviderConfig{
@@ -48,6 +61,17 @@ func Default(workspace string) Config {
 		MaxIterations:  32,
 		Stream:         true,
 		TokenQuota:     5000,
+		TokenUsage: TokenUsageConfig{
+			StorageType:     "file",
+			StoragePath:     ".bytemind/token_usage.json",
+			BackupInterval:  "1m",
+			MaxSessions:     10000,
+			AlertThreshold:  1000000,
+			EnableRealtime:  true,
+			RetentionDays:   30,
+			MonitorInterval: "30s",
+			DatabaseDriver:  "sqlite3",
+		},
 	}
 }
 
@@ -155,6 +179,17 @@ func ensureDefaultConfigFile(home string) error {
 		MaxIterations:  32,
 		Stream:         true,
 		TokenQuota:     5000,
+		TokenUsage: TokenUsageConfig{
+			StorageType:     "file",
+			StoragePath:     ".bytemind/token_usage.json",
+			BackupInterval:  "1m",
+			MaxSessions:     10000,
+			AlertThreshold:  1000000,
+			EnableRealtime:  true,
+			RetentionDays:   30,
+			MonitorInterval: "30s",
+			DatabaseDriver:  "sqlite3",
+		},
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
@@ -315,6 +350,30 @@ func normalize(cfg *Config) error {
 	}
 	if cfg.TokenQuota < 1 {
 		cfg.TokenQuota = 5000
+	}
+	if strings.TrimSpace(cfg.TokenUsage.StorageType) == "" {
+		cfg.TokenUsage.StorageType = "file"
+	}
+	if strings.TrimSpace(cfg.TokenUsage.StoragePath) == "" {
+		cfg.TokenUsage.StoragePath = ".bytemind/token_usage.json"
+	}
+	if strings.TrimSpace(cfg.TokenUsage.BackupInterval) == "" {
+		cfg.TokenUsage.BackupInterval = "1m"
+	}
+	if strings.TrimSpace(cfg.TokenUsage.MonitorInterval) == "" {
+		cfg.TokenUsage.MonitorInterval = "30s"
+	}
+	if strings.TrimSpace(cfg.TokenUsage.DatabaseDriver) == "" {
+		cfg.TokenUsage.DatabaseDriver = "sqlite3"
+	}
+	if cfg.TokenUsage.MaxSessions < 1 {
+		cfg.TokenUsage.MaxSessions = 10000
+	}
+	if cfg.TokenUsage.RetentionDays < 1 {
+		cfg.TokenUsage.RetentionDays = 30
+	}
+	if cfg.TokenUsage.AlertThreshold < 1 {
+		cfg.TokenUsage.AlertThreshold = 1000000
 	}
 	return nil
 }

@@ -15,6 +15,7 @@ import (
 	planpkg "bytemind/internal/plan"
 	"bytemind/internal/session"
 	"bytemind/internal/skills"
+	"bytemind/internal/tokenusage"
 	"bytemind/internal/tools"
 )
 
@@ -44,6 +45,7 @@ type Options struct {
 	Store        *session.Store
 	Registry     *tools.Registry
 	SkillManager *skills.Manager
+	TokenManager *tokenusage.TokenUsageManager
 	Observer     Observer
 	Approval     tools.ApprovalHandler
 	Stdin        io.Reader
@@ -63,10 +65,26 @@ type Runner struct {
 	store        *session.Store
 	registry     *tools.Registry
 	skillManager *skills.Manager
+	tokenManager *tokenusage.TokenUsageManager
 	observer     Observer
 	approval     tools.ApprovalHandler
 	stdin        io.Reader
 	stdout       io.Writer
+}
+
+type TokenRealtimeSnapshot struct {
+	SessionID            string
+	SessionInputTokens   int64
+	SessionOutputTokens  int64
+	SessionContextTokens int64
+	SessionTotalTokens   int64
+	GlobalTotalTokens    int64
+	CurrentTPS           float64
+	PeakTPS              float64
+	ActiveSessions       int
+	ErrorRate            float64
+	AvgLatency           time.Duration
+	GeneratedAt          time.Time
 }
 
 func NewRunner(opts Options) *Runner {
@@ -81,6 +99,7 @@ func NewRunner(opts Options) *Runner {
 		store:        opts.Store,
 		registry:     opts.Registry,
 		skillManager: manager,
+		tokenManager: opts.TokenManager,
 		observer:     opts.Observer,
 		approval:     opts.Approval,
 		stdin:        opts.Stdin,
@@ -94,6 +113,46 @@ func (r *Runner) SetObserver(observer Observer) {
 
 func (r *Runner) SetApprovalHandler(handler tools.ApprovalHandler) {
 	r.approval = handler
+}
+
+func (r *Runner) HasTokenManager() bool {
+	return r != nil && r.tokenManager != nil
+}
+
+func (r *Runner) TokenRealtimeEnabled() bool {
+	return r != nil && r.tokenManager != nil && r.config.TokenUsage.EnableRealtime
+}
+
+func (r *Runner) GetTokenRealtimeSnapshot(sessionID string) (TokenRealtimeSnapshot, error) {
+	var snapshot TokenRealtimeSnapshot
+	if r == nil || r.tokenManager == nil {
+		return snapshot, fmt.Errorf("token manager unavailable")
+	}
+	realtime, err := r.tokenManager.GetRealtimeStats()
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.GlobalTotalTokens = realtime.TotalTokens
+	snapshot.CurrentTPS = realtime.Metrics.CurrentTPS
+	snapshot.PeakTPS = realtime.Metrics.PeakTPS
+	snapshot.ActiveSessions = realtime.Metrics.ActiveSessions
+	snapshot.ErrorRate = realtime.Metrics.ErrorRate
+	snapshot.AvgLatency = realtime.Metrics.Latency
+	snapshot.GeneratedAt = realtime.GeneratedAt
+	snapshot.SessionID = strings.TrimSpace(sessionID)
+
+	if snapshot.SessionID != "" {
+		for _, stats := range realtime.Sessions {
+			if stats == nil || stats.SessionID != snapshot.SessionID {
+				continue
+			}
+			snapshot.SessionInputTokens = stats.InputTokens
+			snapshot.SessionOutputTokens = stats.OutputTokens
+			snapshot.SessionTotalTokens = stats.TotalTokens
+			break
+		}
+	}
+	return snapshot, nil
 }
 
 func (r *Runner) ListSkills() ([]skills.Skill, []skills.Diagnostic) {
@@ -274,11 +333,18 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 		}
 
 		streamedText := false
+		turnStart := time.Now()
 		reply, err := r.completeTurn(ctx, request, out, &streamedText)
+		turnLatency := time.Since(turnStart)
 		if err != nil {
+			estimatedUsage := r.resolveTurnUsage(request, nil)
+			r.recordTokenUsage(ctx, sess, request, estimatedUsage, turnLatency, false)
 			return "", err
 		}
 		reply.Normalize()
+		turnUsage := r.resolveTurnUsage(request, &reply)
+		r.recordTokenUsage(ctx, sess, request, turnUsage, turnLatency, true)
+		r.emitUsageEvent(sess, &turnUsage)
 
 		if len(reply.ToolCalls) == 0 {
 			answer := strings.TrimSpace(reply.Content)
@@ -416,6 +482,85 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 		executedToolNames,
 	)
 	return r.finishWithSummary(sess, summary, out, false)
+}
+
+func (r *Runner) emitUsageEvent(sess *session.Session, usage *llm.Usage) {
+	if sess == nil || usage == nil {
+		return
+	}
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.ContextTokens == 0 && usage.TotalTokens == 0 {
+		return
+	}
+	r.emit(Event{
+		Type:      EventUsageUpdated,
+		SessionID: sess.ID,
+		Usage:     *usage,
+	})
+}
+
+func (r *Runner) recordTokenUsage(ctx context.Context, sess *session.Session, request llm.ChatRequest, usage llm.Usage, latency time.Duration, success bool) {
+	if r.tokenManager == nil || sess == nil {
+		return
+	}
+
+	req := &tokenusage.TokenRecordRequest{
+		SessionID:    sess.ID,
+		ModelName:    request.Model,
+		InputTokens:  int64(max(0, usage.InputTokens+usage.ContextTokens)),
+		OutputTokens: int64(max(0, usage.OutputTokens)),
+		RequestID:    time.Now().UTC().Format("20060102150405.000000000"),
+		Latency:      latency,
+		Success:      success,
+		Metadata: map[string]string{
+			"workspace": sess.Workspace,
+		},
+	}
+	if err := r.tokenManager.RecordTokenUsage(ctx, req); err != nil && r.stdout != nil {
+		fmt.Fprintf(r.stdout, "%swarning%s token usage record failed: %v\n", ansiDim, ansiReset, err)
+	}
+}
+
+func (r *Runner) resolveTurnUsage(request llm.ChatRequest, reply *llm.Message) llm.Usage {
+	if reply != nil && reply.Usage != nil {
+		usage := *reply.Usage
+		input := max(0, usage.InputTokens)
+		output := max(0, usage.OutputTokens)
+		context := max(0, usage.ContextTokens)
+		total := usage.TotalTokens
+		if total <= 0 {
+			total = input + output + context
+		}
+		return llm.Usage{
+			InputTokens:   input,
+			OutputTokens:  output,
+			ContextTokens: context,
+			TotalTokens:   max(0, total),
+		}
+	}
+
+	input := int(tokenusage.ApproximateRequestTokens(request.Messages))
+	output := 0
+	if reply != nil {
+		output += int(tokenusage.ApproximateTokens(reply.Content))
+		for _, call := range reply.ToolCalls {
+			output += int(tokenusage.ApproximateTokens(call.Function.Name))
+			output += int(tokenusage.ApproximateTokens(call.Function.Arguments))
+		}
+	}
+	total := input + output
+	return llm.Usage{
+		InputTokens:   max(0, input),
+		OutputTokens:  max(0, output),
+		ContextTokens: 0,
+		TotalTokens:   max(0, total),
+	}
+}
+
+func (r *Runner) Close() error {
+	if r == nil || r.tokenManager == nil {
+		return nil
+	}
+	return r.tokenManager.Close()
 }
 
 func (r *Runner) completeTurn(ctx context.Context, request llm.ChatRequest, out io.Writer, streamedText *bool) (llm.Message, error) {

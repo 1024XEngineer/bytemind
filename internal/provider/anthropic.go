@@ -91,6 +91,12 @@ func (c *Anthropic) CreateMessage(ctx context.Context, req llm.ChatRequest) (llm
 			Input    json.RawMessage `json:"input"`
 			Thinking string          `json:"thinking"`
 		} `json:"content"`
+		Usage struct {
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal(respBody, &completion); err != nil {
 		return llm.Message{}, err
@@ -125,6 +131,16 @@ func (c *Anthropic) CreateMessage(ctx context.Context, req llm.ChatRequest) (llm
 		}
 	}
 	message.Normalize()
+	contextTokens := max(0, completion.Usage.CacheReadInputTokens) + max(0, completion.Usage.CacheCreationInputTokens)
+	total := max(0, completion.Usage.InputTokens) + max(0, completion.Usage.OutputTokens) + contextTokens
+	if total > 0 {
+		message.Usage = &llm.Usage{
+			InputTokens:   max(0, completion.Usage.InputTokens),
+			OutputTokens:  max(0, completion.Usage.OutputTokens),
+			ContextTokens: contextTokens,
+			TotalTokens:   total,
+		}
+	}
 	return message, nil
 }
 
