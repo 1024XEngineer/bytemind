@@ -14,7 +14,7 @@ Keep prompt assembly simple, testable, and close to OpenCode's runtime layering 
 
 Prompt assets live under `internal/agent/prompts/`:
 
-- `system_prompt.md`
+- `default.md`
 - `mode/build.md`
 - `mode/plan.md`
 - `block-active-skill.md`
@@ -23,7 +23,7 @@ Prompt assets live under `internal/agent/prompts/`:
 
 `internal/agent/prompt.go` assembles the final system prompt in fixed order:
 
-1. `system_prompt.md`
+1. `default.md`
 2. `mode/{build|plan}.md`
 3. `renderSystemBlock(...)`
 4. `renderActiveSkillPrompt(...)` (only when a session skill is active)
@@ -40,6 +40,8 @@ Only non-empty blocks are included.
 - `tools` list
 - `active_skill` (name/description/args/tool-policy/instructions)
 - `instruction` text loaded from workspace root `AGENTS.md`
+
+The current runtime only auto-loads the workspace-root `AGENTS.md`. Nested-scope `AGENTS.md` files are not loaded automatically today.
 
 ## Mode Selection
 

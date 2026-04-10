@@ -65,6 +65,7 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	assertContains(t, prompt, "[Instructions]")
 	assertContains(t, prompt, "Instructions from:")
 	assertContains(t, prompt, "Use rg for search before broad shell scans.")
+	assertNotContains(t, prompt, "The contents of the AGENTS.md file at the root of the repo and any directories from the CWD up to the root are included with the developer message")
 	assertNotContains(t, prompt, "Primary objective:")
 	assertNotContains(t, prompt, "Tool Guidelines")
 	assertNotContains(t, prompt, "Only the active skill block is currently in effect.")
