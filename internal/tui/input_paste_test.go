@@ -60,8 +60,8 @@ func TestApplyLongPastedTextPipelineCompressesSplitPasteChunks(t *testing.T) {
 
 	m.input.SetValue(chunk1)
 	m.handleInputMutation("", chunk1, "paste")
-	if got := m.input.Value(); got != chunk1 {
-		t.Fatalf("expected first chunk to remain literal until paste is complete, got %q", got)
+	if got := m.input.Value(); got != chunk1 && !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(got) {
+		t.Fatalf("expected first chunk to be literal or already compressed, got %q", got)
 	}
 
 	before := m.input.Value()
@@ -79,7 +79,7 @@ func TestApplyLongPastedTextPipelineCompressesSplitPasteChunks(t *testing.T) {
 	}
 }
 
-func TestApplyLongPastedTextPipelineDoesNotCompressEarlyForShortInitialPasteChunk(t *testing.T) {
+func TestApplyLongPastedTextPipelineCompressesEarlyAndMergesFollowupPasteChunk(t *testing.T) {
 	m := newImagePipelineModel(t)
 	chunk1 := strings.Join([]string{
 		"# Long Paste Test Block (20 lines)",
@@ -107,8 +107,8 @@ func TestApplyLongPastedTextPipelineDoesNotCompressEarlyForShortInitialPasteChun
 
 	m.input.SetValue(chunk1)
 	m.handleInputMutation("", chunk1, "paste")
-	if got := m.input.Value(); got != chunk1 {
-		t.Fatalf("expected first short chunk to stay literal, got %q", got)
+	if got := m.input.Value(); !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(got) {
+		t.Fatalf("expected first chunk to compress immediately, got %q", got)
 	}
 
 	before := m.input.Value()
@@ -119,10 +119,10 @@ func TestApplyLongPastedTextPipelineDoesNotCompressEarlyForShortInitialPasteChun
 	got := m.input.Value()
 	re := regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`)
 	if !re.MatchString(got) {
-		t.Fatalf("expected whole paste to compress as one marker, got %q", got)
+		t.Fatalf("expected followup paste chunk to merge into one marker, got %q", got)
 	}
 	if len(m.pastedOrder) != 1 {
-		t.Fatalf("expected exactly one stored marker for one long paste, got %d", len(m.pastedOrder))
+		t.Fatalf("expected one stored marker after merged paste chunks, got %d", len(m.pastedOrder))
 	}
 }
 
@@ -176,9 +176,9 @@ func TestApplyLongPastedTextPipelineCompressesTailAfterMarkerIntoNewMarker(t *te
 	m.handleInputMutation(before, after, "paste")
 
 	got := m.input.Value()
-	re := regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]\[Paste #\d+ ~\d+ lines\]$`)
+	re := regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`)
 	if !re.MatchString(got) {
-		t.Fatalf("expected tail to be compressed as another marker, got %q", got)
+		t.Fatalf("expected immediate followup paste chunk to merge into latest marker, got %q", got)
 	}
 }
 
@@ -225,6 +225,7 @@ func TestApplyLongPastedTextPipelineTrimsShortTailAfterSecondMarker(t *testing.T
 
 	m.handleInputMutation("", first, "paste")
 	before := m.input.Value()
+	m.lastCompressedPasteAt = time.Now().Add(-time.Second)
 	m.handleInputMutation(before, before+second, "paste")
 	before = m.input.Value()
 	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]\[Paste #\d+ ~\d+ lines\]$`).MatchString(before) {
@@ -257,6 +258,7 @@ func TestApplyLongPastedTextPipelineAppendsMarkersForConsecutiveLongPastes(t *te
 
 	before := firstMarker
 	after := before + secondPaste
+	m.lastCompressedPasteAt = time.Now().Add(-time.Second)
 	m.input.SetValue(after)
 	m.handleInputMutation(before, after, "paste")
 
@@ -609,6 +611,26 @@ func TestShouldCompressPastedTextDetectsFastCharacterBurstWithoutPasteSignal(t *
 	}
 }
 
+func TestShouldCompressPastedTextDetectsShortRapidBurstEarly(t *testing.T) {
+	m := newImagePipelineModel(t)
+	text := strings.Repeat("x ", pasteBurstImmediateMinChars+2)
+	m.inputBurstSize = pasteBurstImmediateMinChars
+	m.lastInputAt = time.Now()
+	if !m.shouldCompressPastedText(text, "rune") {
+		t.Fatalf("expected short rapid burst to trigger early compression")
+	}
+}
+
+func TestShouldCompressPastedTextSkipsShortRapidBurstWithoutPasteSignals(t *testing.T) {
+	m := newImagePipelineModel(t)
+	text := strings.Repeat("x", pasteBurstImmediateMinChars+2)
+	m.inputBurstSize = pasteBurstImmediateMinChars
+	m.lastInputAt = time.Now()
+	if m.shouldCompressPastedText(text, "rune") {
+		t.Fatalf("expected short compact burst without paste traits to skip compression")
+	}
+}
+
 func TestExtractLineRangeClampsBounds(t *testing.T) {
 	content := "l1\nl2\nl3\nl4"
 	if got := extractLineRange(content, 0, 99); got != content {
@@ -638,5 +660,221 @@ func TestPastedRefPattern(t *testing.T) {
 		if matched != tc.expected {
 			t.Fatalf("input %q: expected %v, got %v", tc.input, tc.expected, matched)
 		}
+	}
+}
+
+func TestCountCompressedMarkersAndLatestMarkerLookup(t *testing.T) {
+	if got := countCompressedMarkers("   "); got != 0 {
+		t.Fatalf("expected empty marker count to be 0, got %d", got)
+	}
+	value := "[Paste #1 ~11 lines][Paste #2 ~15 lines] trailing"
+	if got := countCompressedMarkers(value); got != 2 {
+		t.Fatalf("expected two markers, got %d", got)
+	}
+
+	loc := latestCompressedMarkerInChain(value)
+	if !loc.ok {
+		t.Fatalf("expected latest marker location to be found")
+	}
+	if loc.id != "2" {
+		t.Fatalf("expected latest marker id 2, got %q", loc.id)
+	}
+	if got := value[loc.start:loc.end]; got != "[Paste #2 ~15 lines]" {
+		t.Fatalf("unexpected latest marker slice %q", got)
+	}
+
+	if loc := latestCompressedMarkerInChain("no marker"); loc.ok {
+		t.Fatalf("expected no marker location for non-marker input")
+	}
+}
+
+func TestShouldHoldCompressedMarkerBranchMatrix(t *testing.T) {
+	now := time.Now()
+	marker := "[Paste #1 ~11 lines]"
+
+	if shouldHoldCompressedMarker("plain text", "plain text trailing", "", now, 0) {
+		t.Fatalf("expected non-marker prefix not to be held")
+	}
+	if shouldHoldCompressedMarker(marker, marker, "", now, 0) {
+		t.Fatalf("expected unchanged marker not to be held")
+	}
+	if shouldHoldCompressedMarker(marker, marker+" [Paste #2 ~12 lines]", "", now, 0) {
+		t.Fatalf("expected marker-only tail chain not to be held")
+	}
+
+	if !shouldHoldCompressedMarker(marker, marker+" this continuation payload should be held", "", now, 0) {
+		t.Fatalf("expected long tail after marker to be held")
+	}
+	if !shouldHoldCompressedMarker(marker, marker+" short", "paste", time.Time{}, 0) {
+		t.Fatalf("expected paste-like source to hold short tail")
+	}
+	if !shouldHoldCompressedMarker(marker, marker+" short", "rune", time.Time{}, 10) {
+		t.Fatalf("expected burst size to hold short tail")
+	}
+	if !shouldHoldCompressedMarker(marker, marker+" short", "rune", now, 0) {
+		t.Fatalf("expected recent paste window to hold short tail")
+	}
+	if shouldHoldCompressedMarker(marker, marker+" short", "rune", time.Time{}, 0) {
+		t.Fatalf("expected short stale tail without paste signals not to be held")
+	}
+}
+
+func TestMergeTailIntoLatestMarkerUpdatesLatestOnly(t *testing.T) {
+	m := newImagePipelineModel(t)
+
+	firstRaw := strings.Join([]string{"f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11"}, "\n")
+	secondRaw := strings.Join([]string{"s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11"}, "\n")
+	marker1, firstStored, err := m.compressPastedText(firstRaw)
+	if err != nil {
+		t.Fatalf("compress first: %v", err)
+	}
+	marker2, secondStored, err := m.compressPastedText(secondRaw)
+	if err != nil {
+		t.Fatalf("compress second: %v", err)
+	}
+	chain := marker1 + marker2
+
+	tail := "\nextra-1\nextra-2\nextra-3\nextra-4"
+	updated, merged, err := m.mergeTailIntoLatestMarker(chain, tail)
+	if err != nil {
+		t.Fatalf("merge tail: %v", err)
+	}
+	if !merged {
+		t.Fatalf("expected merge into latest marker")
+	}
+	if !strings.Contains(updated, "[Paste #"+secondStored.ID+" ~15 lines]") {
+		t.Fatalf("expected latest marker line count to be updated, got %q", updated)
+	}
+
+	firstAfter, ok := m.findPastedContent(firstStored.ID)
+	if !ok {
+		t.Fatalf("expected first stored content to remain present")
+	}
+	if firstAfter.Content != firstStored.Content {
+		t.Fatalf("expected first stored content to remain unchanged")
+	}
+	secondAfter, ok := m.findPastedContent(secondStored.ID)
+	if !ok {
+		t.Fatalf("expected latest stored content to remain present")
+	}
+	if secondAfter.Lines != 15 {
+		t.Fatalf("expected merged latest content lines=15, got %d", secondAfter.Lines)
+	}
+	if !strings.Contains(secondAfter.Content, "extra-4") {
+		t.Fatalf("expected tail to append into latest stored content")
+	}
+}
+
+func TestResolvePastedSelectionInvalidStartLine(t *testing.T) {
+	m := newImagePipelineModel(t)
+	_, stored, err := m.compressPastedText("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk")
+	if err != nil {
+		t.Fatalf("compress pasted text: %v", err)
+	}
+
+	if _, err := m.resolvePastedSelection(stored.ID, "not-a-number", ""); err == nil {
+		t.Fatalf("expected invalid start line to return error")
+	}
+	if _, err := m.resolvePastedSelection("9999", "1", "2"); err == nil {
+		t.Fatalf("expected unknown pasted id to return error")
+	}
+}
+
+func TestProtectCompressedMarkerChainPreventsAccidentalEdits(t *testing.T) {
+	m := newImagePipelineModel(t)
+	raw := strings.Join([]string{
+		"a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10", "a11",
+	}, "\n")
+	m.handleInputMutation("", raw, "paste")
+	marker := m.input.Value()
+	if !strings.HasPrefix(marker, "[Paste #") {
+		t.Fatalf("expected compressed marker, got %q", marker)
+	}
+
+	edited := strings.Replace(marker, "Paste", "Pste", 1)
+	m.handleInputMutation(marker, edited, "rune")
+	if got := m.input.Value(); got != marker {
+		t.Fatalf("expected edited marker to be restored, got %q", got)
+	}
+
+	deleted := ""
+	m.input.SetValue(deleted)
+	m.handleInputMutation(marker, deleted, "backspace")
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("expected deleting whole marker to be allowed, got %q", got)
+	}
+
+	// Editing only marker metadata should also be blocked.
+	mutatedCount := strings.Replace(marker, "~11 lines", "~99 lines", 1)
+	m.handleInputMutation(marker, mutatedCount, "rune")
+	if got := m.input.Value(); got != marker {
+		t.Fatalf("expected manual marker metadata edits to be restored, got %q", got)
+	}
+}
+
+func TestProtectCompressedMarkerChainAllowsPasteCoalescingMetadataUpdate(t *testing.T) {
+	m := newImagePipelineModel(t)
+	before := "[Paste #1 ~11 lines]"
+	after := "[Paste #1 ~14 lines]"
+
+	got, changed := m.protectCompressedMarkerChain(before, after, "paste")
+	if changed {
+		t.Fatalf("expected paste-driven marker metadata update to be allowed")
+	}
+	if got != after {
+		t.Fatalf("expected after marker to be kept, got %q", got)
+	}
+}
+
+func TestProtectCompressedMarkerChainBlocksRuneMetadataEditEvenWhenRecent(t *testing.T) {
+	m := newImagePipelineModel(t)
+	before := "[Paste #1 ~11 lines]"
+	after := "[Paste #1 ~99 lines]"
+	m.lastCompressedPasteAt = time.Now()
+
+	got, changed := m.protectCompressedMarkerChain(before, after, "rune")
+	if !changed {
+		t.Fatalf("expected rune metadata edit to be blocked")
+	}
+	if got != before {
+		t.Fatalf("expected marker metadata to be restored, got %q", got)
+	}
+}
+
+func TestProtectCompressedMarkerChainBackspaceDeletesWholeMarkerBlock(t *testing.T) {
+	m := newImagePipelineModel(t)
+	before := "[Paste #1 ~11 lines]"
+	after := "[Paste #1 ~11 line]"
+
+	got, changed := m.protectCompressedMarkerChain(before, after, "backspace")
+	if !changed {
+		t.Fatalf("expected backspace on marker to trigger block deletion")
+	}
+	if got != "" {
+		t.Fatalf("expected single marker block to be deleted, got %q", got)
+	}
+}
+
+func TestProtectCompressedMarkerChainBackspaceDeletesLatestMarkerInChain(t *testing.T) {
+	m := newImagePipelineModel(t)
+	before := "[Paste #1 ~11 lines][Paste #2 ~7 lines]"
+	after := "[Paste #1 ~11 lines][Paste #2 ~7 line]"
+
+	got, changed := m.protectCompressedMarkerChain(before, after, "backspace")
+	if !changed {
+		t.Fatalf("expected backspace on chained marker to trigger block deletion")
+	}
+	if got != "[Paste #1 ~11 lines]" {
+		t.Fatalf("expected latest marker to be removed, got %q", got)
+	}
+}
+
+func TestShouldMergeIntoLatestMarkerAllowsFastPasteChunks(t *testing.T) {
+	now := time.Now()
+	if !shouldMergeIntoLatestMarker("paste", now.Add(-80*time.Millisecond)) {
+		t.Fatalf("expected immediate paste chunk to merge into latest marker")
+	}
+	if shouldMergeIntoLatestMarker("paste", now.Add(-500*time.Millisecond)) {
+		t.Fatalf("expected delayed paste chunk not to merge into latest marker")
 	}
 }
