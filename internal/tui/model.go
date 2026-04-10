@@ -22,7 +22,6 @@ import (
 	planpkg "bytemind/internal/plan"
 	"bytemind/internal/provider"
 	"bytemind/internal/session"
-	tokentui "bytemind/internal/token/tui"
 	"bytemind/internal/tools"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -247,7 +246,7 @@ type model struct {
 	chatAutoFollow        bool
 	draggingScrollbar     bool
 	scrollbarDragOffset   int
-	tokenUsage            tokentui.Component
+	tokenUsage            tokenUsageComponent
 	tokenUsedTotal        int
 	tokenBudget           int
 	tokenInput            int
@@ -255,7 +254,7 @@ type model struct {
 	tokenContext          int
 	tokenHasOfficialUsage bool
 	tempEstimatedOutput   int
-	tokenEstimator        *tokentui.RealtimeEstimator
+	tokenEstimator        *realtimeTokenEstimator
 	promptHistoryLoaded   bool
 	promptHistoryEntries  []history.PromptEntry
 	promptSearchMode      promptSearchMode
@@ -345,9 +344,9 @@ func newModel(opts Options) model {
 		llmConnected:       true,
 		chatAutoFollow:     true,
 		mentionIndex:       mention.NewWorkspaceFileIndex(opts.Workspace),
-		tokenUsage:         tokentui.NewComponent(),
+		tokenUsage:         newTokenUsageComponent(),
 		tokenBudget:        max(1, opts.Config.TokenQuota),
-		tokenEstimator:     tokentui.NewRealtimeTokenEstimator(opts.Config.Provider.Model),
+		tokenEstimator:     newRealtimeTokenEstimator(opts.Config.Provider.Model),
 		inputImageRefs:     make(map[int]llm.AssetID, 8),
 		inputImageMentions: make(map[string]llm.AssetID, 8),
 		orphanedImages:     make(map[llm.AssetID]time.Time, 8),
@@ -480,7 +479,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tokenUsagePulledMsg:
 		// Account-level usage is not session-accurate; ignore in session-only mode.
 		return m, nil
-	case tokentui.TickMsg:
+	case tokenMonitorTickMsg:
 		cmd, _ := m.tokenUsage.Update(msg)
 		return m, cmd
 	case tea.MouseMsg:
@@ -3408,7 +3407,7 @@ func (m model) loadSessionsCmd() tea.Cmd {
 
 func (m model) fetchRemoteTokenUsageCmd() tea.Cmd {
 	return func() tea.Msg {
-		usage, err := tokentui.FetchCurrentMonthUsage(m.cfg)
+		usage, err := fetchCurrentMonthUsage(m.cfg)
 		if err != nil {
 			return tokenUsagePulledMsg{Err: err}
 		}
