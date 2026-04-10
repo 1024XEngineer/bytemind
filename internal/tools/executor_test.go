@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"bytemind/internal/llm"
 )
@@ -14,6 +15,7 @@ type executorTestTool struct {
 	name   string
 	result string
 	err    error
+	run    func(context.Context, json.RawMessage, *ExecutionContext) (string, error)
 }
 
 func (t executorTestTool) Definition() llm.ToolDefinition {
@@ -31,7 +33,10 @@ func (t executorTestTool) Definition() llm.ToolDefinition {
 	}
 }
 
-func (t executorTestTool) Run(_ context.Context, _ json.RawMessage, _ *ExecutionContext) (string, error) {
+func (t executorTestTool) Run(ctx context.Context, raw json.RawMessage, execCtx *ExecutionContext) (string, error) {
+	if t.run != nil {
+		return t.run(ctx, raw, execCtx)
+	}
 	return t.result, t.err
 }
 
@@ -90,14 +95,50 @@ func TestExecutorNormalizesToolFailure(t *testing.T) {
 
 func TestExecutorTruncatesLongOutput(t *testing.T) {
 	registry := &Registry{}
-	registry.Add(executorTestTool{name: "strict_tool", result: strings.Repeat("a", 70000)})
+	registry.Add(executorTestTool{
+		name:   "strict_tool",
+		result: `{"ok":true,"stdout":"` + strings.Repeat("a", 70000) + `"}`,
+	})
 	executor := NewExecutor(registry)
 
 	got, err := executor.Execute(context.Background(), "strict_tool", `{"path":"a.txt"}`, &ExecutionContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(got, "\n...[truncated]") {
-		t.Fatalf("expected truncated output suffix, got %q", got[len(got)-16:])
+	if !json.Valid([]byte(got)) {
+		t.Fatalf("expected valid JSON output, got %q", got)
+	}
+
+	var payload struct {
+		OK     bool   `json:"ok"`
+		Stdout string `json:"stdout"`
+	}
+	if err := json.Unmarshal([]byte(got), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.OK {
+		t.Fatalf("expected OK payload, got %s", got)
+	}
+	if !strings.HasSuffix(payload.Stdout, "\n...[truncated]") {
+		t.Fatalf("expected truncated stdout suffix, got %q", payload.Stdout[len(payload.Stdout)-16:])
+	}
+}
+
+func TestExecutorDoesNotOverrideToolManagedTimeouts(t *testing.T) {
+	registry := &Registry{}
+	registry.Add(executorTestTool{
+		name: "strict_tool",
+		run: func(ctx context.Context, _ json.RawMessage, _ *ExecutionContext) (string, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				return `{"ok":true}`, nil
+			}
+			return "", errors.New("unexpected deadline: " + deadline.Format(time.RFC3339))
+		},
+	})
+	executor := NewExecutor(registry)
+
+	if _, err := executor.Execute(context.Background(), "strict_tool", `{"path":"a.txt"}`, &ExecutionContext{}); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	planpkg "bytemind/internal/plan"
 )
@@ -96,10 +95,7 @@ func (e *Executor) ExecuteRequest(ctx context.Context, req ExecuteRequest) (Exec
 		execCtx.Mode = planpkg.NormalizeMode(string(req.Mode))
 	}
 
-	runCtx, cancel := context.WithTimeout(ctx, time.Duration(resolved.Spec.DefaultTimeoutS)*time.Second)
-	defer cancel()
-
-	output, runErr := resolved.Tool.Run(runCtx, raw, execCtx)
+	output, runErr := resolved.Tool.Run(ctx, raw, execCtx)
 	if runErr != nil {
 		return ExecuteResult{}, normalizeToolError(runErr)
 	}
@@ -163,11 +159,123 @@ func (maxCharsOutputNormalizer) Normalize(output string, resolved ResolvedTool) 
 	if maxChars <= 0 || len(output) <= maxChars {
 		return output
 	}
-	const suffix = "\n...[truncated]"
-	if maxChars <= len(suffix) {
-		return output[:maxChars]
+
+	var payload any
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		return truncateText(output, maxChars)
 	}
-	return output[:maxChars-len(suffix)] + suffix
+
+	normalized, ok := truncateJSONToFit(payload, maxChars)
+	if !ok {
+		return truncateText(output, maxChars)
+	}
+	return normalized
+}
+
+const truncatedSuffix = "\n...[truncated]"
+
+func truncateJSONToFit(payload any, maxChars int) (string, bool) {
+	for attempt := 0; attempt < 128; attempt++ {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return "", false
+		}
+		if len(data) <= maxChars {
+			return string(data), true
+		}
+
+		reduced, changed := reduceLargestString(payload, len(data)-maxChars)
+		if !changed {
+			return "", false
+		}
+		payload = reduced
+	}
+	return "", false
+}
+
+func reduceLargestString(value any, excess int) (any, bool) {
+	switch current := value.(type) {
+	case map[string]any:
+		return reduceLargestMapString(current, excess)
+	case []any:
+		return reduceLargestSliceString(current, excess)
+	default:
+		return value, false
+	}
+}
+
+func reduceLargestMapString(value map[string]any, excess int) (map[string]any, bool) {
+	longestKey := ""
+	longestLen := 0
+	for key, item := range value {
+		if text, ok := item.(string); ok && len(text) > longestLen {
+			longestKey = key
+			longestLen = len(text)
+		}
+	}
+	if longestKey != "" {
+		value[longestKey] = truncateText(value[longestKey].(string), nextStringLimit(longestLen, excess))
+		return value, true
+	}
+
+	for key, item := range value {
+		reduced, changed := reduceLargestString(item, excess)
+		if !changed {
+			continue
+		}
+		value[key] = reduced
+		return value, true
+	}
+	return value, false
+}
+
+func reduceLargestSliceString(value []any, excess int) ([]any, bool) {
+	longestIndex := -1
+	longestLen := 0
+	for index, item := range value {
+		if text, ok := item.(string); ok && len(text) > longestLen {
+			longestIndex = index
+			longestLen = len(text)
+		}
+	}
+	if longestIndex >= 0 {
+		value[longestIndex] = truncateText(value[longestIndex].(string), nextStringLimit(longestLen, excess))
+		return value, true
+	}
+
+	for index, item := range value {
+		reduced, changed := reduceLargestString(item, excess)
+		if !changed {
+			continue
+		}
+		value[index] = reduced
+		return value, true
+	}
+	return value, false
+}
+
+func nextStringLimit(length, excess int) int {
+	reduction := excess + len(truncatedSuffix) + 8
+	if reduction < length/2 {
+		reduction = length / 2
+	}
+	if reduction >= length {
+		return len(truncatedSuffix)
+	}
+	return length - reduction
+}
+
+func truncateText(value string, maxChars int) string {
+	if maxChars <= 0 {
+		return ""
+	}
+	if len(value) <= maxChars {
+		return value
+	}
+	if maxChars <= len(truncatedSuffix) {
+		return value[:maxChars]
+	}
+	return value[:maxChars-len(truncatedSuffix)] + truncatedSuffix
 }
 
 func normalizeToolError(err error) error {
