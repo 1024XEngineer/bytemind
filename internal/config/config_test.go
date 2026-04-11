@@ -119,7 +119,7 @@ func TestLoadMergesUserAndProjectConfigWithProjectPrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := writeConfig(filepath.Join(workspace, "config.json"), map[string]any{
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
 		"provider": map[string]any{
 			"type":     "openai-compatible",
 			"base_url": "https://api.openai.com/v1",
@@ -154,10 +154,49 @@ func TestLoadMergesUserAndProjectConfigWithProjectPrecedence(t *testing.T) {
 	}
 }
 
+func TestLoadIgnoresLegacyBytemindConfigJSON(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+
+	if err := writeConfig(filepath.Join(home, "config.json"), map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.openai.com/v1",
+			"model":    "user-model",
+			"api_key":  "user-key",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeConfig(filepath.Join(workspace, "bytemind.config.json"), map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.openai.com/v1",
+			"model":    "legacy-project-model",
+			"api_key":  "legacy-project-key",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Model != "user-model" {
+		t.Fatalf("expected legacy bytemind.config.json to be ignored, got %q", cfg.Provider.Model)
+	}
+	if cfg.Provider.ResolveAPIKey() != "user-key" {
+		t.Fatalf("expected user config api key when legacy project config exists, got %q", cfg.Provider.ResolveAPIKey())
+	}
+}
+
 func TestLoadAcceptsLegacySessionDirField(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
-	if err := writeConfig(filepath.Join(workspace, "config.json"), map[string]any{
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
 		"provider": map[string]any{
 			"type":     "openai-compatible",
 			"base_url": "https://api.openai.com/v1",
@@ -181,7 +220,7 @@ func TestLoadAcceptsLegacySessionDirField(t *testing.T) {
 func TestLoadDefaultsOpenAIModelWhenMissing(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
-	if err := writeConfig(filepath.Join(workspace, "config.json"), map[string]any{
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
 		"provider": map[string]any{
 			"type":     "openai-compatible",
 			"base_url": "https://api.deepseek.com",
@@ -204,7 +243,11 @@ func TestLoadDefaultsOpenAIModelWhenMissing(t *testing.T) {
 func TestLoadRejectsUnsupportedProviderType(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
-	if err := os.WriteFile(filepath.Join(workspace, "config.json"), []byte(`{
+	path := projectConfigPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{
   "provider": {
     "type": "unsupported",
     "base_url": "https://example.com",
@@ -227,7 +270,11 @@ func TestLoadRejectsUnsupportedProviderType(t *testing.T) {
 func TestLoadRejectsInvalidApprovalPolicy(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
-	if err := os.WriteFile(filepath.Join(workspace, "config.json"), []byte(`{
+	path := projectConfigPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{
   "provider": {
     "type": "openai-compatible",
     "base_url": "https://api.openai.com/v1",
@@ -251,7 +298,10 @@ func TestLoadRejectsInvalidApprovalPolicy(t *testing.T) {
 func TestLoadRejectsMalformedConfigJSON(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
-	configPath := filepath.Join(workspace, "config.json")
+	configPath := projectConfigPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(configPath, []byte(`{"provider":`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -423,5 +473,12 @@ func writeConfig(path string, cfg map[string]any) error {
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+func projectConfigPath(workspace string) string {
+	return filepath.Join(workspace, ".bytemind", "config.json")
 }

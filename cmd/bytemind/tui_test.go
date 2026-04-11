@@ -175,3 +175,36 @@ func TestRunTUIFailsWhenImageCachePathIsAFile(t *testing.T) {
 		t.Fatal("expected image store initialization error")
 	}
 }
+
+func TestConfigPathHintPrefersDotBytemindConfig(t *testing.T) {
+	workspace := t.TempDir()
+	projectConfig := filepath.Join(workspace, ".bytemind", "config.json")
+	if err := os.MkdirAll(filepath.Dir(projectConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(projectConfig, []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := configPathHint(workspace, "")
+	if got != projectConfig {
+		t.Fatalf("expected project config path %q, got %q", projectConfig, got)
+	}
+}
+
+func TestConfigPathHintIgnoresLegacyBytemindConfigJSON(t *testing.T) {
+	workspace := t.TempDir()
+	legacyConfig := filepath.Join(workspace, "bytemind.config.json")
+	if err := os.WriteFile(legacyConfig, []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+
+	got := configPathHint(workspace, "")
+	want := filepath.Join(home, "config.json")
+	if got != want {
+		t.Fatalf("expected fallback user config path %q, got %q", want, got)
+	}
+}

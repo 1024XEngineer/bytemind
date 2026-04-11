@@ -29,7 +29,7 @@ internal/tools          文件工具、patch 工具、shell 工具
 
 ## 快速开始
 
-先按下方“配置文件”章节准备好 `config.json`，再在仓库根目录运行：
+先按下方“配置文件”章节准备好配置文件，再在仓库根目录运行：
 
 聊天模式：
 
@@ -52,10 +52,13 @@ go run ./cmd/bytemind run -prompt "refactor this module" -max-iterations 64
 
 ## 配置文件
 
-在工作区根目录下寻找配置文件 `config.json`，直接从仓库根目录复制示例模板开始：
+项目级配置文件建议使用 `./.bytemind/config.json`。
+
+可直接从仓库根目录复制示例模板开始：
 
 ```powershell
-Copy-Item config.example.json config.json
+New-Item -ItemType Directory -Force .bytemind | Out-Null
+Copy-Item config.example.json .bytemind/config.json
 ```
 
 然后把 `api_key` 等字段改成你自己的配置。

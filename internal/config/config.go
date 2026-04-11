@@ -216,9 +216,7 @@ func resolveConfigPath(workspace, explicit string) (string, error) {
 
 func resolveProjectConfigPath(workspace string) string {
 	candidates := []string{
-		filepath.Join(workspace, "config.json"),
 		filepath.Join(workspace, ".bytemind", "config.json"),
-		filepath.Join(workspace, "bytemind.config.json"),
 	}
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {

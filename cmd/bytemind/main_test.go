@@ -636,7 +636,11 @@ func writeTestConfig(t *testing.T, workspace string, cfg map[string]any) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(workspace, "config.json"), data, 0o644); err != nil {
+	configPath := filepath.Join(workspace, ".bytemind", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
