@@ -34,6 +34,7 @@
 4. 工作区隔离：只允许操作当前工作目录。
 5. 全链路可观测：每一步工具调用、写入、校验都要记录。
 6. 失败可恢复：出现错误时必须返回明确原因，并保留中间状态。
+7. 单代理优先：V1 先保证单代理闭环稳定，再逐步引入更复杂能力。
 
 ## 3. 总体架构
 
@@ -70,6 +71,26 @@ flowchart TD
 - `Validator`：运行测试、构建、格式化，并解析失败结果供下一轮修复使用。
 - `Session Store`：保存本轮会话状态、操作日志、上下文摘要、变更记录。
 - `LLM Adapter`：抽象模型调用，隔离 Prompt、Tool Call Schema 和模型供应商差异。
+
+### 3.3 V1 范围收敛（本版约束）
+
+V1 仅交付单代理主闭环，避免在 MVP 阶段引入过大的并发与扩展面。
+
+- V1 保留：
+  - `CLI Layer`
+  - `Agent Orchestrator`
+  - `Context Manager`
+  - `Policy Guard`
+  - `Tool Runtime`（内置工具）
+  - `Patch Engine`
+  - `Validator`
+  - `Session Store`
+  - `LLM Adapter`
+- V1 延后到 V1.1/V2：
+  - 多代理编排与协调器
+  - 通用插件宿主（Plugin）
+  - 命令 AST 深度分析器
+  - 复杂工作流引擎
 
 ## 4. 逻辑视图
 
@@ -181,6 +202,17 @@ Idle
  -> Summarizing
  -> Completed / Failed / AwaitingConfirmation
 ```
+
+### 控制流契约（loop 与 orchestrator）
+
+- 调用方向固定：`loop -> orchestrator -> {policy, tools, llm, store}`。
+- `loop` 负责：状态迁移、重试上限、停止条件。
+- `orchestrator` 负责：单步决策与执行编排（本步调用工具或模型，产出事件与结果）。
+- 事件必须边执行边产出（streaming），不能等整步完成后再一次性输出。
+
+`Idle` 与 `Waiting` 语义区分：
+- `Idle`：当前没有在执行 run，也没有外部结果在途，可立即接收新输入。
+- `Waiting`：当前 run 未结束，正在等待外部条件（工具回调/审批/重试窗口）。
 
 ### 设计要点
 
@@ -362,6 +394,39 @@ type ValidationResult struct {
 - 高风险动作在确认前不可落盘。
 - 命令禁止直接拼接不可信用户输入。
 
+### PermissionDecision 规范（可执行）
+
+为避免同请求出现不一致决策，`Policy Guard` 在 V1 必须输出统一决策对象：
+
+```go
+type PermissionDecision struct {
+    Allowed         bool
+    Action          string
+    RiskLevel       string
+    MatchedRuleID   string
+    Reason          string
+    RequireApproval bool
+    CacheKey        string
+    ExpiresAt       time.Time
+}
+```
+
+规则优先级（高到低，短路）：
+1. 路径越界/敏感路径硬拒绝
+2. 显式 deny（工具/命令/路径）
+3. 高风险动作审批门禁
+4. 显式 allow（工具/命令/路径）
+5. 默认拒绝
+
+缓存键建议包含：
+- `session_id + action + target_path + command_digest + policy_version`
+
+失效条件：
+- 会话模式变更
+- policy 版本变更
+- 工作区根目录变化
+- 命令或路径输入变化
+
 ## 5.8 Session Store
 
 ### 职责
@@ -381,6 +446,20 @@ MVP 阶段优先采用本地文件存储，而不是先引入数据库：
 - `artifacts/`：命令输出、测试结果、补丁文件
 
 这样实现简单、可调试、易审计，后续再切换 SQLite 也较平滑。
+
+### 一致性与恢复顺序（必须定义）
+
+为避免双写漂移，V1 采用“`session.json` 为会话事实源，`events.jsonl` 为执行事实流，`changes/` 与 `artifacts/` 为证据归档”的分层。
+
+崩溃恢复顺序固定为：
+1. 读取 `session.json` 恢复会话终态与最后 checkpoint。
+2. 回放 `events.jsonl` 到最后完整事件，重建内存态。
+3. 依据 `changes/` 快照校验关键文件哈希。
+4. 如存在未完成验证步骤，重新触发 `Validator`。
+
+恢复失败策略：
+- 标记会话为 `recovery_failed`。
+- 输出冲突文件与建议人工处理路径。
 
 ### 数据结构建议
 
@@ -605,6 +684,29 @@ gocode/
 - 每轮任务记录所有改动文件。
 - 为后续 `/undo` 功能预留快照恢复能力。
 
+### 9.4 命令防护（V1 可落地版本）
+
+V1 不引入 AST 级命令分析，先采用可验证且低复杂度的防护组合：
+
+- 命令白名单 + 参数约束
+- 高危子串硬拒绝（如递归删除、覆盖系统路径等）
+- 超时、输出截断、退出码审计
+- 工作区沙箱约束（禁止越界路径）
+
+命令 AST 分析作为 V1.1 增强项，不阻塞 V1 落地。
+
+### 9.5 自动压缩质量闸门
+
+当上下文触发压缩后，必须执行最小质量检查：
+
+- 当前任务目标是否仍保留
+- 未完成步骤与相关文件引用是否完整
+- 最近一次失败信息是否保留
+
+若任一检查失败：
+- 回退到压缩前快照
+- 降低压缩比并重试一次
+
 ## 10. 非功能设计
 
 ### 10.1 性能
@@ -666,6 +768,17 @@ MVP 阶段不建议过早引入复杂消息队列、远程执行框架或多 Age
 - Session Store
 - `/plan`、`/files`、`/diff`
 
+### V1 -> V1.1 进入条件
+
+- 单代理主链路成功率稳定
+- 权限拒绝与审批链路无一致性错误
+- 会话恢复流程通过故障演练
+
+满足以上条件后，再引入：
+- MCP 扩展接入
+- 命令 AST 分析
+- 多代理协作能力
+
 ## 13. 风险点与缓解方案
 
 | 风险 | 描述 | 缓解方案 |
@@ -691,3 +804,15 @@ MVP 阶段不建议过早引入复杂消息队列、远程执行框架或多 Age
 `GoCode` 的 MVP 架构应以 `Agent Orchestrator` 为核心，围绕 `Context Manager`、`Tool Runtime`、`Patch Engine`、`Validator` 和 `Session Store` 建立完整执行闭环。该方案既能满足 PRD 要求的本地 CLI 代码代理能力，也保留了后续扩展 Git 辅助、`/undo`、更强重构能力与更安全执行策略的空间。
 
 在实现优先级上，应先确保“读代码 -> 找位置 -> 改代码 -> 跑验证 -> 返回结果”的主流程稳定跑通，再逐步补强风险控制、会话连续性与可观测性。
+
+## 16. Open Decisions（架构决策待办）
+
+以下内容从“风险提示”升级为“可执行决策项”，每项包含默认策略、升级触发与度量指标。
+
+| 主题 | V1 默认策略 | 升级触发条件 | 指标 |
+|---|---|---|---|
+| Memory 压缩与遗忘 | 按阈值压缩 + 保留最近任务目标与失败上下文 | 压缩后修复成功率下降 | `compression_ratio`, `answer_regression_rate` |
+| 多 Agent 协作 | V1 不启用，多任务串行 | 串行吞吐无法满足目标场景 | `task_queue_time`, `parallel_speedup` |
+| 成本与延迟治理 | 固定模型档位 + 基础预算门禁 | P95 延迟或单任务成本持续超阈值 | `p95_latency`, `cost_per_task` |
+| Tool 信任模型 | 分级权限 + 审批 + 沙箱 | 高风险工具审批积压或误放行 | `approval_latency`, `unsafe_attempt_rate` |
+| 事件 schema 演进 | 仅新增字段，保持向后兼容 | 消费端版本分裂增加 | `decode_error_rate`, `version_skew_count` |
