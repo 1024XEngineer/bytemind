@@ -58,6 +58,10 @@ flowchart TB
   AG --> TO
   RT --> ST
   TO --> EX
+  AG --> ST
+  RT --> ST
+  SE --> ST
+
 
 ```
 ## 7. 目录结构（Go）
