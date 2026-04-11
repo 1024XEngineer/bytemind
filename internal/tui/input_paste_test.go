@@ -214,6 +214,36 @@ func TestApplyLongPastedTextPipelineAllowsTailAccumulationThenCompresses(t *test
 	}
 }
 
+func TestApplyLongPastedTextPipelineHidesTransientTailDuringSplitRuneContinuation(t *testing.T) {
+	m := newImagePipelineModel(t)
+	first := strings.Join([]string{
+		"a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10", "a11",
+	}, "\n")
+	second := strings.Join([]string{
+		"b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9", "b10", "b11",
+	}, "\n")
+
+	m.handleInputMutation("", first, "paste")
+	before := m.input.Value()
+	if !strings.HasPrefix(before, "[Paste #") {
+		t.Fatalf("expected first marker, got %q", before)
+	}
+
+	markerRe := regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`)
+	for _, r := range second {
+		after := before + string(r)
+		m.input.SetValue(after)
+		m.handleInputMutation(before, after, "rune")
+		before = m.input.Value()
+		if !markerRe.MatchString(before) {
+			t.Fatalf("expected transient continuation tail to stay hidden, got %q", before)
+		}
+	}
+	if len(m.pastedOrder) != 1 {
+		t.Fatalf("expected one stored entry for split chunks from same paste burst, got %d", len(m.pastedOrder))
+	}
+}
+
 func TestApplyLongPastedTextPipelineTrimsShortTailAfterSecondMarker(t *testing.T) {
 	m := newImagePipelineModel(t)
 	first := strings.Join([]string{

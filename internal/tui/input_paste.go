@@ -366,6 +366,16 @@ func (m *model) applyLongPastedTextPipeline(before, after, source string) (strin
 		if strings.HasPrefix(afterTrimmed, chain) {
 			rawTail := strings.TrimPrefix(afterTrimmed, chain)
 			tail := strings.TrimSpace(rawTail)
+			if tail == "" {
+				chainValue := strings.TrimSpace(chain)
+				if strings.HasPrefix(after, chainValue) {
+					visibleTail := strings.TrimPrefix(after, chainValue)
+					if strings.TrimSpace(visibleTail) == "" &&
+						shouldHoldCompressedMarker(before, after, source, m.lastPasteAt, m.inputBurstSize) {
+						return chainValue, ""
+					}
+				}
+			}
 			if tail != "" && !compressedPasteMarkerPattern.MatchString(tail) && !compressedPasteMarkerChainPrefixPattern.MatchString(tail) {
 				safeTail := len(extractImagePathsFromChunk(tail, m.workspace)) == 0 &&
 					len(extractInlineImagePathSpans(tail)) == 0
@@ -389,6 +399,11 @@ func (m *model) applyLongPastedTextPipeline(before, after, source string) (strin
 					note := fmt.Sprintf("Detected another pasted block and compressed it as %s (%d lines).",
 						marker, content.Lines)
 					return updated, note
+				}
+				if shouldHoldCompressedMarker(before, after, source, m.lastPasteAt, m.inputBurstSize) {
+					// Hide transient continuation tails so split paste chunks do not
+					// visibly appear/disappear before marker coalescing completes.
+					return strings.TrimSpace(chain), ""
 				}
 				// Keep tail as-is so split paste chunks can accumulate and then
 				// compress into the next marker once they cross thresholds.
@@ -507,11 +522,23 @@ func latestCompressedMarkerInChain(chain string) compressedMarkerLoc {
 }
 
 func shouldHoldCompressedMarker(before, after, source string, lastPasteAt time.Time, burst int) bool {
+	rawAfter := after
 	before = strings.TrimSpace(before)
 	after = strings.TrimSpace(after)
 	marker, ok := extractLeadingCompressedMarker(before)
 	if !ok {
 		return false
+	}
+	if strings.HasPrefix(rawAfter, marker) {
+		rawTail := strings.TrimPrefix(rawAfter, marker)
+		if rawTail != "" && strings.TrimSpace(rawTail) == "" {
+			if isPasteLikeSource(source) || burst >= 8 {
+				return true
+			}
+			if !lastPasteAt.IsZero() && time.Since(lastPasteAt) <= pasteContinuationWindow {
+				return true
+			}
+		}
 	}
 	if len(after) <= len(marker) || !strings.HasPrefix(after, marker) {
 		return false
