@@ -178,15 +178,14 @@ type PermissionDecision struct {
 ### 11.2 自动压缩（无 Memory）
 1. 触发阈值：`warning >= 85%`，`critical >= 95%`。
 2. 约束：`tool_use` 与 `tool_result` 必须成对保留。
-3. 质量门禁：保留目标、约束、未完成动作。
-4. 回退：`prompt_too_long` 触发一次 reactive compact + 重试。
+3. 回退：`prompt_too_long` 触发一次 reactive compact + 重试。
 
 ### 11.3 任务系统
 1. 状态机：`pending -> running -> completed|failed|killed`。
 2. 必备机制：超时、取消传播、最大重试次数、终态回收。
 3. 输出：任务日志按 offset 增量读取。
 
-### 11.4 多代理
+### 11.4 子代理
 1. 同步子代理：父代理等待子代理返回。
 2. 异步后台代理：父代理继续执行，后续归并结果。
 3. worktree 隔离代理：独立分支与工作区，避免主工作区污染。
@@ -233,7 +232,6 @@ type Tool interface {
 3. 命令安全：白名单 + 高危规则。
 4. 敏感文件保护：密钥/凭证默认拒绝读取。
 5. 沙箱策略：网络开关、路径白名单、资源限额。
-6. 审计取证：决策与执行全量记录，日志脱敏。
 
 ## 14. 文件存储与恢复（不落库）
 
@@ -247,14 +245,8 @@ type Tool interface {
 2. 单记录原子落盘（临时文件+rename 或 fsync 策略）。
 3. 会话级文件锁，避免并发乱序写。
 4. 事件携带 `event_id`，恢复时幂等去重。
-5. 崩溃恢复顺序：session -> task offset -> replay -> repair audit。
 
-### 14.3 版本治理
-1. 每条记录包含 `schema_version`。
-2. 仅允许向后兼容新增字段。
-3. 破坏性变更必须提供迁移器与回滚方案。
-
-## 15. 可观测性与 SLO
+## 15. 可观测性
 
 ### 15.1 指标
 1. 请求成功率、工具成功率、任务成功率。
@@ -266,15 +258,9 @@ type Tool interface {
 ### 15.2 Trace
 链路贯穿：`agent -> policy -> tools -> runtime -> storage`。
 
-### 15.3 SLO
-1. 核心请求成功率 >= 99%。
-2. 存储写入成功率 >= 99.99%。
-3. 高风险命令误放行率 = 0。
-4. 时延 SLO 分层考核，不把外部模型抖动全归因平台。
-
 ## 16. 测试与治理要求（强制）
 1. Contract Test：工具 schema、事件流一致性。
-2. Replay Test：session/task/audit 回放一致性。
+2. Replay Test：session/task 回放一致性。
 3. Policy Test：规则冲突、优先级、边界样例。
 4. Failure Test：超时、取消、崩溃恢复、重试风暴。
 5. Multi-Agent Test：并发配额、资源争用、冲突归并。
@@ -282,9 +268,9 @@ type Tool interface {
 
 ## 17. 主要风险与应对
 1. 工具误操作风险。
-应对：五层权限 + 高危确认 + 沙箱 + 审计。
+应对：多层权限 + 高危确认 + 沙箱 。
 2. 上下文膨胀风险。
-应对：预算器 + 自动压缩 + 质量门禁。
+应对：预算器 + 自动压缩。
 3. 多代理复杂度风险。
 应对：依赖图调度 + 配额控制 + 终态约束。
 4. 文件一致性风险。
