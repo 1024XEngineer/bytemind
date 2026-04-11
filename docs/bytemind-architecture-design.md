@@ -4,16 +4,16 @@
 本文档定义 bytemind 的完整总体架构，作为技术评审、研发实施、演进治理的统一基线。
 
 ## 2. 既定约束
-1. 单入口 CLI，无 Gateway。
+1. 明确单入口 TUI，无 Gateway。
 2. 无长期 Memory，无跨会话语义记忆。
-3. 会话、任务、审计采用文件存储，不依赖数据库。
+3. 会话、任务，不依赖数据库。
 
 ## 3. 架构目标
 1. 支持 coding agent 主闭环：理解任务、调用工具、修改代码、执行验证、返回结果。
 2. 支持长任务与并发：任务系统、后台执行、多代理协作。
-3. 支持扩展：MCP、Skills、Plugin。
-4. 支持安全可控：权限分层、沙箱执行、风险拦截、全量审计。
-5. 支持工程治理：可观测、可恢复、可追踪、可测试。
+3. 支持扩展：MCP、Skills。
+4. 支持安全可控：权限分层、沙箱执行、风险拦截。
+5. 支持工程治理：可恢复、可追踪、可测试。
 
 ## 4. 非目标
 1. 不做多入口统一接入层。
@@ -87,10 +87,8 @@ bytemind/
     tools/           # 工具契约、注册、执行、事件流
     runtime/         # 任务系统、工作流、多代理调度
     policy/          # 权限决策与安全防护
-    storage/         # 文件存储、回放恢复、审计
-    extensions/      # MCP、Skills、Plugin 接入
-    observability/   # 日志、指标、追踪、诊断
-  pkg/               # 稳定可复用公共类型（谨慎引入）
+    storage/         # 文件存储、回放恢复
+    extensions/      # MCP、Skills
 ```
 
 ## 8. 模块职责（做什么 / 不做什么）
@@ -116,21 +114,17 @@ bytemind/
 - 不做：业务动作执行。
 
 6. `storage`
-- 做：会话/任务/审计文件写入、恢复回放、幂等去重。
+- 做：会话/任务文件写入、恢复回放、幂等去重。
 - 不做：业务决策与调度。
 
 7. `extensions`
-- 做：MCP/Skills/Plugin 以统一契约接入 tools 层。
+- 做：MCP/Skills以统一契约接入 tools 层。
 - 不做：主循环控制。
-
-8. `observability`
-- 做：结构化日志、指标、trace、故障快照。
-- 不做：业务流程分支判断。
 
 ## 9. 强制依赖约束
 1. 禁止循环依赖。
 2. `app` 只做装配，不承载业务逻辑。
-3. `agent` 仅通过接口访问 `tools/runtime/policy/storage/observability`。
+3. `agent` 仅通过接口访问 `tools/runtime/policy/storage`。
 4. `extensions` 不可直接读写 `agent` 内部状态。
 5. `policy` 必须是独立可测试模块，不依赖 `agent` 具体实现。
 
