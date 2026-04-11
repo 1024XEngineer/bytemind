@@ -10,9 +10,9 @@ import (
 	"bytemind/internal/config"
 )
 
-type roundTripFunc func(*http.Request) (*http.Response, error)
+type usageRoundTripFunc func(*http.Request) (*http.Response, error)
 
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+func (f usageRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
@@ -45,7 +45,7 @@ func TestFetchCurrentMonthUsageHTTPErrorAndDecodeError(t *testing.T) {
 		},
 	}
 
-	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	http.DefaultTransport = usageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return nil, errors.New("network down")
 	})
 	_, err := fetchCurrentMonthUsage(cfg)
@@ -53,7 +53,7 @@ func TestFetchCurrentMonthUsageHTTPErrorAndDecodeError(t *testing.T) {
 		t.Fatalf("expected network error to propagate, got %v", err)
 	}
 
-	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	http.DefaultTransport = usageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusBadRequest,
 			Body:       io.NopCloser(strings.NewReader("bad request")),
@@ -65,7 +65,7 @@ func TestFetchCurrentMonthUsageHTTPErrorAndDecodeError(t *testing.T) {
 		t.Fatalf("expected status error, got %v", err)
 	}
 
-	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	http.DefaultTransport = usageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader("{not-json")),
@@ -89,7 +89,7 @@ func TestFetchCurrentMonthUsageSuccess(t *testing.T) {
 		},
 	}
 
-	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	http.DefaultTransport = usageRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Method != http.MethodGet {
 			t.Fatalf("expected GET request, got %s", req.Method)
 		}
@@ -157,4 +157,3 @@ func TestNormalizeOpenAIBaseURL(t *testing.T) {
 		t.Fatalf("expected /v1 suffix to be appended, got %q", got)
 	}
 }
-

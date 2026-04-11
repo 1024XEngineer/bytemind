@@ -39,7 +39,7 @@ var (
 	landingLogoStyle = landingLogoMindStyle
 
 	landingInputStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("#1A1A1A")).
+				Background(lipgloss.Color("#000000")).
 				Padding(1, 4)
 
 	landingPlaceholderStyle = lipgloss.NewStyle().
@@ -98,7 +98,7 @@ var (
 
 	helpCodeStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#F1F5F9")).
-			Background(lipgloss.Color("#101010")).
+			Background(lipgloss.Color("#000000")).
 			Padding(0, 1)
 
 	inputStyle = lipgloss.NewStyle().
@@ -150,7 +150,7 @@ var (
 
 	tableLineStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#D7E3F1")).
-			Background(lipgloss.Color("#101923"))
+			Background(lipgloss.Color("#000000"))
 
 	chatAssistantStyle = lipgloss.NewStyle().
 				Padding(1, 1)
@@ -163,7 +163,7 @@ var (
 				Faint(true)
 
 	chatUserStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("#2A2A2A")).
+			Background(lipgloss.Color("#000000")).
 			Padding(1, 1)
 
 	chatToolStyle = lipgloss.NewStyle().
@@ -179,13 +179,13 @@ var (
 	approvalBannerStyle = lipgloss.NewStyle().
 				BorderStyle(lipgloss.NormalBorder()).
 				BorderForeground(colorTool).
-				Background(lipgloss.Color("#17140D")).
+				Background(lipgloss.Color("#000000")).
 				Padding(0, 1)
 
 	activeSkillBannerStyle = lipgloss.NewStyle().
 				BorderStyle(lipgloss.NormalBorder()).
 				BorderForeground(colorAccent).
-				Background(lipgloss.Color("#0F1A28")).
+				Background(lipgloss.Color("#000000")).
 				Padding(0, 1)
 
 	statusBarStyle = lipgloss.NewStyle().
@@ -202,11 +202,11 @@ var (
 				Padding(0, 1)
 
 	commandPaletteRowStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("#0B1118")).
+				Background(lipgloss.Color("#000000")).
 				Padding(0, 1)
 
 	commandPaletteSelectedRowStyle = lipgloss.NewStyle().
-					Background(lipgloss.Color("#231421")).
+					Background(lipgloss.Color("#000000")).
 					Padding(0, 1)
 
 	commandPaletteNameStyle = lipgloss.NewStyle().
@@ -246,7 +246,7 @@ var (
 
 	codeStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#F8FAFC")).
-			Background(lipgloss.Color("#0B1220")).
+			Background(lipgloss.Color("#000000")).
 			Padding(0, 1)
 
 	mutedStyle  = lipgloss.NewStyle().Foreground(colorMuted)
