@@ -69,7 +69,7 @@ func TestRegistryExecuteReturnsUnknownToolError(t *testing.T) {
 
 func TestRegistryExecuteDefaultsEmptyArgsToJSONObject(t *testing.T) {
 	tool := &recordingTool{name: "fake_tool", result: `{"ok":true}`}
-	registry := &Registry{tools: map[string]Tool{}}
+	registry := &Registry{tools: map[string]ResolvedTool{}}
 	registry.Add(tool)
 
 	result, err := registry.Execute(context.Background(), "fake_tool", "", &ExecutionContext{})
@@ -117,7 +117,7 @@ func TestDefaultRegistryDefinitionsForPlanModeIncludeWebTools(t *testing.T) {
 
 func TestRegistryExecuteRespectsActiveSkillPolicy(t *testing.T) {
 	tool := &recordingTool{name: "fake_tool", result: `{"ok":true}`}
-	registry := &Registry{tools: map[string]Tool{}}
+	registry := &Registry{tools: map[string]ResolvedTool{}}
 	registry.Add(tool)
 
 	_, err := registry.ExecuteForMode(context.Background(), "build", "fake_tool", `{}`, &ExecutionContext{

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1908,6 +1909,8 @@ func TestHelpTextOnlyMentionsSupportedEntryPoints(t *testing.T) {
 		"go run ./cmd/bytemind chat",
 		"go run ./cmd/bytemind run -prompt",
 		"/session",
+		"/skill clear",
+		"/skill delete <name>",
 		"/quit",
 		"/new",
 		"Ctrl+G",
@@ -2305,6 +2308,159 @@ func TestHandleSlashSkillActivateAndClear(t *testing.T) {
 	}
 	if m.sess.ActiveSkill != nil {
 		t.Fatalf("expected active skill to be cleared, got %#v", m.sess.ActiveSkill)
+	}
+}
+
+func TestHandleSlashSkillAuthorIsUnsupported(t *testing.T) {
+	workspace := t.TempDir()
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	runner := agent.NewRunner(agent.Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+		},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	m := model{
+		runner:    runner,
+		store:     store,
+		sess:      sess,
+		workspace: workspace,
+		screen:    screenChat,
+		input:     textarea.New(),
+	}
+
+	if err := m.handleSlashCommand("/skill author"); err == nil {
+		t.Fatalf("expected /skill author to fail")
+	} else if !strings.Contains(err.Error(), "usage: /skill <clear|delete> ...") {
+		t.Fatalf("unexpected error for /skill author: %v", err)
+	}
+	if err := m.handleSlashCommand("/skill author review-plus review backend changes and report risks"); err == nil {
+		t.Fatalf("expected /skill author <name> to fail")
+	} else if !strings.Contains(err.Error(), "usage: /skill <clear|delete> ...") {
+		t.Fatalf("unexpected error for /skill author <name>: %v", err)
+	}
+}
+
+func TestHandleSlashSkillDeleteDeletesProjectSkill(t *testing.T) {
+	workspace := t.TempDir()
+	skillDir := filepath.Join(workspace, ".bytemind", "skills", "review-plus")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "skill.json"), []byte(`{"name":"review-plus","description":"review"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# review-plus"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	runner := agent.NewRunner(agent.Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+		},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	m := model{
+		runner:    runner,
+		store:     store,
+		sess:      sess,
+		workspace: workspace,
+		screen:    screenChat,
+		input:     textarea.New(),
+	}
+
+	if _, err := runner.ActivateSkill(sess, "/review-plus", nil); err != nil {
+		t.Fatalf("expected activate before clear, got %v", err)
+	}
+	if err := m.handleSlashCommand("/skill delete review-plus"); err != nil {
+		t.Fatalf("expected /skill delete to succeed, got %v", err)
+	}
+	if _, err := os.Stat(skillDir); !os.IsNotExist(err) {
+		t.Fatalf("expected skill directory removed, stat err=%v", err)
+	}
+	if m.sess.ActiveSkill != nil {
+		t.Fatalf("expected active skill cleared, got %#v", m.sess.ActiveSkill)
+	}
+	if len(m.chatItems) < 2 || !strings.Contains(m.chatItems[len(m.chatItems)-1].Body, "Deleted project skill") {
+		t.Fatalf("expected clear command response, got %#v", m.chatItems)
+	}
+}
+
+func TestHandleSlashSkillClearOnlyClearsActiveSkill(t *testing.T) {
+	workspace := t.TempDir()
+	skillDir := filepath.Join(workspace, ".bytemind", "skills", "review-plus")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "skill.json"), []byte(`{"name":"review-plus","description":"review"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# review-plus"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	runner := agent.NewRunner(agent.Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+		},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	m := model{
+		runner:    runner,
+		store:     store,
+		sess:      sess,
+		workspace: workspace,
+		screen:    screenChat,
+		input:     textarea.New(),
+	}
+
+	if _, err := runner.ActivateSkill(sess, "/review-plus", nil); err != nil {
+		t.Fatalf("expected activate before clear, got %v", err)
+	}
+	if err := m.handleSlashCommand("/skill clear"); err != nil {
+		t.Fatalf("expected /skill clear to succeed, got %v", err)
+	}
+	if m.sess.ActiveSkill != nil {
+		t.Fatalf("expected active skill cleared, got %#v", m.sess.ActiveSkill)
+	}
+	if len(m.chatItems) < 2 || !strings.Contains(m.chatItems[len(m.chatItems)-1].Body, "Cleared active skill") {
+		t.Fatalf("expected clear status response, got %#v", m.chatItems)
+	}
+}
+
+func TestCommandPaletteDoesNotExposeSkillAuthor(t *testing.T) {
+	input := textarea.New()
+	input.SetValue("/skill")
+	m := model{input: input}
+	items := m.filteredCommands()
+	for _, item := range items {
+		if strings.EqualFold(strings.TrimSpace(item.Name), "/skill author") {
+			t.Fatalf("command palette should not expose /skill author, got %+v", item)
+		}
 	}
 }
 
@@ -4527,6 +4683,39 @@ func TestThinkingFilters(t *testing.T) {
 	}
 	if !shouldRenderThinkingFromDelta("First, I will inspect the failing branch and then patch tests.") {
 		t.Fatalf("expected structured reasoning marker to trigger thinking rendering")
+	}
+}
+
+func TestHandleKeyPasteCompressesLongTextImmediately(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	longPaste := strings.Join([]string{
+		"func normalize(items []string) []string {",
+		"    out := make([]string, 0, len(items))",
+		"    for _, item := range items {",
+		"        v := strings.TrimSpace(item)",
+		"        if v == \"\" {",
+		"            continue",
+		"        }",
+		"        out = append(out, strings.ToLower(v))",
+		"    }",
+		"    sort.Strings(out)",
+		"    return out",
+		"}",
+	}, "\n")
+
+	msg := tea.KeyMsg{
+		Type:  tea.KeyRunes,
+		Runes: []rune(longPaste),
+		Paste: true,
+	}
+	got, _ := m.handleKey(msg)
+	updated := got.(model)
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(updated.input.Value()) {
+		t.Fatalf("expected immediate marker replacement for pasted long text, got %q", updated.input.Value())
+	}
+	if strings.Contains(updated.input.Value(), "normalize(items") {
+		t.Fatalf("expected no raw pasted code to remain in input, got %q", updated.input.Value())
 	}
 }
 

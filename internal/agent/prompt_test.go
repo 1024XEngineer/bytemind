@@ -42,6 +42,7 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	})
 
 	assertContains(t, prompt, "You are ByteMind")
+	assertContains(t, prompt, "Your capabilities:")
 	assertContains(t, prompt, "[Current Mode]")
 	assertContains(t, prompt, "plan")
 	assertContains(t, prompt, "[Runtime Context]")
@@ -52,16 +53,22 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	assertContains(t, prompt, "mode: plan")
 	assertContains(t, prompt, "approval_policy: on-request")
 	assertContains(t, prompt, "[Available Skills]")
-	assertContains(t, prompt, "Skills are user-selected session profiles")
-	assertContains(t, prompt, "- review: Review code changes for regressions. enabled=true")
+	assertContains(t, prompt, "Skills are reusable task profiles available in this session")
+	assertContains(t, prompt, "- review: Review code changes for regressions.")
 	assertContains(t, prompt, "[Available Tools]")
 	assertContains(t, prompt, "- list_files")
 	assertContains(t, prompt, "- read_file")
 	assertContains(t, prompt, "[Active Skill]")
+	assertContains(t, prompt, "Use this skill when it is relevant to the user's request.")
+	assertContains(t, prompt, "Follow the workflow and output contract defined here.")
 	assertContains(t, prompt, "Tool Policy: allowlist")
 	assertContains(t, prompt, "[Instructions]")
 	assertContains(t, prompt, "Instructions from:")
 	assertContains(t, prompt, "Use rg for search before broad shell scans.")
+	assertNotContains(t, prompt, "The contents of the AGENTS.md file at the root of the repo and any directories from the CWD up to the root are included with the developer message")
+	assertNotContains(t, prompt, "Primary objective:")
+	assertNotContains(t, prompt, "Tool Guidelines")
+	assertNotContains(t, prompt, "Only the active skill block is currently in effect.")
 	assertNoTemplateMarkers(t, prompt)
 }
 
@@ -83,7 +90,7 @@ func TestSystemPromptOmitsOptionalBlocksWhenEmpty(t *testing.T) {
 	if strings.Contains(prompt, "[Instructions]") {
 		t.Fatalf("did not expect instruction block in prompt: %q", prompt)
 	}
-	if strings.Contains(prompt, "[Active Skill]") {
+	if strings.Contains(prompt, "\n[Active Skill]\n") {
 		t.Fatalf("did not expect active skill block in prompt: %q", prompt)
 	}
 	assertNoTemplateMarkers(t, prompt)
@@ -174,7 +181,7 @@ func TestFormatSkillsKeepsSkillDescriptionsAsIs(t *testing.T) {
 		{Name: "review", Description: "Review with strict correctness focus.", Enabled: true},
 	})
 
-	assertContains(t, got, "- review: Review with strict correctness focus. enabled=true")
+	assertContains(t, got, "- review: Review with strict correctness focus.")
 }
 
 func TestRenderActiveSkillPromptKeepsSkillFieldsAsIs(t *testing.T) {
@@ -228,6 +235,13 @@ func assertContains(t *testing.T, prompt, needle string) {
 	t.Helper()
 	if !strings.Contains(prompt, needle) {
 		t.Fatalf("expected %q in prompt, got %q", needle, prompt)
+	}
+}
+
+func assertNotContains(t *testing.T, prompt, needle string) {
+	t.Helper()
+	if strings.Contains(prompt, needle) {
+		t.Fatalf("did not expect %q in prompt, got %q", needle, prompt)
 	}
 }
 

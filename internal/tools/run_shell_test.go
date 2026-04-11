@@ -3,9 +3,13 @@ package tools
 import (
 	"bytes"
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAssessShellCommandAllowsReadOnlyCommands(t *testing.T) {
@@ -154,6 +158,60 @@ func TestRequireApprovalReturnsClearDenialMessage(t *testing.T) {
 	}
 }
 
+func TestResolveWindowsShellExecutablePrefersLookPathCandidate(t *testing.T) {
+	got := resolveWindowsShellExecutable(
+		func(file string) (string, error) {
+			if file == "powershell.exe" {
+				return `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, nil
+			}
+			return "", errors.New("not found")
+		},
+		func(name string) (os.FileInfo, error) {
+			return nil, os.ErrNotExist
+		},
+		func(key string) string { return "" },
+	)
+	if !strings.EqualFold(got, `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`) {
+		t.Fatalf("expected lookPath candidate, got %q", got)
+	}
+}
+
+func TestResolveWindowsShellExecutableFallsBackToAbsoluteCandidate(t *testing.T) {
+	windowsRoot := `C:\Windows`
+	expected := filepath.Join(windowsRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	got := resolveWindowsShellExecutable(
+		func(file string) (string, error) {
+			return "", errors.New("not found")
+		},
+		func(name string) (os.FileInfo, error) {
+			if strings.EqualFold(name, expected) {
+				return stubFileInfo{}, nil
+			}
+			return nil, os.ErrNotExist
+		},
+		func(key string) string {
+			if key == "SystemRoot" {
+				return windowsRoot
+			}
+			return ""
+		},
+	)
+	if !strings.EqualFold(got, expected) {
+		t.Fatalf("expected absolute fallback %q, got %q", expected, got)
+	}
+}
+
+func TestResolveWindowsShellExecutableFallbacksToPowerShellLiteral(t *testing.T) {
+	got := resolveWindowsShellExecutable(
+		func(file string) (string, error) { return "", errors.New("not found") },
+		func(name string) (os.FileInfo, error) { return nil, os.ErrNotExist },
+		func(key string) string { return "" },
+	)
+	if got != "powershell" {
+		t.Fatalf("expected final fallback powershell, got %q", got)
+	}
+}
+
 func TestRunShellToolReturnsTimeoutError(t *testing.T) {
 	tool := RunShellTool{}
 	command := "sleep 2"
@@ -173,3 +231,12 @@ func TestRunShellToolReturnsTimeoutError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+type stubFileInfo struct{}
+
+func (stubFileInfo) Name() string       { return "powershell.exe" }
+func (stubFileInfo) Size() int64        { return 0 }
+func (stubFileInfo) Mode() os.FileMode  { return 0o644 }
+func (stubFileInfo) ModTime() time.Time { return time.Time{} }
+func (stubFileInfo) IsDir() bool        { return false }
+func (stubFileInfo) Sys() any           { return nil }

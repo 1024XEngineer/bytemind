@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -496,7 +497,89 @@ func isOneOf(value string, options ...string) bool {
 
 func shellCommand(ctx context.Context, command string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
-		return exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command", command)
+		executable := resolveWindowsShellExecutable(exec.LookPath, os.Stat, os.Getenv)
+		return exec.CommandContext(ctx, executable, "-NoProfile", "-Command", command)
 	}
 	return exec.CommandContext(ctx, "sh", "-lc", command)
+}
+
+func resolveWindowsShellExecutable(
+	lookPath func(file string) (string, error),
+	statFn func(name string) (os.FileInfo, error),
+	getenv func(key string) string,
+) string {
+	for _, candidate := range windowsShellCandidates(getenv) {
+		if isWindowsAbsolutePath(candidate) {
+			info, err := statFn(candidate)
+			if err == nil && info != nil && !info.IsDir() {
+				return candidate
+			}
+			continue
+		}
+		resolved, err := lookPath(candidate)
+		if err == nil && strings.TrimSpace(resolved) != "" {
+			return resolved
+		}
+	}
+	return "powershell"
+}
+
+func windowsShellCandidates(getenv func(key string) string) []string {
+	candidates := []string{
+		"powershell.exe",
+		"powershell",
+		"pwsh.exe",
+		"pwsh",
+	}
+
+	appendWindowsRoot := func(root string) {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			return
+		}
+		candidates = append(candidates,
+			filepath.Join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+			filepath.Join(root, "Sysnative", "WindowsPowerShell", "v1.0", "powershell.exe"),
+		)
+	}
+
+	appendWindowsRoot(getenv("SystemRoot"))
+	appendWindowsRoot(getenv("WINDIR"))
+
+	if programFiles := strings.TrimSpace(getenv("ProgramFiles")); programFiles != "" {
+		candidates = append(candidates, filepath.Join(programFiles, "PowerShell", "7", "pwsh.exe"))
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	uniq := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		key := strings.ToLower(candidate)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		uniq = append(uniq, candidate)
+	}
+	return uniq
+}
+
+func isWindowsAbsolutePath(path string) bool {
+	if filepath.IsAbs(path) {
+		return true
+	}
+	if len(path) >= 3 && isASCIIAlpha(path[0]) && path[1] == ':' && (path[2] == '\\' || path[2] == '/') {
+		return true
+	}
+	if len(path) >= 2 && path[0] == '\\' && path[1] == '\\' {
+		return true
+	}
+	return false
+}
+
+func isASCIIAlpha(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }

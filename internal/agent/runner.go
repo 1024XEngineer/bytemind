@@ -47,6 +47,7 @@ type Options struct {
 	Client       llm.Client
 	Store        *session.Store
 	Registry     *tools.Registry
+	Executor     *tools.Executor
 	SkillManager *skills.Manager
 	TokenManager *tokenusage.TokenUsageManager
 	Observer     Observer
@@ -67,6 +68,7 @@ type Runner struct {
 	client       llm.Client
 	store        *session.Store
 	registry     *tools.Registry
+	executor     *tools.Executor
 	skillManager *skills.Manager
 	tokenManager *tokenusage.TokenUsageManager
 	observer     Observer
@@ -95,12 +97,17 @@ func NewRunner(opts Options) *Runner {
 	if manager == nil {
 		manager = skills.NewManager(opts.Workspace)
 	}
+	executor := opts.Executor
+	if executor == nil && opts.Registry != nil {
+		executor = tools.NewExecutor(opts.Registry)
+	}
 	return &Runner{
 		workspace:    opts.Workspace,
 		config:       opts.Config,
 		client:       opts.Client,
 		store:        opts.Store,
 		registry:     opts.Registry,
+		executor:     executor,
 		skillManager: manager,
 		tokenManager: opts.TokenManager,
 		observer:     opts.Observer,
@@ -469,7 +476,7 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 				fmt.Fprintf(out, "%s%stool>%s %s\n", ansiBold, ansiCyan, ansiReset, call.Function.Name)
 			}
 
-			result, execErr := r.registry.ExecuteForMode(ctx, runMode, call.Function.Name, call.Function.Arguments, &tools.ExecutionContext{
+			result, execErr := r.executor.ExecuteForMode(ctx, runMode, call.Function.Name, call.Function.Arguments, &tools.ExecutionContext{
 				Workspace:      r.workspace,
 				ApprovalPolicy: r.config.ApprovalPolicy,
 				Approval:       r.approval,
