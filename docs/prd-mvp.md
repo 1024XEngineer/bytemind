@@ -326,7 +326,6 @@ run_shell
 
 按当前实现，ByteMind 会从以下位置查找配置：
 
-- `config.json`
 - `.bytemind/config.json`
 - `bytemind.config.json`
 - `~/.bytemind/config.json`
