@@ -130,185 +130,43 @@ bytemind/
 
 ## 10. 模块级设计交付标准（每个模块 2 个文件）
 
-每个核心模块目录都必须包含以下两个文件：
+每个核心模块使用同级目录管理，并固定包含两个文件：
 1. `README.md`：讲清楚模块定位、边界、内部实现逻辑、依赖关系、测试策略。
 2. `interface.go`：仅放模块对外暴露的 Go 风格接口与核心类型，不放具体实现。
 
-建议目录形态：
+当前文档拆分如下：
 
 ```text
-internal/<module>/
-  README.md
-  interface.go
-  ...实现文件
+docs/bytemind-architecture/
+  app/
+    README.md
+    interface.go
+  agent/
+    README.md
+    interface.go
+  tools/
+    README.md
+    interface.go
+  runtime/
+    README.md
+    interface.go
+  policy/
+    README.md
+    interface.go
+  storage/
+    README.md
+    interface.go
+  extensions/
+    README.md
+    interface.go
 ```
 
-### 10.1 `README.md` 必写内容模板
-1. 模块定位：本模块负责什么，不负责什么。
-2. 内部实现：关键子组件、关键流程、状态变更点。
-3. 对外契约：暴露哪些接口、输入输出与错误约定。
-4. 依赖关系：允许依赖和禁止依赖。
-5. 可观测性：指标、日志、审计事件。
-6. 测试策略：单测、契约测试、故障测试覆盖范围。
-
-### 10.2 `interface.go` 设计约束
-1. 接口按“调用方视角”定义，避免暴露实现细节。
+### 10.1 统一设计约束
+1. 接口按调用方视角定义，避免暴露实现细节。
 2. 所有阻塞操作必须接收 `context.Context`。
 3. 返回错误优先使用语义化错误（可判断、可测试）。
 4. 事件流能力统一使用 channel 或迭代器风格，不在接口层泄漏底层 transport。
 5. 禁止在接口层引入具体 provider/tool 的实现类型。
-
-### 10.3 各模块 `interface.go` 基线示例
-
-`internal/app/interface.go`
-```go
-package app
-
-import "context"
-
-type Application interface {
-    Run(ctx context.Context) error
-    Shutdown(ctx context.Context) error
-}
-```
-
-`internal/agent/interface.go`
-```go
-package agent
-
-import "context"
-
-type Service interface {
-    HandleUserMessage(ctx context.Context, sessionID string, input string) (<-chan Event, error)
-}
-
-type Event struct {
-    Type    string
-    Payload []byte
-}
-```
-
-`internal/tools/interface.go`
-```go
-package tools
-
-import "context"
-
-type Registry interface {
-    Get(name string) (Tool, bool)
-    List() []ToolMeta
-}
-
-type Tool interface {
-    Name() string
-    Description() string
-    Execute(ctx context.Context, args []byte, tctx UseContext) (<-chan Event, error)
-}
-
-type ToolMeta struct {
-    Name string
-}
-
-type UseContext struct {
-    SessionID string
-    TaskID    string
-}
-
-type Event struct {
-    Type string
-    Data []byte
-}
-```
-
-`internal/runtime/interface.go`
-```go
-package runtime
-
-import "context"
-
-type TaskScheduler interface {
-    Submit(ctx context.Context, req SubmitRequest) (TaskHandle, error)
-    Cancel(ctx context.Context, taskID string) error
-}
-
-type TaskHandle interface {
-    ID() string
-    Wait(ctx context.Context) (TaskResult, error)
-}
-
-type SubmitRequest struct {
-    Name string
-}
-
-type TaskResult struct {
-    Status string
-}
-```
-
-`internal/policy/interface.go`
-```go
-package policy
-
-import "context"
-
-type Engine interface {
-    Decide(ctx context.Context, input DecisionInput) (DecisionOutput, error)
-}
-
-type DecisionInput struct {
-    ToolName string
-    Path     string
-    Command  string
-}
-
-type DecisionOutput struct {
-    Decision string
-    Reason   string
-    Risk     string
-}
-```
-
-`internal/storage/interface.go`
-```go
-package storage
-
-import "context"
-
-type SessionStore interface {
-    AppendEvent(ctx context.Context, sessionID string, evt Event) error
-    Replay(ctx context.Context, sessionID string, fromOffset int64) ([]Event, error)
-}
-
-type TaskStore interface {
-    AppendLog(ctx context.Context, taskID string, chunk []byte) error
-}
-
-type Event struct {
-    ID   string
-    Type string
-    Data []byte
-}
-```
-
-`internal/extensions/interface.go`
-```go
-package extensions
-
-import "context"
-
-type Loader interface {
-    LoadAll(ctx context.Context) ([]Provider, error)
-}
-
-type Provider interface {
-    Name() string
-    Tools(ctx context.Context) ([]ToolAdapter, error)
-}
-
-type ToolAdapter interface {
-    ToolName() string
-}
-```
 
 ## 11. 核心领域模型（基线）
 
