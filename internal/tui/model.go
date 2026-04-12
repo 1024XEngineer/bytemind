@@ -458,7 +458,7 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		textarea.Blink,
 		waitForAsync(m.async),
-		m.tokenUsage.tickCmd(),
+		m.tokenUsage.TickCmd(),
 		m.loadSessionsCmd(),
 	)
 }
@@ -2247,7 +2247,7 @@ func (m model) renderScrollbar(viewHeight, contentHeight, currentOffset int) str
 	if !visible {
 		return ""
 	}
-	trackStyle := scrollbarTrackStyle.Copy().Background(lipgloss.Color("#1B1D22"))
+	trackStyle := scrollbarTrackStyle.Copy().Background(lipgloss.Color("#000000"))
 	thumbStyle := scrollbarThumbIdleStyle.Copy().Background(lipgloss.Color("#C2C7CF"))
 	if m.draggingScrollbar {
 		thumbStyle = scrollbarThumbActiveStyle.Copy().Background(lipgloss.Color("#E5E7EB"))
@@ -2780,7 +2780,7 @@ func (m *model) verifyAndFinalizeStartupAPIKey(rawInput string) error {
 	checkCfg := m.cfg.Provider
 	checkCfg.APIKey = apiKey
 	check := provider.CheckAvailability(context.Background(), checkCfg)
-	if !check.Ready {
+	if !check.Ready && !shouldAllowStartupSaveWithoutVerification(check) {
 		m.llmConnected = false
 		m.phase = "error"
 		m.setStartupGuideStep(startupFieldAPIKey, startupGuideIssueHint(check))
@@ -2808,17 +2808,40 @@ func (m *model) verifyAndFinalizeStartupAPIKey(rawInput string) error {
 	}
 	m.cfg.Provider = checkCfg
 	m.startupGuide.Active = false
-	m.statusNote = "Provider configured and verified. You can start chatting."
-	m.llmConnected = true
+	if check.Ready {
+		m.statusNote = "Provider configured and verified. You can start chatting."
+		m.llmConnected = true
+	} else {
+		m.statusNote = "API key saved. Provider verification is temporarily unavailable; you can continue and retry later."
+		m.llmConnected = false
+	}
 	m.phase = "idle"
 	if saveErr != nil {
-		m.statusNote = "Provider verified, but config save failed: " + compact(saveErr.Error(), 80)
+		m.statusNote = "API key saved in memory, but config save failed: " + compact(saveErr.Error(), 80)
 	} else if strings.TrimSpace(writtenPath) != "" {
-		m.statusNote = "Provider configured and verified. Saved to " + compact(writtenPath, 48)
+		if check.Ready {
+			m.statusNote = "Provider configured and verified. Saved to " + compact(writtenPath, 48)
+		} else {
+			m.statusNote = "API key saved to " + compact(writtenPath, 48) + ". Verification skipped due temporary endpoint reachability issue."
+		}
 	}
 	m.syncInputStyle()
 	m.input.Reset()
 	return nil
+}
+
+func shouldAllowStartupSaveWithoutVerification(check provider.Availability) bool {
+	reason := strings.ToLower(strings.TrimSpace(check.Reason))
+	switch {
+	case strings.Contains(reason, "failed to reach provider endpoint"):
+		return true
+	case strings.Contains(reason, "provider check failed (http 5"):
+		return true
+	case strings.Contains(reason, "provider check failed (http 429"):
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *model) applyStartupConfigField(field, value string) error {
@@ -3937,28 +3960,62 @@ func renderAssistantBody(text string, width int) string {
 	lines := strings.Split(text, "\n")
 	out := make([]string, 0, len(lines))
 	inCodeBlock := false
+	codeLines := make([]string, 0, 16)
 	prevBlank := true
+	flushCodeBlock := func() {
+		if len(codeLines) == 0 {
+			return
+		}
+		out = append(out, renderMarkdownCodeBlock(codeLines, width))
+		codeLines = codeLines[:0]
+		prevBlank = false
+	}
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") {
-			inCodeBlock = !inCodeBlock
+			if inCodeBlock {
+				flushCodeBlock()
+				inCodeBlock = false
+			} else {
+				inCodeBlock = true
+				codeLines = codeLines[:0]
+			}
 			continue
 		}
 
-		plainLine := line
-		if !inCodeBlock {
-			plainLine = normalizeAssistantMarkdownLine(line)
+		if inCodeBlock {
+			codeLines = append(codeLines, line)
+			continue
 		}
-		if strings.TrimSpace(plainLine) == "" {
+
+		if trimmed == "" {
 			if !prevBlank {
 				out = append(out, "")
 			}
 			prevBlank = true
 			continue
 		}
-		out = append(out, wrapPlainText(plainLine, width))
+
+		switch {
+		case isMarkdownHeading(trimmed):
+			out = append(out, renderMarkdownHeading(trimmed, width))
+		case isMarkdownListItem(trimmed):
+			out = append(out, renderMarkdownListItem(trimmed, width))
+		case strings.HasPrefix(trimmed, ">"):
+			out = append(out, renderMarkdownQuote(trimmed, width))
+		default:
+			plainLine := normalizeAssistantMarkdownLine(line)
+			if strings.TrimSpace(plainLine) == "" {
+				continue
+			}
+			out = append(out, wrapPlainText(plainLine, width))
+		}
 		prevBlank = false
+	}
+
+	if inCodeBlock {
+		flushCodeBlock()
 	}
 
 	return strings.Join(out, "\n")
@@ -4200,12 +4257,29 @@ func renderMarkdownListItem(line string, width int) string {
 	lines := make([]string, 0, len(wrapped))
 	for i, part := range wrapped {
 		if i == 0 {
-			lines = append(lines, indent+listMarkerStyle.Render(marker)+" "+part)
+			lines = append(lines, listMarkerStyle.Render(indent+marker+" "+part))
 			continue
 		}
 		lines = append(lines, indent+strings.Repeat(" ", runewidth.StringWidth(marker))+" "+part)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func renderMarkdownCodeBlock(codeLines []string, width int) string {
+	if len(codeLines) == 0 {
+		return ""
+	}
+	blockWidth := max(12, width)
+	contentWidth := max(8, blockWidth-codeStyle.GetHorizontalFrameSize())
+	rendered := make([]string, 0, len(codeLines))
+	for _, line := range codeLines {
+		if line == "" {
+			rendered = append(rendered, "")
+			continue
+		}
+		rendered = append(rendered, strings.Split(wrapPlainText(line, contentWidth), "\n")...)
+	}
+	return codeStyle.Width(blockWidth).Render(strings.Join(rendered, "\n"))
 }
 
 func renderMarkdownQuote(line string, width int) string {

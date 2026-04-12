@@ -19,6 +19,7 @@ import (
 	"bytemind/internal/llm"
 	"bytemind/internal/mention"
 	planpkg "bytemind/internal/plan"
+	"bytemind/internal/provider"
 	"bytemind/internal/session"
 	"bytemind/internal/tools"
 
@@ -50,6 +51,12 @@ type compactCommandTestClient struct {
 	replies  []llm.Message
 	requests []llm.ChatRequest
 	index    int
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func (c *compactCommandTestClient) CreateMessage(_ context.Context, req llm.ChatRequest) (llm.Message, error) {
@@ -565,7 +572,6 @@ func TestRenderMainPanelShowsTokenUsageBadge(t *testing.T) {
 		tokenUsage: newTokenUsageComponent(),
 	}
 	m.viewport.SetContent(strings.Repeat("line\n", 40))
-	m.tokenUsage.displayUsed = 1234
 	_ = m.tokenUsage.SetUsage(1234, 5000)
 
 	panel := m.renderMainPanel()
@@ -587,15 +593,16 @@ func TestHandleMouseHoverTokenUsageConsumesEvent(t *testing.T) {
 	_ = m.tokenUsage.SetUsage(1500, 5000)
 	m.refreshViewport()
 
-	x := m.tokenUsage.bounds.x + max(0, m.tokenUsage.bounds.w/2)
-	y := m.tokenUsage.bounds.y
+	bounds := m.tokenUsage.Bounds()
+	x := bounds.X + max(0, bounds.W/2)
+	y := bounds.Y
 	got, _ := m.handleMouse(tea.MouseMsg{
 		Action: tea.MouseActionMotion,
 		X:      x,
 		Y:      y,
 	})
 	updated := got.(model)
-	if !updated.tokenUsage.hover {
+	if !updated.tokenUsage.Hovering() {
 		t.Fatalf("expected hover state to activate over token badge")
 	}
 }
@@ -622,8 +629,8 @@ func TestHandleAgentEventUsageUpdatedAccumulatesRealTokens(t *testing.T) {
 	if m.tokenInput != 120 || m.tokenOutput != 40 || m.tokenContext != 30 {
 		t.Fatalf("unexpected token breakdown input=%d output=%d context=%d", m.tokenInput, m.tokenOutput, m.tokenContext)
 	}
-	if m.tokenUsage.used != 190 {
-		t.Fatalf("expected token component used value 190, got %d", m.tokenUsage.used)
+	if m.tokenUsage.Used() != 190 {
+		t.Fatalf("expected token component used value 190, got %d", m.tokenUsage.Used())
 	}
 }
 
@@ -1227,6 +1234,69 @@ func TestStartupGuideAcceptsValidKeyAndDisablesGuide(t *testing.T) {
 	}
 	if !strings.Contains(string(written), `"api_key": "test-key"`) {
 		t.Fatalf("expected config file to store api key, got %q", string(written))
+	}
+}
+
+func TestStartupGuideSavesKeyWhenProviderTemporarilyUnreachable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	serverURL := server.URL
+	server.Close()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"provider":{"type":"openai-compatible","base_url":"`+serverURL+`","model":"gpt-5.4"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("test-key")
+	m := model{
+		input: input,
+		cfg: config.Config{
+			Provider: config.ProviderConfig{
+				Type:      "openai-compatible",
+				BaseURL:   serverURL,
+				Model:     "gpt-5.4",
+				APIKeyEnv: "BYTEMIND_API_KEY",
+			},
+		},
+		startupGuide: StartupGuide{
+			Active:       true,
+			Status:       "Bytemind needs a working API key before chat can start.",
+			ConfigPath:   configPath,
+			CurrentField: startupFieldAPIKey,
+		},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	if updated.startupGuide.Active {
+		t.Fatalf("expected startup guide to be disabled when key is saved under temporary network failure")
+	}
+	if !strings.Contains(strings.ToLower(updated.statusNote), "api key saved") {
+		t.Fatalf("expected save status note, got %q", updated.statusNote)
+	}
+
+	written, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(written), `"api_key": "test-key"`) {
+		t.Fatalf("expected config file to store api key, got %q", string(written))
+	}
+}
+
+func TestShouldAllowStartupSaveWithoutVerification(t *testing.T) {
+	if !shouldAllowStartupSaveWithoutVerification(provider.Availability{Ready: false, Reason: "failed to reach provider endpoint"}) {
+		t.Fatal("expected failed reach endpoint to allow save without verification")
+	}
+	if !shouldAllowStartupSaveWithoutVerification(provider.Availability{Ready: false, Reason: "provider check failed (HTTP 503)"}) {
+		t.Fatal("expected HTTP 503 check failure to allow save without verification")
+	}
+	if shouldAllowStartupSaveWithoutVerification(provider.Availability{Ready: false, Reason: "API key unauthorized"}) {
+		t.Fatal("expected unauthorized not to allow bypass")
 	}
 }
 
@@ -4569,7 +4639,6 @@ func TestRenderTokenBadgeAndScrollbarHelpers(t *testing.T) {
 		tokenUsage: newTokenUsageComponent(),
 	}
 	m.viewport.SetContent(strings.Repeat("line\n", 120))
-	m.tokenUsage.displayUsed = 2345
 	_ = m.tokenUsage.SetUsage(2345, 5000)
 	m.refreshViewport()
 
@@ -4726,4 +4795,151 @@ func containsString(items []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func TestInputMutationSourceBranches(t *testing.T) {
+	if got := inputMutationSource(tea.KeyMsg{Type: tea.KeyCtrlV}); got != "ctrl+v" {
+		t.Fatalf("expected ordinary source to stay as key string, got %q", got)
+	}
+	if got := inputMutationSource(tea.KeyMsg{Type: tea.KeyCtrlV, Paste: true}); got != "ctrl+v:paste" {
+		t.Fatalf("expected paste source suffix, got %q", got)
+	}
+	if got := inputMutationSource(tea.KeyMsg{Paste: true}); !strings.HasSuffix(got, ":paste") {
+		t.Fatalf("expected paste event source suffix, got %q", got)
+	}
+}
+
+func TestHandleKeyEnterCompressesLongRawInputBeforeSubmit(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	m.lastPasteAt = time.Now().Add(-2 * time.Second)
+	m.lastInputAt = time.Now().Add(-2 * time.Second)
+	m.input.SetValue(strings.Join([]string{
+		"line1", "line2", "line3", "line4", "line5", "line6",
+		"line7", "line8", "line9", "line10", "line11",
+	}, "\n"))
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(updated.input.Value()) {
+		t.Fatalf("expected enter to compress long pasted text before submit, got %q", updated.input.Value())
+	}
+	if !strings.Contains(updated.statusNote, "Press Enter again to send") {
+		t.Fatalf("expected compression guidance note, got %q", updated.statusNote)
+	}
+}
+
+func TestHandleKeyEnterCompressesTailAfterMarkerChain(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	first := strings.Join([]string{
+		"a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10", "a11",
+	}, "\n")
+	m.handleInputMutation("", first, "paste")
+	firstMarker := m.input.Value()
+	m.lastPasteAt = time.Now().Add(-2 * time.Second)
+	m.lastInputAt = time.Now().Add(-2 * time.Second)
+
+	tail := strings.Repeat("segment ", 90)
+	m.input.SetValue(firstMarker + tail)
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]\[Paste #\d+ ~\d+ lines\]$`).MatchString(updated.input.Value()) {
+		t.Fatalf("expected marker tail to compress into second marker, got %q", updated.input.Value())
+	}
+	if !strings.Contains(updated.statusNote, "Detected another pasted block") {
+		t.Fatalf("expected second-block compression note, got %q", updated.statusNote)
+	}
+}
+
+func TestHandleKeyEnterDropsContinuationTailAfterMarker(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	first := strings.Join([]string{
+		"u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10", "u11",
+	}, "\n")
+	m.handleInputMutation("", first, "paste")
+	firstMarker := m.input.Value()
+	m.lastPasteAt = time.Now().Add(-2 * time.Second)
+	m.lastInputAt = time.Now().Add(-2 * time.Second)
+
+	m.input.SetValue(firstMarker + " trailing continuation chunk text")
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if updated.input.Value() != firstMarker {
+		t.Fatalf("expected trailing continuation text to be dropped, got %q", updated.input.Value())
+	}
+	if !strings.Contains(updated.statusNote, "Kept compressed markers only") {
+		t.Fatalf("expected continuation-tail cleanup note, got %q", updated.statusNote)
+	}
+}
+
+func TestHandleKeyEnterSuppressAfterPasteBranches(t *testing.T) {
+	t.Run("busy-run-ignores-enter", func(t *testing.T) {
+		m := newImagePipelineModel(t)
+		m.screen = screenChat
+		m.busy = true
+		m.lastPasteAt = time.Now()
+		m.lastInputAt = time.Now()
+		m.input.SetValue("abc")
+
+		got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+		updated := got.(model)
+		if updated.input.Value() != "abc" {
+			t.Fatalf("expected busy run to ignore suppressed enter, got %q", updated.input.Value())
+		}
+	})
+
+	t.Run("idle-run-converts-enter-to-newline", func(t *testing.T) {
+		m := newImagePipelineModel(t)
+		m.screen = screenChat
+		m.lastPasteAt = time.Now()
+		m.lastInputAt = time.Now()
+		m.input.SetValue("abc")
+
+		got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+		updated := got.(model)
+		if !strings.Contains(updated.input.Value(), "\n") {
+			t.Fatalf("expected suppressed enter to insert newline, got %q", updated.input.Value())
+		}
+	})
+}
+
+func TestHandleKeyPasteCompressesLongTextImmediately(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	longPaste := strings.Join([]string{
+		"func normalize(items []string) []string {",
+		"    out := make([]string, 0, len(items))",
+		"    for _, item := range items {",
+		"        v := strings.TrimSpace(item)",
+		"        if v == \"\" {",
+		"            continue",
+		"        }",
+		"        out = append(out, strings.ToLower(v))",
+		"    }",
+		"    sort.Strings(out)",
+		"    return out",
+		"}",
+	}, "\n")
+
+	msg := tea.KeyMsg{
+		Type:  tea.KeyRunes,
+		Runes: []rune(longPaste),
+		Paste: true,
+	}
+	got, _ := m.handleKey(msg)
+	updated := got.(model)
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(updated.input.Value()) {
+		t.Fatalf("expected immediate marker replacement for pasted long text, got %q", updated.input.Value())
+	}
+	if strings.Contains(updated.input.Value(), "normalize(items") {
+		t.Fatalf("expected no raw pasted code to remain in input, got %q", updated.input.Value())
+	}
 }

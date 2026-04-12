@@ -45,6 +45,13 @@ type rect struct {
 	h int
 }
 
+type tokenUsageBounds struct {
+	X int
+	Y int
+	W int
+	H int
+}
+
 func newTokenUsageComponent() tokenUsageComponent {
 	compatRing := runtime.GOOS == "windows" || readEnvFlag("BYTEMIND_TOKEN_MONITOR_COMPAT")
 	simpleRing := readEnvFlag("BYTEMIND_TOKEN_MONITOR_SIMPLE")
@@ -160,6 +167,10 @@ func (c tokenUsageComponent) tickCmd() tea.Cmd {
 	})
 }
 
+func (c tokenUsageComponent) TickCmd() tea.Cmd {
+	return c.tickCmd()
+}
+
 func (c tokenUsageComponent) Layout(containerWidth int) (x, y, w, h int) {
 	badgeW := lipgloss.Width(c.View())
 	badgeH := lipgloss.Height(c.badgeStyle().Render("x"))
@@ -173,6 +184,23 @@ func (c tokenUsageComponent) contains(x, y int) bool {
 		return false
 	}
 	return x >= c.bounds.x && x < c.bounds.x+c.bounds.w && y >= c.bounds.y && y < c.bounds.y+c.bounds.h
+}
+
+func (c tokenUsageComponent) Bounds() tokenUsageBounds {
+	return tokenUsageBounds{
+		X: c.bounds.x,
+		Y: c.bounds.y,
+		W: c.bounds.w,
+		H: c.bounds.h,
+	}
+}
+
+func (c tokenUsageComponent) Hovering() bool {
+	return c.hover
+}
+
+func (c tokenUsageComponent) Used() int {
+	return c.used
 }
 
 func (c tokenUsageComponent) usageText() string {
