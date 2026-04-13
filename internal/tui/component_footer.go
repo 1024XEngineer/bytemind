@@ -51,6 +51,9 @@ func (m model) renderModeTabs() string {
 func (m model) renderFooterInfoLine() string {
 	width := max(24, m.chatPanelInnerWidth())
 	left := m.renderModeTabs()
+	if indicator := m.renderFooterRunIndicator(); indicator != "" {
+		left = lipgloss.JoinHorizontal(lipgloss.Left, left, indicator)
+	}
 	modelName := strings.TrimSpace(m.currentModelLabel())
 	if modelName == "-" {
 		modelName = ""
@@ -71,6 +74,13 @@ func (m model) renderFooterInfoLine() string {
 	}
 
 	return lipgloss.NewStyle().Width(width).Render(left + strings.Repeat(" ", gap) + right)
+}
+
+func (m model) renderFooterRunIndicator() string {
+	if !m.busy {
+		return ""
+	}
+	return accentStyle.Copy().Bold(true).Render(" " + m.spinner.View() + " running")
 }
 
 func renderFooterInfoRight(modelName string, maxWidth int) string {

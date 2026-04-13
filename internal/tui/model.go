@@ -491,10 +491,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.runCancel = nil
 		m.activeRunID = 0
 		m.interruptSafe = false
+		wasInterrupting := m.interrupting
 		shouldResumeBTW := m.interrupting && len(m.pendingBTW) > 0
 		m.interrupting = false
 		finishReason := classifyRunFinish(msg.Err, shouldResumeBTW)
 		if shouldResumeBTW {
+			m.clearTransientAssistantPlaceholder()
 			updateScope := formatBTWUpdateScope(len(m.pendingBTW))
 			prompt := composeBTWPrompt(m.pendingBTW)
 			m.pendingBTW = nil
@@ -519,12 +521,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusNote = "Ready."
 			m.phase = "idle"
 		case runFinishReasonCanceled:
-			m.streamingIndex = -1
-			m.statusNote = "Run canceled."
-			m.phase = "idle"
-			m.llmConnected = true
+			if wasInterrupting {
+				m.clearTransientAssistantPlaceholder()
+				m.statusNote = "Run canceled."
+				m.phase = "idle"
+				m.llmConnected = true
+			} else {
+				m.statusNote = "Run canceled before receiving a response."
+				m.phase = "error"
+				m.llmConnected = false
+				m.failLatestAssistant("request canceled before completion")
+			}
 		case runFinishReasonFailed:
-			m.streamingIndex = -1
 			m.statusNote = "Run failed: " + msg.Err.Error()
 			m.phase = "error"
 			m.llmConnected = false
@@ -1634,6 +1642,7 @@ func (m *model) beginRunWithInput(promptInput agent.RunPromptInput, mode, note s
 	m.llmConnected = true
 	m.busy = true
 	m.chatAutoFollow = true
+	m.ensurePendingAssistantCard()
 	if m.width > 0 && m.height > 0 {
 		m.syncLayoutForCurrentScreen()
 		m.refreshViewport()
@@ -1739,6 +1748,11 @@ func (m *model) handleAgentEvent(event agent.Event) {
 	switch event.Type {
 	case agent.EventRunStarted:
 		m.tempEstimatedOutput = 0
+		m.phase = "thinking"
+		if strings.TrimSpace(m.statusNote) == "" || m.statusNote == "Ready." {
+			m.statusNote = "Request sent to LLM. Waiting for response..."
+		}
+		m.ensurePendingAssistantCard()
 	case agent.EventAssistantDelta:
 		m.phase = "responding"
 		m.statusNote = "LLM is responding..."
@@ -1993,27 +2007,85 @@ func (m *model) updateThinkingCard() {
 	item.Body = m.thinkingText()
 }
 
+func (m *model) ensurePendingAssistantCard() {
+	if m.streamingIndex >= 0 && m.streamingIndex < len(m.chatItems) {
+		item := &m.chatItems[m.streamingIndex]
+		if item.Kind == "assistant" {
+			item.Title = thinkingLabel
+			item.Status = "pending"
+			item.Body = m.thinkingText()
+			return
+		}
+	}
+	m.appendChat(chatEntry{
+		Kind:   "assistant",
+		Title:  thinkingLabel,
+		Body:   m.thinkingText(),
+		Status: "pending",
+	})
+	m.streamingIndex = len(m.chatItems) - 1
+}
+
+func (m *model) clearTransientAssistantPlaceholder() {
+	if m.streamingIndex < 0 || m.streamingIndex >= len(m.chatItems) {
+		m.streamingIndex = -1
+		return
+	}
+	item := m.chatItems[m.streamingIndex]
+	if item.Kind == "assistant" {
+		status := strings.TrimSpace(strings.ToLower(item.Status))
+		if (status == "pending" || status == "thinking") && isThinkingPlaceholderBody(item.Body) {
+			m.chatItems = append(m.chatItems[:m.streamingIndex], m.chatItems[m.streamingIndex+1:]...)
+		}
+	}
+	m.streamingIndex = -1
+}
+
+func isThinkingPlaceholderBody(body string) bool {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return true
+	}
+	return strings.Contains(body, "Thinking... request already sent to the LLM, waiting for response.")
+}
+
+func isTransientAssistantStatus(status string) bool {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "pending", "thinking", "streaming":
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *model) failLatestAssistant(errText string) {
 	errText = strings.TrimSpace(errText)
 	if errText == "" {
 		errText = "Unknown provider error"
 	}
-	if len(m.chatItems) == 0 {
-		m.appendChat(chatEntry{
-			Kind:   "assistant",
-			Title:  assistantLabel,
-			Body:   "Request failed: " + errText,
-			Status: "error",
-		})
-		return
+
+	if m.streamingIndex >= 0 && m.streamingIndex < len(m.chatItems) {
+		item := &m.chatItems[m.streamingIndex]
+		if item.Kind == "assistant" && isTransientAssistantStatus(item.Status) {
+			item.Title = assistantLabel
+			item.Body = "Request failed: " + errText
+			item.Status = "error"
+			m.streamingIndex = -1
+			return
+		}
+		m.streamingIndex = -1
 	}
-	for i := len(m.chatItems) - 1; i >= 0; i-- {
-		if m.chatItems[i].Kind == "assistant" {
-			m.chatItems[i].Body = "Request failed: " + errText
-			m.chatItems[i].Status = "error"
+
+	if len(m.chatItems) > 0 {
+		last := &m.chatItems[len(m.chatItems)-1]
+		if last.Kind == "assistant" && isTransientAssistantStatus(last.Status) {
+			last.Title = assistantLabel
+			last.Body = "Request failed: " + errText
+			last.Status = "error"
 			return
 		}
 	}
+
 	m.appendChat(chatEntry{
 		Kind:   "assistant",
 		Title:  assistantLabel,

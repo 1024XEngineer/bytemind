@@ -189,8 +189,7 @@ var (
 				Padding(0, 1)
 
 	statusBarStyle = lipgloss.NewStyle().
-			Foreground(colorMuted).
-			Faint(true)
+			Foreground(lipgloss.Color("#AFC0D8"))
 
 	commandPaletteStyle = lipgloss.NewStyle().
 				BorderStyle(lipgloss.NormalBorder()).

@@ -22,6 +22,7 @@ import (
 	"bytemind/internal/session"
 	"bytemind/internal/tools"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -1985,6 +1986,23 @@ func TestRenderFooterInfoLineCombinesModeAndHints(t *testing.T) {
 	}
 }
 
+func TestRenderFooterInfoLineShowsRunIndicatorWhenBusy(t *testing.T) {
+	input := textarea.New()
+	spin := spinner.New()
+	spin.Spinner = spinner.MiniDot
+	m := model{
+		width:   160,
+		input:   input,
+		busy:    true,
+		spinner: spin,
+	}
+
+	footer := m.renderFooter()
+	if !strings.Contains(footer, "running") {
+		t.Fatalf("expected footer info line to show running indicator when busy, got %q", footer)
+	}
+}
+
 func TestRenderStatusBarShowsCurrentRuntimeState(t *testing.T) {
 	m := model{
 		width:          200,
@@ -2006,6 +2024,7 @@ func TestRenderStatusBarShowsCurrentRuntimeState(t *testing.T) {
 	bar := m.renderStatusBar()
 	for _, want := range []string{
 		"Mode: BUILD",
+		"Run: idle",
 		"Phase: executing",
 		"Session: 1234567890ab",
 		"Step: Implement plan resumption",
@@ -3637,6 +3656,38 @@ func TestUpdateRunFinishedMsgResetsBusyState(t *testing.T) {
 			t.Fatalf("expected latest assistant card to show failure, got %+v", last)
 		}
 	})
+
+	t.Run("unexpected canceled", func(t *testing.T) {
+		m := model{
+			async:          make(chan tea.Msg, 1),
+			busy:           true,
+			streamingIndex: 1,
+			statusNote:     "Running...",
+			phase:          "responding",
+			llmConnected:   true,
+			chatItems: []chatEntry{
+				{Kind: "user", Title: "You", Body: "inspect repo", Status: "final"},
+				{Kind: "assistant", Title: thinkingLabel, Body: "thinking", Status: "pending"},
+			},
+		}
+
+		got, _ := m.Update(runFinishedMsg{Err: context.Canceled})
+		updated := got.(model)
+
+		if updated.busy {
+			t.Fatalf("expected canceled run to clear busy state")
+		}
+		if updated.phase != "error" || !strings.Contains(updated.statusNote, "Run canceled before receiving a response") {
+			t.Fatalf("expected canceled run without user interrupt to show visible error, got phase=%q note=%q", updated.phase, updated.statusNote)
+		}
+		if updated.llmConnected {
+			t.Fatalf("expected canceled run without user interrupt to set llmConnected=false")
+		}
+		last := updated.chatItems[len(updated.chatItems)-1]
+		if last.Status != "error" || !strings.Contains(last.Body, "request canceled before completion") {
+			t.Fatalf("expected canceled run to surface assistant error, got %+v", last)
+		}
+	})
 }
 
 func TestRunFinishedKeepsStreamingSlotForLateAssistantMessage(t *testing.T) {
@@ -3669,6 +3720,61 @@ func TestRunFinishedKeepsStreamingSlotForLateAssistantMessage(t *testing.T) {
 		t.Fatalf("expected assistant card to be finalized in place, got %+v", last)
 	}
 }
+
+func TestBeginRunWithInputAddsPendingAssistantPlaceholder(t *testing.T) {
+	m := model{
+		async:     make(chan tea.Msg, 1),
+		runner:    &agent.Runner{},
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+		mode:      modeBuild,
+	}
+
+	cmd := m.beginRunWithInput(agent.RunPromptInput{
+		UserMessage: llm.NewUserTextMessage("check"),
+		DisplayText: "check",
+	}, string(modeBuild), "")
+	if cmd == nil {
+		t.Fatalf("expected beginRunWithInput to return command")
+	}
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected pending assistant placeholder to be appended, got %d items", len(m.chatItems))
+	}
+	item := m.chatItems[0]
+	if item.Kind != "assistant" || item.Status != "pending" {
+		t.Fatalf("expected pending assistant placeholder, got %+v", item)
+	}
+	if !strings.Contains(item.Body, "Thinking... request already sent to the LLM") {
+		t.Fatalf("expected placeholder body to mention waiting state, got %q", item.Body)
+	}
+	if m.streamingIndex != 0 {
+		t.Fatalf("expected streaming index to point at placeholder, got %d", m.streamingIndex)
+	}
+}
+
+func TestFailLatestAssistantDoesNotOverwriteHistoricalFinalMessage(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "q1", Status: "final"},
+			{Kind: "assistant", Title: assistantLabel, Body: "final answer", Status: "final"},
+		},
+		streamingIndex: -1,
+	}
+
+	m.failLatestAssistant("provider unavailable")
+
+	if len(m.chatItems) != 3 {
+		t.Fatalf("expected failure to append a new assistant error card, got %d items", len(m.chatItems))
+	}
+	if m.chatItems[1].Body != "final answer" || m.chatItems[1].Status != "final" {
+		t.Fatalf("expected historical final message to remain untouched, got %+v", m.chatItems[1])
+	}
+	last := m.chatItems[2]
+	if last.Kind != "assistant" || last.Status != "error" || !strings.Contains(last.Body, "provider unavailable") {
+		t.Fatalf("expected appended error card for failed run, got %+v", last)
+	}
+}
+
 func TestBusyInputStillEditable(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
@@ -3923,14 +4029,21 @@ func TestRunFinishedWithPendingBTWRestartsRun(t *testing.T) {
 	if !updated.busy {
 		t.Fatalf("expected model to restart immediately with pending btw prompt")
 	}
-	if len(updated.chatItems) != 1 || updated.chatItems[0].Kind != "system" {
-		t.Fatalf("expected system restart notice before resumed run, got %#v", updated.chatItems)
+	if len(updated.chatItems) < 2 || updated.chatItems[0].Kind != "system" {
+		t.Fatalf("expected system restart notice and pending assistant card before resumed run, got %#v", updated.chatItems)
 	}
 	if !strings.Contains(updated.chatItems[0].Body, "BTW interrupt accepted") {
 		t.Fatalf("expected btw restart notice, got %#v", updated.chatItems[0])
 	}
 	if !strings.Contains(updated.chatItems[0].Body, "2 updates") {
 		t.Fatalf("expected restart notice to include update count, got %#v", updated.chatItems[0])
+	}
+	pending := updated.chatItems[1]
+	if pending.Kind != "assistant" || pending.Status != "pending" {
+		t.Fatalf("expected resumed run to include pending assistant card, got %#v", pending)
+	}
+	if !strings.Contains(pending.Body, "Thinking... request already sent to the LLM") {
+		t.Fatalf("expected pending assistant placeholder text, got %#v", pending)
 	}
 	if updated.interrupting {
 		t.Fatalf("expected interrupting state to clear after restart")
