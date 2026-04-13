@@ -26,45 +26,49 @@
 ## 5. 总体架构图
 ```mermaid
 flowchart TB
-  U["TUI"] --> APP["app"] --> AG["agent"]
+  U["用户"]
 
-  subgraph S1["核心服务层"]
+  subgraph ORCH["主编排"]
+    AG["agent"]
+  end
+
+  subgraph STATE["会话与存储"]
     SE["session"]
+    ST["storage"]
+  end
+
+  subgraph MODEL["上下文与模型"]
     CTX["context"]
     PV["provider"]
+  end
+
+  subgraph EXEC["安全与执行"]
     PO["policy"]
+    TO["tools"]
     RT["runtime"]
-    TO["tools (SkillTool/MCPTool/...)"]
   end
 
-  subgraph S2["扩展与存储层"]
-    EX["extensions/plugins"]
-    SK["skill registry"]
-    MCP["MCP client/server"]
-    ST["storage (session/task/audit)"]
-  end
+  U -->|提交请求| AG
+  AG -->|输出最终回复| U
 
-  CORE["core (shared types)"]
+  AG -->|读取快照| SE
+  AG -->|写回会话| SE
+  SE <--> |会话日志读写| ST
+  AG -->|审计事件写入| ST
 
-  AG --> SE
-  AG --> CTX
-  AG --> PV
-  AG --> PO
-  AG --> RT
-  AG --> TO
+  AG -->|构建上下文| CTX
+  CTX -->|上下文结果| AG
+  AG -->|发送模型请求| PV
+  PV -->|返回流式事件| AG
 
-  EX --> SK
-  EX --> MCP
+  AG -->|发起权限评估| PO
+  PO -->|返回决策| AG
+  AG -->|执行工具| TO
+  TO -->|返回工具事件| AG
 
-  TO --> SK
-  TO --> MCP
-
-  AG --> ST
-  RT --> ST
-  SE --> ST
-
-  CORE --- AG
-  CORE --- TO
+  AG -->|提交任务/子代理| RT
+  RT -->|返回任务结果| AG
+  RT -->|任务日志写入| ST
 
 ```
 ## 6. 目录结构（Go）
