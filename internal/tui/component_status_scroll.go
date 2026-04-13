@@ -132,6 +132,7 @@ func (m model) renderStatusBarWithWidth(width int) string {
 	}
 	left := strings.Join([]string{
 		"Mode: " + strings.ToUpper(string(m.mode)),
+		"Run: " + m.runIndicatorLabel(),
 		"Phase: " + m.currentPhaseLabel(),
 		"Step: " + stepTitle,
 		"Skill: " + m.currentSkillLabel(),
@@ -145,6 +146,13 @@ func (m model) renderStatusBarWithWidth(width int) string {
 
 	line := m.renderTopInfoLine(left, right, width)
 	return statusBarStyle.Width(width).Render(line)
+}
+
+func (m model) runIndicatorLabel() string {
+	if m.busy {
+		return m.spinner.View() + " running"
+	}
+	return "idle"
 }
 
 func (m model) renderTopInfoLine(left, right string, width int) string {
