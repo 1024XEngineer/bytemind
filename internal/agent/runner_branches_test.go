@@ -202,14 +202,3 @@ func TestToolNamesDeduplicatesAndSkipsBlank(t *testing.T) {
 		t.Fatalf("unexpected tool names: %s", data)
 	}
 }
-
-func TestExplicitWebLookupInstruction(t *testing.T) {
-	got := explicitWebLookupInstruction("Find the implementation in the GitHub source repository")
-	if !strings.Contains(got, "web_search/web_fetch") {
-		t.Fatalf("expected explicit web lookup instruction, got %q", got)
-	}
-
-	if got := explicitWebLookupInstruction("Use search_text in the current workspace to find TODO"); got != "" {
-		t.Fatalf("expected no explicit web lookup instruction, got %q", got)
-	}
-}

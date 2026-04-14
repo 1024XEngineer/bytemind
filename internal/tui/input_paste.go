@@ -18,6 +18,7 @@ const (
 	longPasteLineThreshold      = 10
 	longPasteCharThreshold      = 500
 	pasteQuickCharThreshold     = 80
+	pasteBurstImmediateMinChars = 12
 	flattenedPasteCharThreshold = 180
 	pasteBurstCharThreshold     = 120
 	pasteBurstWindow            = 80 * time.Millisecond
@@ -215,7 +216,16 @@ func (m *model) shouldCompressPastedText(input, source string) bool {
 	if m.isLongPastedText(input) {
 		return true
 	}
-	if trimmed == "" || len(trimmed) < pasteQuickCharThreshold {
+	if trimmed == "" {
+		return false
+	}
+	rapidBurst := !m.lastInputAt.IsZero() &&
+		time.Since(m.lastInputAt) <= pasteBurstWindow &&
+		m.inputBurstSize >= pasteBurstImmediateMinChars
+	if rapidBurst && len(trimmed) >= pasteBurstImmediateMinChars && looksLikePastedFragment(trimmed) {
+		return true
+	}
+	if len(trimmed) < pasteQuickCharThreshold {
 		return false
 	}
 	if isPasteLikeSource(source) {
@@ -231,6 +241,13 @@ func (m *model) shouldCompressPastedText(input, source string) bool {
 		return true
 	}
 	return m.inputBurstSize >= pasteBurstCharThreshold
+}
+
+func looksLikePastedFragment(value string) bool {
+	if strings.ContainsAny(value, "\r\n\t ") {
+		return true
+	}
+	return len(value) >= 64
 }
 
 func isLikelyPathInput(value string) bool {
@@ -344,12 +361,21 @@ func (m *model) applyLongPastedTextPipeline(before, after, source string) (strin
 		return after, ""
 	}
 	class, prefix, inserted, suffix := classifyInputMutation(before, after, source)
-	_, beforeHasMarkerChain := extractLeadingCompressedMarker(before)
 	if chain, ok := extractLeadingCompressedMarker(before); ok {
 		afterTrimmed := strings.TrimSpace(after)
 		if strings.HasPrefix(afterTrimmed, chain) {
 			rawTail := strings.TrimPrefix(afterTrimmed, chain)
 			tail := strings.TrimSpace(rawTail)
+			if tail == "" {
+				chainValue := strings.TrimSpace(chain)
+				if strings.HasPrefix(after, chainValue) {
+					visibleTail := strings.TrimPrefix(after, chainValue)
+					if strings.TrimSpace(visibleTail) == "" &&
+						shouldHoldCompressedMarker(before, after, source, m.lastPasteAt, m.inputBurstSize) {
+						return chainValue, ""
+					}
+				}
+			}
 			if tail != "" && !compressedPasteMarkerPattern.MatchString(tail) && !compressedPasteMarkerChainPrefixPattern.MatchString(tail) {
 				safeTail := len(extractImagePathsFromChunk(tail, m.workspace)) == 0 &&
 					len(extractInlineImagePathSpans(tail)) == 0
@@ -374,6 +400,11 @@ func (m *model) applyLongPastedTextPipeline(before, after, source string) (strin
 						marker, content.Lines)
 					return updated, note
 				}
+				if shouldHoldCompressedMarker(before, after, source, m.lastPasteAt, m.inputBurstSize) {
+					// Hide transient continuation tails so split paste chunks do not
+					// visibly appear/disappear before marker coalescing completes.
+					return strings.TrimSpace(chain), ""
+				}
 				// Keep tail as-is so split paste chunks can accumulate and then
 				// compress into the next marker once they cross thresholds.
 				return after, ""
@@ -382,14 +413,7 @@ func (m *model) applyLongPastedTextPipeline(before, after, source string) (strin
 	}
 	if class == inputMutationPasteFilled {
 		candidate := strings.ReplaceAll(inserted, ctrlVMarkerRune, "")
-		if m.isLongPastedText(candidate) {
-			if !beforeHasMarkerChain && strings.TrimSpace(before) != "" && isSplitPasteContinuation(before, source, m.lastPasteAt) {
-				// Looks like the same clipboard paste still streaming in chunks.
-				// Defer compression so we can fold the whole paste into one marker.
-				candidate = ""
-			}
-		}
-		if strings.TrimSpace(candidate) != "" && m.isLongPastedText(candidate) {
+		if strings.TrimSpace(candidate) != "" && m.shouldCompressPastedText(candidate, source) {
 			marker, content, err := m.compressPastedText(candidate)
 			if err != nil {
 				return after, err.Error()
@@ -423,11 +447,11 @@ func countCompressedMarkers(value string) int {
 }
 
 func shouldMergeIntoLatestMarker(source string, lastCompressedAt time.Time) bool {
-	if isPasteLikeSource(source) {
-		return false
-	}
 	if lastCompressedAt.IsZero() {
 		return false
+	}
+	if isPasteLikeSource(source) {
+		return time.Since(lastCompressedAt) <= 120*time.Millisecond
 	}
 	return time.Since(lastCompressedAt) <= 300*time.Millisecond
 }
@@ -498,11 +522,23 @@ func latestCompressedMarkerInChain(chain string) compressedMarkerLoc {
 }
 
 func shouldHoldCompressedMarker(before, after, source string, lastPasteAt time.Time, burst int) bool {
+	rawAfter := after
 	before = strings.TrimSpace(before)
 	after = strings.TrimSpace(after)
 	marker, ok := extractLeadingCompressedMarker(before)
 	if !ok {
 		return false
+	}
+	if strings.HasPrefix(rawAfter, marker) {
+		rawTail := strings.TrimPrefix(rawAfter, marker)
+		if rawTail != "" && strings.TrimSpace(rawTail) == "" {
+			if isPasteLikeSource(source) || burst >= 8 {
+				return true
+			}
+			if !lastPasteAt.IsZero() && time.Since(lastPasteAt) <= pasteContinuationWindow {
+				return true
+			}
+		}
 	}
 	if len(after) <= len(marker) || !strings.HasPrefix(after, marker) {
 		return false
@@ -539,6 +575,122 @@ func extractLeadingCompressedMarker(value string) (string, bool) {
 		return "", false
 	}
 	return marker, true
+}
+
+func compressedMarkerIDs(value string) []string {
+	matches := compressedPasteMarkerDetailsPattern.FindAllStringSubmatch(value, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		id := strings.TrimSpace(match[1])
+		if id == "" {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func sameMarkerIDPrefix(beforeIDs, afterIDs []string) bool {
+	if len(beforeIDs) == 0 || len(afterIDs) < len(beforeIDs) {
+		return false
+	}
+	for i := range beforeIDs {
+		if beforeIDs[i] != afterIDs[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func isMarkerDeletionSource(source string) bool {
+	key := normalizeKeyName(source)
+	return key == "backspace" || key == "delete" || key == "ctrl+h"
+}
+
+func dropLatestCompressedMarker(chain string) string {
+	matches := compressedPasteMarkerAnyPattern.FindAllStringIndex(chain, -1)
+	if len(matches) == 0 {
+		return strings.TrimSpace(chain)
+	}
+	last := matches[len(matches)-1]
+	if len(last) < 2 {
+		return strings.TrimSpace(chain)
+	}
+	updated := chain[:last[0]] + chain[last[1]:]
+	return strings.TrimSpace(updated)
+}
+
+func (m *model) protectCompressedMarkerChain(before, after, source string) (string, bool) {
+	if m == nil {
+		return after, false
+	}
+	beforeChain, ok := extractLeadingCompressedMarker(before)
+	if !ok {
+		return after, false
+	}
+	beforeTrimmed := strings.TrimSpace(before)
+	afterTrimmed := strings.TrimSpace(after)
+	if afterTrimmed == beforeTrimmed {
+		return after, false
+	}
+	if afterTrimmed == "" {
+		// Allow explicit full deletion of compressed markers.
+		return after, false
+	}
+	if isMarkerDeletionSource(source) && !strings.HasPrefix(afterTrimmed, beforeChain) {
+		// Backspace/Delete on marker text removes one whole marker block.
+		beforeTail := strings.TrimSpace(strings.TrimPrefix(beforeTrimmed, beforeChain))
+		reduced := dropLatestCompressedMarker(beforeChain)
+		if reduced == "" {
+			return beforeTail, true
+		}
+		if beforeTail != "" {
+			return reduced + beforeTail, true
+		}
+		return reduced, true
+	}
+	if strings.HasPrefix(afterTrimmed, beforeChain) {
+		return after, false
+	}
+
+	afterChain, afterHasChain := extractLeadingCompressedMarker(afterTrimmed)
+	if afterHasChain {
+		beforeIDs := compressedMarkerIDs(beforeChain)
+		afterIDs := compressedMarkerIDs(afterChain)
+		if sameMarkerIDPrefix(beforeIDs, afterIDs) {
+			// Marker text is immutable for manual edits. Only allow chain text
+			// changes when they likely come from paste chunk coalescing logic.
+			if strings.TrimSpace(afterChain) == strings.TrimSpace(beforeChain) ||
+				isPasteLikeSource(source) ||
+				source == "paste-enter" {
+				return after, false
+			}
+			tail := strings.TrimSpace(strings.TrimPrefix(afterTrimmed, afterChain))
+			restored := strings.TrimSpace(beforeChain)
+			if tail != "" {
+				restored += tail
+			}
+			return restored, true
+		}
+		tail := strings.TrimSpace(strings.TrimPrefix(afterTrimmed, afterChain))
+		restored := strings.TrimSpace(beforeChain)
+		if tail != "" {
+			restored += tail
+		}
+		return restored, true
+	}
+
+	if isPasteLikeSource(source) {
+		// Keep accidental paste spill while restoring immutable marker chain.
+		return strings.TrimSpace(beforeChain) + afterTrimmed, true
+	}
+	return strings.TrimSpace(beforeChain), true
 }
 
 func isSplitPasteContinuation(input, source string, lastPasteAt time.Time) bool {

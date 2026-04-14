@@ -83,6 +83,93 @@ func TestLoadAppliesTokenUsageDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadAppliesContextBudgetDefaultsWhenMissing(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "secret")
+
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": minimalProviderConfigDoc("gpt-5.4-mini", "project-key"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ContextBudget.WarningRatio != DefaultContextBudgetWarningRatio {
+		t.Fatalf("expected default warning ratio %v, got %v", DefaultContextBudgetWarningRatio, cfg.ContextBudget.WarningRatio)
+	}
+	if cfg.ContextBudget.CriticalRatio != DefaultContextBudgetCriticalRatio {
+		t.Fatalf("expected default critical ratio %v, got %v", DefaultContextBudgetCriticalRatio, cfg.ContextBudget.CriticalRatio)
+	}
+	if cfg.ContextBudget.MaxReactiveRetry != DefaultContextBudgetMaxReactiveRetry {
+		t.Fatalf("expected default max reactive retry %d, got %d", DefaultContextBudgetMaxReactiveRetry, cfg.ContextBudget.MaxReactiveRetry)
+	}
+}
+
+func TestLoadRejectsInvalidContextBudgetRatios(t *testing.T) {
+	tests := []struct {
+		name          string
+		contextBudget map[string]any
+	}{
+		{
+			name:          "warning not less than critical",
+			contextBudget: contextBudgetDoc(DefaultContextBudgetCriticalRatio, DefaultContextBudgetCriticalRatio, DefaultContextBudgetMaxReactiveRetry),
+		},
+		{
+			name:          "critical greater than one",
+			contextBudget: contextBudgetDoc(DefaultContextBudgetWarningRatio, 1.1, DefaultContextBudgetMaxReactiveRetry),
+		},
+		{
+			name:          "warning not positive",
+			contextBudget: contextBudgetDoc(0.0, DefaultContextBudgetCriticalRatio, DefaultContextBudgetMaxReactiveRetry),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			t.Setenv("BYTEMIND_HOME", t.TempDir())
+			if err := writeConfig(projectConfigPath(workspace), map[string]any{
+				"provider":       minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+				"context_budget": tc.contextBudget,
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := Load(workspace, "")
+			if err == nil {
+				t.Fatalf("expected invalid context_budget to fail")
+			}
+			if !strings.Contains(err.Error(), "context_budget") {
+				t.Fatalf("expected context_budget validation error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsNegativeMaxReactiveRetry(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider":       minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+		"context_budget": contextBudgetDoc(DefaultContextBudgetWarningRatio, DefaultContextBudgetCriticalRatio, -1),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected negative max_reactive_retry to fail")
+	}
+	if !strings.Contains(err.Error(), "context_budget.max_reactive_retry") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestResolveConfigPathExplicit(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(file, []byte(`{}`), 0o644); err != nil {
@@ -119,7 +206,7 @@ func TestLoadMergesUserAndProjectConfigWithProjectPrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := writeConfig(filepath.Join(workspace, "config.json"), map[string]any{
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
 		"provider": map[string]any{
 			"type":     "openai-compatible",
 			"base_url": "https://api.openai.com/v1",
@@ -154,10 +241,49 @@ func TestLoadMergesUserAndProjectConfigWithProjectPrecedence(t *testing.T) {
 	}
 }
 
+func TestLoadIgnoresLegacyBytemindConfigJSON(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+
+	if err := writeConfig(filepath.Join(home, "config.json"), map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.openai.com/v1",
+			"model":    "user-model",
+			"api_key":  "user-key",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeConfig(filepath.Join(workspace, "bytemind.config.json"), map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.openai.com/v1",
+			"model":    "legacy-project-model",
+			"api_key":  "legacy-project-key",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Model != "user-model" {
+		t.Fatalf("expected legacy bytemind.config.json to be ignored, got %q", cfg.Provider.Model)
+	}
+	if cfg.Provider.ResolveAPIKey() != "user-key" {
+		t.Fatalf("expected user config api key when legacy project config exists, got %q", cfg.Provider.ResolveAPIKey())
+	}
+}
+
 func TestLoadAcceptsLegacySessionDirField(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
-	if err := writeConfig(filepath.Join(workspace, "config.json"), map[string]any{
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
 		"provider": map[string]any{
 			"type":     "openai-compatible",
 			"base_url": "https://api.openai.com/v1",
@@ -181,7 +307,7 @@ func TestLoadAcceptsLegacySessionDirField(t *testing.T) {
 func TestLoadDefaultsOpenAIModelWhenMissing(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
-	if err := writeConfig(filepath.Join(workspace, "config.json"), map[string]any{
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
 		"provider": map[string]any{
 			"type":     "openai-compatible",
 			"base_url": "https://api.deepseek.com",
@@ -204,7 +330,11 @@ func TestLoadDefaultsOpenAIModelWhenMissing(t *testing.T) {
 func TestLoadRejectsUnsupportedProviderType(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
-	if err := os.WriteFile(filepath.Join(workspace, "config.json"), []byte(`{
+	path := projectConfigPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{
   "provider": {
     "type": "unsupported",
     "base_url": "https://example.com",
@@ -227,7 +357,11 @@ func TestLoadRejectsUnsupportedProviderType(t *testing.T) {
 func TestLoadRejectsInvalidApprovalPolicy(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
-	if err := os.WriteFile(filepath.Join(workspace, "config.json"), []byte(`{
+	path := projectConfigPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{
   "provider": {
     "type": "openai-compatible",
     "base_url": "https://api.openai.com/v1",
@@ -251,7 +385,10 @@ func TestLoadRejectsInvalidApprovalPolicy(t *testing.T) {
 func TestLoadRejectsMalformedConfigJSON(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
-	configPath := filepath.Join(workspace, "config.json")
+	configPath := projectConfigPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(configPath, []byte(`{"provider":`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -423,5 +560,29 @@ func writeConfig(path string, cfg map[string]any) error {
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+func projectConfigPath(workspace string) string {
+	return filepath.Join(workspace, ".bytemind", "config.json")
+}
+
+func minimalProviderConfigDoc(model, apiKey string) map[string]any {
+	return map[string]any{
+		"type":     "openai-compatible",
+		"base_url": "https://api.openai.com/v1",
+		"model":    strings.TrimSpace(model),
+		"api_key":  strings.TrimSpace(apiKey),
+	}
+}
+
+func contextBudgetDoc(warningRatio, criticalRatio float64, maxReactiveRetry int) map[string]any {
+	return map[string]any{
+		"warning_ratio":      warningRatio,
+		"critical_ratio":     criticalRatio,
+		"max_reactive_retry": maxReactiveRetry,
+	}
 }

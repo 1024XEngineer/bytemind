@@ -14,13 +14,20 @@ const (
 	defaultHomeDir  = ".bytemind"
 )
 
+const (
+	DefaultContextBudgetWarningRatio     = 0.85
+	DefaultContextBudgetCriticalRatio    = 0.95
+	DefaultContextBudgetMaxReactiveRetry = 1
+)
+
 type Config struct {
-	Provider       ProviderConfig   `json:"provider"`
-	ApprovalPolicy string           `json:"approval_policy"`
-	MaxIterations  int              `json:"max_iterations"`
-	Stream         bool             `json:"stream"`
-	TokenQuota     int              `json:"token_quota"`
-	TokenUsage     TokenUsageConfig `json:"token_usage"`
+	Provider       ProviderConfig      `json:"provider"`
+	ApprovalPolicy string              `json:"approval_policy"`
+	MaxIterations  int                 `json:"max_iterations"`
+	Stream         bool                `json:"stream"`
+	TokenQuota     int                 `json:"token_quota"`
+	TokenUsage     TokenUsageConfig    `json:"token_usage"`
+	ContextBudget  ContextBudgetConfig `json:"context_budget"`
 }
 
 type ProviderConfig struct {
@@ -49,6 +56,12 @@ type TokenUsageConfig struct {
 	DatabaseDriver  string `json:"database_driver"`
 }
 
+type ContextBudgetConfig struct {
+	WarningRatio     float64 `json:"warning_ratio"`
+	CriticalRatio    float64 `json:"critical_ratio"`
+	MaxReactiveRetry int     `json:"max_reactive_retry"`
+}
+
 func Default(workspace string) Config {
 	return Config{
 		Provider: ProviderConfig{
@@ -71,6 +84,11 @@ func Default(workspace string) Config {
 			RetentionDays:   30,
 			MonitorInterval: "30s",
 			DatabaseDriver:  "sqlite3",
+		},
+		ContextBudget: ContextBudgetConfig{
+			WarningRatio:     DefaultContextBudgetWarningRatio,
+			CriticalRatio:    DefaultContextBudgetCriticalRatio,
+			MaxReactiveRetry: DefaultContextBudgetMaxReactiveRetry,
 		},
 	}
 }
@@ -190,6 +208,11 @@ func ensureDefaultConfigFile(home string) error {
 			MonitorInterval: "30s",
 			DatabaseDriver:  "sqlite3",
 		},
+		ContextBudget: ContextBudgetConfig{
+			WarningRatio:     DefaultContextBudgetWarningRatio,
+			CriticalRatio:    DefaultContextBudgetCriticalRatio,
+			MaxReactiveRetry: DefaultContextBudgetMaxReactiveRetry,
+		},
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
@@ -216,9 +239,7 @@ func resolveConfigPath(workspace, explicit string) (string, error) {
 
 func resolveProjectConfigPath(workspace string) string {
 	candidates := []string{
-		filepath.Join(workspace, "config.json"),
 		filepath.Join(workspace, ".bytemind", "config.json"),
-		filepath.Join(workspace, "bytemind.config.json"),
 	}
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {
@@ -374,6 +395,18 @@ func normalize(cfg *Config) error {
 	}
 	if cfg.TokenUsage.AlertThreshold < 1 {
 		cfg.TokenUsage.AlertThreshold = 1000000
+	}
+	if cfg.ContextBudget.WarningRatio <= 0 {
+		return errors.New("context_budget.warning_ratio must be > 0")
+	}
+	if cfg.ContextBudget.CriticalRatio <= 0 || cfg.ContextBudget.CriticalRatio > 1 {
+		return errors.New("context_budget.critical_ratio must be > 0 and <= 1")
+	}
+	if cfg.ContextBudget.WarningRatio >= cfg.ContextBudget.CriticalRatio {
+		return errors.New("context_budget.warning_ratio must be < context_budget.critical_ratio")
+	}
+	if cfg.ContextBudget.MaxReactiveRetry < 0 {
+		return errors.New("context_budget.max_reactive_retry must be >= 0")
 	}
 	return nil
 }

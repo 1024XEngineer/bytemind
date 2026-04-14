@@ -16,7 +16,7 @@ const (
 	maxPromptSkillDescriptionRune = 140
 )
 
-//go:embed prompts/system_prompt.md
+//go:embed prompts/default.md
 var mainPromptSource string
 
 //go:embed prompts/mode/build.md
@@ -148,7 +148,7 @@ func renderSystemBlock(input PromptInput) string {
 		fmt.Sprintf("approval_policy: %s", approval),
 		"",
 		"[Available Skills]",
-		"- Skills are user-selected session profiles that define workflow focus and tool boundaries.",
+		"- Skills are reusable task profiles available in this session. Only the [Active Skill] block, when present, is currently in effect.",
 		formatSkills(input.Skills),
 		"",
 		"[Available Tools]",
@@ -173,7 +173,7 @@ func formatSkills(skills []PromptSkill) string {
 			description = "No description provided."
 		}
 		description = trimPromptText(description, maxPromptSkillDescriptionRune)
-		lines = append(lines, fmt.Sprintf("- %s: %s enabled=%t", name, description, skill.Enabled))
+		lines = append(lines, fmt.Sprintf("- %s: %s", name, description))
 	}
 	if len(lines) == 0 {
 		return "- none"

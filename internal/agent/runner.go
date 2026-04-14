@@ -47,6 +47,7 @@ type Options struct {
 	Client       llm.Client
 	Store        *session.Store
 	Registry     *tools.Registry
+	Executor     *tools.Executor
 	SkillManager *skills.Manager
 	TokenManager *tokenusage.TokenUsageManager
 	Observer     Observer
@@ -67,6 +68,7 @@ type Runner struct {
 	client       llm.Client
 	store        *session.Store
 	registry     *tools.Registry
+	executor     *tools.Executor
 	skillManager *skills.Manager
 	tokenManager *tokenusage.TokenUsageManager
 	observer     Observer
@@ -95,12 +97,17 @@ func NewRunner(opts Options) *Runner {
 	if manager == nil {
 		manager = skills.NewManager(opts.Workspace)
 	}
+	executor := opts.Executor
+	if executor == nil && opts.Registry != nil {
+		executor = tools.NewExecutor(opts.Registry)
+	}
 	return &Runner{
 		workspace:    opts.Workspace,
 		config:       opts.Config,
 		client:       opts.Client,
 		store:        opts.Store,
 		registry:     opts.Registry,
+		executor:     executor,
 		skillManager: manager,
 		tokenManager: opts.TokenManager,
 		observer:     opts.Observer,
@@ -307,8 +314,9 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 	availableSkills := r.promptSkills()
 	availableTools := toolNames(r.registry.DefinitionsForMode(runMode))
 	instructionText := loadAGENTSInstruction(r.workspace)
-	webLookupInstruction := explicitWebLookupInstruction(userInput)
 	promptTokens := int(tokenusage.ApproximateRequestTokens([]llm.Message{userMessage}))
+	reactiveRetries := 0
+	maxReactiveRetries := max(0, r.config.ContextBudget.MaxReactiveRetry)
 
 	buildTurnMessages := func() ([]llm.Message, error) {
 		messages := make([]llm.Message, 0, len(sess.Messages)+2)
@@ -326,13 +334,6 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 			return nil, err
 		}
 		messages = append(messages, systemMessage)
-		if webLookupInstruction != "" {
-			webLookupMessage := llm.NewTextMessage(llm.RoleSystem, webLookupInstruction)
-			if err := llm.ValidateMessage(webLookupMessage); err != nil {
-				return nil, err
-			}
-			messages = append(messages, webLookupMessage)
-		}
 		messages = append(messages, sess.Messages...)
 		return messages, nil
 	}
@@ -346,11 +347,21 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 			requestTokens := int(tokenusage.ApproximateRequestTokens(messages))
 			compacted, compactErr := r.maybeAutoCompactSession(ctx, sess, promptTokens, requestTokens)
 			if compactErr != nil {
+				if isLocalPromptTooLongError(compactErr) {
+					return "", compactErr
+				}
+				retried, retryErr := r.retryAfterPromptTooLong(ctx, sess, out, compactErr, &reactiveRetries, maxReactiveRetries)
+				if retryErr != nil {
+					return "", retryErr
+				}
+				if retried {
+					continue
+				}
 				return "", compactErr
 			}
 			if compacted {
 				if out != nil {
-					fmt.Fprintf(out, "%scontext compacted to fit long-history budget%s\n", ansiDim, ansiReset)
+					fmt.Fprintf(out, "%scontext compacted to fit context budget%s\n", ansiDim, ansiReset)
 				}
 				messages, err = buildTurnMessages()
 				if err != nil {
@@ -382,6 +393,13 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 		if err != nil {
 			estimatedUsage := r.resolveTurnUsage(request, nil)
 			r.recordTokenUsage(ctx, sess, request, estimatedUsage, turnLatency, false)
+			retried, retryErr := r.retryAfterPromptTooLong(ctx, sess, out, err, &reactiveRetries, maxReactiveRetries)
+			if retryErr != nil {
+				return "", retryErr
+			}
+			if retried {
+				continue
+			}
 			return "", err
 		}
 		reply.Normalize()
@@ -469,7 +487,7 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 				fmt.Fprintf(out, "%s%stool>%s %s\n", ansiBold, ansiCyan, ansiReset, call.Function.Name)
 			}
 
-			result, execErr := r.registry.ExecuteForMode(ctx, runMode, call.Function.Name, call.Function.Arguments, &tools.ExecutionContext{
+			result, execErr := r.executor.ExecuteForMode(ctx, runMode, call.Function.Name, call.Function.Arguments, &tools.ExecutionContext{
 				Workspace:      r.workspace,
 				ApprovalPolicy: r.config.ApprovalPolicy,
 				Approval:       r.approval,
@@ -604,6 +622,24 @@ func (r *Runner) Close() error {
 		return nil
 	}
 	return r.tokenManager.Close()
+}
+
+func (r *Runner) retryAfterPromptTooLong(ctx context.Context, sess *session.Session, out io.Writer, sourceErr error, reactiveRetries *int, maxReactiveRetries int) (bool, error) {
+	if isLocalPromptTooLongError(sourceErr) || !isPromptTooLongError(sourceErr) || reactiveRetries == nil || *reactiveRetries >= maxReactiveRetries {
+		return false, nil
+	}
+	_, changed, err := r.compactSession(ctx, sess, true, "reactive")
+	if err != nil {
+		return false, err
+	}
+	if !changed {
+		return false, nil
+	}
+	*reactiveRetries++
+	if out != nil {
+		fmt.Fprintf(out, "%scontext compacted after prompt_too_long; retrying%s\n", ansiDim, ansiReset)
+	}
+	return true, nil
 }
 
 func (r *Runner) completeTurn(ctx context.Context, request llm.ChatRequest, out io.Writer, streamedText *bool) (llm.Message, error) {
@@ -1184,32 +1220,6 @@ func toolNames(definitions []llm.ToolDefinition) []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-func explicitWebLookupInstruction(userInput string) string {
-	text := strings.ToLower(strings.TrimSpace(userInput))
-	if text == "" {
-		return ""
-	}
-
-	webSignals := []string{
-		"github", "gitlab", "bitbucket",
-		"联网", "上网", "互联网", "网上",
-		"源码", "源代码", "repo", "repository",
-		"official website", "官网",
-	}
-	matched := false
-	for _, signal := range webSignals {
-		if strings.Contains(text, signal) {
-			matched = true
-			break
-		}
-	}
-	if !matched {
-		return ""
-	}
-
-	return "The user explicitly requested online or GitHub-source lookup. Use web_search/web_fetch first. Do not substitute local-workspace tools (list_files/read_file/search_text) for this request unless the user explicitly asks to inspect the current workspace repository."
 }
 
 func (r *Runner) normalizeSkillAuthorBrief(brief string) string {

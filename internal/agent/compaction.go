@@ -7,15 +7,23 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"bytemind/internal/config"
 	"bytemind/internal/llm"
 	"bytemind/internal/session"
 )
 
 const (
-	autoCompactThresholdRatio    = 95
 	maxCompactionSummaryRunes    = 4000
 	maxCompactionTranscriptRunes = 48000
 	maxCompactionMessageRunes    = 1200
+)
+
+type budgetLevel string
+
+const (
+	budgetNone     budgetLevel = "none"
+	budgetWarning  budgetLevel = "warning"
+	budgetCritical budgetLevel = "critical"
 )
 
 const compactionSystemPrompt = `You are a conversation compaction assistant for a coding agent.
@@ -32,27 +40,59 @@ Rules:
 - Remove repetitive chatter and low-signal tool noise.
 - Keep the summary compact and actionable.`
 
-func (r *Runner) compactThresholdTokens() int {
+func classifyBudget(usageRatio, warning, critical float64) budgetLevel {
+	switch {
+	case usageRatio >= critical:
+		return budgetCritical
+	case usageRatio >= warning:
+		return budgetWarning
+	default:
+		return budgetNone
+	}
+}
+
+func (r *Runner) contextBudgetQuota() int {
 	quota := r.config.TokenQuota
 	if quota < 1 {
 		quota = 5000
 	}
-	threshold := quota * autoCompactThresholdRatio / 100
-	if threshold < 1 {
-		return 1
+	return quota
+}
+
+func (r *Runner) contextBudgetRatios() (float64, float64) {
+	warning := r.config.ContextBudget.WarningRatio
+	critical := r.config.ContextBudget.CriticalRatio
+	if warning <= 0 {
+		warning = config.DefaultContextBudgetWarningRatio
 	}
-	return threshold
+	if critical <= 0 {
+		critical = config.DefaultContextBudgetCriticalRatio
+	}
+	if critical > 1 {
+		critical = 1
+	}
+	if warning >= critical {
+		warning = config.DefaultContextBudgetWarningRatio
+		critical = config.DefaultContextBudgetCriticalRatio
+	}
+	return warning, critical
 }
 
 func (r *Runner) maybeAutoCompactSession(ctx context.Context, sess *session.Session, promptTokens, requestTokens int) (bool, error) {
-	threshold := r.compactThresholdTokens()
-	if promptTokens >= threshold {
-		return false, fmt.Errorf("prompt too long (%d estimated tokens) for current context budget (%d). Try a shorter prompt or split it", promptTokens, threshold)
+	quota := r.contextBudgetQuota()
+	warningRatio, criticalRatio := r.contextBudgetRatios()
+
+	promptUsageRatio := float64(promptTokens) / float64(quota)
+	if classifyBudget(promptUsageRatio, warningRatio, criticalRatio) == budgetCritical {
+		return false, newPromptTooLongError(promptTokens, quota, criticalRatio)
 	}
-	if requestTokens <= threshold {
+
+	requestUsageRatio := float64(requestTokens) / float64(quota)
+	level := classifyBudget(requestUsageRatio, warningRatio, criticalRatio)
+	if level == budgetNone {
 		return false, nil
 	}
-	_, changed, err := r.compactSession(ctx, sess, true, "auto")
+	_, changed, err := r.compactSession(ctx, sess, true, string(level))
 	if err != nil {
 		return false, err
 	}
@@ -103,6 +143,9 @@ func (r *Runner) compactSession(ctx context.Context, sess *session.Session, keep
 		return "", false, err
 	}
 	summary = strings.TrimSpace(truncateRunes(summary, maxCompactionSummaryRunes))
+	if summary == "" {
+		summary = fallbackCompactionSummary(history)
+	}
 	if summary == "" {
 		return "", false, fmt.Errorf("compaction returned empty summary")
 	}
@@ -172,6 +215,39 @@ func (r *Runner) requestCompactionSummary(ctx context.Context, history []llm.Mes
 	}
 	reply.Normalize()
 	return strings.TrimSpace(reply.Text()), nil
+}
+
+func fallbackCompactionSummary(history []llm.Message) string {
+	if len(history) == 0 {
+		return ""
+	}
+
+	goal := strings.TrimSpace(firstUserGoal(history))
+	if goal == "" {
+		goal = "(unknown)"
+	}
+
+	const recentCount = 6
+	start := 0
+	if len(history) > recentCount {
+		start = len(history) - recentCount
+	}
+
+	lines := []string{
+		"Compaction fallback summary (model returned empty summary).",
+		"User goal: " + truncateRunes(goal, 320),
+		"Recent context:",
+	}
+
+	for i := start; i < len(history); i++ {
+		entry := strings.TrimSpace(formatCompactionMessage(i+1, history[i]))
+		if entry == "" {
+			continue
+		}
+		lines = append(lines, "- "+truncateRunes(entry, 420))
+	}
+
+	return strings.TrimSpace(truncateRunes(strings.Join(lines, "\n"), maxCompactionSummaryRunes))
 }
 
 func buildCompactionTranscript(messages []llm.Message, limit int) string {

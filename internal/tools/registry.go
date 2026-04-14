@@ -30,12 +30,18 @@ type Tool interface {
 	Run(context.Context, json.RawMessage, *ExecutionContext) (string, error)
 }
 
+type ResolvedTool struct {
+	Definition llm.ToolDefinition
+	Spec       ToolSpec
+	Tool       Tool
+}
+
 type Registry struct {
-	tools map[string]Tool
+	tools map[string]ResolvedTool
 }
 
 func DefaultRegistry() *Registry {
-	r := &Registry{tools: map[string]Tool{}}
+	r := &Registry{tools: map[string]ResolvedTool{}}
 	r.Add(ListFilesTool{})
 	r.Add(ReadFileTool{})
 	r.Add(SearchTextTool{})
@@ -50,7 +56,23 @@ func DefaultRegistry() *Registry {
 }
 
 func (r *Registry) Add(tool Tool) {
-	r.tools[tool.Definition().Function.Name] = tool
+	if r.tools == nil {
+		r.tools = map[string]ResolvedTool{}
+	}
+	definition := tool.Definition()
+	spec := DefaultToolSpec(definition)
+	if provider, ok := tool.(ToolSpecProvider); ok {
+		spec = MergeToolSpec(spec, provider.Spec())
+	}
+	spec = NormalizeToolSpec(spec)
+	if err := ValidateToolSpec(spec); err != nil {
+		panic(err)
+	}
+	r.tools[definition.Function.Name] = ResolvedTool{
+		Definition: definition,
+		Spec:       spec,
+		Tool:       tool,
+	}
 }
 
 func (r *Registry) Definitions() []llm.ToolDefinition {
@@ -67,7 +89,7 @@ func (r *Registry) DefinitionsForModeWithFilters(mode planpkg.AgentMode, allowli
 
 	names := make([]string, 0, len(r.tools))
 	for name := range r.tools {
-		if toolAllowedInMode(mode, name) {
+		if modeAllowed(r.tools[name].Spec, mode) {
 			if len(allowSet) > 0 {
 				if _, ok := allowSet[name]; !ok {
 					continue
@@ -83,9 +105,56 @@ func (r *Registry) DefinitionsForModeWithFilters(mode planpkg.AgentMode, allowli
 
 	defs := make([]llm.ToolDefinition, 0, len(names))
 	for _, name := range names {
-		defs = append(defs, r.tools[name].Definition())
+		defs = append(defs, r.tools[name].Definition)
 	}
 	return defs
+}
+
+func (r *Registry) Spec(name string) (ToolSpec, bool) {
+	resolved, ok := r.tools[name]
+	if !ok {
+		return ToolSpec{}, false
+	}
+	return resolved.Spec, true
+}
+
+func (r *Registry) ResolveForMode(mode planpkg.AgentMode, name string) (ResolvedTool, error) {
+	resolved, ok := r.tools[name]
+	if !ok {
+		return ResolvedTool{}, NewToolExecError(ToolErrorInvalidArgs, fmt.Sprintf("unknown tool %q", name), false, nil)
+	}
+	if !modeAllowed(resolved.Spec, mode) {
+		return ResolvedTool{}, NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q is unavailable in %s mode", name, mode), false, nil)
+	}
+	return resolved, nil
+}
+
+func (r *Registry) ResolveForModeWithFilters(mode planpkg.AgentMode, allowlist, denylist []string) []ResolvedTool {
+	allowSet := toNameSet(allowlist)
+	denySet := toNameSet(denylist)
+
+	names := make([]string, 0, len(r.tools))
+	for name, resolved := range r.tools {
+		if !modeAllowed(resolved.Spec, mode) {
+			continue
+		}
+		if len(allowSet) > 0 {
+			if _, ok := allowSet[name]; !ok {
+				continue
+			}
+		}
+		if _, blocked := denySet[name]; blocked {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	items := make([]ResolvedTool, 0, len(names))
+	for _, name := range names {
+		items = append(items, r.tools[name])
+	}
+	return items
 }
 
 func (r *Registry) Execute(ctx context.Context, name, rawArgs string, execCtx *ExecutionContext) (string, error) {
@@ -93,15 +162,12 @@ func (r *Registry) Execute(ctx context.Context, name, rawArgs string, execCtx *E
 }
 
 func (r *Registry) ExecuteForMode(ctx context.Context, mode planpkg.AgentMode, name, rawArgs string, execCtx *ExecutionContext) (string, error) {
-	tool, ok := r.tools[name]
-	if !ok {
-		return "", fmt.Errorf("unknown tool %q", name)
-	}
-	if !toolAllowedInMode(mode, name) {
-		return "", fmt.Errorf("tool %q is unavailable in %s mode", name, mode)
+	resolved, err := r.ResolveForMode(mode, name)
+	if err != nil {
+		return "", err
 	}
 	if !toolAllowedByPolicy(name, execCtx) {
-		return "", fmt.Errorf("tool %q is unavailable by active skill policy", name)
+		return "", NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q is unavailable by active skill policy", name), false, nil)
 	}
 	if rawArgs == "" {
 		rawArgs = "{}"
@@ -109,7 +175,7 @@ func (r *Registry) ExecuteForMode(ctx context.Context, mode planpkg.AgentMode, n
 	if execCtx != nil {
 		execCtx.Mode = mode
 	}
-	return tool.Run(ctx, json.RawMessage(rawArgs), execCtx)
+	return resolved.Tool.Run(ctx, json.RawMessage(rawArgs), execCtx)
 }
 
 func toNameSet(items []string) map[string]struct{} {
@@ -142,16 +208,4 @@ func toolAllowedByPolicy(name string, execCtx *ExecutionContext) bool {
 		}
 	}
 	return true
-}
-
-func toolAllowedInMode(mode planpkg.AgentMode, name string) bool {
-	if planpkg.NormalizeMode(string(mode)) != planpkg.ModePlan {
-		return true
-	}
-	switch name {
-	case "list_files", "read_file", "search_text", "web_search", "web_fetch", "update_plan", "run_shell":
-		return true
-	default:
-		return false
-	}
 }

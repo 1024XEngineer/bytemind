@@ -9,6 +9,11 @@
   "approval_policy": "on-request",
   "max_iterations": 32,
   "stream": true,
+  "context_budget": {
+    "warning_ratio": 0.85,
+    "critical_ratio": 0.95,
+    "max_reactive_retry": 1
+  },
   "token_usage": {
     "storage_type": "file",
     "storage_path": "./.bytemind/token_usage.json",

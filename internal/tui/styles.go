@@ -116,6 +116,16 @@ var (
 	chatBodyStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#D8D8D8"))
 
+	selectionToastStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#DFF7E8")).
+				Background(lipgloss.Color("#163423")).
+				Padding(0, 1).
+				Bold(true)
+
+	selectionHighlightStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#0B1118")).
+				Background(lipgloss.Color("#9CCBFF"))
+
 	assistantHeading1Style = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("#EAF6FF"))
@@ -177,6 +187,10 @@ var (
 				BorderForeground(colorAccent).
 				Background(lipgloss.Color("#0F1A28")).
 				Padding(0, 1)
+
+	runIndicatorStyle = lipgloss.NewStyle().
+				Foreground(colorMuted).
+				Faint(true)
 
 	statusBarStyle = lipgloss.NewStyle().
 			Foreground(colorMuted).

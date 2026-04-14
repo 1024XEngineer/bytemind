@@ -37,6 +37,27 @@ func TestWrapErrorAndMapProviderError(t *testing.T) {
 	}
 }
 
+func TestMapProviderErrorContextTooLong(t *testing.T) {
+	mapped := MapProviderError("openai", 400, "maximum context length exceeded", nil)
+	if mapped.Code != ErrorCodeContextTooLong || mapped.Retryable {
+		t.Fatalf("expected context too long mapping, got %#v", mapped)
+	}
+
+	mappedStatus := MapProviderError("openai", 413, "", errors.New("payload too large"))
+	if mappedStatus.Code != ErrorCodeContextTooLong {
+		t.Fatalf("expected status-based context too long mapping, got %#v", mappedStatus)
+	}
+}
+
+func TestIsContextTooLongMessage(t *testing.T) {
+	if !IsContextTooLongMessage("Prompt is too long for this context window") {
+		t.Fatal("expected known context-too-long phrase to match")
+	}
+	if IsContextTooLongMessage("rate limit exceeded") {
+		t.Fatal("expected unrelated phrase not to match")
+	}
+}
+
 func TestIsInvalidRole(t *testing.T) {
 	if !IsInvalidRole(errInvalidRole) {
 		t.Fatal("expected direct invalid role match")

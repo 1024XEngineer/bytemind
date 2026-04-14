@@ -1,0 +1,22 @@
+{
+  "name": "skill-creator",
+  "version": "0.1.0",
+  "title": "Skill Creator",
+  "description": "Create, refine, and evaluate skills with repeatable test loops and benchmark feedback.",
+  "entry": {
+    "slash": "/skill-creator"
+  },
+  "tools": {
+    "policy": "allowlist",
+    "items": [
+      "list_files",
+      "read_file",
+      "search_text",
+      "run_shell",
+      "write_file",
+      "replace_in_file",
+      "apply_patch",
+      "update_plan"
+    ]
+  }
+}
