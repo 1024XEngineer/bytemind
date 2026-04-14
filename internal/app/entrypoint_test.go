@@ -214,7 +214,11 @@ func writeEntrypointTestConfig(t *testing.T, workspace string, cfg map[string]an
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(workspace, "config.json"), data, 0o644); err != nil {
+	projectConfigDir := filepath.Join(workspace, ".bytemind")
+	if err := os.MkdirAll(projectConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectConfigDir, "config.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
