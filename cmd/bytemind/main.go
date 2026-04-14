@@ -49,9 +49,9 @@ type slashCommand struct {
 
 var slashCommands = []slashCommand{
 	{Name: "/help", Usage: "/help", Description: "Show available commands"},
-	{Name: "/session", Usage: "/session", Description: "Show the current session"},
+	{Name: "/session", Usage: "/session", Description: "Show the current session (CLI)"},
 	{Name: "/sessions", Usage: "/sessions [limit]", Description: "List recent sessions"},
-	{Name: "/resume", Usage: "/resume <id>", Description: "Resume a recent session by id or prefix"},
+	{Name: "/resume", Usage: "/resume <id>", Description: "Resume a recent session by id or prefix (CLI only; TUI uses /session then Enter)"},
 	{Name: "/new", Usage: "/new", Description: "Start a new session in the current workspace"},
 	{Name: "/quit", Usage: "/quit", Description: "Exit the CLI"},
 }
@@ -237,6 +237,11 @@ func handleSlashCommand(stdout io.Writer, store *session.Store, current *session
 			fmt.Fprintln(stdout, "usage: /resume <id>")
 			return current, false, true, nil
 		}
+		if store != nil {
+			if err := purgeZeroMessageSessionsForWorkspace(stdout, store, current.Workspace, current.ID); err != nil {
+				return current, false, true, err
+			}
+		}
 		id, err := resolveSessionID(store, fields[1])
 		if err != nil {
 			return current, false, true, err
@@ -248,13 +253,28 @@ func handleSlashCommand(stdout io.Writer, store *session.Store, current *session
 		if !sameWorkspace(current.Workspace, next.Workspace) {
 			return current, false, true, fmt.Errorf("session %s belongs to workspace %s, current workspace is %s", next.ID, next.Workspace, current.Workspace)
 		}
+		if store != nil {
+			if err := purgeZeroMessageSessionsForWorkspace(stdout, store, current.Workspace, next.ID); err != nil {
+				return current, false, true, err
+			}
+		}
 		fmt.Fprintf(stdout, "%sresumed%s %s\n", ansiDim, ansiReset, next.ID)
 		printCurrentSession(stdout, next)
 		return next, false, true, nil
 	case "/new":
+		if store != nil {
+			if err := purgeZeroMessageSessionsForWorkspace(stdout, store, current.Workspace, current.ID); err != nil {
+				return current, false, true, err
+			}
+		}
 		next := session.New(current.Workspace)
 		if err := store.Save(next); err != nil {
 			return current, false, true, err
+		}
+		if store != nil {
+			if err := purgeZeroMessageSessionsForWorkspace(stdout, store, current.Workspace, next.ID); err != nil {
+				return current, false, true, err
+			}
 		}
 		fmt.Fprintf(stdout, "%snew session%s %s\n", ansiDim, ansiReset, next.ID)
 		printCurrentSession(stdout, next)
@@ -335,9 +355,12 @@ func printSessions(w io.Writer, store *session.Store, currentID string, limit in
 			if item.ID == currentID {
 				marker = "*"
 			}
-			preview := item.LastUserMessage
+			preview := strings.TrimSpace(item.Title)
 			if preview == "" {
-				preview = "(no user prompt yet)"
+				preview = item.LastUserMessage
+			}
+			if preview == "" {
+				preview = "(untitled session)"
 			}
 			fmt.Fprintf(w, "%s %s  %s  %2d msgs  %s\n", marker, item.ID, item.UpdatedAt.Local().Format("2006-01-02 15:04"), item.MessageCount, preview)
 			fmt.Fprintf(w, "%s    %s%s\n", ansiGray, item.Workspace, ansiReset)
@@ -390,6 +413,20 @@ func parseOptionalLimit(fields []string) (int, error) {
 		return 0, errors.New("/sessions limit must be a positive integer")
 	}
 	return limit, nil
+}
+
+func purgeZeroMessageSessionsForWorkspace(stdout io.Writer, store *session.Store, workspace, excludeID string) error {
+	deleted, warnings, err := store.PurgeZeroMessageSessions(workspace, excludeID)
+	if err != nil {
+		return err
+	}
+	for _, warning := range warnings {
+		fmt.Fprintf(stdout, "%swarning%s %s\n", ansiDim, ansiReset, warning)
+	}
+	if deleted > 0 {
+		fmt.Fprintf(stdout, "%sinfo%s auto-cleaned %d zero-msg session(s)\n", ansiDim, ansiReset, deleted)
+	}
+	return nil
 }
 
 func sameWorkspace(a, b string) bool {

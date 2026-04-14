@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"bytemind/internal/config"
+	"bytemind/internal/llm"
 	"bytemind/internal/provider"
 	"bytemind/internal/session"
 )
@@ -31,6 +32,19 @@ func TestPrintUsageIncludesInstallCommand(t *testing.T) {
 	printUsage(&out)
 	if !strings.Contains(out.String(), "bytemind install") {
 		t.Fatalf("expected usage to mention install command, got %q", out.String())
+	}
+}
+
+func TestPrintHelpClarifiesResumePathsForCLIAndTUI(t *testing.T) {
+	var out bytes.Buffer
+	printHelp(&out)
+	text := out.String()
+
+	if !strings.Contains(text, "/resume <id>") {
+		t.Fatalf("expected help to include /resume usage, got %q", text)
+	}
+	if !strings.Contains(text, "CLI only") || !strings.Contains(text, "/session then Enter") {
+		t.Fatalf("expected help to clarify CLI/TUI resume semantics, got %q", text)
 	}
 }
 
@@ -120,6 +134,7 @@ func TestHandleSlashCommandResumesSessionWithinWorkspace(t *testing.T) {
 
 	resumed := session.New(filepath.Join(workspace, "."))
 	resumed.ID = "resume-me"
+	resumed.Messages = append(resumed.Messages, llm.NewUserTextMessage("resume payload"))
 	if err := store.Save(resumed); err != nil {
 		t.Fatal(err)
 	}
@@ -249,6 +264,85 @@ func TestHandleSlashCommandCreatesNewSession(t *testing.T) {
 	}
 }
 
+func TestHandleSlashCommandNewPurgesZeroMsgSessions(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workspace := t.TempDir()
+	current := session.New(workspace)
+	current.ID = "current"
+	current.Messages = append(current.Messages, llm.NewUserTextMessage("keep current"))
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+
+	zero := session.New(workspace)
+	zero.ID = "zero"
+	if err := store.Save(zero); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	next, shouldExit, handled, err := handleSlashCommand(&out, store, current, "/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shouldExit || !handled {
+		t.Fatalf("expected handled new command without exit, got handled=%v shouldExit=%v", handled, shouldExit)
+	}
+	if next.ID == current.ID {
+		t.Fatalf("expected a new session, got %#v", next)
+	}
+	if _, err := store.Load(zero.ID); !os.IsNotExist(err) {
+		t.Fatalf("expected stale zero-msg session to be purged, got %v", err)
+	}
+}
+
+func TestHandleSlashCommandResumePurgesZeroMsgSessions(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workspace := t.TempDir()
+	current := session.New(workspace)
+	current.ID = "current"
+	current.Messages = append(current.Messages, llm.NewUserTextMessage("current message"))
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+
+	resumed := session.New(workspace)
+	resumed.ID = "resume-target"
+	resumed.Messages = append(resumed.Messages, llm.NewUserTextMessage("resume message"))
+	if err := store.Save(resumed); err != nil {
+		t.Fatal(err)
+	}
+
+	zero := session.New(workspace)
+	zero.ID = "zero"
+	if err := store.Save(zero); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	next, shouldExit, handled, err := handleSlashCommand(&out, store, current, "/resume resume-target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shouldExit || !handled {
+		t.Fatalf("expected handled resume command without exit, got handled=%v shouldExit=%v", handled, shouldExit)
+	}
+	if next.ID != resumed.ID {
+		t.Fatalf("expected resumed session %q, got %#v", resumed.ID, next)
+	}
+	if _, err := store.Load(zero.ID); !os.IsNotExist(err) {
+		t.Fatalf("expected stale zero-msg session to be purged, got %v", err)
+	}
+}
+
 func TestPrintSessionsShowsFullSessionID(t *testing.T) {
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
@@ -267,6 +361,32 @@ func TestPrintSessionsShowsFullSessionID(t *testing.T) {
 	output := out.String()
 	if !strings.Contains(output, sess.ID) {
 		t.Fatalf("expected full session id in output, got %q", output)
+	}
+}
+
+func TestPrintSessionsPrefersTitleOverPreview(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(`E:\\repo`)
+	sess.ID = "title-first"
+	sess.Title = "Session Summary Title"
+	sess.Messages = append(sess.Messages, llm.NewUserTextMessage("preview that should not be preferred"))
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := printSessions(&out, store, sess.ID, 8); err != nil {
+		t.Fatal(err)
+	}
+	output := out.String()
+	if !strings.Contains(output, "Session Summary Title") {
+		t.Fatalf("expected title to be rendered in sessions list, got %q", output)
+	}
+	if strings.Contains(output, "preview that should not be preferred") {
+		t.Fatalf("expected title to override preview in sessions list, got %q", output)
 	}
 }
 

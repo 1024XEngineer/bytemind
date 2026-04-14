@@ -321,6 +321,160 @@ func TestStoreIgnoresLegacyJSONFiles(t *testing.T) {
 	}
 }
 
+func TestEffectiveMessageCounts(t *testing.T) {
+	sess := New(`E:\\repo`)
+	sess.Messages = []llm.Message{
+		llm.NewUserTextMessage("hello"),
+		llm.NewToolResultMessage("call-1", `{"ok":true}`),
+		{
+			Role: llm.RoleUser,
+			Parts: []llm.Part{{
+				Type: llm.PartText,
+				Text: &llm.TextPart{Value: "   "},
+			}},
+		},
+		llm.NewAssistantTextMessage("world"),
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-2",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "shell_command",
+					Arguments: `{"command":"pwd"}`,
+				},
+			}},
+		},
+		{
+			Role: llm.RoleAssistant,
+			Parts: []llm.Part{{
+				Type: llm.PartToolUse,
+				ToolUse: &llm.ToolUsePart{
+					ID:        "call-3",
+					Name:      "read_file",
+					Arguments: `{"path":"README.md"}`,
+				},
+			}},
+		},
+	}
+
+	if got := UserEffectiveInputCount(sess); got != 1 {
+		t.Fatalf("expected user effective input count 1, got %d", got)
+	}
+	if got := AssistantEffectiveOutputCount(sess); got != 3 {
+		t.Fatalf("expected assistant effective output count 3, got %d", got)
+	}
+	if IsZeroMessageSession(sess) {
+		t.Fatal("expected session with user input not to be zero-msg")
+	}
+
+	zero := New(`E:\\repo`)
+	if !IsZeroMessageSession(zero) {
+		t.Fatal("expected empty session to be zero-msg")
+	}
+}
+
+func TestStoreListIncludesTitleAndEffectiveCounts(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sess := New(`E:\\repo`)
+	sess.ID = "with-title"
+	sess.Title = "project kickoff summary"
+	sess.Messages = []llm.Message{
+		llm.NewUserTextMessage("start"),
+		llm.NewAssistantTextMessage("done"),
+	}
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, warnings, err := store.List(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("expected one summary, got %#v", summaries)
+	}
+	got := summaries[0]
+	if got.Title != "project kickoff summary" {
+		t.Fatalf("expected summary title to prefer session title, got %#v", got)
+	}
+	if got.UserEffectiveInputCount != 1 {
+		t.Fatalf("expected user effective input count 1, got %#v", got)
+	}
+	if got.AssistantEffectiveOutputCount != 1 {
+		t.Fatalf("expected assistant effective output count 1, got %#v", got)
+	}
+	if got.MessageCount != 2 {
+		t.Fatalf("expected raw message count 2, got %#v", got)
+	}
+}
+
+func TestStorePurgeZeroMessageSessionsScopesWorkspaceAndExcludesActive(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workspaceA := t.TempDir()
+	workspaceB := t.TempDir()
+
+	active := New(workspaceA)
+	active.ID = "active-zero"
+	if err := store.Save(active); err != nil {
+		t.Fatal(err)
+	}
+
+	zeroA := New(workspaceA)
+	zeroA.ID = "zero-a"
+	if err := store.Save(zeroA); err != nil {
+		t.Fatal(err)
+	}
+
+	noReply := New(workspaceA)
+	noReply.ID = "no-reply"
+	noReply.Messages = []llm.Message{llm.NewUserTextMessage("user asked but no assistant yet")}
+	if err := store.Save(noReply); err != nil {
+		t.Fatal(err)
+	}
+
+	zeroB := New(workspaceB)
+	zeroB.ID = "zero-b"
+	if err := store.Save(zeroB); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, warnings, err := store.PurgeZeroMessageSessions(workspaceA, active.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %#v", warnings)
+	}
+	if deleted != 1 {
+		t.Fatalf("expected exactly one zero-msg session deleted in workspace A, got %d", deleted)
+	}
+
+	if _, err := store.Load(active.ID); err != nil {
+		t.Fatalf("expected active excluded session to remain, got %v", err)
+	}
+	if _, err := store.Load(noReply.ID); err != nil {
+		t.Fatalf("expected no-reply session to remain, got %v", err)
+	}
+	if _, err := store.Load(zeroA.ID); !os.IsNotExist(err) {
+		t.Fatalf("expected zero-msg session in workspace A to be deleted, got %v", err)
+	}
+	if _, err := store.Load(zeroB.ID); err != nil {
+		t.Fatalf("expected zero-msg session in other workspace to remain, got %v", err)
+	}
+}
+
 func TestProjectIDProducesStablePathSafeValue(t *testing.T) {
 	first := projectID(`C:\\Users\\Wheat\\Desktop\\Demo Repo`)
 	second := projectID(`C:\\Users\\wheat\\Desktop\\Demo Repo`)

@@ -32,6 +32,8 @@ func (m model) helpText() string {
 		"- If provider setup is required, paste an API key in the input and press Enter.",
 		"- Long pasted code/text is compressed to `[Paste #N ~X lines]`.",
 		"- Use `[Paste]`, `[Paste #N]`, `[Paste line3]`, or `[Paste #N line3~line7]` to expand references.",
+		"- Restore in TUI: press `Ctrl+L` or run `/session`, choose a session, then press `Enter`.",
+		"- CLI-only restore: use `/resume <id>` in `bytemind chat`.",
 		"- After restoring a session with a saved plan, type `continue execution` to resume it.",
 		"- Approval requests appear above the input area when a shell command needs confirmation.",
 		"- Footer shortcuts: `tab` agents, `/` commands, drag select, `Ctrl+C` copy/quit, `Ctrl+F` history, `Ctrl+L` sessions.",

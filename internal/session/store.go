@@ -33,6 +33,7 @@ type ActiveSkill struct {
 type Session struct {
 	ID           string            `json:"id"`
 	Workspace    string            `json:"workspace"`
+	Title        string            `json:"title,omitempty"`
 	CreatedAt    time.Time         `json:"created_at"`
 	UpdatedAt    time.Time         `json:"updated_at"`
 	Conversation Conversation      `json:"conversation,omitempty"`
@@ -76,12 +77,15 @@ type Store struct {
 }
 
 type Summary struct {
-	ID              string    `json:"id"`
-	Workspace       string    `json:"workspace"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	LastUserMessage string    `json:"last_user_message,omitempty"`
-	MessageCount    int       `json:"message_count"`
+	ID                            string    `json:"id"`
+	Workspace                     string    `json:"workspace"`
+	Title                         string    `json:"title,omitempty"`
+	CreatedAt                     time.Time `json:"created_at"`
+	UpdatedAt                     time.Time `json:"updated_at"`
+	LastUserMessage               string    `json:"last_user_message,omitempty"`
+	MessageCount                  int       `json:"message_count"`
+	UserEffectiveInputCount       int       `json:"user_effective_input_count"`
+	AssistantEffectiveOutputCount int       `json:"assistant_effective_output_count"`
 }
 
 func New(workspace string) *Session {
@@ -169,13 +173,21 @@ func (s *Store) List(limit int) ([]Summary, []string, error) {
 			continue
 		}
 
+		timeline := sessionTimeline(sess)
+		title := summarizeMessage(strings.TrimSpace(sess.Title), 72)
+		if title == "" {
+			title = summarizeMessage(deriveSessionTitle(timeline), 72)
+		}
 		summaries = append(summaries, Summary{
-			ID:              sess.ID,
-			Workspace:       sess.Workspace,
-			CreatedAt:       sess.CreatedAt,
-			UpdatedAt:       sess.UpdatedAt,
-			LastUserMessage: summarizeMessage(lastUserMessage(sessionTimeline(sess)), 72),
-			MessageCount:    len(sessionTimeline(sess)),
+			ID:                            sess.ID,
+			Workspace:                     sess.Workspace,
+			Title:                         title,
+			CreatedAt:                     sess.CreatedAt,
+			UpdatedAt:                     sess.UpdatedAt,
+			LastUserMessage:               summarizeMessage(lastUserMessage(timeline), 72),
+			MessageCount:                  len(timeline),
+			UserEffectiveInputCount:       userEffectiveInputCount(timeline),
+			AssistantEffectiveOutputCount: assistantEffectiveOutputCount(timeline),
 		})
 	}
 
@@ -187,6 +199,70 @@ func (s *Store) List(limit int) ([]Summary, []string, error) {
 		summaries = summaries[:limit]
 	}
 	return summaries, warnings, nil
+}
+
+func (s *Store) Delete(id string) error {
+	path, err := s.findSessionPath(id)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) PurgeZeroMessageSessions(workspace, excludeSessionID string) (int, []string, error) {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return 0, nil, nil
+	}
+	projectDir := filepath.Join(s.dir, projectID(workspace))
+	entries, err := os.ReadDir(projectDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil, nil
+		}
+		return 0, nil, err
+	}
+
+	excludeSessionID = strings.TrimSpace(excludeSessionID)
+	deleted := 0
+	warnings := make([]string, 0)
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.ToLower(filepath.Ext(entry.Name())) != ".jsonl" {
+			continue
+		}
+		path := filepath.Join(projectDir, entry.Name())
+		sess, loadErr := loadSessionFile(path)
+		if loadErr != nil {
+			warnings = append(warnings, fmt.Sprintf("skip purge for corrupted session file %s: %v", entry.Name(), loadErr))
+			continue
+		}
+		sessionID := strings.TrimSpace(sess.ID)
+		if sessionID == "" {
+			sessionID = strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		}
+		if sessionID == excludeSessionID {
+			continue
+		}
+		if !IsZeroMessageSession(sess) {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			warnings = append(warnings, fmt.Sprintf("failed to remove zero-msg session %s: %v", sessionID, err))
+			continue
+		}
+		deleted++
+	}
+	return deleted, warnings, nil
 }
 
 func (s *Store) pathForSession(session *Session) (string, error) {
@@ -474,6 +550,47 @@ func lastUserMessage(messages []llm.Message) string {
 	return ""
 }
 
+func firstUserMessage(messages []llm.Message) string {
+	for i := 0; i < len(messages); i++ {
+		if messages[i].Role != llm.RoleUser {
+			continue
+		}
+		msg := messages[i]
+		msg.Normalize()
+		if hasToolResultPart(msg) {
+			continue
+		}
+		if text := strings.TrimSpace(msg.Text()); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func firstAssistantMessage(messages []llm.Message) string {
+	for i := 0; i < len(messages); i++ {
+		if messages[i].Role != llm.RoleAssistant {
+			continue
+		}
+		msg := messages[i]
+		msg.Normalize()
+		if len(msg.ToolCalls) > 0 || hasToolUsePart(msg) {
+			return strings.TrimSpace(msg.Text())
+		}
+		if text := strings.TrimSpace(msg.Text()); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func deriveSessionTitle(messages []llm.Message) string {
+	if text := firstUserMessage(messages); text != "" {
+		return text
+	}
+	return firstAssistantMessage(messages)
+}
+
 func sessionTimeline(sess *Session) []llm.Message {
 	if sess == nil {
 		return nil
@@ -482,6 +599,82 @@ func sessionTimeline(sess *Session) []llm.Message {
 		return sess.Conversation.Timeline
 	}
 	return sess.Messages
+}
+
+func UserEffectiveInputCount(sess *Session) int {
+	return userEffectiveInputCount(sessionTimeline(sess))
+}
+
+func AssistantEffectiveOutputCount(sess *Session) int {
+	return assistantEffectiveOutputCount(sessionTimeline(sess))
+}
+
+func IsZeroMessageSession(sess *Session) bool {
+	return UserEffectiveInputCount(sess) == 0
+}
+
+func userEffectiveInputCount(messages []llm.Message) int {
+	count := 0
+	for _, raw := range messages {
+		if raw.Role != llm.RoleUser {
+			continue
+		}
+		msg := raw
+		msg.Normalize()
+		if hasToolResultPart(msg) {
+			continue
+		}
+		if hasNonEmptyTextPart(msg) {
+			count++
+		}
+	}
+	return count
+}
+
+func assistantEffectiveOutputCount(messages []llm.Message) int {
+	count := 0
+	for _, raw := range messages {
+		if raw.Role != llm.RoleAssistant {
+			continue
+		}
+		msg := raw
+		msg.Normalize()
+		if len(msg.ToolCalls) > 0 || hasToolUsePart(msg) {
+			count++
+			continue
+		}
+		if hasNonEmptyTextPart(msg) {
+			count++
+		}
+	}
+	return count
+}
+
+func hasNonEmptyTextPart(msg llm.Message) bool {
+	for _, part := range msg.Parts {
+		if part.Text != nil && strings.TrimSpace(part.Text.Value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasToolResultPart(msg llm.Message) bool {
+	for _, part := range msg.Parts {
+		if part.ToolResult != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func hasToolUsePart(msg llm.Message) bool {
+	for _, part := range msg.Parts {
+		if part.ToolUse != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeSessionConversation(sess *Session) {

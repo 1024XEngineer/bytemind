@@ -35,7 +35,8 @@ import (
 )
 
 const (
-	defaultSessionLimit        = 8
+	defaultSessionLimit        = 0
+	sessionPageSize            = 8
 	scrollStep                 = 3
 	scrollbarWidth             = 1
 	mouseZoneAutoProbeMaxDelta = 4
@@ -893,6 +894,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "down", "j":
 			if m.sessionCursor < len(m.sessions)-1 {
 				m.sessionCursor++
+			}
+		case "left":
+			m.moveSessionPage(-1)
+		case "right":
+			m.moveSessionPage(1)
+		case "delete":
+			if err := m.deleteSelectedSession(); err != nil {
+				m.statusNote = err.Error()
+			} else {
+				return m, m.loadSessionsCmd()
 			}
 		case "enter":
 			if m.busy || len(m.sessions) == 0 {
@@ -2204,22 +2215,40 @@ func (m model) renderLanding() string {
 }
 
 func (m model) renderSessionsModal() string {
-	lines := []string{modalTitleStyle.Render("Recent Sessions"), mutedStyle.Render("Up/Down to select, Enter to resume, Esc to close"), ""}
+	total := len(m.sessions)
+	totalPages := 1
+	currentPage := 1
+	start := 0
+	end := total
+	if total > 0 {
+		totalPages = (total + sessionPageSize - 1) / sessionPageSize
+		cursor := clamp(m.sessionCursor, 0, total-1)
+		currentPage = cursor/sessionPageSize + 1
+		start = (currentPage - 1) * sessionPageSize
+		end = min(total, start+sessionPageSize)
+	}
+	guide := fmt.Sprintf("Up/Down select, Left/Right page, Enter to resume, Delete to remove, Esc to close · Page %d/%d · Total %d", currentPage, totalPages, total)
+	lines := []string{modalTitleStyle.Render("Recent Sessions"), mutedStyle.Render(guide), ""}
 	if len(m.sessions) == 0 {
 		lines = append(lines, "No sessions available.")
 	} else {
-		for i, summary := range m.sessions {
+		for i := start; i < end; i++ {
+			summary := m.sessions[i]
 			prefix := "  "
 			style := lipgloss.NewStyle()
 			if i == m.sessionCursor {
 				prefix = "> "
 				style = style.Foreground(colorAccent).Bold(true)
 			}
-			line := fmt.Sprintf("%s%s  %s  %d msgs", prefix, shortID(summary.ID), summary.UpdatedAt.Local().Format("2006-01-02 15:04"), summary.MessageCount)
+			line := fmt.Sprintf("%s%s  %s  %d msgs", prefix, summary.ID, summary.UpdatedAt.Local().Format("2006-01-02 15:04"), summary.MessageCount)
 			lines = append(lines, style.Render(line))
 			lines = append(lines, mutedStyle.Render("   "+summary.Workspace))
-			if summary.LastUserMessage != "" {
-				lines = append(lines, mutedStyle.Render("   "+summary.LastUserMessage))
+			title := strings.TrimSpace(summary.Title)
+			if title == "" {
+				title = summary.LastUserMessage
+			}
+			if title != "" {
+				lines = append(lines, mutedStyle.Render("   "+title))
 			}
 			lines = append(lines, "")
 		}
@@ -3000,6 +3029,18 @@ func (m *model) appendCommandExchange(command, response string) {
 }
 
 func (m *model) newSession() error {
+	prev := m.sess
+	if m.store != nil {
+		workspace := strings.TrimSpace(m.workspace)
+		if workspace == "" && prev != nil {
+			workspace = prev.Workspace
+		}
+		excludeID := ""
+		if prev != nil {
+			excludeID = prev.ID
+		}
+		_, _, _ = m.store.PurgeZeroMessageSessions(workspace, excludeID)
+	}
 	next := session.New(m.workspace)
 	if err := m.store.Save(next); err != nil {
 		return err
@@ -3038,10 +3079,24 @@ func (m *model) newSession() error {
 		m.syncLayoutForCurrentScreen()
 		m.refreshViewport()
 	}
+	if m.store != nil {
+		workspace := strings.TrimSpace(m.workspace)
+		if workspace == "" && prev != nil {
+			workspace = prev.Workspace
+		}
+		_, _, _ = m.store.PurgeZeroMessageSessions(workspace, next.ID)
+	}
 	return nil
 }
 
 func (m *model) resumeSession(prefix string) error {
+	if m.store != nil {
+		excludeID := ""
+		if m.sess != nil {
+			excludeID = m.sess.ID
+		}
+		_, _, _ = m.store.PurgeZeroMessageSessions(m.workspace, excludeID)
+	}
 	id, err := resolveSessionID(m.sessions, prefix)
 	if err != nil {
 		return err
@@ -3086,6 +3141,9 @@ func (m *model) resumeSession(prefix string) error {
 		m.syncLayoutForCurrentScreen()
 		m.refreshViewport()
 	}
+	if m.store != nil {
+		_, _, _ = m.store.PurgeZeroMessageSessions(next.Workspace, next.ID)
+	}
 	return nil
 }
 
@@ -3104,9 +3162,59 @@ func (m model) loadSessionsCmd() tea.Cmd {
 		if m.store == nil {
 			return sessionsLoadedMsg{}
 		}
+		excludeID := ""
+		if m.sess != nil {
+			excludeID = m.sess.ID
+		}
+		_, _, _ = m.store.PurgeZeroMessageSessions(m.workspace, excludeID)
 		summaries, _, err := m.store.List(m.sessionLimit)
 		return sessionsLoadedMsg{Summaries: summaries, Err: err}
 	}
+}
+
+func (m *model) moveSessionPage(delta int) {
+	if delta == 0 || len(m.sessions) == 0 {
+		return
+	}
+	current := clamp(m.sessionCursor, 0, len(m.sessions)-1)
+	currentPageStart := (current / sessionPageSize) * sessionPageSize
+	currentOffset := current - currentPageStart
+	nextPageStart := currentPageStart + delta*sessionPageSize
+	maxPageStart := ((len(m.sessions) - 1) / sessionPageSize) * sessionPageSize
+	nextPageStart = clamp(nextPageStart, 0, maxPageStart)
+	next := nextPageStart + currentOffset
+	if next >= len(m.sessions) {
+		next = len(m.sessions) - 1
+	}
+	m.sessionCursor = clamp(next, 0, len(m.sessions)-1)
+}
+
+func (m *model) deleteSelectedSession() error {
+	if m.store == nil {
+		return errors.New("session store is unavailable")
+	}
+	if len(m.sessions) == 0 {
+		return nil
+	}
+	index := clamp(m.sessionCursor, 0, len(m.sessions)-1)
+	targetID := strings.TrimSpace(m.sessions[index].ID)
+	if targetID == "" {
+		return errors.New("selected session id is empty")
+	}
+
+	if m.sess != nil && m.sess.ID == targetID {
+		if m.busy {
+			return errors.New("cannot delete active session while a run is in progress")
+		}
+		if err := m.newSession(); err != nil {
+			return err
+		}
+	}
+	if err := m.store.Delete(targetID); err != nil {
+		return err
+	}
+	m.statusNote = "Deleted session " + shortID(targetID)
+	return nil
 }
 
 func (m model) fetchRemoteTokenUsageCmd() tea.Cmd {

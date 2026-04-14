@@ -1909,6 +1909,7 @@ func TestHelpTextOnlyMentionsSupportedEntryPoints(t *testing.T) {
 		"go run ./cmd/bytemind chat",
 		"go run ./cmd/bytemind run -prompt",
 		"/session",
+		"/resume <id>",
 		"/skill clear",
 		"/skill delete <name>",
 		"/quit",
@@ -2248,6 +2249,29 @@ func TestHandleSlashSessionOpensSessionsModal(t *testing.T) {
 	}
 	if !m.sessionsOpen {
 		t.Fatalf("expected /session to open sessions modal")
+	}
+}
+
+func TestHandleSlashHelpDoesNotPersistLocalFeedbackToSessionTimeline(t *testing.T) {
+	workspace := t.TempDir()
+	sess := session.New(workspace)
+	sess.Messages = append(sess.Messages, llm.NewUserTextMessage("hello"))
+
+	m := model{
+		sess:      sess,
+		workspace: workspace,
+		screen:    screenLanding,
+	}
+	originalTimelineCount := len(m.sess.Messages)
+
+	if err := m.handleSlashCommand("/help"); err != nil {
+		t.Fatalf("expected /help to succeed, got %v", err)
+	}
+	if len(m.sess.Messages) != originalTimelineCount {
+		t.Fatalf("expected /help local feedback not to mutate session timeline, got %d messages", len(m.sess.Messages))
+	}
+	if len(m.chatItems) < 2 {
+		t.Fatalf("expected /help to render local command exchange in UI, got %#v", m.chatItems)
 	}
 }
 
@@ -4150,6 +4174,7 @@ func TestResumeSessionClearsInterruptState(t *testing.T) {
 	workspace := t.TempDir()
 	current := session.New(workspace)
 	target := session.New(workspace)
+	target.Messages = append(target.Messages, llm.NewUserTextMessage("resume payload"))
 	if err := store.Save(current); err != nil {
 		t.Fatal(err)
 	}
@@ -4189,6 +4214,196 @@ func TestResumeSessionClearsInterruptState(t *testing.T) {
 	}
 	if m.screen != screenChat {
 		t.Fatalf("expected resume to switch to chat screen, got %q", m.screen)
+	}
+}
+
+func TestMoveSessionPageKeepsOffsetAndClamps(t *testing.T) {
+	summaries := make([]session.Summary, 18)
+	for i := range summaries {
+		summaries[i] = session.Summary{ID: "session-" + string(rune('a'+i))}
+	}
+
+	m := model{
+		sessions:      summaries,
+		sessionCursor: 1,
+	}
+
+	m.moveSessionPage(1)
+	if m.sessionCursor != 9 {
+		t.Fatalf("expected cursor to move to next page with same offset, got %d", m.sessionCursor)
+	}
+
+	m.moveSessionPage(1)
+	if m.sessionCursor != 17 {
+		t.Fatalf("expected cursor to clamp on last page, got %d", m.sessionCursor)
+	}
+
+	m.moveSessionPage(1)
+	if m.sessionCursor != 17 {
+		t.Fatalf("expected cursor to stay clamped on last page, got %d", m.sessionCursor)
+	}
+
+	m.moveSessionPage(-1)
+	if m.sessionCursor != 9 {
+		t.Fatalf("expected cursor to return to previous page with same offset, got %d", m.sessionCursor)
+	}
+}
+
+func TestRenderSessionsModalShowsPaginationAndTitlePriority(t *testing.T) {
+	summaries := make([]session.Summary, 10)
+	now := time.Date(2026, 4, 14, 10, 0, 0, 0, time.UTC)
+	for i := range summaries {
+		summaries[i] = session.Summary{
+			ID:           "session-" + string(rune('a'+i)),
+			Workspace:    `E:\\repo`,
+			UpdatedAt:    now,
+			MessageCount: i + 1,
+		}
+	}
+	summaries[8].ID = "20260414-101500-abcdef12"
+	summaries[8].Title = "preferred title"
+	summaries[8].LastUserMessage = "fallback should not be shown"
+	summaries[9].LastUserMessage = "fallback preview line"
+
+	m := model{
+		sessions:      summaries,
+		sessionCursor: 8,
+	}
+
+	rendered := m.renderSessionsModal()
+	if !strings.Contains(rendered, "Page 2/2 · Total 10") {
+		t.Fatalf("expected pagination header, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "preferred title") {
+		t.Fatalf("expected title line to be rendered, got %q", rendered)
+	}
+	if !strings.Contains(rendered, summaries[8].ID) {
+		t.Fatalf("expected full session id in modal row, got %q", rendered)
+	}
+	if strings.Contains(rendered, "fallback should not be shown") {
+		t.Fatalf("expected title to override preview fallback, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "fallback preview line") {
+		t.Fatalf("expected preview fallback when title missing, got %q", rendered)
+	}
+}
+
+func TestDeleteSelectedSessionBlocksBusyActiveSession(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	active := session.New(workspace)
+	active.ID = "active"
+	if err := store.Save(active); err != nil {
+		t.Fatal(err)
+	}
+
+	m := model{
+		store:         store,
+		sess:          active,
+		workspace:     workspace,
+		sessions:      []session.Summary{{ID: active.ID}},
+		sessionCursor: 0,
+		busy:          true,
+		input:         textarea.New(),
+	}
+
+	err = m.deleteSelectedSession()
+	if err == nil || !strings.Contains(err.Error(), "cannot delete active session") {
+		t.Fatalf("expected busy active delete to be blocked, got %v", err)
+	}
+	if _, err := store.Load(active.ID); err != nil {
+		t.Fatalf("expected active session to remain, got %v", err)
+	}
+}
+
+func TestDeleteSelectedSessionSwitchesThenDeletesActiveWhenIdle(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	active := session.New(workspace)
+	active.ID = "active"
+	if err := store.Save(active); err != nil {
+		t.Fatal(err)
+	}
+
+	m := model{
+		store:         store,
+		sess:          active,
+		workspace:     workspace,
+		sessions:      []session.Summary{{ID: active.ID}},
+		sessionCursor: 0,
+		input:         textarea.New(),
+		tokenUsage:    newTokenUsageComponent(),
+	}
+
+	if err := m.deleteSelectedSession(); err != nil {
+		t.Fatalf("expected idle active session delete to succeed, got %v", err)
+	}
+	if m.sess == nil || m.sess.ID == active.ID {
+		t.Fatalf("expected model to switch to a new active session, got %#v", m.sess)
+	}
+	if _, err := store.Load(active.ID); !os.IsNotExist(err) {
+		t.Fatalf("expected original active session to be deleted, got %v", err)
+	}
+	if _, err := store.Load(m.sess.ID); err != nil {
+		t.Fatalf("expected replacement active session to be persisted, got %v", err)
+	}
+}
+
+func TestLoadSessionsCmdPurgesZeroMsgSessionsExcludingActive(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+
+	active := session.New(workspace)
+	active.ID = "active-zero"
+	if err := store.Save(active); err != nil {
+		t.Fatal(err)
+	}
+
+	zero := session.New(workspace)
+	zero.ID = "zero"
+	if err := store.Save(zero); err != nil {
+		t.Fatal(err)
+	}
+
+	noReply := session.New(workspace)
+	noReply.ID = "no-reply"
+	noReply.Messages = append(noReply.Messages, llm.NewUserTextMessage("hello"))
+	if err := store.Save(noReply); err != nil {
+		t.Fatal(err)
+	}
+
+	m := model{
+		store:        store,
+		sess:         active,
+		workspace:    workspace,
+		sessionLimit: 0,
+	}
+	msg := m.loadSessionsCmd()()
+	loaded, ok := msg.(sessionsLoadedMsg)
+	if !ok {
+		t.Fatalf("expected sessionsLoadedMsg, got %T", msg)
+	}
+	if loaded.Err != nil {
+		t.Fatalf("expected loadSessionsCmd success, got %v", loaded.Err)
+	}
+
+	if _, err := store.Load(active.ID); err != nil {
+		t.Fatalf("expected active zero-msg session to be excluded from purge, got %v", err)
+	}
+	if _, err := store.Load(zero.ID); !os.IsNotExist(err) {
+		t.Fatalf("expected non-active zero-msg session to be purged, got %v", err)
+	}
+	if _, err := store.Load(noReply.ID); err != nil {
+		t.Fatalf("expected no-reply session to remain, got %v", err)
 	}
 }
 
