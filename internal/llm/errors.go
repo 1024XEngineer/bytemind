@@ -15,9 +15,19 @@ const (
 	ErrorCodeClipboardUnavailable ErrorCode = "clipboard_unavailable"
 	ErrorCodeImageDecodeFailed    ErrorCode = "image_decode_failed"
 	ErrorCodeRateLimited          ErrorCode = "rate_limited"
+	ErrorCodeContextTooLong       ErrorCode = "context_too_long"
 	ErrorCodeInvalidToolCall      ErrorCode = "invalid_tool_call"
 	ErrorCodeUnknown              ErrorCode = "unknown"
 )
+
+var contextTooLongMessageHints = []string{
+	"context length",
+	"maximum context",
+	"too many tokens",
+	"prompt is too long",
+	"prompt too long",
+	"context window",
+}
 
 type ProviderError struct {
 	Code      ErrorCode `json:"code"`
@@ -62,7 +72,10 @@ func MapProviderError(provider string, status int, body string, fallback error) 
 		message = fallback.Error()
 	}
 
-	if status == 429 || strings.Contains(strings.ToLower(message), "rate") {
+	if IsContextTooLongMessage(message) || status == 413 {
+		code = ErrorCodeContextTooLong
+	}
+	if code == ErrorCodeUnknown && (status == 429 || strings.Contains(strings.ToLower(message), "rate")) {
 		code = ErrorCodeRateLimited
 		retryable = true
 	}
@@ -78,6 +91,19 @@ func MapProviderError(provider string, status int, body string, fallback error) 
 		Status:    status,
 		Retryable: retryable,
 	}
+}
+
+func IsContextTooLongMessage(message string) bool {
+	message = strings.ToLower(strings.TrimSpace(message))
+	if message == "" {
+		return false
+	}
+	for _, hint := range contextTooLongMessageHints {
+		if strings.Contains(message, hint) {
+			return true
+		}
+	}
+	return false
 }
 
 var errInvalidRole = errors.New("invalid role")

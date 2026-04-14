@@ -315,6 +315,8 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 	availableTools := toolNames(r.registry.DefinitionsForMode(runMode))
 	instructionText := loadAGENTSInstruction(r.workspace)
 	promptTokens := int(tokenusage.ApproximateRequestTokens([]llm.Message{userMessage}))
+	reactiveRetries := 0
+	maxReactiveRetries := max(0, r.config.ContextBudget.MaxReactiveRetry)
 
 	buildTurnMessages := func() ([]llm.Message, error) {
 		messages := make([]llm.Message, 0, len(sess.Messages)+2)
@@ -345,11 +347,21 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 			requestTokens := int(tokenusage.ApproximateRequestTokens(messages))
 			compacted, compactErr := r.maybeAutoCompactSession(ctx, sess, promptTokens, requestTokens)
 			if compactErr != nil {
+				if isLocalPromptTooLongError(compactErr) {
+					return "", compactErr
+				}
+				retried, retryErr := r.retryAfterPromptTooLong(ctx, sess, out, compactErr, &reactiveRetries, maxReactiveRetries)
+				if retryErr != nil {
+					return "", retryErr
+				}
+				if retried {
+					continue
+				}
 				return "", compactErr
 			}
 			if compacted {
 				if out != nil {
-					fmt.Fprintf(out, "%scontext compacted to fit long-history budget%s\n", ansiDim, ansiReset)
+					fmt.Fprintf(out, "%scontext compacted to fit context budget%s\n", ansiDim, ansiReset)
 				}
 				messages, err = buildTurnMessages()
 				if err != nil {
@@ -381,6 +393,13 @@ func (r *Runner) RunPromptWithInput(ctx context.Context, sess *session.Session, 
 		if err != nil {
 			estimatedUsage := r.resolveTurnUsage(request, nil)
 			r.recordTokenUsage(ctx, sess, request, estimatedUsage, turnLatency, false)
+			retried, retryErr := r.retryAfterPromptTooLong(ctx, sess, out, err, &reactiveRetries, maxReactiveRetries)
+			if retryErr != nil {
+				return "", retryErr
+			}
+			if retried {
+				continue
+			}
 			return "", err
 		}
 		reply.Normalize()
@@ -603,6 +622,24 @@ func (r *Runner) Close() error {
 		return nil
 	}
 	return r.tokenManager.Close()
+}
+
+func (r *Runner) retryAfterPromptTooLong(ctx context.Context, sess *session.Session, out io.Writer, sourceErr error, reactiveRetries *int, maxReactiveRetries int) (bool, error) {
+	if isLocalPromptTooLongError(sourceErr) || !isPromptTooLongError(sourceErr) || reactiveRetries == nil || *reactiveRetries >= maxReactiveRetries {
+		return false, nil
+	}
+	_, changed, err := r.compactSession(ctx, sess, true, "reactive")
+	if err != nil {
+		return false, err
+	}
+	if !changed {
+		return false, nil
+	}
+	*reactiveRetries++
+	if out != nil {
+		fmt.Fprintf(out, "%scontext compacted after prompt_too_long; retrying%s\n", ansiDim, ansiReset)
+	}
+	return true, nil
 }
 
 func (r *Runner) completeTurn(ctx context.Context, request llm.ChatRequest, out io.Writer, streamedText *bool) (llm.Message, error) {
