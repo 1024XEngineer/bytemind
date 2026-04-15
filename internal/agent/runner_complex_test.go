@@ -53,6 +53,8 @@ type fakeTool struct {
 	run  func(raw json.RawMessage, execCtx *tools.ExecutionContext) (string, error)
 }
 
+const generousTokenQuota = 1_000_000
+
 func (t *fakeTool) Definition() llm.ToolDefinition {
 	return llm.ToolDefinition{
 		Type: "function",

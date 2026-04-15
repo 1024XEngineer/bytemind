@@ -8,8 +8,10 @@ import (
 	"sort"
 	"strings"
 
+	extensionspkg "bytemind/internal/extensions"
 	"bytemind/internal/llm"
 	planpkg "bytemind/internal/plan"
+	runtimepkg "bytemind/internal/runtime"
 	"bytemind/internal/session"
 )
 
@@ -18,6 +20,8 @@ type ExecutionContext struct {
 	ApprovalPolicy string
 	Approval       ApprovalHandler
 	Session        *session.Session
+	TaskManager    runtimepkg.TaskManager
+	Extensions     extensionspkg.Manager
 	Mode           planpkg.AgentMode
 	Stdin          io.Reader
 	Stdout         io.Writer
@@ -157,27 +161,6 @@ func (r *Registry) ResolveForModeWithFilters(mode planpkg.AgentMode, allowlist, 
 	return items
 }
 
-func (r *Registry) Execute(ctx context.Context, name, rawArgs string, execCtx *ExecutionContext) (string, error) {
-	return r.ExecuteForMode(ctx, planpkg.ModeBuild, name, rawArgs, execCtx)
-}
-
-func (r *Registry) ExecuteForMode(ctx context.Context, mode planpkg.AgentMode, name, rawArgs string, execCtx *ExecutionContext) (string, error) {
-	resolved, err := r.ResolveForMode(mode, name)
-	if err != nil {
-		return "", err
-	}
-	if !toolAllowedByPolicy(name, execCtx) {
-		return "", NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q is unavailable by active skill policy", name), false, nil)
-	}
-	if rawArgs == "" {
-		rawArgs = "{}"
-	}
-	if execCtx != nil {
-		execCtx.Mode = mode
-	}
-	return resolved.Tool.Run(ctx, json.RawMessage(rawArgs), execCtx)
-}
-
 func toNameSet(items []string) map[string]struct{} {
 	if len(items) == 0 {
 		return nil
@@ -191,21 +174,4 @@ func toNameSet(items []string) map[string]struct{} {
 		result[item] = struct{}{}
 	}
 	return result
-}
-
-func toolAllowedByPolicy(name string, execCtx *ExecutionContext) bool {
-	if execCtx == nil {
-		return true
-	}
-	if len(execCtx.AllowedTools) > 0 {
-		if _, ok := execCtx.AllowedTools[name]; !ok {
-			return false
-		}
-	}
-	if len(execCtx.DeniedTools) > 0 {
-		if _, blocked := execCtx.DeniedTools[name]; blocked {
-			return false
-		}
-	}
-	return true
 }

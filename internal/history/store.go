@@ -1,21 +1,10 @@
 package history
 
 import (
-	"bufio"
-	"encoding/json"
-	"os"
-	"path/filepath"
+	corepkg "bytemind/internal/core"
+	"bytemind/internal/storage"
 	"strings"
-	"sync"
 	"time"
-
-	"bytemind/internal/config"
-)
-
-const (
-	defaultRecentLimit  = 5000
-	promptHistoryFile   = "prompt_history.jsonl"
-	scannerMaxLineBytes = 1024 * 1024
 )
 
 type PromptEntry struct {
@@ -25,121 +14,102 @@ type PromptEntry struct {
 	Prompt    string    `json:"prompt"`
 }
 
-var appendMu sync.Mutex
+type PromptHistoryWriter interface {
+	Append(workspace, sessionID, prompt string, at time.Time) error
+}
 
-func AppendPrompt(workspace, sessionID, prompt string, at time.Time) error {
-	prompt = strings.TrimSpace(prompt)
-	if prompt == "" {
-		return nil
-	}
-	if at.IsZero() {
-		at = time.Now().UTC()
-	} else {
-		at = at.UTC()
-	}
+type PromptHistoryStore struct {
+	inner *storage.PromptHistoryStore
+}
 
-	path, err := historyFilePath()
-	if err != nil {
-		return err
-	}
+type NopPromptHistoryStore struct{}
 
-	entry := PromptEntry{
-		Timestamp: at,
-		Workspace: strings.TrimSpace(workspace),
-		SessionID: strings.TrimSpace(sessionID),
-		Prompt:    prompt,
-	}
-	payload, err := json.Marshal(entry)
-	if err != nil {
-		return err
-	}
-
-	appendMu.Lock()
-	defer appendMu.Unlock()
-
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	if _, err := f.Write(append(payload, '\n')); err != nil {
-		return err
-	}
+func (NopPromptHistoryStore) Append(string, string, string, time.Time) error {
 	return nil
 }
 
+type PromptSearchQuery = storage.PromptSearchQuery
+
+func AppendPrompt(workspace, sessionID, prompt string, at time.Time) error {
+	return storage.AppendPrompt(workspace, corepkg.SessionID(strings.TrimSpace(sessionID)), prompt, at)
+}
+
 func LoadRecentPrompts(limit int) ([]PromptEntry, error) {
-	if limit <= 0 {
-		limit = defaultRecentLimit
-	}
-
-	path, err := historyFilePath()
+	entries, err := storage.LoadRecentPrompts(limit)
 	if err != nil {
 		return nil, err
 	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	defer f.Close()
-
-	entries := make([]PromptEntry, 0, minInt(limit, 256))
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), scannerMaxLineBytes)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		var entry PromptEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			continue
-		}
-		entry.Prompt = strings.TrimSpace(entry.Prompt)
-		if entry.Prompt == "" {
-			continue
-		}
-		if entry.Timestamp.IsZero() {
-			entry.Timestamp = time.Now().UTC()
-		} else {
-			entry.Timestamp = entry.Timestamp.UTC()
-		}
-
-		entries = append(entries, entry)
-		if len(entries) > limit {
-			copy(entries, entries[len(entries)-limit:])
-			entries = entries[:limit]
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-
-	return entries, nil
+	return fromStorageEntries(entries), nil
 }
 
-func historyFilePath() (string, error) {
-	home, err := config.ResolveHomeDir()
+func NewDefaultPromptHistoryStore() (*PromptHistoryStore, error) {
+	inner, err := storage.NewDefaultPromptHistoryStore()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-
-	cacheDir := filepath.Join(home, "cache")
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		return "", err
-	}
-	return filepath.Join(cacheDir, promptHistoryFile), nil
+	return &PromptHistoryStore{inner: inner}, nil
 }
 
-func minInt(a, b int) int {
-	if a < b {
-		return a
+func DefaultPromptHistoryPath() (string, error) {
+	return storage.DefaultPromptHistoryPath()
+}
+
+func (s *PromptHistoryStore) Append(workspace, sessionID, prompt string, at time.Time) error {
+	if s == nil || s.inner == nil {
+		return nil
 	}
-	return b
+	return s.inner.Append(workspace, corepkg.SessionID(strings.TrimSpace(sessionID)), prompt, at)
+}
+
+func (s *PromptHistoryStore) LoadRecent(limit int) ([]PromptEntry, error) {
+	if s == nil || s.inner == nil {
+		return nil, nil
+	}
+	entries, err := s.inner.LoadRecent(limit)
+	if err != nil {
+		return nil, err
+	}
+	return fromStorageEntries(entries), nil
+}
+
+func ParsePromptSearchQuery(raw string) PromptSearchQuery {
+	return storage.ParsePromptSearchQuery(raw)
+}
+
+func FilterPromptEntries(entries []PromptEntry, rawQuery string, limit int) []PromptEntry {
+	storageEntries := toStorageEntries(entries)
+	filtered := storage.FilterPromptEntries(storageEntries, rawQuery, limit)
+	return fromStorageEntries(filtered)
+}
+
+func toStorageEntries(entries []PromptEntry) []storage.PromptEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]storage.PromptEntry, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, storage.PromptEntry{
+			Timestamp: entry.Timestamp,
+			Workspace: entry.Workspace,
+			SessionID: corepkg.SessionID(strings.TrimSpace(entry.SessionID)),
+			Prompt:    entry.Prompt,
+		})
+	}
+	return out
+}
+
+func fromStorageEntries(entries []storage.PromptEntry) []PromptEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]PromptEntry, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, PromptEntry{
+			Timestamp: entry.Timestamp,
+			Workspace: entry.Workspace,
+			SessionID: strings.TrimSpace(string(entry.SessionID)),
+			Prompt:    entry.Prompt,
+		})
+	}
+	return out
 }

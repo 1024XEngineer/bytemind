@@ -12,6 +12,7 @@ import (
 const (
 	envBytemindHome = "BYTEMIND_HOME"
 	defaultHomeDir  = ".bytemind"
+	defaultModelID  = "gpt-5.4-mini"
 )
 
 const (
@@ -67,7 +68,7 @@ func Default(workspace string) Config {
 		Provider: ProviderConfig{
 			Type:      "openai-compatible",
 			BaseURL:   "https://api.openai.com/v1",
-			Model:     "GPT-5.4",
+			Model:     defaultModelID,
 			APIKeyEnv: "BYTEMIND_API_KEY",
 		},
 		ApprovalPolicy: "on-request",
@@ -189,7 +190,7 @@ func ensureDefaultConfigFile(home string) error {
 		Provider: ProviderConfig{
 			Type:             "openai-compatible",
 			BaseURL:          "https://api.openai.com/v1",
-			Model:            "GPT-5.4",
+			Model:            defaultModelID,
 			APIKeyEnv:        "BYTEMIND_API_KEY",
 			AnthropicVersion: "2023-06-01",
 		},
@@ -324,7 +325,7 @@ func normalize(cfg *Config) error {
 		return errors.New("provider.base_url is required")
 	}
 	if strings.TrimSpace(cfg.Provider.Model) == "" {
-		cfg.Provider.Model = defaultModel(cfg.Provider.Type)
+		cfg.Provider.Model = defaultModel(cfg.Provider.Type, cfg.Provider.BaseURL)
 		if strings.TrimSpace(cfg.Provider.Model) == "" {
 			return errors.New("provider.model is required")
 		}
@@ -473,10 +474,13 @@ func defaultBaseURL(providerType string) string {
 	}
 }
 
-func defaultModel(providerType string) string {
+func defaultModel(providerType, baseURL string) string {
 	switch normalizeProviderType(providerType) {
 	case "openai-compatible", "openai", "":
-		return "GPT-5.4"
+		if strings.Contains(strings.ToLower(strings.TrimSpace(baseURL)), "deepseek.com") {
+			return "deepseek-chat"
+		}
+		return defaultModelID
 	default:
 		return ""
 	}

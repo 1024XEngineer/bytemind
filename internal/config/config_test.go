@@ -304,7 +304,7 @@ func TestLoadAcceptsLegacySessionDirField(t *testing.T) {
 	}
 }
 
-func TestLoadDefaultsOpenAIModelWhenMissing(t *testing.T) {
+func TestLoadDefaultsModelFromProviderEndpointWhenMissing(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
 	if err := writeConfig(projectConfigPath(workspace), map[string]any{
@@ -322,8 +322,8 @@ func TestLoadDefaultsOpenAIModelWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Provider.Model != "GPT-5.4" {
-		t.Fatalf("expected default model GPT-5.4, got %q", cfg.Provider.Model)
+	if cfg.Provider.Model != "deepseek-chat" {
+		t.Fatalf("expected default model deepseek-chat, got %q", cfg.Provider.Model)
 	}
 }
 
@@ -542,6 +542,33 @@ func TestUpsertProviderFieldUpdatesModelAndBaseURL(t *testing.T) {
 	}
 	if cfg.Provider.BaseURL != "https://api.deepseek.com" {
 		t.Fatalf("expected updated base url, got %q", cfg.Provider.BaseURL)
+	}
+}
+
+func TestUpsertProviderFieldBackfillsModelForDeepseekEndpointWhenMissing(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.deepseek.com",
+    "model": "",
+    "api_key": "test-key"
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := UpsertProviderField(configPath, "base_url", "https://api.deepseek.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Model != "deepseek-chat" {
+		t.Fatalf("expected deepseek model fallback, got %q", cfg.Provider.Model)
 	}
 }
 

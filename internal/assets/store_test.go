@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	corepkg "bytemind/internal/core"
 	"bytemind/internal/llm"
 )
 
@@ -19,7 +20,7 @@ func TestFileAssetStorePutAndGetImageByAssetID(t *testing.T) {
 	}
 
 	meta, err := store.PutImage(context.Background(), PutImageInput{
-		SessionID: "sess-1",
+		SessionID: corepkg.SessionID("sess-1"),
 		ImageID:   2,
 		MediaType: "image/png",
 		FileName:  "a.png",
@@ -32,7 +33,7 @@ func TestFileAssetStorePutAndGetImageByAssetID(t *testing.T) {
 		t.Fatalf("unexpected asset id %q", meta.AssetID)
 	}
 
-	blob, err := store.GetImageByAssetID(context.Background(), "sess-1", meta.AssetID)
+	blob, err := store.GetImageByAssetID(context.Background(), corepkg.SessionID("sess-1"), meta.AssetID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,7 @@ func TestFileAssetStoreRejectsUnsupportedImage(t *testing.T) {
 	}
 
 	_, err = store.PutImage(context.Background(), PutImageInput{
-		SessionID: "sess-1",
+		SessionID: corepkg.SessionID("sess-1"),
 		ImageID:   0,
 		MediaType: "image/bmp",
 		Data:      []byte("x"),
@@ -73,7 +74,7 @@ func TestFileAssetStoreDeleteSessionImages(t *testing.T) {
 	}
 
 	if _, err := store.PutImage(context.Background(), PutImageInput{
-		SessionID: "sess-1",
+		SessionID: corepkg.SessionID("sess-1"),
 		ImageID:   1,
 		MediaType: "image/jpeg",
 		Data:      []byte("jpeg"),
@@ -81,11 +82,11 @@ func TestFileAssetStoreDeleteSessionImages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := store.DeleteSessionImages(context.Background(), "sess-1"); err != nil {
+	if err := store.DeleteSessionImages(context.Background(), corepkg.SessionID("sess-1")); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = store.GetImageByAssetID(context.Background(), "sess-1", llm.AssetID("sess-1:1"))
+	_, err = store.GetImageByAssetID(context.Background(), corepkg.SessionID("sess-1"), llm.AssetID("sess-1:1"))
 	if err == nil {
 		t.Fatal("expected not found after deletion")
 	}
@@ -97,7 +98,7 @@ func TestFileAssetStoreGetImageByAssetIDRejectsInvalidAssetID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = store.GetImageByAssetID(context.Background(), "sess-1", llm.AssetID("bad-id"))
+	_, err = store.GetImageByAssetID(context.Background(), corepkg.SessionID("sess-1"), llm.AssetID("bad-id"))
 	if err == nil {
 		t.Fatal("expected invalid asset id to fail")
 	}
@@ -114,7 +115,7 @@ func TestFileAssetStoreRejectsCrossSessionAssetRead(t *testing.T) {
 	}
 
 	meta, err := store.PutImage(context.Background(), PutImageInput{
-		SessionID: "sess-a",
+		SessionID: corepkg.SessionID("sess-a"),
 		ImageID:   7,
 		MediaType: "image/png",
 		Data:      []byte("png"),
@@ -123,7 +124,7 @@ func TestFileAssetStoreRejectsCrossSessionAssetRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = store.GetImageByAssetID(context.Background(), "sess-b", meta.AssetID)
+	_, err = store.GetImageByAssetID(context.Background(), corepkg.SessionID("sess-b"), meta.AssetID)
 	if err == nil {
 		t.Fatal("expected cross-session read to be blocked")
 	}
@@ -140,7 +141,7 @@ func TestFileAssetStoreRejectsMalformedSessionPrefixInAssetID(t *testing.T) {
 	}
 
 	if _, err := store.PutImage(context.Background(), PutImageInput{
-		SessionID: "sess-a",
+		SessionID: corepkg.SessionID("sess-a"),
 		ImageID:   1,
 		MediaType: "image/png",
 		Data:      []byte("png"),
@@ -148,7 +149,7 @@ func TestFileAssetStoreRejectsMalformedSessionPrefixInAssetID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = store.GetImageByAssetID(context.Background(), "sess-a", llm.AssetID(":1"))
+	_, err = store.GetImageByAssetID(context.Background(), corepkg.SessionID("sess-a"), llm.AssetID(":1"))
 	if err == nil {
 		t.Fatal("expected malformed asset id to be blocked")
 	}
@@ -165,10 +166,10 @@ func TestFileAssetStoreGC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := store.PutImage(context.Background(), PutImageInput{SessionID: "keep", ImageID: 1, MediaType: "image/png", Data: []byte("a")}); err != nil {
+	if _, err := store.PutImage(context.Background(), PutImageInput{SessionID: corepkg.SessionID("keep"), ImageID: 1, MediaType: "image/png", Data: []byte("a")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.PutImage(context.Background(), PutImageInput{SessionID: "drop", ImageID: 2, MediaType: "image/png", Data: []byte("b")}); err != nil {
+	if _, err := store.PutImage(context.Background(), PutImageInput{SessionID: corepkg.SessionID("drop"), ImageID: 2, MediaType: "image/png", Data: []byte("b")}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -178,7 +179,7 @@ func TestFileAssetStoreGC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := store.GC(context.Background(), []string{"keep"}, time.Now().Add(-time.Hour)); err != nil {
+	if err := store.GC(context.Background(), []corepkg.SessionID{corepkg.SessionID("keep")}, time.Now().Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 

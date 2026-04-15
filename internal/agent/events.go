@@ -1,6 +1,7 @@
 package agent
 
 import (
+	corepkg "bytemind/internal/core"
 	"bytemind/internal/llm"
 	planpkg "bytemind/internal/plan"
 )
@@ -20,7 +21,7 @@ const (
 
 type Event struct {
 	Type          EventType
-	SessionID     string
+	SessionID     corepkg.SessionID
 	UserInput     string
 	Content       string
 	ToolName      string

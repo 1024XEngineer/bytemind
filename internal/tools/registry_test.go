@@ -1,35 +1,12 @@
 package tools
 
 import (
-	"context"
-	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
 
-	"bytemind/internal/llm"
 	planpkg "bytemind/internal/plan"
 )
-
-type recordingTool struct {
-	name    string
-	lastRaw string
-	result  string
-}
-
-func (t *recordingTool) Definition() llm.ToolDefinition {
-	return llm.ToolDefinition{
-		Type: "function",
-		Function: llm.FunctionDefinition{
-			Name: t.name,
-		},
-	}
-}
-
-func (t *recordingTool) Run(_ context.Context, raw json.RawMessage, _ *ExecutionContext) (string, error) {
-	t.lastRaw = string(raw)
-	return t.result, nil
-}
 
 func TestDefaultRegistryDefinitionsAreSortedAndComplete(t *testing.T) {
 	registry := DefaultRegistry()
@@ -56,31 +33,14 @@ func TestDefaultRegistryDefinitionsAreSortedAndComplete(t *testing.T) {
 	}
 }
 
-func TestRegistryExecuteReturnsUnknownToolError(t *testing.T) {
+func TestRegistryResolveForModeReturnsUnknownToolError(t *testing.T) {
 	registry := DefaultRegistry()
-	_, err := registry.Execute(context.Background(), "missing_tool", `{}`, &ExecutionContext{})
+	_, err := registry.ResolveForMode(planpkg.ModeBuild, "missing_tool")
 	if err == nil {
 		t.Fatal("expected unknown tool error")
 	}
 	if !strings.Contains(err.Error(), `unknown tool "missing_tool"`) {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestRegistryExecuteDefaultsEmptyArgsToJSONObject(t *testing.T) {
-	tool := &recordingTool{name: "fake_tool", result: `{"ok":true}`}
-	registry := &Registry{tools: map[string]ResolvedTool{}}
-	registry.Add(tool)
-
-	result, err := registry.Execute(context.Background(), "fake_tool", "", &ExecutionContext{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result != `{"ok":true}` {
-		t.Fatalf("unexpected result %q", result)
-	}
-	if tool.lastRaw != "{}" {
-		t.Fatalf("expected empty args to default to {}, got %q", tool.lastRaw)
 	}
 }
 
@@ -112,23 +72,5 @@ func TestDefaultRegistryDefinitionsForPlanModeIncludeWebTools(t *testing.T) {
 	}
 	if slices.Contains(names, "write_file") {
 		t.Fatalf("did not expect write_file in plan mode definitions: %v", names)
-	}
-}
-
-func TestRegistryExecuteRespectsActiveSkillPolicy(t *testing.T) {
-	tool := &recordingTool{name: "fake_tool", result: `{"ok":true}`}
-	registry := &Registry{tools: map[string]ResolvedTool{}}
-	registry.Add(tool)
-
-	_, err := registry.ExecuteForMode(context.Background(), "build", "fake_tool", `{}`, &ExecutionContext{
-		AllowedTools: map[string]struct{}{
-			"read_file": {},
-		},
-	})
-	if err == nil {
-		t.Fatal("expected active skill policy to block disallowed tool")
-	}
-	if !strings.Contains(err.Error(), "active skill policy") {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }

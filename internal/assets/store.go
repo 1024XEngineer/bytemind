@@ -11,11 +11,12 @@ import (
 	"time"
 	"unicode"
 
+	corepkg "bytemind/internal/core"
 	"bytemind/internal/llm"
 )
 
 type PutImageInput struct {
-	SessionID string
+	SessionID corepkg.SessionID
 	ImageID   int
 	MediaType string
 	FileName  string
@@ -36,7 +37,7 @@ type ImageMeta struct {
 }
 
 type ImageBlob struct {
-	SessionID string
+	SessionID corepkg.SessionID
 	ImageID   int
 	MediaType string
 	FileName  string
@@ -47,9 +48,9 @@ type ImageBlob struct {
 
 type ImageStore interface {
 	PutImage(ctx context.Context, in PutImageInput) (ImageMeta, error)
-	GetImageByAssetID(ctx context.Context, sessionID string, assetID llm.AssetID) (ImageBlob, error)
-	DeleteSessionImages(ctx context.Context, sessionID string) error
-	GC(ctx context.Context, keepSessionIDs []string, olderThan time.Time) error
+	GetImageByAssetID(ctx context.Context, sessionID corepkg.SessionID, assetID llm.AssetID) (ImageBlob, error)
+	DeleteSessionImages(ctx context.Context, sessionID corepkg.SessionID) error
+	GC(ctx context.Context, keepSessionIDs []corepkg.SessionID, olderThan time.Time) error
 }
 
 type FileAssetStore struct {
@@ -72,7 +73,7 @@ func (s *FileAssetStore) PutImage(ctx context.Context, in PutImageInput) (ImageM
 	if err := ctx.Err(); err != nil {
 		return ImageMeta{}, err
 	}
-	sessionID := sanitizeSessionID(in.SessionID)
+	sessionID := sanitizeSessionID(string(in.SessionID))
 	if sessionID == "" {
 		return ImageMeta{}, llm.WrapError("asset_store", llm.ErrorCodeUnknown, fmt.Errorf("session id is required"))
 	}
@@ -112,7 +113,7 @@ func (s *FileAssetStore) PutImage(ctx context.Context, in PutImageInput) (ImageM
 	}, nil
 }
 
-func (s *FileAssetStore) GetImageByAssetID(ctx context.Context, sessionID string, assetID llm.AssetID) (ImageBlob, error) {
+func (s *FileAssetStore) GetImageByAssetID(ctx context.Context, sessionID corepkg.SessionID, assetID llm.AssetID) (ImageBlob, error) {
 	if err := ctx.Err(); err != nil {
 		return ImageBlob{}, err
 	}
@@ -120,11 +121,11 @@ func (s *FileAssetStore) GetImageByAssetID(ctx context.Context, sessionID string
 	if err != nil {
 		return ImageBlob{}, llm.WrapError("asset_store", llm.ErrorCodeAssetNotFound, err)
 	}
-	sanitized := sanitizeSessionID(sessionID)
+	sanitized := sanitizeSessionID(string(sessionID))
 	if sanitized == "" {
 		return ImageBlob{}, llm.WrapError("asset_store", llm.ErrorCodeUnknown, fmt.Errorf("session id is required"))
 	}
-	if sanitizeSessionID(assetSessionID) != sanitized {
+	if sanitizeSessionID(string(assetSessionID)) != sanitized {
 		return ImageBlob{}, llm.WrapError("asset_store", llm.ErrorCodeAssetNotFound, fmt.Errorf("asset %q does not belong to session %q", assetID, sessionID))
 	}
 	sessionDir := filepath.Join(s.root, sanitized)
@@ -175,31 +176,31 @@ func (s *FileAssetStore) GetImageByAssetID(ctx context.Context, sessionID string
 	}, nil
 }
 
-func parseAssetID(assetID llm.AssetID) (string, int, error) {
+func parseAssetID(assetID llm.AssetID) (corepkg.SessionID, int, error) {
 	raw := strings.TrimSpace(string(assetID))
 	if raw == "" {
-		return "", 0, fmt.Errorf("asset id is empty")
+		return corepkg.SessionID(""), 0, fmt.Errorf("asset id is empty")
 	}
 	idx := strings.LastIndex(raw, ":")
 	if idx < 0 || idx == len(raw)-1 {
-		return "", 0, fmt.Errorf("invalid asset id %q", raw)
+		return corepkg.SessionID(""), 0, fmt.Errorf("invalid asset id %q", raw)
 	}
 	sessionID := strings.TrimSpace(raw[:idx])
 	if sessionID == "" {
-		return "", 0, fmt.Errorf("invalid asset id %q", raw)
+		return corepkg.SessionID(""), 0, fmt.Errorf("invalid asset id %q", raw)
 	}
 	id, err := strconv.Atoi(raw[idx+1:])
 	if err != nil || id < 0 {
-		return "", 0, fmt.Errorf("invalid asset id %q", raw)
+		return corepkg.SessionID(""), 0, fmt.Errorf("invalid asset id %q", raw)
 	}
-	return sessionID, id, nil
+	return corepkg.SessionID(sessionID), id, nil
 }
 
-func (s *FileAssetStore) DeleteSessionImages(ctx context.Context, sessionID string) error {
+func (s *FileAssetStore) DeleteSessionImages(ctx context.Context, sessionID corepkg.SessionID) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	sanitized := sanitizeSessionID(sessionID)
+	sanitized := sanitizeSessionID(string(sessionID))
 	if sanitized == "" {
 		return nil
 	}
@@ -213,10 +214,10 @@ func (s *FileAssetStore) DeleteSessionImages(ctx context.Context, sessionID stri
 	return os.RemoveAll(target)
 }
 
-func (s *FileAssetStore) GC(ctx context.Context, keepSessionIDs []string, olderThan time.Time) error {
+func (s *FileAssetStore) GC(ctx context.Context, keepSessionIDs []corepkg.SessionID, olderThan time.Time) error {
 	keep := make(map[string]struct{}, len(keepSessionIDs))
 	for _, id := range keepSessionIDs {
-		sanitized := sanitizeSessionID(id)
+		sanitized := sanitizeSessionID(string(id))
 		if sanitized != "" {
 			keep[sanitized] = struct{}{}
 		}
@@ -261,8 +262,8 @@ func (s *FileAssetStore) GC(ctx context.Context, keepSessionIDs []string, olderT
 	return nil
 }
 
-func AssetID(sessionID string, imageID int) llm.AssetID {
-	return llm.AssetID(sessionID + ":" + strconv.Itoa(imageID))
+func AssetID(sessionID corepkg.SessionID, imageID int) llm.AssetID {
+	return llm.AssetID(string(sessionID) + ":" + strconv.Itoa(imageID))
 }
 
 func extensionForMediaType(mediaType string) (string, bool) {
