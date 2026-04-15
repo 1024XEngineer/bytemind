@@ -116,8 +116,17 @@ func TestRunPromptReactiveCompactRetrySucceedsAfterContextTooLong(t *testing.T) 
 	if len(client.requests[1].Tools) != 0 {
 		t.Fatalf("expected compaction request to disable tools, got %#v", client.requests[1].Tools)
 	}
-	if len(client.requests[1].Messages) < 1 || !strings.Contains(strings.ToLower(client.requests[1].Messages[0].Text()), "compaction") {
-		t.Fatalf("expected compaction prompt request, got %#v", client.requests[1].Messages)
+	if len(client.requests[1].Messages) != 2 {
+		t.Fatalf("expected compaction request to have system+user messages, got %#v", client.requests[1].Messages)
+	}
+	if client.requests[1].Messages[0].Role != llm.RoleSystem || client.requests[1].Messages[1].Role != llm.RoleUser {
+		t.Fatalf("expected compaction request roles to be system+user, got %#v", client.requests[1].Messages)
+	}
+	if client.requests[1].Temperature != 0 {
+		t.Fatalf("expected compaction request to enforce deterministic temperature=0, got %v", client.requests[1].Temperature)
+	}
+	if len(client.requests[2].Messages) >= len(client.requests[0].Messages) {
+		t.Fatalf("expected retry request to be rebuilt from compacted context (fewer messages), first=%d retry=%d", len(client.requests[0].Messages), len(client.requests[2].Messages))
 	}
 	if len(sess.Messages) != 3 {
 		t.Fatalf("expected compacted summary + latest user + final assistant, got %#v", sess.Messages)
@@ -127,6 +136,18 @@ func TestRunPromptReactiveCompactRetrySucceedsAfterContextTooLong(t *testing.T) 
 	}
 	if strings.TrimSpace(sess.Messages[1].Text()) != "continue implementation" {
 		t.Fatalf("expected latest user message preserved, got %#v", sess.Messages[1])
+	}
+	retryMessages := client.requests[2].Messages
+	if len(retryMessages) < 2 {
+		t.Fatalf("expected retry request to include compacted session messages, got %#v", retryMessages)
+	}
+	gotSummary := strings.TrimSpace(retryMessages[len(retryMessages)-2].Text())
+	if gotSummary != strings.TrimSpace(sess.Messages[0].Text()) {
+		t.Fatalf("expected retry request to use compacted summary message, got %q want %q", gotSummary, strings.TrimSpace(sess.Messages[0].Text()))
+	}
+	gotLatestUser := strings.TrimSpace(retryMessages[len(retryMessages)-1].Text())
+	if gotLatestUser != strings.TrimSpace(sess.Messages[1].Text()) {
+		t.Fatalf("expected retry request to keep latest user message, got %q want %q", gotLatestUser, strings.TrimSpace(sess.Messages[1].Text()))
 	}
 }
 
