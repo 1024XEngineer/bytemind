@@ -237,7 +237,8 @@ flowchart TD
 9. 若模型返回文本答案，则保存 assistant 消息并结束本轮。
 10. 若模型返回工具调用，则逐个执行 Tool：
     - 生成 `ExecutionContext`
-    - 执行 Tool
+    - 通过 `Runner` 调用 `Executor` 执行统一管线（参数校验、权限策略、超时、错误归一），当前实现在 `internal/agent/runner.go` + `internal/tools/executor.go`
+    - 工具定义与 mode 过滤由 `internal/tools/registry.go` 提供
     - 记录结果
     - 将 tool result 重新写回 Session
 11. 进入下一轮模型调用，直到：

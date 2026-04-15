@@ -132,3 +132,21 @@ func TestRegistryExecuteRespectsActiveSkillPolicy(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestRegistryAddDefaultsAdditionalPropertiesToFalseForStrictTools(t *testing.T) {
+	registry := &Registry{tools: map[string]ResolvedTool{}}
+	registry.Add(&recordingTool{name: "fake_tool"})
+
+	resolved, err := registry.ResolveForMode(planpkg.ModeBuild, "fake_tool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, ok := resolved.Definition.Function.Parameters["additionalProperties"]
+	if !ok {
+		t.Fatal("expected additionalProperties to be defaulted")
+	}
+	allowed, ok := value.(bool)
+	if !ok || allowed {
+		t.Fatalf("expected additionalProperties=false, got %#v", value)
+	}
+}

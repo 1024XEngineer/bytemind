@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -41,21 +43,25 @@ func (t executorTestTool) Run(ctx context.Context, raw json.RawMessage, execCtx 
 	return t.result, t.err
 }
 
-func TestExecutorAllowsUnknownArgumentsUnlessSchemaForbidsThem(t *testing.T) {
+func TestExecutorRejectsUnknownArgumentsByDefault(t *testing.T) {
 	registry := &Registry{}
 	registry.Add(executorTestTool{name: "strict_tool", result: `{"ok":true}`})
 	executor := NewExecutor(registry)
 
-	got, err := executor.Execute(context.Background(), "strict_tool", `{"path":"a.txt","extra":true}`, &ExecutionContext{})
-	if err != nil {
-		t.Fatalf("expected extra field to be ignored, got %v", err)
+	_, err := executor.Execute(context.Background(), "strict_tool", `{"path":"a.txt","extra":true}`, &ExecutionContext{})
+	if err == nil {
+		t.Fatal("expected argument validation error")
 	}
-	if got != `{"ok":true}` {
-		t.Fatalf("unexpected result: %q", got)
+	execErr, ok := AsToolExecError(err)
+	if !ok {
+		t.Fatalf("expected ToolExecError, got %T", err)
+	}
+	if execErr.Code != ToolErrorInvalidArgs {
+		t.Fatalf("unexpected code: %s", execErr.Code)
 	}
 }
 
-func TestExecutorRejectsUnknownArgumentsWhenSchemaForbidsThem(t *testing.T) {
+func TestExecutorAllowsUnknownArgumentsWhenSchemaAllowsThem(t *testing.T) {
 	registry := &Registry{}
 	registry.Add(executorTestTool{
 		name:   "strict_tool",
@@ -69,7 +75,7 @@ func TestExecutorRejectsUnknownArgumentsWhenSchemaForbidsThem(t *testing.T) {
 				Name: "strict_tool",
 				Parameters: map[string]any{
 					"type":                 "object",
-					"additionalProperties": false,
+					"additionalProperties": true,
 					"properties": map[string]any{
 						"path": map[string]any{"type": "string"},
 					},
@@ -81,16 +87,12 @@ func TestExecutorRejectsUnknownArgumentsWhenSchemaForbidsThem(t *testing.T) {
 	}
 	executor := NewExecutor(registry)
 
-	_, err := executor.Execute(context.Background(), "strict_tool", `{"path":"a.txt","extra":true}`, &ExecutionContext{})
-	if err == nil {
-		t.Fatal("expected argument validation error")
+	got, err := executor.Execute(context.Background(), "strict_tool", `{"path":"a.txt","extra":true}`, &ExecutionContext{})
+	if err != nil {
+		t.Fatalf("expected extra field to be allowed, got %v", err)
 	}
-	execErr, ok := AsToolExecError(err)
-	if !ok {
-		t.Fatalf("expected ToolExecError, got %T", err)
-	}
-	if execErr.Code != ToolErrorInvalidArgs {
-		t.Fatalf("unexpected code: %s", execErr.Code)
+	if got != `{"ok":true}` {
+		t.Fatalf("unexpected result: %q", got)
 	}
 }
 
@@ -108,6 +110,59 @@ func TestExecutorMapsPolicyFailuresToPermissionDenied(t *testing.T) {
 	execErr, ok := AsToolExecError(err)
 	if !ok || execErr.Code != ToolErrorPermissionDenied {
 		t.Fatalf("unexpected error: %#v", err)
+	}
+}
+
+func TestExecutorPromptsApprovalForDestructiveTools(t *testing.T) {
+	registry := DefaultRegistry()
+	executor := NewExecutor(registry)
+	workspace := t.TempDir()
+	var approvalCalled bool
+
+	_, err := executor.Execute(context.Background(), "write_file", `{"path":"a.txt","content":"ok"}`, &ExecutionContext{
+		Workspace:      workspace,
+		ApprovalPolicy: "on-request",
+		Approval: func(req ApprovalRequest) (bool, error) {
+			approvalCalled = true
+			if req.Command != "write_file" {
+				t.Fatalf("unexpected approval command: %q", req.Command)
+			}
+			return false, nil
+		},
+	})
+	if err == nil {
+		t.Fatal("expected approval denial")
+	}
+	if !approvalCalled {
+		t.Fatal("expected approval callback to be called")
+	}
+	execErr, ok := AsToolExecError(err)
+	if !ok || execErr.Code != ToolErrorPermissionDenied {
+		t.Fatalf("unexpected error: %#v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(workspace, "a.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected file not to be created, got %v", statErr)
+	}
+}
+
+func TestExecutorSkipsWriteApprovalWhenPolicyIsNever(t *testing.T) {
+	registry := DefaultRegistry()
+	executor := NewExecutor(registry)
+	workspace := t.TempDir()
+
+	_, err := executor.Execute(context.Background(), "write_file", `{"path":"a.txt","content":"ok"}`, &ExecutionContext{
+		Workspace:      workspace,
+		ApprovalPolicy: "never",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, readErr := os.ReadFile(filepath.Join(workspace, "a.txt"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "ok" {
+		t.Fatalf("unexpected file content: %q", string(data))
 	}
 }
 

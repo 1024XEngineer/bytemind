@@ -1,10 +1,12 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -37,9 +39,14 @@ type OutputNormalizer interface {
 	Normalize(string, ResolvedTool) string
 }
 
+type WriteApprovalEngine interface {
+	Check(context.Context, ResolvedTool, *ExecutionContext) error
+}
+
 type Executor struct {
 	registry         *Registry
 	permissionEngine PermissionEngine
+	writeApproval    WriteApprovalEngine
 	argumentDecoder  ArgumentDecoder
 	outputNormalizer OutputNormalizer
 }
@@ -48,6 +55,7 @@ func NewExecutor(registry *Registry) *Executor {
 	return &Executor{
 		registry:         registry,
 		permissionEngine: defaultPermissionEngine{},
+		writeApproval:    defaultWriteApprovalEngine{},
 		argumentDecoder:  strictJSONArgumentDecoder{},
 		outputNormalizer: maxCharsOutputNormalizer{},
 	}
@@ -90,6 +98,11 @@ func (e *Executor) ExecuteRequest(ctx context.Context, req ExecuteRequest) (Exec
 	if err := e.permissionEngine.Check(ctx, resolved, req.Context); err != nil {
 		return ExecuteResult{}, err
 	}
+	if e.writeApproval != nil {
+		if err := e.writeApproval.Check(ctx, resolved, req.Context); err != nil {
+			return ExecuteResult{}, err
+		}
+	}
 
 	execCtx := req.Context
 	if execCtx == nil {
@@ -121,6 +134,60 @@ func (defaultPermissionEngine) Check(_ context.Context, resolved ResolvedTool, e
 	return nil
 }
 
+type defaultWriteApprovalEngine struct{}
+
+func (defaultWriteApprovalEngine) Check(_ context.Context, resolved ResolvedTool, execCtx *ExecutionContext) error {
+	if !resolved.Spec.Destructive {
+		return nil
+	}
+	if execCtx == nil {
+		return NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q requires approval context", resolved.Definition.Function.Name), false, nil)
+	}
+
+	switch strings.TrimSpace(execCtx.ApprovalPolicy) {
+	case "never":
+		return nil
+	case "always", "on-request", "":
+		return promptForWriteApproval(resolved.Definition.Function.Name, execCtx)
+	default:
+		return promptForWriteApproval(resolved.Definition.Function.Name, execCtx)
+	}
+}
+
+func promptForWriteApproval(toolName string, execCtx *ExecutionContext) error {
+	reason := "writes files in the workspace"
+	if execCtx.Approval != nil {
+		approved, err := execCtx.Approval(ApprovalRequest{
+			Command: toolName,
+			Reason:  reason,
+		})
+		if err != nil {
+			return err
+		}
+		if !approved {
+			return NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q was not run because approval was denied", toolName), false, nil)
+		}
+		return nil
+	}
+
+	if execCtx.Stdin == nil {
+		return NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q requires approval but no stdin is available", toolName), false, nil)
+	}
+	if execCtx.Stdout != nil {
+		fmt.Fprintf(execCtx.Stdout, "Approve tool %q (%s)? [y/N]: ", toolName, reason)
+	}
+	reader := bufio.NewReader(execCtx.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return NewToolExecError(ToolErrorPermissionDenied, err.Error(), false, err)
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	if answer != "y" && answer != "yes" {
+		return NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q was not run because approval was denied", toolName), false, nil)
+	}
+	return nil
+}
+
 type strictJSONArgumentDecoder struct{}
 
 func (strictJSONArgumentDecoder) Decode(rawArgs string, resolved ResolvedTool) (json.RawMessage, error) {
@@ -143,14 +210,11 @@ func (strictJSONArgumentDecoder) Decode(rawArgs string, resolved ResolvedTool) (
 		return nil, NewToolExecError(ToolErrorInvalidArgs, "tool arguments must be a JSON object", false, nil)
 	}
 
-	if !schemaRejectsUnknownFields(resolved.Definition.Function.Parameters) {
+	if schemaAllowsUnknownFields(resolved.Definition.Function.Parameters) {
 		return json.RawMessage(rawArgs), nil
 	}
 
 	allowedFields := schemaPropertyNames(resolved.Definition.Function.Parameters)
-	if len(allowedFields) == 0 {
-		return json.RawMessage(rawArgs), nil
-	}
 	for key := range objectPayload {
 		if _, ok := allowedFields[key]; ok {
 			continue
@@ -227,13 +291,13 @@ func schemaPropertyNames(parameters map[string]any) map[string]struct{} {
 	return names
 }
 
-func schemaRejectsUnknownFields(parameters map[string]any) bool {
+func schemaAllowsUnknownFields(parameters map[string]any) bool {
 	value, ok := parameters["additionalProperties"]
 	if !ok {
 		return false
 	}
 	allowed, ok := value.(bool)
-	return ok && !allowed
+	return ok && allowed
 }
 
 func executionTimeout(raw json.RawMessage, spec ToolSpec) time.Duration {
