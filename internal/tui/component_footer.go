@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	zone "github.com/lrstanley/bubblezone"
@@ -42,6 +44,44 @@ func (m model) renderRunIndicator() string {
 	}
 	width := max(24, m.chatPanelInnerWidth())
 	return runIndicatorStyle.Width(width).Render(m.runIndicatorText())
+}
+
+func runIndicatorPhaseText(phase string) string {
+	switch strings.ToLower(strings.TrimSpace(phase)) {
+	case "thinking":
+		return "Thinking..."
+	case "responding":
+		return "Responding..."
+	case "tool":
+		return "Running tool..."
+	case "interrupting":
+		return "Interrupting..."
+	case "approval":
+		return "Waiting for approval..."
+	default:
+		return "Working..."
+	}
+}
+
+func formatElapsedClock(startedAt, now time.Time) string {
+	if startedAt.IsZero() || now.Before(startedAt) {
+		return "00:00"
+	}
+	seconds := int(now.Sub(startedAt).Seconds())
+	if seconds < 0 {
+		seconds = 0
+	}
+	minutes := seconds / 60
+	secs := seconds % 60
+	return fmt.Sprintf("%02d:%02d", minutes, secs)
+}
+
+func (m model) runIndicatorText() string {
+	spin := strings.TrimSpace(m.spinner.View())
+	if spin == "" {
+		spin = "•"
+	}
+	return fmt.Sprintf("%s %s (%s)", spin, runIndicatorPhaseText(m.phase), formatElapsedClock(m.runStartedAt, time.Now()))
 }
 
 func (m model) renderModeTabs() string {

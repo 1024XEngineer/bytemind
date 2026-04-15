@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"bytemind/internal/agent"
 	"bytemind/internal/assets"
 	"bytemind/internal/config"
 	"bytemind/internal/session"
@@ -14,8 +13,8 @@ import (
 )
 
 type Options struct {
-	Runner       *agent.Runner
-	Store        *session.Store
+	Runner       Runner
+	Store        SessionStore
 	Session      *session.Session
 	ImageStore   assets.ImageStore
 	Config       config.Config

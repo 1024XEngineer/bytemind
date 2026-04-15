@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	corepkg "bytemind/internal/core"
 )
 
 type AgentMode string
@@ -34,12 +36,12 @@ const (
 	StepBlocked    StepStatus = "blocked"
 )
 
-type RiskLevel string
+type RiskLevel = corepkg.RiskLevel
 
 const (
-	RiskLow    RiskLevel = "low"
-	RiskMedium RiskLevel = "medium"
-	RiskHigh   RiskLevel = "high"
+	RiskLow    RiskLevel = corepkg.RiskLow
+	RiskMedium RiskLevel = corepkg.RiskMedium
+	RiskHigh   RiskLevel = corepkg.RiskHigh
 )
 
 type Step struct {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"bytemind/internal/assets"
+	corepkg "bytemind/internal/core"
 	"bytemind/internal/llm"
 	"bytemind/internal/session"
 
@@ -94,7 +95,7 @@ func TestApplyInputImagePipelineConvertsPastedPathToPlaceholder(t *testing.T) {
 	}
 
 	assetID := findAssetIDByImageID(t, m, 1)
-	blob, err := m.imageStore.GetImageByAssetID(context.Background(), m.sess.ID, assetID)
+	blob, err := m.imageStore.GetImageByAssetID(context.Background(), corepkg.SessionID(m.sess.ID), assetID)
 	if err != nil {
 		t.Fatalf("read stored image: %v", err)
 	}
@@ -289,7 +290,7 @@ func TestApplyInputImagePipelineReplacesInlinePathAndKeepsTrailingText(t *testin
 func TestBuildPromptInputGracefullyDegradesMissingImageAsset(t *testing.T) {
 	m := newImagePipelineModel(t)
 	ref := mustIngestTestImage(t, m, "missing")
-	if err := m.imageStore.DeleteSessionImages(context.Background(), m.sess.ID); err != nil {
+	if err := m.imageStore.DeleteSessionImages(context.Background(), corepkg.SessionID(m.sess.ID)); err != nil {
 		t.Fatalf("delete session images: %v", err)
 	}
 
@@ -377,7 +378,7 @@ func TestBuildPromptInputFallsBackWhenMentionAssetMissing(t *testing.T) {
 	_ = mustIngestTestImage(t, m, "mention-missing")
 	assetID := findAssetIDByImageID(t, m, 1)
 	m.bindMentionImageAsset("2.1.jpg", assetID)
-	if err := m.imageStore.DeleteSessionImages(context.Background(), m.sess.ID); err != nil {
+	if err := m.imageStore.DeleteSessionImages(context.Background(), corepkg.SessionID(m.sess.ID)); err != nil {
 		t.Fatalf("delete session images: %v", err)
 	}
 

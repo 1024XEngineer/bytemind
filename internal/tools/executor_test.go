@@ -55,6 +55,28 @@ func TestExecutorAllowsUnknownArgumentsUnlessSchemaForbidsThem(t *testing.T) {
 	}
 }
 
+func TestExecutorDefaultsEmptyArgsToJSONObject(t *testing.T) {
+	registry := &Registry{}
+	registry.Add(executorTestTool{
+		name: "strict_tool",
+		run: func(_ context.Context, raw json.RawMessage, _ *ExecutionContext) (string, error) {
+			if string(raw) != "{}" {
+				t.Fatalf("expected empty args to default to {}, got %q", string(raw))
+			}
+			return `{"ok":true}`, nil
+		},
+	})
+	executor := NewExecutor(registry)
+
+	got, err := executor.Execute(context.Background(), "strict_tool", "", &ExecutionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `{"ok":true}` {
+		t.Fatalf("unexpected result: %q", got)
+	}
+}
+
 func TestExecutorRejectsUnknownArgumentsWhenSchemaForbidsThem(t *testing.T) {
 	registry := &Registry{}
 	registry.Add(executorTestTool{

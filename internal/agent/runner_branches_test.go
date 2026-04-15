@@ -10,6 +10,8 @@ import (
 
 	"bytemind/internal/config"
 	"bytemind/internal/llm"
+	policypkg "bytemind/internal/policy"
+	runtimepkg "bytemind/internal/runtime"
 	"bytemind/internal/tools"
 )
 
@@ -166,7 +168,7 @@ func TestRenderToolFeedbackAdditionalBranches(t *testing.T) {
 }
 
 func TestUtilityHelpersBranches(t *testing.T) {
-	if got := normalizeToolArguments("{bad"); got != "{bad" {
+	if got := runtimepkg.NormalizeToolArguments("{bad"); got != "{bad" {
 		t.Fatalf("expected raw fallback for invalid json, got %q", got)
 	}
 	if got := emptyDot("   "); got != "." {
@@ -200,5 +202,16 @@ func TestToolNamesDeduplicatesAndSkipsBlank(t *testing.T) {
 	}
 	if string(data) != `["list_files","read_file"]` {
 		t.Fatalf("unexpected tool names: %s", data)
+	}
+}
+
+func TestExplicitWebLookupInstruction(t *testing.T) {
+	got := policypkg.ExplicitWebLookupInstruction("Find the implementation in the GitHub source repository")
+	if !strings.Contains(got, "web_search/web_fetch") {
+		t.Fatalf("expected explicit web lookup instruction, got %q", got)
+	}
+
+	if got := policypkg.ExplicitWebLookupInstruction("Use search_text in the current workspace to find TODO"); got != "" {
+		t.Fatalf("expected no explicit web lookup instruction, got %q", got)
 	}
 }

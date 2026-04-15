@@ -76,6 +76,80 @@ func (c *compactCommandTestClient) StreamMessage(ctx context.Context, req llm.Ch
 	return reply, nil
 }
 
+type testRunnerAdapter struct {
+	*agent.Runner
+}
+
+func wrapTestRunner(r *agent.Runner) Runner {
+	if r == nil {
+		return nil
+	}
+	return testRunnerAdapter{Runner: r}
+}
+
+func (a testRunnerAdapter) RunPromptWithInput(ctx context.Context, sess *session.Session, input RunPromptInput, mode string, out io.Writer) (string, error) {
+	return a.Runner.RunPromptWithInput(ctx, sess, agent.RunPromptInput{
+		UserMessage: input.UserMessage,
+		Assets:      input.Assets,
+		DisplayText: input.DisplayText,
+	}, mode, out)
+}
+
+func (a testRunnerAdapter) SetObserver(observer Observer) {
+	a.Runner.SetObserver(agent.ObserverFunc(func(event agent.Event) {
+		if observer == nil {
+			return
+		}
+		observer(Event{
+			Type:          mapTestEventType(event.Type),
+			SessionID:     string(event.SessionID),
+			UserInput:     event.UserInput,
+			Content:       event.Content,
+			ToolName:      event.ToolName,
+			ToolArguments: event.ToolArguments,
+			ToolResult:    event.ToolResult,
+			Error:         event.Error,
+			Plan:          event.Plan,
+			Usage:         event.Usage,
+		})
+	}))
+}
+
+func (a testRunnerAdapter) SetApprovalHandler(handler ApprovalHandler) {
+	a.Runner.SetApprovalHandler(func(req tools.ApprovalRequest) (bool, error) {
+		if handler == nil {
+			return false, nil
+		}
+		return handler(ApprovalRequest{
+			Command: req.Command,
+			Reason:  req.Reason,
+		})
+	})
+}
+
+func mapTestEventType(value agent.EventType) EventType {
+	switch value {
+	case agent.EventRunStarted:
+		return EventRunStarted
+	case agent.EventAssistantDelta:
+		return EventAssistantDelta
+	case agent.EventAssistantMessage:
+		return EventAssistantMessage
+	case agent.EventToolCallStarted:
+		return EventToolCallStarted
+	case agent.EventToolCallCompleted:
+		return EventToolCallCompleted
+	case agent.EventPlanUpdated:
+		return EventPlanUpdated
+	case agent.EventUsageUpdated:
+		return EventUsageUpdated
+	case agent.EventRunFinished:
+		return EventRunFinished
+	default:
+		return EventType(value)
+	}
+}
+
 func TestHandleMouseScrollsViewport(t *testing.T) {
 	m := model{
 		screen: screenChat,
@@ -606,8 +680,8 @@ func TestHandleAgentEventUsageUpdatedAccumulatesRealTokens(t *testing.T) {
 		tokenBudget: 5000,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type: agent.EventUsageUpdated,
+	m.handleAgentEvent(Event{
+		Type: EventUsageUpdated,
 		Usage: llm.Usage{
 			InputTokens:   120,
 			OutputTokens:  40,
@@ -633,9 +707,9 @@ func TestAssistantDeltaDoesNotChangeUsageWithoutOfficialUsage(t *testing.T) {
 		tokenBudget: 5000,
 	}
 
-	m.handleAgentEvent(agent.Event{Type: agent.EventRunStarted})
-	m.handleAgentEvent(agent.Event{
-		Type:    agent.EventAssistantDelta,
+	m.handleAgentEvent(Event{Type: EventRunStarted})
+	m.handleAgentEvent(Event{
+		Type:    EventAssistantDelta,
 		Content: "This streamed delta should not change usage counters.",
 	})
 
@@ -643,8 +717,8 @@ func TestAssistantDeltaDoesNotChangeUsageWithoutOfficialUsage(t *testing.T) {
 		t.Fatalf("expected no provisional usage without official usage, used=%d output=%d", m.tokenUsedTotal, m.tokenOutput)
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type: agent.EventUsageUpdated,
+	m.handleAgentEvent(Event{
+		Type: EventUsageUpdated,
 		Usage: llm.Usage{
 			InputTokens:   20,
 			OutputTokens:  7,
@@ -667,8 +741,8 @@ func TestApplyUsageFallsBackToBreakdownWhenTotalIsZero(t *testing.T) {
 		tokenBudget: 5000,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type: agent.EventUsageUpdated,
+	m.handleAgentEvent(Event{
+		Type: EventUsageUpdated,
 		Usage: llm.Usage{
 			InputTokens:   11,
 			OutputTokens:  5,
@@ -1099,6 +1173,114 @@ func TestPromptSearchPanelSupportsPageNavigation(t *testing.T) {
 	back := got.(model)
 	if back.promptSearchCursor != 0 {
 		t.Fatalf("expected pgup to move cursor back to 0, got %d", back.promptSearchCursor)
+	}
+}
+
+func TestCtrlFOpensPromptSearchStartsAsyncHistoryLoad(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	m := model{
+		input: input,
+	}
+
+	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
+	opened := got.(model)
+	if !opened.promptSearchOpen {
+		t.Fatalf("expected ctrl+f to open prompt search")
+	}
+	if !opened.promptHistoryLoading {
+		t.Fatalf("expected prompt history async loading state")
+	}
+	if cmd == nil {
+		t.Fatalf("expected async prompt history load command")
+	}
+	if opened.statusNote != "Prompt history loading..." {
+		t.Fatalf("expected loading status note, got %q", opened.statusNote)
+	}
+}
+
+func TestUpdatePromptHistoryLoadedMsgSuccessUpdatesPromptSearchState(t *testing.T) {
+	m := model{
+		promptSearchOpen:     true,
+		promptSearchMode:     promptSearchModeQuick,
+		promptHistoryLoading: true,
+	}
+
+	got, _ := m.Update(promptHistoryLoadedMsg{
+		Entries: []history.PromptEntry{
+			{Prompt: "first prompt"},
+			{Prompt: "second prompt"},
+		},
+	})
+	updated := got.(model)
+	if !updated.promptHistoryLoaded || updated.promptHistoryLoading {
+		t.Fatalf("expected prompt history load state to settle, got loaded=%v loading=%v", updated.promptHistoryLoaded, updated.promptHistoryLoading)
+	}
+	if len(updated.promptHistoryEntries) != 2 || len(updated.promptSearchMatches) != 2 {
+		t.Fatalf("expected loaded entries and matches, got entries=%d matches=%d", len(updated.promptHistoryEntries), len(updated.promptSearchMatches))
+	}
+	if updated.statusNote != "Prompt history ready (2 matches)." {
+		t.Fatalf("expected ready status note, got %q", updated.statusNote)
+	}
+}
+
+func TestUpdatePromptHistoryLoadedMsgErrorSetsUnavailableStatus(t *testing.T) {
+	m := model{
+		promptSearchOpen:     true,
+		promptSearchMode:     promptSearchModePanel,
+		promptHistoryLoading: true,
+		promptHistoryEntries: []history.PromptEntry{
+			{Prompt: "old prompt"},
+		},
+	}
+
+	got, _ := m.Update(promptHistoryLoadedMsg{Err: errors.New("history read failed")})
+	updated := got.(model)
+	if !updated.promptHistoryLoaded || updated.promptHistoryLoading {
+		t.Fatalf("expected prompt history error to finish loading state, got loaded=%v loading=%v", updated.promptHistoryLoaded, updated.promptHistoryLoading)
+	}
+	if len(updated.promptHistoryEntries) != 0 || len(updated.promptSearchMatches) != 0 {
+		t.Fatalf("expected entries and matches to clear on load error, got entries=%d matches=%d", len(updated.promptHistoryEntries), len(updated.promptSearchMatches))
+	}
+	if !strings.Contains(updated.promptHistoryLoadErr, "history read failed") {
+		t.Fatalf("expected load error to be stored, got %q", updated.promptHistoryLoadErr)
+	}
+	if !strings.Contains(updated.statusNote, "Prompt history unavailable:") {
+		t.Fatalf("expected unavailable status note, got %q", updated.statusNote)
+	}
+}
+
+func TestOpenPromptSearchPanelReadyAndUnavailableStatus(t *testing.T) {
+	inputReady := textarea.New()
+	inputReady.Focus()
+	inputReady.SetValue("draft")
+	m := model{
+		input:               inputReady,
+		promptHistoryLoaded: true,
+		promptHistoryEntries: []history.PromptEntry{
+			{Prompt: "fix tui layout"},
+		},
+	}
+
+	if cmd := m.openPromptSearch(promptSearchModePanel); cmd != nil {
+		t.Fatalf("expected no load command when history already loaded")
+	}
+	if m.statusNote != "History panel ready (1 matches)." {
+		t.Fatalf("expected panel ready status note, got %q", m.statusNote)
+	}
+
+	inputUnavailable := textarea.New()
+	inputUnavailable.Focus()
+	m2 := model{
+		input:                inputUnavailable,
+		promptHistoryLoaded:  true,
+		promptHistoryLoadErr: "permission denied while reading history",
+	}
+	if cmd := m2.openPromptSearch(promptSearchModeQuick); cmd != nil {
+		t.Fatalf("expected no load command when history is already marked loaded")
+	}
+	if !strings.Contains(m2.statusNote, "Prompt history unavailable:") {
+		t.Fatalf("expected unavailable quick-search status note, got %q", m2.statusNote)
 	}
 }
 
@@ -2217,7 +2399,7 @@ func TestHandleSlashCompactCompactsSession(t *testing.T) {
 	})
 
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2278,7 +2460,7 @@ func TestHandleSlashSkillsListsDiscoveredSkills(t *testing.T) {
 	})
 
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2337,7 +2519,7 @@ func TestHandleSlashSkillActivateAndClear(t *testing.T) {
 	})
 
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2384,7 +2566,7 @@ func TestHandleSlashSkillAuthorIsUnsupported(t *testing.T) {
 	})
 
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2432,7 +2614,7 @@ func TestHandleSlashSkillDeleteDeletesProjectSkill(t *testing.T) {
 	})
 
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2485,7 +2667,7 @@ func TestHandleSlashSkillClearOnlyClearsActiveSkill(t *testing.T) {
 	})
 
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2549,7 +2731,7 @@ func TestFilteredCommandsIncludeSkillSlashCommands(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("/re")
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2603,7 +2785,7 @@ func TestFilteredCommandsIncludeProjectSkillSlashCommands(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("/review")
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -3265,8 +3447,8 @@ func TestHandleAgentEventShowsToolProgressInChat(t *testing.T) {
 		streamingIndex: 1,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:          agent.EventToolCallStarted,
+	m.handleAgentEvent(Event{
+		Type:          EventToolCallStarted,
 		ToolName:      "read_file",
 		ToolArguments: `{"path":"internal/tui/model.go"}`,
 	})
@@ -3283,8 +3465,8 @@ func TestHandleAgentEventShowsToolProgressInChat(t *testing.T) {
 		t.Fatalf("expected tool call body to hide params, got %q", m.chatItems[2].Body)
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:       agent.EventToolCallCompleted,
+	m.handleAgentEvent(Event{
+		Type:       EventToolCallCompleted,
 		ToolName:   "read_file",
 		ToolResult: `{"path":"internal/tui/model.go","start_line":1,"end_line":20}`,
 	})
@@ -3313,8 +3495,8 @@ func TestHandleAgentEventTracksRunLifecyclePhases(t *testing.T) {
 		streamingIndex: 1,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:    agent.EventAssistantDelta,
+	m.handleAgentEvent(Event{
+		Type:    EventAssistantDelta,
 		Content: "Inspecting the TUI flow...",
 	})
 	if m.phase != "responding" || m.statusNote != "LLM is responding..." {
@@ -3324,8 +3506,8 @@ func TestHandleAgentEventTracksRunLifecyclePhases(t *testing.T) {
 		t.Fatalf("expected streaming assistant card after delta, got %+v", m.chatItems[1])
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:          agent.EventToolCallStarted,
+	m.handleAgentEvent(Event{
+		Type:          EventToolCallStarted,
 		ToolName:      "read_file",
 		ToolArguments: `{"path":"internal/tui/model.go","start_line":1,"end_line":5}`,
 	})
@@ -3333,8 +3515,8 @@ func TestHandleAgentEventTracksRunLifecyclePhases(t *testing.T) {
 		t.Fatalf("expected tool start to move UI into tool phase, got phase=%q note=%q", m.phase, m.statusNote)
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:       agent.EventToolCallCompleted,
+	m.handleAgentEvent(Event{
+		Type:       EventToolCallCompleted,
 		ToolName:   "read_file",
 		ToolResult: `{"path":"internal/tui/model.go","start_line":1,"end_line":5}`,
 	})
@@ -3345,8 +3527,8 @@ func TestHandleAgentEventTracksRunLifecyclePhases(t *testing.T) {
 		t.Fatalf("expected tool result summary in status note, got %q", m.statusNote)
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:    agent.EventRunFinished,
+	m.handleAgentEvent(Event{
+		Type:    EventRunFinished,
 		Content: "Done.",
 	})
 	if m.phase != "idle" || m.statusNote != "Run finished." {
@@ -3363,8 +3545,8 @@ func TestToolStartKeepsStreamedAssistantReasoning(t *testing.T) {
 		streamingIndex: 1,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:          agent.EventToolCallStarted,
+	m.handleAgentEvent(Event{
+		Type:          EventToolCallStarted,
 		ToolName:      "list_files",
 		ToolArguments: `{"path":"."}`,
 	})
@@ -3388,8 +3570,8 @@ func TestToolStartWithoutAssistantDeltaDoesNotInjectThinkingCard(t *testing.T) {
 		streamingIndex: -1,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:          agent.EventToolCallStarted,
+	m.handleAgentEvent(Event{
+		Type:          EventToolCallStarted,
 		ToolName:      "list_files",
 		ToolArguments: `{"path":"."}`,
 	})
@@ -3414,8 +3596,8 @@ func TestToolStartWithGenericToolIntentDoesNotShowThinkingCard(t *testing.T) {
 		streamingIndex: 1,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:          agent.EventToolCallStarted,
+	m.handleAgentEvent(Event{
+		Type:          EventToolCallStarted,
 		ToolName:      "list_files",
 		ToolArguments: `{"path":"."}`,
 	})
@@ -3455,8 +3637,8 @@ func TestAssistantDeltaPlanningTextRendersAsThinking(t *testing.T) {
 		streamingIndex: -1,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:    agent.EventAssistantDelta,
+	m.handleAgentEvent(Event{
+		Type:    EventAssistantDelta,
 		Content: "I will first inspect structure and config, then code organization and dependencies, and finally verify with build and tests.",
 	})
 
@@ -3544,7 +3726,7 @@ func TestUpdateApprovalRequestMsgSetsApprovalPhase(t *testing.T) {
 	m := model{async: make(chan tea.Msg, 1)}
 
 	got, cmd := m.Update(approvalRequestMsg{
-		Request: tools.ApprovalRequest{
+		Request: ApprovalRequest{
 			Command: "go test ./internal/tui",
 			Reason:  "run focused tests",
 		},
@@ -3711,8 +3893,8 @@ func TestRunFinishedKeepsStreamingSlotForLateAssistantMessage(t *testing.T) {
 		t.Fatalf("expected run finished to keep streaming index for late final message, got %d", updated.streamingIndex)
 	}
 
-	updated.handleAgentEvent(agent.Event{
-		Type:    agent.EventAssistantMessage,
+	updated.handleAgentEvent(Event{
+		Type:    EventAssistantMessage,
 		Content: "received, response looks good.",
 	})
 
@@ -3939,8 +4121,8 @@ func TestToolCallCompletedTriggersDeferredBTWCancel(t *testing.T) {
 		runCancel:     func() { canceled = true },
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:       agent.EventToolCallCompleted,
+	m.handleAgentEvent(Event{
+		Type:       EventToolCallCompleted,
 		ToolName:   "read_file",
 		ToolResult: `{"path":"internal/tui/model.go","start_line":1,"end_line":3}`,
 	})

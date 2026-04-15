@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"bytemind/internal/llm"
+	storagepkg "bytemind/internal/storage"
 )
 
 func TestStorePreservesUTF8Content(t *testing.T) {
@@ -25,7 +26,7 @@ func TestStorePreservesUTF8Content(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	path := filepath.Join(dir, projectID(sess.Workspace), sess.ID+".jsonl")
+	path := filepath.Join(dir, storagepkg.WorkspaceProjectID(sess.Workspace), sess.ID+".jsonl")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +115,7 @@ func TestStoreListSkipsEmptySessionFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	brokenDir := filepath.Join(dir, projectID(sess.Workspace))
+	brokenDir := filepath.Join(dir, storagepkg.WorkspaceProjectID(sess.Workspace))
 	if err := os.MkdirAll(brokenDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func TestStoreListSkipsInvalidJSONSessionFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	brokenDir := filepath.Join(dir, projectID(sess.Workspace))
+	brokenDir := filepath.Join(dir, storagepkg.WorkspaceProjectID(sess.Workspace))
 	if err := os.MkdirAll(brokenDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +201,7 @@ func TestStoreSaveReplacesExistingSessionFile(t *testing.T) {
 		t.Fatalf("expected updated session content, got %#v", loaded.Messages)
 	}
 
-	projectDir := filepath.Join(dir, projectID(sess.Workspace))
+	projectDir := filepath.Join(dir, storagepkg.WorkspaceProjectID(sess.Workspace))
 	entries, err := os.ReadDir(projectDir)
 	if err != nil {
 		t.Fatal(err)
@@ -318,20 +319,6 @@ func TestStoreIgnoresLegacyJSONFiles(t *testing.T) {
 	}
 	if _, err := store.Load("legacy"); !os.IsNotExist(err) {
 		t.Fatalf("expected legacy json to be unsupported and not found, got %v", err)
-	}
-}
-
-func TestProjectIDProducesStablePathSafeValue(t *testing.T) {
-	first := projectID(`C:\\Users\\Wheat\\Desktop\\Demo Repo`)
-	second := projectID(`C:\\Users\\wheat\\Desktop\\Demo Repo`)
-	if first != second {
-		t.Fatalf("expected stable id normalization, got %q vs %q", first, second)
-	}
-	if !strings.HasPrefix(first, "-") {
-		t.Fatalf("expected project id to be prefixed with '-', got %q", first)
-	}
-	if strings.Contains(first, "\\") || strings.Contains(first, "/") || strings.Contains(first, ":") {
-		t.Fatalf("expected path-safe project id, got %q", first)
 	}
 }
 

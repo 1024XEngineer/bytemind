@@ -9,7 +9,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	corepkg "bytemind/internal/core"
 	planpkg "bytemind/internal/plan"
+	policypkg "bytemind/internal/policy"
 )
 
 type ExecuteRequest struct {
@@ -115,8 +117,20 @@ func (e *Executor) ExecuteRequest(ctx context.Context, req ExecuteRequest) (Exec
 type defaultPermissionEngine struct{}
 
 func (defaultPermissionEngine) Check(_ context.Context, resolved ResolvedTool, execCtx *ExecutionContext) error {
-	if !toolAllowedByPolicy(resolved.Definition.Function.Name, execCtx) {
-		return NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q is unavailable by active skill policy", resolved.Definition.Function.Name), false, nil)
+	if execCtx == nil {
+		return nil
+	}
+	decision := policypkg.DecideToolAccess(policypkg.ToolAccessInput{
+		ToolName: resolved.Definition.Function.Name,
+		Allowed:  execCtx.AllowedTools,
+		Denied:   execCtx.DeniedTools,
+	})
+	if decision.Decision != corepkg.DecisionAllow {
+		reason := strings.TrimSpace(decision.Reason)
+		if strings.TrimSpace(reason) == "" {
+			reason = "tool is unavailable by active skill policy"
+		}
+		return NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q is unavailable by active skill policy: %s", resolved.Definition.Function.Name, reason), false, nil)
 	}
 	return nil
 }
