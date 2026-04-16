@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -30,6 +31,7 @@ type Task struct {
 	Spec       TaskSpec
 	Status     corepkg.TaskStatus
 	Attempt    int
+	Output     []byte
 	CreatedAt  time.Time
 	StartedAt  *time.Time
 	FinishedAt *time.Time
@@ -99,21 +101,40 @@ type QuotaManager interface {
 	Release(key string)
 }
 
-// InMemoryTaskManager is a safe placeholder until runtime orchestration is wired.
-type InMemoryTaskManager struct {
-	mu      sync.RWMutex
-	tasks   map[corepkg.TaskID]Task
-	waiters map[corepkg.TaskID][]chan TaskResult
-}
+type TaskExecutorFunc func(ctx context.Context, task Task) ([]byte, error)
 
-func NewInMemoryTaskManager() *InMemoryTaskManager {
-	return &InMemoryTaskManager{
-		tasks:   make(map[corepkg.TaskID]Task),
-		waiters: make(map[corepkg.TaskID][]chan TaskResult),
+type InMemoryTaskManagerOption func(*InMemoryTaskManager)
+
+func WithTaskExecutor(executor TaskExecutorFunc) InMemoryTaskManagerOption {
+	return func(m *InMemoryTaskManager) {
+		m.executor = executor
 	}
 }
 
-func (m *InMemoryTaskManager) Submit(_ context.Context, spec TaskSpec) (corepkg.TaskID, error) {
+// InMemoryTaskManager is a safe placeholder until runtime orchestration is wired.
+type InMemoryTaskManager struct {
+	mu         sync.RWMutex
+	tasks      map[corepkg.TaskID]Task
+	waiters    map[corepkg.TaskID][]chan TaskResult
+	runCancels map[corepkg.TaskID]context.CancelFunc
+	executor   TaskExecutorFunc
+}
+
+func NewInMemoryTaskManager(opts ...InMemoryTaskManagerOption) *InMemoryTaskManager {
+	manager := &InMemoryTaskManager{
+		tasks:      make(map[corepkg.TaskID]Task),
+		waiters:    make(map[corepkg.TaskID][]chan TaskResult),
+		runCancels: make(map[corepkg.TaskID]context.CancelFunc),
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(manager)
+		}
+	}
+	return manager
+}
+
+func (m *InMemoryTaskManager) Submit(ctx context.Context, spec TaskSpec) (corepkg.TaskID, error) {
 	if m == nil {
 		return "", ErrTaskNotImplemented
 	}
@@ -121,7 +142,7 @@ func (m *InMemoryTaskManager) Submit(_ context.Context, spec TaskSpec) (corepkg.
 	now := time.Now().UTC()
 	task := Task{
 		ID:        id,
-		Spec:      spec,
+		Spec:      cloneTaskSpec(spec),
 		Status:    corepkg.TaskPending,
 		Attempt:   0,
 		CreatedAt: now,
@@ -129,6 +150,9 @@ func (m *InMemoryTaskManager) Submit(_ context.Context, spec TaskSpec) (corepkg.
 	m.mu.Lock()
 	m.tasks[id] = task
 	m.mu.Unlock()
+
+	m.enqueueTask(detachContext(ctx), id)
+
 	return id, nil
 }
 
@@ -145,9 +169,12 @@ func (m *InMemoryTaskManager) Get(_ context.Context, id corepkg.TaskID) (Task, e
 	return task, nil
 }
 
-func (m *InMemoryTaskManager) Cancel(_ context.Context, id corepkg.TaskID, _ string) error {
+func (m *InMemoryTaskManager) Cancel(ctx context.Context, id corepkg.TaskID, _ string) error {
 	if m == nil {
 		return ErrTaskNotImplemented
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	now := time.Now().UTC()
@@ -163,6 +190,18 @@ func (m *InMemoryTaskManager) Cancel(_ context.Context, id corepkg.TaskID, _ str
 		m.mu.Unlock()
 		return taskNotFoundError(id)
 	}
+	if task.Status == corepkg.TaskRunning {
+		cancel := m.runCancels[id]
+		m.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		_, waitErr := m.Wait(ctx, id)
+		if waitErr != nil {
+			return waitErr
+		}
+		return nil
+	}
 	if task.Status == corepkg.TaskKilled {
 		m.mu.Unlock()
 		return nil
@@ -176,6 +215,7 @@ func (m *InMemoryTaskManager) Cancel(_ context.Context, id corepkg.TaskID, _ str
 	task.ErrorCode = ErrorCodeTaskCancelled
 	task.FinishedAt = &now
 	m.tasks[id] = task
+	delete(m.runCancels, id)
 	result = taskToResult(task)
 	waiters = m.waiters[id]
 	delete(m.waiters, id)
@@ -195,24 +235,30 @@ func (m *InMemoryTaskManager) Cancel(_ context.Context, id corepkg.TaskID, _ str
 	return nil
 }
 
-func (m *InMemoryTaskManager) Retry(_ context.Context, id corepkg.TaskID) (corepkg.TaskID, error) {
+func (m *InMemoryTaskManager) Retry(ctx context.Context, id corepkg.TaskID) (corepkg.TaskID, error) {
 	if m == nil {
 		return "", ErrTaskNotImplemented
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	task, ok := m.tasks[id]
 	if !ok {
+		m.mu.Unlock()
 		return "", taskNotFoundError(id)
 	}
 	if task.Status != corepkg.TaskFailed {
+		m.mu.Unlock()
 		return "", invalidTransitionError(task.Status, corepkg.TaskPending)
 	}
 	if task.Attempt >= task.Spec.MaxRetries {
+		m.mu.Unlock()
 		return "", newRuntimeError(ErrorCodeRetryExhausted, fmt.Sprintf("task %q exhausted retries", id), false, nil)
 	}
 	if err := ValidateTaskTransition(task.Status, corepkg.TaskPending, TransitionOptions{AllowRetryTransition: true}); err != nil {
+		m.mu.Unlock()
 		return "", err
 	}
 
@@ -222,6 +268,9 @@ func (m *InMemoryTaskManager) Retry(_ context.Context, id corepkg.TaskID) (corep
 	task.StartedAt = nil
 	task.FinishedAt = nil
 	m.tasks[id] = task
+	m.mu.Unlock()
+
+	m.enqueueTask(detachContext(ctx), id)
 
 	return id, nil
 }
@@ -263,6 +312,122 @@ func (m *InMemoryTaskManager) Wait(ctx context.Context, id corepkg.TaskID) (Task
 	}
 }
 
+func (m *InMemoryTaskManager) enqueueTask(parentCtx context.Context, id corepkg.TaskID) {
+	if m == nil || m.executor == nil {
+		return
+	}
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	go m.runTaskAttempt(parentCtx, id)
+}
+
+func (m *InMemoryTaskManager) runTaskAttempt(parentCtx context.Context, id corepkg.TaskID) {
+	if m == nil || m.executor == nil {
+		return
+	}
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+
+	now := time.Now().UTC()
+
+	m.mu.Lock()
+	task, ok := m.tasks[id]
+	if !ok {
+		m.mu.Unlock()
+		return
+	}
+	if task.Status != corepkg.TaskPending {
+		m.mu.Unlock()
+		return
+	}
+	if err := ValidateTaskTransition(task.Status, corepkg.TaskRunning, TransitionOptions{}); err != nil {
+		m.mu.Unlock()
+		return
+	}
+	task.Status = corepkg.TaskRunning
+	task.ErrorCode = ""
+	task.StartedAt = &now
+	task.FinishedAt = nil
+	m.tasks[id] = task
+
+	runCtx, runCancel := context.WithCancel(parentCtx)
+	m.runCancels[id] = runCancel
+	m.mu.Unlock()
+
+	execCtx := runCtx
+	timeoutCancel := func() {}
+	if task.Spec.Timeout > 0 {
+		execCtx, timeoutCancel = context.WithTimeout(runCtx, task.Spec.Timeout)
+	}
+	output, execErr := m.executor(execCtx, task)
+	timeoutCancel()
+	runCancel()
+
+	status, errorCodeValue := mapExecutionResult(execErr)
+	finished := time.Now().UTC()
+
+	var (
+		result  TaskResult
+		waiters []chan TaskResult
+	)
+
+	m.mu.Lock()
+	current, ok := m.tasks[id]
+	if !ok {
+		delete(m.runCancels, id)
+		m.mu.Unlock()
+		return
+	}
+	if current.Status != corepkg.TaskRunning {
+		delete(m.runCancels, id)
+		m.mu.Unlock()
+		return
+	}
+	if err := ValidateTaskTransition(current.Status, status, TransitionOptions{}); err != nil {
+		delete(m.runCancels, id)
+		m.mu.Unlock()
+		return
+	}
+
+	current.Status = status
+	current.ErrorCode = errorCodeValue
+	current.Output = append([]byte(nil), output...)
+	current.FinishedAt = &finished
+	m.tasks[id] = current
+	delete(m.runCancels, id)
+
+	result = taskToResult(current)
+	waiters = m.waiters[id]
+	delete(m.waiters, id)
+	m.mu.Unlock()
+
+	for _, waiter := range waiters {
+		select {
+		case waiter <- result:
+		default:
+		}
+		close(waiter)
+	}
+}
+
+func mapExecutionResult(execErr error) (corepkg.TaskStatus, string) {
+	if execErr == nil {
+		return corepkg.TaskCompleted, ""
+	}
+	if errors.Is(execErr, context.DeadlineExceeded) {
+		return corepkg.TaskFailed, ErrorCodeTaskTimeout
+	}
+	if errors.Is(execErr, context.Canceled) {
+		return corepkg.TaskKilled, ErrorCodeTaskCancelled
+	}
+	if code := errorCode(execErr); code != "" {
+		return corepkg.TaskFailed, code
+	}
+	return corepkg.TaskFailed, ErrorCodeTaskExecutionFailed
+}
+
 func (m *InMemoryTaskManager) removeWaiter(id corepkg.TaskID, waiter chan TaskResult) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -296,7 +461,28 @@ func taskToResult(task Task) TaskResult {
 	return TaskResult{
 		TaskID:     task.ID,
 		Status:     task.Status,
+		Output:     append([]byte(nil), task.Output...),
 		ErrorCode:  task.ErrorCode,
 		FinishedAt: finishedAt,
 	}
+}
+
+func cloneTaskSpec(spec TaskSpec) TaskSpec {
+	cloned := spec
+	if len(spec.Input) > 0 {
+		cloned.Input = append([]byte(nil), spec.Input...)
+	}
+	if len(spec.Metadata) > 0 {
+		cloned.Metadata = make(map[string]string, len(spec.Metadata))
+		for k, v := range spec.Metadata {
+			cloned.Metadata[k] = v
+		}
+	}
+	return cloned
+}
+
+func detachContext(ctx context.Context) context.Context {
+	// Keep execution lifecycle independent from request-scoped cancellation.
+	// Task timeout and explicit Cancel(...) remain the runtime controls.
+	return context.Background()
 }
