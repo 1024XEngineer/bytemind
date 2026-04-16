@@ -91,6 +91,50 @@ func TestNewDomainClientWrapsBaseClient(t *testing.T) {
 	}
 }
 
+func TestNewClientAcceptsNormalizedTypeVariants(t *testing.T) {
+	cases := []config.ProviderConfig{
+		{Type: " OPENAI ", BaseURL: "https://api.openai.com/v1", APIKey: "test-key", Model: "gpt-5.4"},
+		{Type: "OpenAI-Compatible", BaseURL: "https://api.openai.com/v1", APIKey: "test-key", Model: "gpt-5.4"},
+		{Type: " ANTHROPIC ", BaseURL: "https://api.anthropic.com", APIKey: "test-key", Model: "claude-sonnet", AnthropicVersion: "2023-06-01"},
+	}
+	for _, cfg := range cases {
+		if _, err := NewClient(cfg); err != nil {
+			t.Fatalf("expected normalized type %q to succeed, got %v", cfg.Type, err)
+		}
+	}
+}
+
+func TestNewDomainClientPreservesAnthropicProviderID(t *testing.T) {
+	client, err := NewDomainClient(config.ProviderConfig{
+		Type:             "anthropic",
+		BaseURL:          "https://api.anthropic.com",
+		APIKey:           "test-key",
+		Model:            "claude-sonnet",
+		AnthropicVersion: "2023-06-01",
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if client.ProviderID() != ProviderAnthropic {
+		t.Fatalf("expected provider id %q, got %q", ProviderAnthropic, client.ProviderID())
+	}
+}
+
+func TestNewDomainClientNormalizesOpenAIProviderIDVariants(t *testing.T) {
+	client, err := NewDomainClient(config.ProviderConfig{
+		Type:    " OpenAI-Compatible ",
+		BaseURL: "https://api.openai.com/v1",
+		APIKey:  "test-key",
+		Model:   "gpt-5.4",
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if client.ProviderID() != ProviderOpenAI {
+		t.Fatalf("expected provider id %q, got %q", ProviderOpenAI, client.ProviderID())
+	}
+}
+
 func TestNewDomainClientRejectsEmptyType(t *testing.T) {
 	client, err := NewDomainClient(config.ProviderConfig{
 		Type:    "",

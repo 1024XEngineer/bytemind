@@ -166,6 +166,14 @@ func TestWrapClientStreamStopsWhenContextCancelled(t *testing.T) {
 	}
 }
 
+func TestEmitReturnsFalseWhenContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if emit(ctx, make(chan Event), Event{}) {
+		t.Fatal("expected emit to fail when context is cancelled")
+	}
+}
+
 func TestWrapClientCoversNilClientAndEmptyModel(t *testing.T) {
 	if WrapClient(ProviderOpenAI, ModelID("gpt-5.4"), nil) != nil {
 		t.Fatal("expected nil client to return nil adapter")
