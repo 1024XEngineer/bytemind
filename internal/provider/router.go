@@ -13,10 +13,9 @@ type RouterConfig struct {
 }
 
 type registryRouter struct {
-	registry          Registry
-	health            HealthChecker
-	policy            RouterConfig
-	candidateWarnings []Warning
+	registry Registry
+	health   HealthChecker
+	policy   RouterConfig
 }
 
 func NewRouter(reg Registry, health HealthChecker, cfg RouterConfig) Router {
@@ -100,17 +99,7 @@ func (r *registryRouter) collectCandidates(ctx context.Context) ([]routeCandidat
 			})
 		}
 	}
-	r.candidateWarnings = warnings
 	return candidates, nil
-}
-
-func (r *registryRouter) CandidateWarnings() []Warning {
-	if r == nil || len(r.candidateWarnings) == 0 {
-		return nil
-	}
-	warnings := make([]Warning, len(r.candidateWarnings))
-	copy(warnings, r.candidateWarnings)
-	return warnings
 }
 
 func normalizeRouteProviderID(id ProviderID) ProviderID {

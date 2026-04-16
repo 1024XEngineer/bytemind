@@ -137,6 +137,7 @@ func executeTarget(ctx context.Context, target RouteTarget, req Request, stream 
 			if event.Error != nil {
 				return llm.Message{}, event.Error
 			}
+			return llm.Message{}, unavailableRouteError("provider stream emitted error event without error payload")
 		}
 	}
 	if !hasTerminal {

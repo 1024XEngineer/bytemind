@@ -351,6 +351,11 @@ func TestExecuteTargetCoversBranches(t *testing.T) {
 	if err != nil || msg.Content != "" {
 		t.Fatalf("unexpected result %#v err=%v", msg, err)
 	}
+	client = &stubRouterClient{providerID: "openai", streams: []stubRouterStreamResult{{events: []Event{{Type: EventError}}}}}
+	_, err = executeTarget(context.Background(), RouteTarget{ProviderID: "openai", ModelID: "gpt-5.4", Client: client}, Request{ChatRequest: llm.ChatRequest{Model: "gpt-5.4"}}, false, nil)
+	if !errors.As(err, &providerErr) || providerErr.Code != ErrCodeUnavailable {
+		t.Fatalf("expected nil-payload error event to fail, got %v", err)
+	}
 	client = &stubRouterClient{providerID: "openai", streams: []stubRouterStreamResult{{deltas: []string{"a", "b"}, skipAutoEnd: true}}}
 	_, err = executeTarget(context.Background(), RouteTarget{ProviderID: "openai", ModelID: "gpt-5.4", Client: client}, Request{ChatRequest: llm.ChatRequest{Model: "gpt-5.4"}}, false, nil)
 	if !errors.As(err, &providerErr) || providerErr.Code != ErrCodeUnavailable {
