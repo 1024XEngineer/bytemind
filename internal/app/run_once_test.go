@@ -156,6 +156,85 @@ func writeRunOneShotTestConfig(t *testing.T, workspace string, cfg map[string]an
 	}
 }
 
+func TestRunOneShotPolicyBlocksDangerousShellCommandInToolLoop(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+
+		switch requestCount {
+		case 1:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []map[string]any{{
+							"id":   "call-1",
+							"type": "function",
+							"function": map[string]any{
+								"name":      "run_shell",
+								"arguments": `{"command":"rm -rf ."}`,
+							},
+						}},
+					},
+				}},
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "Dangerous command blocked as expected.",
+					},
+				}},
+			})
+		}
+	}))
+	defer server.Close()
+
+	writeRunOneShotTestConfig(t, workspace, map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": server.URL,
+			"model":    "gpt-5.4-mini",
+			"api_key":  "test-key",
+		},
+		"stream": false,
+	})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := RunOneShot(RunOneShotRequest{
+		Args:   []string{"-prompt", "clean this repository"},
+		Stdin:  strings.NewReader(""),
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestCount != 2 {
+		t.Fatalf("expected two provider requests, got %d", requestCount)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "tool>") || !strings.Contains(output, "run_shell") {
+		t.Fatalf("expected run_shell tool execution output, got %q", output)
+	}
+	if !strings.Contains(output, "blocked dangerous shell command") {
+		t.Fatalf("expected dangerous-command policy rejection in output, got %q", output)
+	}
+	if !strings.Contains(output, "Dangerous command blocked as expected.") {
+		t.Fatalf("expected final assistant answer in stdout, got %q", output)
+	}
+}
+
 func newOpenAICompletionServer(content string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {

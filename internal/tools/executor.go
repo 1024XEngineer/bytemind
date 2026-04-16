@@ -11,7 +11,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	corepkg "bytemind/internal/core"
 	planpkg "bytemind/internal/plan"
 	policypkg "bytemind/internal/policy"
 )
@@ -30,7 +29,7 @@ type ExecuteResult struct {
 }
 
 type PermissionEngine interface {
-	Check(context.Context, ResolvedTool, *ExecutionContext) error
+	Check(context.Context, ResolvedTool, json.RawMessage, *ExecutionContext) error
 }
 
 type ArgumentDecoder interface {
@@ -93,7 +92,7 @@ func (e *Executor) ExecuteRequest(ctx context.Context, req ExecuteRequest) (Exec
 	if err != nil {
 		return ExecuteResult{}, err
 	}
-	if err := e.permissionEngine.Check(ctx, resolved, execCtx); err != nil {
+	if err := e.permissionEngine.Check(ctx, resolved, raw, execCtx); err != nil {
 		return ExecuteResult{}, err
 	}
 
@@ -114,28 +113,40 @@ func (e *Executor) ExecuteRequest(ctx context.Context, req ExecuteRequest) (Exec
 
 type defaultPermissionEngine struct{}
 
-func (defaultPermissionEngine) Check(_ context.Context, resolved ResolvedTool, execCtx *ExecutionContext) error {
+func (defaultPermissionEngine) Check(_ context.Context, resolved ResolvedTool, rawArgs json.RawMessage, execCtx *ExecutionContext) error {
 	if execCtx == nil {
 		return nil
 	}
-	decision := policypkg.DecideToolAccess(policypkg.ToolAccessInput{
-		ToolName: resolved.Definition.Function.Name,
-		Allowed:  execCtx.AllowedTools,
-		Denied:   execCtx.DeniedTools,
+	toolName := strings.TrimSpace(resolved.Definition.Function.Name)
+	eval := policypkg.Evaluate(policypkg.EvaluateInput{
+		ToolName: toolName,
+		ToolSpec: policypkg.ToolSpec{
+			Name:        resolved.Spec.Name,
+			Destructive: resolved.Spec.Destructive,
+		},
+		ToolArgs:          rawArgs,
+		Allowed:           execCtx.AllowedTools,
+		Denied:            execCtx.DeniedTools,
+		Mode:              execCtx.Mode,
+		ApprovalPolicy:    execCtx.ApprovalPolicy,
+		SkipRuntimeChecks: strings.EqualFold(toolName, "run_shell"),
 	})
-	if decision.Decision != corepkg.DecisionAllow {
-		reason := strings.TrimSpace(decision.Reason)
-		if strings.TrimSpace(reason) == "" {
-			reason = "tool is unavailable by active skill policy"
+	switch eval.MainDecision {
+	case policypkg.MainDecisionAllow:
+		return nil
+	case policypkg.MainDecisionEscalate:
+		return requireDestructiveApproval(toolName, execCtx)
+	default:
+		reason := strings.TrimSpace(eval.MainReason)
+		if reason == "" {
+			reason = "tool is unavailable by active policy"
 		}
-		return NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q is unavailable by active skill policy: %s", resolved.Definition.Function.Name, reason), false, nil)
-	}
-	if resolved.Spec.Destructive {
-		if err := requireDestructiveApproval(resolved.Definition.Function.Name, execCtx); err != nil {
-			return err
+		code := strings.TrimSpace(string(eval.MainReasonCode))
+		if code != "" {
+			reason = fmt.Sprintf("%s (%s)", reason, code)
 		}
+		return NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q is unavailable by active skill policy: %s", toolName, reason), false, nil)
 	}
-	return nil
 }
 
 type strictJSONArgumentDecoder struct{}
