@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"bytemind/internal/config"
+	contextpkg "bytemind/internal/context"
 	"bytemind/internal/llm"
 	"bytemind/internal/session"
 )
@@ -16,6 +17,7 @@ const (
 	maxCompactionSummaryRunes    = 4000
 	maxCompactionTranscriptRunes = 48000
 	maxCompactionMessageRunes    = 1200
+	defaultRecentPairKeepCount   = 1
 )
 
 type budgetLevel string
@@ -92,7 +94,7 @@ func (r *Runner) maybeAutoCompactSession(ctx context.Context, sess *session.Sess
 	if level == budgetNone {
 		return false, nil
 	}
-	_, changed, err := r.compactSession(ctx, sess, true, string(level))
+	_, changed, err := r.compactSession(ctx, sess, true, true, string(level))
 	if err != nil {
 		return false, err
 	}
@@ -100,10 +102,10 @@ func (r *Runner) maybeAutoCompactSession(ctx context.Context, sess *session.Sess
 }
 
 func (r *Runner) CompactSession(ctx context.Context, sess *session.Session) (string, bool, error) {
-	return r.compactSession(ctx, sess, false, "manual")
+	return r.compactSession(ctx, sess, false, false, "manual")
 }
 
-func (r *Runner) compactSession(ctx context.Context, sess *session.Session, keepLatestUser bool, reason string) (string, bool, error) {
+func (r *Runner) compactSession(ctx context.Context, sess *session.Session, keepLatestUser, pairAware bool, reason string) (string, bool, error) {
 	if sess == nil {
 		return "", false, fmt.Errorf("session is required")
 	}
@@ -125,44 +127,70 @@ func (r *Runner) compactSession(ctx context.Context, sess *session.Session, keep
 		}
 	}
 
-	history := make([]llm.Message, 0, len(messages))
-	var preserved llm.Message
-	for i, message := range messages {
-		if i == latestUserIndex {
-			preserved = message
-			continue
+	summaryForReturn := ""
+	summaryBuilder := func(history []llm.Message) (llm.Message, error) {
+		summary, err := r.requestCompactionSummary(ctx, history)
+		if err != nil {
+			return llm.Message{}, err
 		}
-		history = append(history, message)
-	}
-	if len(history) == 0 {
-		return "", false, nil
-	}
-
-	summary, err := r.requestCompactionSummary(ctx, history)
-	if err != nil {
-		return "", false, err
-	}
-	summary = strings.TrimSpace(truncateRunes(summary, maxCompactionSummaryRunes))
-	if summary == "" {
-		summary = fallbackCompactionSummary(history)
-	}
-	if summary == "" {
-		return "", false, fmt.Errorf("compaction returned empty summary")
-	}
-
-	summaryMessage := llm.NewAssistantTextMessage("Context summary:\n" + summary)
-	summaryMessage.Meta = llm.MessageMeta{
-		"compaction": map[string]any{
-			"reason":               strings.TrimSpace(reason),
-			"created_at":           time.Now().UTC().Format(time.RFC3339),
-			"message_count_before": len(messages),
-		},
+		summary = strings.TrimSpace(truncateRunes(summary, maxCompactionSummaryRunes))
+		if summary == "" {
+			summary = fallbackCompactionSummary(history)
+		}
+		if summary == "" {
+			return llm.Message{}, fmt.Errorf("compaction returned empty summary")
+		}
+		summaryForReturn = summary
+		summaryMessage := llm.NewAssistantTextMessage("Context summary:\n" + summary)
+		summaryMessage.Meta = llm.MessageMeta{
+			"compaction": map[string]any{
+				"reason":               strings.TrimSpace(reason),
+				"created_at":           time.Now().UTC().Format(time.RFC3339),
+				"message_count_before": len(messages),
+			},
+		}
+		return summaryMessage, nil
 	}
 
-	updated := []llm.Message{summaryMessage}
-	if latestUserIndex >= 0 {
-		preserved.Normalize()
-		updated = append(updated, preserved)
+	var (
+		updated []llm.Message
+		err     error
+	)
+	if pairAware {
+		updated, _, err = contextpkg.BuildPairAwareCompactedMessages(contextpkg.PairAwareCompactionConfig{
+			Messages:        messages,
+			LatestUserIndex: latestUserIndex,
+			KeepPairCount:   defaultRecentPairKeepCount,
+			SummaryBuilder:  summaryBuilder,
+		})
+		if err != nil {
+			return "", false, err
+		}
+	} else {
+		history := make([]llm.Message, 0, len(messages))
+		var preserved llm.Message
+		for i, message := range messages {
+			if i == latestUserIndex {
+				preserved = message
+				continue
+			}
+			history = append(history, message)
+		}
+		if len(history) == 0 {
+			return "", false, nil
+		}
+		summaryMessage, buildErr := summaryBuilder(history)
+		if buildErr != nil {
+			return "", false, buildErr
+		}
+		updated = []llm.Message{summaryMessage}
+		if latestUserIndex >= 0 {
+			preserved.Normalize()
+			updated = append(updated, preserved)
+		}
+		if err := contextpkg.ValidateToolPairInvariant(updated); err != nil {
+			return "", false, err
+		}
 	}
 	for i := range updated {
 		if err := llm.ValidateMessage(updated[i]); err != nil {
@@ -176,7 +204,7 @@ func (r *Runner) compactSession(ctx context.Context, sess *session.Session, keep
 			return "", false, err
 		}
 	}
-	return summary, true, nil
+	return summaryForReturn, true, nil
 }
 
 func (r *Runner) requestCompactionSummary(ctx context.Context, history []llm.Message) (string, error) {
