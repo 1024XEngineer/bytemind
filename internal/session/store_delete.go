@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -95,5 +96,10 @@ func sameWorkspacePath(left, right string) bool {
 	if err == nil {
 		right = rightAbs
 	}
-	return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
+	left = filepath.Clean(left)
+	right = filepath.Clean(right)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
 }

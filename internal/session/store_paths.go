@@ -39,27 +39,24 @@ type sessionSource struct {
 }
 
 func (s *Store) pathForSession(session *Session) (sessionPaths, error) {
-	if strings.TrimSpace(session.ID) == "" {
-		return sessionPaths{}, errors.New("session id is required")
-	}
 	return s.pathForWorkspaceSession(session.Workspace, session.ID)
 }
 
 func (s *Store) pathForWorkspaceSession(workspace, id string) (sessionPaths, error) {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return sessionPaths{}, errors.New("session id is required")
+	normalizedID, err := normalizeSessionID(id)
+	if err != nil {
+		return sessionPaths{}, err
 	}
 	projectID := storagepkg.WorkspaceProjectID(workspace)
 	root := s.files.Root()
-	dir := filepath.Join(root, projectID, id)
-	legacy, err := s.files.SessionPath(projectID, id)
+	dir := filepath.Join(root, projectID, normalizedID)
+	legacy, err := s.files.SessionPath(projectID, normalizedID)
 	if err != nil {
 		return sessionPaths{}, err
 	}
 	return sessionPaths{
 		ProjectID: projectID,
-		SessionID: id,
+		SessionID: normalizedID,
 		Dir:       dir,
 		Events:    filepath.Join(dir, eventsFileName),
 		Snapshot:  filepath.Join(dir, snapshotFileName),
@@ -68,9 +65,9 @@ func (s *Store) pathForWorkspaceSession(workspace, id string) (sessionPaths, err
 }
 
 func (s *Store) findSessionSource(id string) (sessionSource, error) {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return sessionSource{}, errors.New("session id is required")
+	normalizedID, err := normalizeSessionID(id)
+	if err != nil {
+		return sessionSource{}, err
 	}
 
 	sources, err := s.sessionSources()
@@ -82,7 +79,7 @@ func (s *Store) findSessionSource(id string) (sessionSource, error) {
 	var newestLegacy *sessionSource
 	for i := range sources {
 		source := sources[i]
-		if source.paths.SessionID != id {
+		if source.paths.SessionID != normalizedID {
 			continue
 		}
 		switch source.kind {
