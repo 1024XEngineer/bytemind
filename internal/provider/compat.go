@@ -66,6 +66,9 @@ func (c *RoutedClient) execute(ctx context.Context, req llm.ChatRequest, stream 
 	targets = append(targets, result.Fallbacks...)
 	var lastErr error
 	for _, target := range targets {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return llm.Message{}, ctxErr
+		}
 		if target.Client == nil {
 			continue
 		}
@@ -141,6 +144,9 @@ func executeTarget(ctx context.Context, target RouteTarget, req Request, stream 
 		}
 	}
 	if !hasTerminal {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return llm.Message{}, ctxErr
+		}
 		if hasDelta || len(result.ToolCalls) > 0 || result.Usage != nil {
 			return llm.Message{}, unavailableRouteError("provider stream terminated without terminal event")
 		}

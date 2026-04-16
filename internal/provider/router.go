@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 )
@@ -98,6 +99,9 @@ func (r *registryRouter) collectCandidates(ctx context.Context) ([]routeCandidat
 				Client:     client,
 			})
 		}
+	}
+	for _, warning := range warnings {
+		log.Printf("provider router warning: provider=%s reason=%s", warning.ProviderID, warning.Reason)
 	}
 	return candidates, nil
 }

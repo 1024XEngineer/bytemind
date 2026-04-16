@@ -1,8 +1,11 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
+	"strings"
 	"testing"
 
 	"bytemind/internal/config"
@@ -199,12 +202,19 @@ func TestRouterCollectCandidatesSkipsInvalidEntries(t *testing.T) {
 		"dup":    &stubRouterClient{providerID: "dup", models: []ModelInfo{{ModelID: "gpt-5.4"}, {ModelID: "gpt-5.4"}, {ModelID: "   "}}},
 		"valid":  &stubRouterClient{providerID: "valid", models: []ModelInfo{{ModelID: "gpt-4.1"}}},
 	}}
+	var buf bytes.Buffer
+	prevWriter := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(prevWriter)
 	candidates, err := (&registryRouter{registry: reg}).collectCandidates(context.Background())
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if len(candidates) != 2 {
 		t.Fatalf("unexpected candidates %#v", candidates)
+	}
+	if !strings.Contains(buf.String(), "provider=broken") || !strings.Contains(buf.String(), "provider_list_models_failed") {
+		t.Fatalf("expected warning log, got %q", buf.String())
 	}
 }
 
@@ -328,6 +338,14 @@ func TestNewRoutedClientAndExecuteBranches(t *testing.T) {
 	if _, err := client.CreateMessage(context.Background(), llm.ChatRequest{Model: "gpt-5.4"}); err == nil {
 		t.Fatal("expected fallback disabled error")
 	}
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := NewRoutedClientWithPolicy(NewRouter(reg, nil, RouterConfig{DefaultProvider: "openai"}), true).CreateMessage(cancelCtx, llm.ChatRequest{Model: "gpt-5.4"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if len(fallback.streamReqs) != 0 {
+		t.Fatalf("expected canceled request to skip fallback, got %d fallback calls", len(fallback.streamReqs))
+	}
 }
 
 func TestExecuteTargetCoversBranches(t *testing.T) {
@@ -355,6 +373,13 @@ func TestExecuteTargetCoversBranches(t *testing.T) {
 	_, err = executeTarget(context.Background(), RouteTarget{ProviderID: "openai", ModelID: "gpt-5.4", Client: client}, Request{ChatRequest: llm.ChatRequest{Model: "gpt-5.4"}}, false, nil)
 	if !errors.As(err, &providerErr) || providerErr.Code != ErrCodeUnavailable {
 		t.Fatalf("expected nil-payload error event to fail, got %v", err)
+	}
+	client = &stubRouterClient{providerID: "openai", streams: []stubRouterStreamResult{{deltas: []string{"a", "b"}, skipAutoEnd: true}}}
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = executeTarget(cancelCtx, RouteTarget{ProviderID: "openai", ModelID: "gpt-5.4", Client: client}, Request{ChatRequest: llm.ChatRequest{Model: "gpt-5.4"}}, false, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
 	}
 	client = &stubRouterClient{providerID: "openai", streams: []stubRouterStreamResult{{deltas: []string{"a", "b"}, skipAutoEnd: true}}}
 	_, err = executeTarget(context.Background(), RouteTarget{ProviderID: "openai", ModelID: "gpt-5.4", Client: client}, Request{ChatRequest: llm.ChatRequest{Model: "gpt-5.4"}}, false, nil)
