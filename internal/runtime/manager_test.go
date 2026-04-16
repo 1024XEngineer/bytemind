@@ -502,3 +502,65 @@ func TestInMemoryTaskManagerSubmitSnapshotsMutableTaskSpec(t *testing.T) {
 		t.Fatal("expected metadata not to include caller-side mutations")
 	}
 }
+
+func TestInMemoryTaskManagerRegisterExecutionRunsTokenExecutor(t *testing.T) {
+	mgr := NewInMemoryTaskManager()
+	mgr.RegisterExecution("token-1", func(_ context.Context, task Task) ([]byte, error) {
+		return []byte("token:" + task.Spec.Name), nil
+	})
+
+	id, err := mgr.Submit(context.Background(), TaskSpec{
+		Name: "dynamic",
+		Metadata: map[string]string{
+			TaskExecutionTokenMetadataKey: "token-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+
+	waitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	result, err := mgr.Wait(waitCtx, id)
+	if err != nil {
+		t.Fatalf("Wait failed: %v", err)
+	}
+	if result.Status != corepkg.TaskCompleted {
+		t.Fatalf("expected completed status, got %s", result.Status)
+	}
+	if got := string(result.Output); got != "token:dynamic" {
+		t.Fatalf("expected token executor output %q, got %q", "token:dynamic", got)
+	}
+}
+
+func TestInMemoryTaskManagerTokenExecutionOverridesDefaultExecutor(t *testing.T) {
+	mgr := NewInMemoryTaskManager(WithTaskExecutor(func(_ context.Context, _ Task) ([]byte, error) {
+		return []byte("default"), nil
+	}))
+	mgr.RegisterExecution("token-2", func(_ context.Context, _ Task) ([]byte, error) {
+		return []byte("dynamic"), nil
+	})
+
+	id, err := mgr.Submit(context.Background(), TaskSpec{
+		Name: "override",
+		Metadata: map[string]string{
+			TaskExecutionTokenMetadataKey: "token-2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+
+	waitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	result, err := mgr.Wait(waitCtx, id)
+	if err != nil {
+		t.Fatalf("Wait failed: %v", err)
+	}
+	if result.Status != corepkg.TaskCompleted {
+		t.Fatalf("expected completed status, got %s", result.Status)
+	}
+	if got := string(result.Output); got != "dynamic" {
+		t.Fatalf("expected dynamic executor output %q, got %q", "dynamic", got)
+	}
+}

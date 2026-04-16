@@ -42,6 +42,7 @@ type Options struct {
 	Registry     ToolRegistry
 	Executor     ToolExecutor
 	TaskManager  runtimepkg.TaskManager
+	Runtime      RuntimeGateway
 	Extensions   extensionspkg.Manager
 	SkillManager *skills.Manager
 	TokenManager *tokenusage.TokenUsageManager
@@ -67,6 +68,7 @@ type Runner struct {
 	registry     ToolRegistry
 	executor     ToolExecutor
 	taskManager  runtimepkg.TaskManager
+	runtime      RuntimeGateway
 	extensions   extensionspkg.Manager
 	skillManager *skills.Manager
 	tokenManager *tokenusage.TokenUsageManager
@@ -105,6 +107,10 @@ func NewRunner(opts Options) *Runner {
 	if taskManager == nil {
 		taskManager = runtimepkg.NewInMemoryTaskManager()
 	}
+	runtimeGateway := opts.Runtime
+	if runtimeGateway == nil {
+		runtimeGateway = newDefaultRuntimeGateway(taskManager)
+	}
 	extensions := opts.Extensions
 	if extensions == nil {
 		extensions = extensionspkg.NopManager{}
@@ -117,6 +123,7 @@ func NewRunner(opts Options) *Runner {
 		registry:     registry,
 		executor:     executor,
 		taskManager:  taskManager,
+		runtime:      runtimeGateway,
 		extensions:   extensions,
 		skillManager: manager,
 		tokenManager: opts.TokenManager,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -103,12 +104,45 @@ type QuotaManager interface {
 
 type TaskExecutorFunc func(ctx context.Context, task Task) ([]byte, error)
 
+const TaskExecutionTokenMetadataKey = "runtime_execution_token"
+
+type TaskExecutionRegistry interface {
+	RegisterExecution(token string, executor TaskExecutorFunc)
+	UnregisterExecution(token string)
+}
+
 type InMemoryTaskManagerOption func(*InMemoryTaskManager)
 
 func WithTaskExecutor(executor TaskExecutorFunc) InMemoryTaskManagerOption {
 	return func(m *InMemoryTaskManager) {
 		m.executor = executor
 	}
+}
+
+func (m *InMemoryTaskManager) RegisterExecution(token string, executor TaskExecutorFunc) {
+	if m == nil {
+		return
+	}
+	token = normalizeExecutionToken(token)
+	if token == "" || executor == nil {
+		return
+	}
+	m.mu.Lock()
+	m.executions[token] = executor
+	m.mu.Unlock()
+}
+
+func (m *InMemoryTaskManager) UnregisterExecution(token string) {
+	if m == nil {
+		return
+	}
+	token = normalizeExecutionToken(token)
+	if token == "" {
+		return
+	}
+	m.mu.Lock()
+	delete(m.executions, token)
+	m.mu.Unlock()
 }
 
 // InMemoryTaskManager is a safe placeholder until runtime orchestration is wired.
@@ -119,6 +153,7 @@ type InMemoryTaskManager struct {
 	runCancels     map[corepkg.TaskID]context.CancelFunc
 	parentChildren map[corepkg.TaskID]map[corepkg.TaskID]struct{}
 	childParent    map[corepkg.TaskID]corepkg.TaskID
+	executions     map[string]TaskExecutorFunc
 	executor       TaskExecutorFunc
 }
 
@@ -129,6 +164,7 @@ func NewInMemoryTaskManager(opts ...InMemoryTaskManagerOption) *InMemoryTaskMana
 		runCancels:     make(map[corepkg.TaskID]context.CancelFunc),
 		parentChildren: make(map[corepkg.TaskID]map[corepkg.TaskID]struct{}),
 		childParent:    make(map[corepkg.TaskID]corepkg.TaskID),
+		executions:     make(map[string]TaskExecutorFunc),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -331,7 +367,7 @@ func (m *InMemoryTaskManager) Wait(ctx context.Context, id corepkg.TaskID) (Task
 }
 
 func (m *InMemoryTaskManager) enqueueTask(parentCtx context.Context, id corepkg.TaskID) {
-	if m == nil || m.executor == nil {
+	if m == nil {
 		return
 	}
 	if parentCtx == nil {
@@ -341,7 +377,7 @@ func (m *InMemoryTaskManager) enqueueTask(parentCtx context.Context, id corepkg.
 }
 
 func (m *InMemoryTaskManager) runTaskAttempt(parentCtx context.Context, id corepkg.TaskID) {
-	if m == nil || m.executor == nil {
+	if m == nil {
 		return
 	}
 	if parentCtx == nil {
@@ -353,6 +389,11 @@ func (m *InMemoryTaskManager) runTaskAttempt(parentCtx context.Context, id corep
 	m.mu.Lock()
 	task, ok := m.tasks[id]
 	if !ok {
+		m.mu.Unlock()
+		return
+	}
+	executor := m.resolveExecutionLocked(task)
+	if executor == nil {
 		m.mu.Unlock()
 		return
 	}
@@ -379,7 +420,7 @@ func (m *InMemoryTaskManager) runTaskAttempt(parentCtx context.Context, id corep
 	if task.Spec.Timeout > 0 {
 		execCtx, timeoutCancel = context.WithTimeout(runCtx, task.Spec.Timeout)
 	}
-	output, execErr := m.executor(execCtx, task)
+	output, execErr := executor(execCtx, task)
 	timeoutCancel()
 	runCancel()
 
@@ -554,6 +595,25 @@ func cloneTaskSpec(spec TaskSpec) TaskSpec {
 		}
 	}
 	return cloned
+}
+
+func (m *InMemoryTaskManager) resolveExecutionLocked(task Task) TaskExecutorFunc {
+	if m == nil {
+		return nil
+	}
+	if len(task.Spec.Metadata) > 0 {
+		token := normalizeExecutionToken(task.Spec.Metadata[TaskExecutionTokenMetadataKey])
+		if token != "" {
+			if executor := m.executions[token]; executor != nil {
+				return executor
+			}
+		}
+	}
+	return m.executor
+}
+
+func normalizeExecutionToken(token string) string {
+	return strings.TrimSpace(token)
 }
 
 func detachContext(ctx context.Context) context.Context {

@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	corepkg "bytemind/internal/core"
 	"bytemind/internal/llm"
 	planpkg "bytemind/internal/plan"
+	runtimepkg "bytemind/internal/runtime"
 	"bytemind/internal/session"
 	storagepkg "bytemind/internal/storage"
 	"bytemind/internal/tools"
@@ -26,14 +28,18 @@ func (r *Runner) executeToolCall(
 	if r.executor == nil {
 		return fmt.Errorf("tool executor is unavailable")
 	}
+	traceID := buildToolTraceID(call)
+	sessionID := corepkg.SessionID(sess.ID)
+
 	r.emit(Event{
 		Type:          EventToolCallStarted,
-		SessionID:     corepkg.SessionID(sess.ID),
+		SessionID:     sessionID,
 		ToolName:      call.Function.Name,
 		ToolArguments: call.Function.Arguments,
 	})
 	r.appendAudit(ctx, storagepkg.AuditEvent{
-		SessionID: corepkg.SessionID(sess.ID),
+		SessionID: sessionID,
+		TraceID:   traceID,
 		Actor:     "agent",
 		Action:    "tool_execute_start",
 		Metadata: map[string]string{
@@ -45,19 +51,50 @@ func (r *Runner) executeToolCall(
 	}
 
 	execStartedAt := time.Now()
-	result, execErr := r.executor.ExecuteForMode(ctx, runMode, call.Function.Name, call.Function.Arguments, &tools.ExecutionContext{
-		Workspace:      r.workspace,
-		ApprovalPolicy: r.config.ApprovalPolicy,
-		Approval:       r.approval,
-		Session:        sess,
-		TaskManager:    r.taskManager,
-		Extensions:     r.extensions,
-		Mode:           runMode,
-		Stdin:          r.stdin,
-		Stdout:         r.stdout,
-		AllowedTools:   allowedTools,
-		DeniedTools:    deniedTools,
+	execution, runtimeErr := r.runtime.RunSync(ctx, RuntimeTaskRequest{
+		SessionID: sessionID,
+		TraceID:   traceID,
+		Name:      call.Function.Name,
+		Kind:      "tool",
+		Metadata: map[string]string{
+			"tool_name": call.Function.Name,
+		},
+		Execute: func(execCtx context.Context) ([]byte, error) {
+			output, err := r.executor.ExecuteForMode(execCtx, runMode, call.Function.Name, call.Function.Arguments, &tools.ExecutionContext{
+				Workspace:      r.workspace,
+				ApprovalPolicy: r.config.ApprovalPolicy,
+				Approval:       r.approval,
+				Session:        sess,
+				TaskManager:    r.taskManager,
+				Extensions:     r.extensions,
+				Mode:           runMode,
+				Stdin:          r.stdin,
+				Stdout:         r.stdout,
+				AllowedTools:   allowedTools,
+				DeniedTools:    deniedTools,
+			})
+			return []byte(output), err
+		},
+		OnTaskStateChanged: func(task runtimepkg.Task) {
+			r.appendTaskStateAudit(ctx, sessionID, traceID, call.Function.Name, task)
+		},
 	})
+
+	result := string(execution.Result.Output)
+	execErr := execution.ExecutionError
+	if runtimeErr != nil && execution.Result.TaskID == "" {
+		execErr = runtimeErr
+	}
+	if execErr == nil && execution.Result.TaskID != "" && execution.Result.Status != corepkg.TaskCompleted {
+		execErr = runtimeTaskResultError{
+			status:    execution.Result.Status,
+			errorCode: execution.Result.ErrorCode,
+		}
+	}
+	if execErr == nil && runtimeErr != nil {
+		execErr = runtimeErr
+	}
+
 	if execErr != nil {
 		result = marshalToolResult(map[string]any{
 			"ok":    false,
@@ -74,7 +111,7 @@ func (r *Runner) executeToolCall(
 	}
 	r.emit(Event{
 		Type:       EventToolCallCompleted,
-		SessionID:  corepkg.SessionID(sess.ID),
+		SessionID:  sessionID,
 		ToolName:   call.Function.Name,
 		ToolResult: result,
 		Error:      errText,
@@ -84,16 +121,22 @@ func (r *Runner) executeToolCall(
 	if execErr != nil {
 		auditResult = "error"
 	}
+	metadata := map[string]string{
+		"tool_name": call.Function.Name,
+		"error":     errText,
+	}
+	if execution.Result.ErrorCode != "" {
+		metadata["error_code"] = execution.Result.ErrorCode
+	}
 	r.appendAudit(ctx, storagepkg.AuditEvent{
-		SessionID: corepkg.SessionID(sess.ID),
+		SessionID: sessionID,
+		TaskID:    execution.TaskID,
+		TraceID:   traceID,
 		Actor:     "agent",
 		Action:    "tool_execute_result",
 		Result:    auditResult,
 		LatencyMS: time.Since(execStartedAt).Milliseconds(),
-		Metadata: map[string]string{
-			"tool_name": call.Function.Name,
-			"error":     errText,
-		},
+		Metadata:  metadata,
 	})
 
 	toolMessage := llm.NewToolResultMessage(call.ID, result)
@@ -109,9 +152,44 @@ func (r *Runner) executeToolCall(
 	if call.Function.Name == "update_plan" {
 		r.emit(Event{
 			Type:      EventPlanUpdated,
-			SessionID: corepkg.SessionID(sess.ID),
+			SessionID: sessionID,
 			Plan:      planpkg.CloneState(sess.Plan),
 		})
 	}
 	return nil
+}
+
+func buildToolTraceID(call llm.ToolCall) corepkg.TraceID {
+	if id := strings.TrimSpace(call.ID); id != "" {
+		return corepkg.TraceID(id)
+	}
+	return corepkg.TraceID(fmt.Sprintf("tool-%d", time.Now().UTC().UnixNano()))
+}
+
+func (r *Runner) appendTaskStateAudit(
+	ctx context.Context,
+	sessionID corepkg.SessionID,
+	traceID corepkg.TraceID,
+	toolName string,
+	task runtimepkg.Task,
+) {
+	if task.ID == "" {
+		return
+	}
+	metadata := map[string]string{
+		"tool_name": toolName,
+		"status":    string(task.Status),
+	}
+	if task.ErrorCode != "" {
+		metadata["error_code"] = task.ErrorCode
+	}
+	r.appendAudit(ctx, storagepkg.AuditEvent{
+		SessionID: sessionID,
+		TaskID:    task.ID,
+		TraceID:   traceID,
+		Actor:     "runtime",
+		Action:    "task_state_changed",
+		Result:    string(task.Status),
+		Metadata:  metadata,
+	})
 }
