@@ -50,6 +50,7 @@ func (c *InMemorySubAgentCoordinator) Spawn(ctx context.Context, spec TaskSpec) 
 		c.mu.Lock()
 		c.quotaKeys[taskID] = quotaKey
 		c.mu.Unlock()
+		go c.waitTerminalAndRelease(taskID)
 	}
 
 	return taskID, nil
@@ -60,8 +61,32 @@ func (c *InMemorySubAgentCoordinator) Wait(ctx context.Context, id corepkg.TaskI
 		return TaskResult{}, ErrTaskNotImplemented
 	}
 	result, err := c.taskManager.Wait(ctx, id)
-	c.releaseQuota(id)
+	if err == nil || c.isTaskTerminal(id) {
+		c.releaseQuota(id)
+	}
 	return result, err
+}
+
+func (c *InMemorySubAgentCoordinator) waitTerminalAndRelease(id corepkg.TaskID) {
+	if c == nil || c.taskManager == nil || c.quotaManager == nil {
+		return
+	}
+	_, err := c.taskManager.Wait(context.Background(), id)
+	if err != nil && !c.isTaskTerminal(id) {
+		return
+	}
+	c.releaseQuota(id)
+}
+
+func (c *InMemorySubAgentCoordinator) isTaskTerminal(id corepkg.TaskID) bool {
+	if c == nil || c.taskManager == nil {
+		return false
+	}
+	task, err := c.taskManager.Get(context.Background(), id)
+	if err != nil {
+		return false
+	}
+	return IsTerminalTaskStatus(task.Status)
 }
 
 func (c *InMemorySubAgentCoordinator) releaseQuota(id corepkg.TaskID) {

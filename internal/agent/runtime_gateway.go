@@ -91,15 +91,17 @@ func (g *defaultRuntimeGateway) RunSync(ctx context.Context, request RuntimeTask
 		Metadata:     copyTaskMetadata(request.Metadata),
 	}
 
-	if registry, ok := g.taskManager.(runtimepkg.TaskExecutionRegistry); ok {
-		token := g.buildExecutionToken(spec)
-		if spec.Metadata == nil {
-			spec.Metadata = make(map[string]string, 1)
-		}
-		spec.Metadata[runtimepkg.TaskExecutionTokenMetadataKey] = token
-		registry.RegisterExecution(token, executor)
-		defer registry.UnregisterExecution(token)
+	registry, ok := g.taskManager.(runtimepkg.TaskExecutionRegistry)
+	if !ok {
+		return RuntimeTaskExecution{}, fmt.Errorf("runtime task manager must implement TaskExecutionRegistry")
 	}
+	token := g.buildExecutionToken(spec)
+	if spec.Metadata == nil {
+		spec.Metadata = make(map[string]string, 1)
+	}
+	spec.Metadata[runtimepkg.TaskExecutionTokenMetadataKey] = token
+	registry.RegisterExecution(token, executor)
+	defer registry.UnregisterExecution(token)
 
 	taskID, submitErr := g.taskManager.Submit(ctx, spec)
 	if submitErr != nil {

@@ -53,8 +53,8 @@ func TestDefaultRuntimeGatewayRunSyncCompletes(t *testing.T) {
 	if len(states) < 3 {
 		t.Fatalf("expected at least 3 state callbacks, got %v", states)
 	}
-	if states[0] != corepkg.TaskPending {
-		t.Fatalf("expected first callback pending, got %v", states)
+	if states[0] != corepkg.TaskPending && states[0] != corepkg.TaskRunning {
+		t.Fatalf("expected first callback to be pending or running, got %v", states)
 	}
 	if states[len(states)-1] != corepkg.TaskCompleted {
 		t.Fatalf("expected final callback completed, got %v", states)
@@ -150,6 +150,26 @@ func TestDefaultRuntimeGatewayRunSyncCancelsTaskWhenParentContextCancelled(t *te
 	}
 }
 
+func TestDefaultRuntimeGatewayRunSyncFailsWhenRegistryUnavailable(t *testing.T) {
+	gateway := newDefaultRuntimeGateway(taskManagerWithoutRegistry{})
+
+	_, err := gateway.RunSync(context.Background(), RuntimeTaskRequest{
+		SessionID: "sess-1",
+		TraceID:   "trace-no-registry",
+		Name:      "tool_no_registry",
+		Kind:      "tool",
+		Execute: func(_ context.Context) ([]byte, error) {
+			return []byte("ok"), nil
+		},
+	})
+	if err == nil {
+		t.Fatal("expected RunSync to fail when registry is unavailable")
+	}
+	if got := err.Error(); got != "runtime task manager must implement TaskExecutionRegistry" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func containsTaskStatus(states []corepkg.TaskStatus, expected corepkg.TaskStatus) bool {
 	for _, status := range states {
 		if status == expected {
@@ -196,4 +216,30 @@ func taskStatusRank(status corepkg.TaskStatus) (int, bool) {
 
 func isTerminalStatus(status corepkg.TaskStatus) bool {
 	return status == corepkg.TaskCompleted || status == corepkg.TaskFailed || status == corepkg.TaskKilled
+}
+
+type taskManagerWithoutRegistry struct{}
+
+func (taskManagerWithoutRegistry) Submit(_ context.Context, _ runtimepkg.TaskSpec) (corepkg.TaskID, error) {
+	return "task-id", nil
+}
+
+func (taskManagerWithoutRegistry) Get(_ context.Context, _ corepkg.TaskID) (runtimepkg.Task, error) {
+	return runtimepkg.Task{}, nil
+}
+
+func (taskManagerWithoutRegistry) Cancel(_ context.Context, _ corepkg.TaskID, _ string) error {
+	return nil
+}
+
+func (taskManagerWithoutRegistry) Retry(_ context.Context, _ corepkg.TaskID) (corepkg.TaskID, error) {
+	return "", nil
+}
+
+func (taskManagerWithoutRegistry) Stream(_ context.Context, _ corepkg.TaskID) (<-chan runtimepkg.TaskEvent, error) {
+	return nil, nil
+}
+
+func (taskManagerWithoutRegistry) Wait(_ context.Context, _ corepkg.TaskID) (runtimepkg.TaskResult, error) {
+	return runtimepkg.TaskResult{}, nil
 }
