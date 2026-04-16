@@ -315,6 +315,9 @@ func TestUnavailableRouteError(t *testing.T) {
 	if err.Code != ErrCodeUnavailable || !err.Retryable || err.Message != "no candidates" {
 		t.Fatalf("unexpected error %#v", err)
 	}
+	if errors.Is(err, ErrProviderNotFound) {
+		t.Fatalf("unexpected provider-not-found unwrap %#v", err)
+	}
 }
 
 func TestNewRoutedClientAndExecuteBranches(t *testing.T) {
@@ -375,6 +378,16 @@ func TestExecuteTargetCoversBranches(t *testing.T) {
 	}
 	if msg.Content != "" || len(buffered) != 0 {
 		t.Fatalf("unexpected buffered result %#v deltas=%#v", msg, buffered)
+	}
+	client = &stubRouterClient{providerID: "openai", streams: []stubRouterStreamResult{{events: []Event{{Type: EventResult, Result: &llm.Message{Role: llm.RoleAssistant}}}, deltas: []string{"o", "k"}}}}
+	msg, buffered, err = executeTarget(context.Background(), RouteTarget{ProviderID: "openai", ModelID: "gpt-5.4", Client: client}, Request{ChatRequest: llm.ChatRequest{Model: "gpt-5.4"}})
+	if err != nil || msg.Content != "ok" || strings.Join(buffered, "") != "ok" {
+		t.Fatalf("expected merged delta content, got msg=%#v deltas=%#v err=%v", msg, buffered, err)
+	}
+	client = &stubRouterClient{providerID: "openai", streams: []stubRouterStreamResult{{events: []Event{{Type: EventToolCall, ToolCall: &tool}, {Type: EventUsage, Usage: &Usage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}}, {Type: EventResult, Result: &llm.Message{Role: llm.RoleAssistant}}}}}}
+	msg, buffered, err = executeTarget(context.Background(), RouteTarget{ProviderID: "openai", ModelID: "gpt-5.4", Client: client}, Request{ChatRequest: llm.ChatRequest{Model: "gpt-5.4"}})
+	if err != nil || len(msg.ToolCalls) != 1 || msg.Usage == nil || msg.Usage.TotalTokens != 3 || len(buffered) != 0 {
+		t.Fatalf("expected merged metadata result, got msg=%#v deltas=%#v err=%v", msg, buffered, err)
 	}
 	client = &stubRouterClient{providerID: "openai", streams: []stubRouterStreamResult{{events: []Event{{Type: EventResult, Result: &llm.Message{Role: llm.RoleAssistant, Content: "ok"}}}, deltas: []string{"o", "k"}}}}
 	msg, buffered, err = executeTarget(context.Background(), RouteTarget{ProviderID: "openai", ModelID: "gpt-5.4", Client: client}, Request{ChatRequest: llm.ChatRequest{Model: "gpt-5.4"}})

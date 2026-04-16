@@ -1,12 +1,14 @@
 package provider
 
+import "errors"
+
 type routeCandidate struct {
 	ProviderID ProviderID
 	ModelID    ModelID
 	Client     Client
 }
 
-var errorsUnavailable = ErrProviderNotFound
+var errorsUnavailable = errors.New(string(ErrCodeUnavailable))
 
 func preferredRouteProvider(requested ModelID, rc RouteContext) ProviderID {
 	if id := normalizeRouteProviderID(ProviderID(rc.Tags["provider"])); id != "" {

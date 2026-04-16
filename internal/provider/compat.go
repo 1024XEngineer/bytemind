@@ -135,7 +135,19 @@ func executeTarget(ctx context.Context, target RouteTarget, req Request) (llm.Me
 		case EventResult:
 			hasTerminal = true
 			if event.Result != nil {
-				return *event.Result, deltas, nil
+				merged := *event.Result
+				if strings.TrimSpace(merged.Content) == "" && result.Content != "" {
+					merged.Content = result.Content
+				}
+				if len(merged.ToolCalls) == 0 && len(result.ToolCalls) > 0 {
+					merged.ToolCalls = append([]llm.ToolCall(nil), result.ToolCalls...)
+				}
+				if merged.Usage == nil && result.Usage != nil {
+					usage := *result.Usage
+					merged.Usage = &usage
+				}
+				merged.Normalize()
+				return merged, deltas, nil
 			}
 			result.Normalize()
 			return result, deltas, nil
