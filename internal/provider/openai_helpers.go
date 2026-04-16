@@ -65,7 +65,7 @@ func (c *OpenAICompatible) chatPayload(req llm.ChatRequest, stream bool) (map[st
 		"messages": messages,
 		"stream":   stream,
 	}
-	if req.Temperature > 0 {
+	if req.Temperature >= 0 {
 		payload["temperature"] = req.Temperature
 	}
 	if len(req.Tools) > 0 {
@@ -110,12 +110,15 @@ func openAIMessages(req llm.ChatRequest) ([]map[string]any, error) {
 					converted = append(converted, map[string]any{"role": "tool", "tool_call_id": part.ToolResult.ToolUseID, "content": part.ToolResult.Content})
 				}
 			}
+			hasToolCalls := len(asToolCalls(entry["tool_calls"])) > 0
 			if len(content) == 1 && content[0]["type"] == "text" {
 				entry["content"] = content[0]["text"]
-			} else {
+			} else if len(content) > 0 {
 				entry["content"] = content
 			}
-			converted = append(converted, entry)
+			if _, hasContent := entry["content"]; hasContent || hasToolCalls {
+				converted = append(converted, entry)
+			}
 		case "tool":
 			converted = append(converted, map[string]any{"role": "tool", "tool_call_id": message.ToolCallID, "content": message.Text()})
 		}

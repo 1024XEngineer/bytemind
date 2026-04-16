@@ -17,14 +17,28 @@ func parseOpenAIUsage(raw json.RawMessage) *llm.Usage {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
+		PromptDetails    struct {
+			CachedTokens int `json:"cached_tokens"`
+			AudioTokens  int `json:"audio_tokens"`
+		} `json:"prompt_tokens_details"`
+		CompletionDetails struct {
+			AudioTokens int `json:"audio_tokens"`
+		} `json:"completion_tokens_details"`
 	}
 	if err := json.Unmarshal(raw, &usage); err != nil {
 		return nil
 	}
-	if usage.PromptTokens == 0 && usage.CompletionTokens == 0 && usage.TotalTokens == 0 {
+	input := max(0, usage.PromptTokens) + max(0, usage.PromptDetails.AudioTokens)
+	output := max(0, usage.CompletionTokens) + max(0, usage.CompletionDetails.AudioTokens)
+	context := max(0, usage.PromptDetails.CachedTokens)
+	total := usage.TotalTokens
+	if total <= 0 {
+		total = input + output + context
+	}
+	if input == 0 && output == 0 && context == 0 && total == 0 {
 		return nil
 	}
-	return &llm.Usage{InputTokens: usage.PromptTokens, OutputTokens: usage.CompletionTokens, TotalTokens: usage.TotalTokens}
+	return &llm.Usage{InputTokens: input, OutputTokens: output, ContextTokens: context, TotalTokens: max(0, total)}
 }
 
 type streamDelta struct {
@@ -57,7 +71,12 @@ func parseOpenAIDelta(raw json.RawMessage) (streamDelta, error) {
 		delta.Role = llm.Role(strings.TrimSpace(role))
 	}
 	if contentRaw, ok := obj["content"]; ok {
-		_ = json.Unmarshal(contentRaw, &delta.Content)
+		delta.Content = extractTextFromRaw(contentRaw, false)
+	}
+	if delta.Content == "" {
+		if outputRaw, ok := obj["output_text"]; ok {
+			delta.Content = extractTextFromRaw(outputRaw, false)
+		}
 	}
 	if reasoningRaw, ok := obj["reasoning_content"]; ok {
 		_ = json.Unmarshal(reasoningRaw, &delta.Reasoning)
@@ -92,12 +111,11 @@ func parseOpenAIMessage(raw json.RawMessage) llm.Message {
 		}
 	}
 	if contentRaw, ok := obj["content"]; ok {
-		_ = json.Unmarshal(contentRaw, &msg.Content)
+		msg.Content = extractTextFromRaw(contentRaw, false)
 	}
 	if msg.Content == "" {
-		if reasoningRaw, ok := obj["reasoning_content"]; ok {
-			var ignored string
-			_ = json.Unmarshal(reasoningRaw, &ignored)
+		if outputRaw, ok := obj["output_text"]; ok {
+			msg.Content = extractTextFromRaw(outputRaw, false)
 		}
 	}
 	if toolCallsRaw, ok := obj["tool_calls"]; ok {
@@ -192,4 +210,60 @@ func argumentString(raw json.RawMessage) string {
 		}
 	}
 	return trimmed
+}
+
+func extractTextFromRaw(raw json.RawMessage, includeReasoning bool) string {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return ""
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return extractTextFromAny(value, includeReasoning)
+}
+
+func extractTextFromAny(value any, includeReasoning bool) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []any:
+		var b strings.Builder
+		for _, item := range typed {
+			b.WriteString(extractTextFromAny(item, includeReasoning))
+		}
+		return b.String()
+	case map[string]any:
+		var b strings.Builder
+		for _, key := range []string{"text", "output_text", "content", "value"} {
+			if nested, ok := typed[key]; ok {
+				b.WriteString(extractTextFromAny(nested, includeReasoning))
+			}
+		}
+		if includeReasoning {
+			for _, key := range []string{"reasoning_content", "reasoning", "summary"} {
+				if nested, ok := typed[key]; ok {
+					b.WriteString(extractTextFromAny(nested, includeReasoning))
+				}
+			}
+		}
+		if b.Len() > 0 {
+			return b.String()
+		}
+		for _, key := range []string{"message", "delta", "part", "parts"} {
+			if nested, ok := typed[key]; ok {
+				b.WriteString(extractTextFromAny(nested, includeReasoning))
+			}
+		}
+		return b.String()
+	default:
+		return ""
+	}
 }
