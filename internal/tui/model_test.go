@@ -948,6 +948,43 @@ func TestCtrlLFromLandingOpensSessions(t *testing.T) {
 	}
 }
 
+func TestCtrlLFromLandingShowsCleanupError(t *testing.T) {
+	dir := t.TempDir()
+	store, err := session.NewStore(dir)
+	if err != nil {
+		t.Fatalf("failed to create session store: %v", err)
+	}
+	workspace := t.TempDir()
+	current := session.New(workspace)
+	if err := store.Save(current); err != nil {
+		t.Fatalf("failed to save current session: %v", err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatalf("failed to remove session store dir: %v", err)
+	}
+
+	m := model{
+		screen:       screenLanding,
+		sessionLimit: defaultSessionLimit,
+		store:        store,
+		workspace:    workspace,
+		sess:         current,
+	}
+
+	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlL})
+	updated := got.(model)
+
+	if cmd != nil {
+		t.Fatalf("expected ctrl+l cleanup error path to avoid loading command")
+	}
+	if updated.sessionsOpen {
+		t.Fatalf("expected ctrl+l cleanup error path not to open sessions modal")
+	}
+	if strings.TrimSpace(updated.statusNote) == "" {
+		t.Fatalf("expected ctrl+l cleanup error path to report status note")
+	}
+}
+
 func TestCtrlGOpensAndClosesHelp(t *testing.T) {
 	m := model{}
 
@@ -2091,6 +2128,8 @@ func TestHelpTextOnlyMentionsSupportedEntryPoints(t *testing.T) {
 		"go run ./cmd/bytemind chat",
 		"go run ./cmd/bytemind run -prompt",
 		"/session",
+		"TUI does not expose `/resume`",
+		"CLI keeps `/resume <id>`",
 		"/skill clear",
 		"/skill delete <name>",
 		"/quit",
@@ -4332,6 +4371,9 @@ func TestResumeSessionClearsInterruptState(t *testing.T) {
 	workspace := t.TempDir()
 	current := session.New(workspace)
 	target := session.New(workspace)
+	target.Messages = []llm.Message{
+		llm.NewUserTextMessage("recover me"),
+	}
 	if err := store.Save(current); err != nil {
 		t.Fatal(err)
 	}

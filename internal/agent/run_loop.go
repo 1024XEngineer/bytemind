@@ -21,7 +21,7 @@ func (r *Runner) runPromptTurns(ctx context.Context, sess *session.Session, setu
 		if err != nil {
 			return "", err
 		}
-		answer, finished, err := r.processTurn(ctx, turnProcessParams{
+		answer, finished, err := r.processTurnWithReactiveCompaction(ctx, setup, turnProcessParams{
 			Session:          sess,
 			RunMode:          setup.RunMode,
 			Messages:         messages,
@@ -48,6 +48,31 @@ func (r *Runner) runPromptTurns(ctx context.Context, sess *session.Session, setu
 		ExecutedTools: executedToolNames,
 	})
 	return r.finishWithSummary(sess, summary, out, false)
+}
+
+func (r *Runner) processTurnWithReactiveCompaction(ctx context.Context, setup runPromptSetup, params turnProcessParams) (string, bool, error) {
+	answer, finished, err := r.processTurn(ctx, params)
+	if err == nil || !isPromptTooLongError(err) {
+		return answer, finished, err
+	}
+
+	_, compacted, compactErr := r.compactSession(ctx, params.Session, true, true, "reactive_prompt_too_long")
+	if compactErr != nil {
+		return "", false, compactErr
+	}
+	if !compacted {
+		return "", false, err
+	}
+	if params.Out != nil {
+		fmt.Fprintf(params.Out, "%scontext exceeded model window; compacted and retrying once%s\n", ansiDim, ansiReset)
+	}
+
+	retryMessages, buildErr := r.buildTurnMessages(params.Session, setup)
+	if buildErr != nil {
+		return "", false, buildErr
+	}
+	params.Messages = retryMessages
+	return r.processTurn(ctx, params)
 }
 
 func (r *Runner) messagesForStep(ctx context.Context, sess *session.Session, setup runPromptSetup, step int, out io.Writer) ([]llm.Message, error) {

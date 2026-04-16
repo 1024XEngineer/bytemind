@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"bytemind/internal/config"
+	"bytemind/internal/llm"
 )
 
 func TestClassifyBudgetBoundaries(t *testing.T) {
@@ -29,4 +30,36 @@ func TestClassifyBudgetBoundaries(t *testing.T) {
 			}
 		})
 	}
+}
+
+func containsToolUseID(messages []llm.Message, toolUseID string) bool {
+	for i := range messages {
+		message := messages[i]
+		message.Normalize()
+		for _, part := range message.Parts {
+			if part.Type != llm.PartToolUse || part.ToolUse == nil {
+				continue
+			}
+			if part.ToolUse.ID == toolUseID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsToolResultID(messages []llm.Message, toolUseID string) bool {
+	for i := range messages {
+		message := messages[i]
+		message.Normalize()
+		for _, part := range message.Parts {
+			if part.Type != llm.PartToolResult || part.ToolResult == nil {
+				continue
+			}
+			if part.ToolResult.ToolUseID == toolUseID {
+				return true
+			}
+		}
+	}
+	return false
 }

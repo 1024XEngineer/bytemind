@@ -43,6 +43,16 @@ func TestNormalizeToolSpecFillsDefaults(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolSpecMarksDestructiveFromSafetyClass(t *testing.T) {
+	spec := NormalizeToolSpec(ToolSpec{
+		Name:        "custom_write_tool",
+		SafetyClass: SafetyClassDestructive,
+	})
+	if !spec.Destructive {
+		t.Fatal("expected destructive safety class to imply destructive tool")
+	}
+}
+
 func TestValidateToolSpecRejectsConflictingFlags(t *testing.T) {
 	err := ValidateToolSpec(ToolSpec{
 		Name:            "bad_tool",

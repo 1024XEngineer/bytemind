@@ -28,9 +28,7 @@ func (m *model) handleSlashCommand(input string) error {
 		m.statusNote = "Help opened in the conversation view."
 		return nil
 	case "/session":
-		m.sessionsOpen = true
-		m.statusNote = "Opened recent sessions."
-		return nil
+		return m.openSessionsModal()
 	case "/skills-select":
 		return m.openSkillsPicker()
 	case "/skills":

@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"bytemind/internal/config"
+	contextpkg "bytemind/internal/context"
 	"bytemind/internal/llm"
 	"bytemind/internal/session"
 	"bytemind/internal/tokenusage"
@@ -346,6 +347,179 @@ func TestRunPromptAutoCompactsLongHistory(t *testing.T) {
 	}
 	if sess.Messages[1].Role != llm.RoleUser || strings.TrimSpace(sess.Messages[1].Text()) != "continue implementation" {
 		t.Fatalf("expected latest user message to be preserved, got %#v", sess.Messages[1])
+	}
+}
+
+func TestRunPromptAutoCompactionPreservesMostRecentCompleteToolPair(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	for i := 0; i < 6; i++ {
+		sess.Messages = append(sess.Messages,
+			llm.NewUserTextMessage(strings.Repeat("history user segment ", 24)),
+			llm.NewAssistantTextMessage(strings.Repeat("history assistant segment ", 24)),
+		)
+	}
+	sess.Messages = append(sess.Messages,
+		llm.NewUserTextMessage("older tool task"),
+		llm.Message{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-old",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{}`,
+				},
+			}},
+		},
+		llm.NewToolResultMessage("call-old", `{"ok":true,"items":["a.txt"]}`),
+		llm.NewAssistantTextMessage("old tool done"),
+		llm.NewUserTextMessage("recent tool task"),
+		llm.Message{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-recent",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "read_file",
+					Arguments: `{"path":"README.md"}`,
+				},
+			}},
+		},
+		llm.NewToolResultMessage("call-recent", `{"ok":true,"content":"hello"}`),
+		llm.NewAssistantTextMessage("recent tool done"),
+	)
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &fakeClient{
+		replies: []llm.Message{
+			{Role: llm.RoleAssistant, Content: "Goal: continue\nRecent: keep latest tool context"},
+			{Role: llm.RoleAssistant, Content: "done"},
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 2,
+			Stream:        false,
+			TokenQuota:    260,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "continue implementation", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "done" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("expected one compaction request + one turn request, got %d", len(client.requests))
+	}
+	if !containsToolUseID(sess.Messages, "call-recent") {
+		t.Fatalf("expected compacted session to keep recent tool_use, got %#v", sess.Messages)
+	}
+	if !containsToolResultID(sess.Messages, "call-recent") {
+		t.Fatalf("expected compacted session to keep recent tool_result, got %#v", sess.Messages)
+	}
+	if containsToolUseID(sess.Messages, "call-old") {
+		t.Fatalf("expected older pair to be compacted into summary, got %#v", sess.Messages)
+	}
+}
+
+func TestRunPromptAutoCompactionDropsIncompleteToolTail(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	for i := 0; i < 6; i++ {
+		sess.Messages = append(sess.Messages,
+			llm.NewUserTextMessage(strings.Repeat("history user segment ", 24)),
+			llm.NewAssistantTextMessage(strings.Repeat("history assistant segment ", 24)),
+		)
+	}
+	sess.Messages = append(sess.Messages,
+		llm.NewUserTextMessage("tool task"),
+		llm.Message{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{}`,
+				},
+			}},
+		},
+		llm.NewToolResultMessage("call-1", `{"ok":true}`),
+		llm.NewAssistantTextMessage("done"),
+		llm.Message{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-open",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "read_file",
+					Arguments: `{"path":"missing.txt"}`,
+				},
+			}},
+		},
+	)
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &fakeClient{
+		replies: []llm.Message{
+			{Role: llm.RoleAssistant, Content: "Goal: continue\nSummary: first pass"},
+			{Role: llm.RoleAssistant, Content: "Goal: continue\nSummary: fallback pass"},
+			{Role: llm.RoleAssistant, Content: "done"},
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 2,
+			Stream:        false,
+			TokenQuota:    260,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "continue implementation", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "done" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected two compaction requests + one turn request after fallback, got %d", len(client.requests))
+	}
+	if containsToolUseID(sess.Messages, "call-open") {
+		t.Fatalf("expected orphan tail tool_use to be dropped, got %#v", sess.Messages)
+	}
+	if err := contextpkg.ValidateToolPairInvariant(sess.Messages); err != nil {
+		t.Fatalf("expected compacted session to satisfy pair invariant, got %v", err)
 	}
 }
 

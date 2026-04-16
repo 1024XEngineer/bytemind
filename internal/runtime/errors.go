@@ -22,7 +22,7 @@ const (
 	ErrorCodeTaskCancelled = "task_cancelled"
 	// ErrorCodeQuotaExceeded indicates runtime quota acquisition failure.
 	ErrorCodeQuotaExceeded = "quota_exceeded"
-	// ErrorCodeTaskExecutionFailed indicates task executor returned a non-timeout failure.
+	// ErrorCodeTaskExecutionFailed indicates runtime executor returned a non-timeout failure.
 	ErrorCodeTaskExecutionFailed = "task_execution_failed"
 )
 

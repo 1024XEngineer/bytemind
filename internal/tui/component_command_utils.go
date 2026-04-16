@@ -22,6 +22,8 @@ func (m model) helpText() string {
 		"- `/compact`: summarize long history into a compact continuation context.",
 		"- `/btw <message>`: interject while a run is in progress.",
 		"- `/quit`: exit the TUI.",
+		"- TUI does not expose `/resume`; use `/session` then `Enter` on the selected row.",
+		"- CLI keeps `/resume <id>` for command-line or scripted recovery.",
 		"",
 		"## UI Notes",
 		"- `Tab` toggles between Build and Plan modes.",

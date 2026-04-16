@@ -25,6 +25,30 @@ func TestSessionFileStoreWriteAtomicAndRead(t *testing.T) {
 	}
 }
 
+func TestSessionFileStoreAppendLine(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewSessionFileStore(root)
+	if err != nil {
+		t.Fatalf("NewSessionFileStore failed: %v", err)
+	}
+	path := filepath.Join(root, "events", "events.jsonl")
+	if err := store.AppendLine(path, []byte(`{"seq":1}`)); err != nil {
+		t.Fatalf("AppendLine first failed: %v", err)
+	}
+	if err := store.AppendLine(path, []byte(`{"seq":2}`)); err != nil {
+		t.Fatalf("AppendLine second failed: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	got := string(data)
+	want := "{\"seq\":1}\n{\"seq\":2}\n"
+	if got != want {
+		t.Fatalf("unexpected content\nwant: %q\n got: %q", want, got)
+	}
+}
+
 func TestSessionFileStoreFindNewestByName(t *testing.T) {
 	root := t.TempDir()
 	store, err := NewSessionFileStore(root)
@@ -89,5 +113,16 @@ func TestSessionFileStoreSessionPath(t *testing.T) {
 	}
 	if _, err := store.SessionPath("-project", ""); err == nil {
 		t.Fatal("expected empty session id to fail")
+	}
+}
+
+func TestSessionFileStoreRoot(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewSessionFileStore(root)
+	if err != nil {
+		t.Fatalf("NewSessionFileStore failed: %v", err)
+	}
+	if got := store.Root(); filepath.Clean(got) != filepath.Clean(root) {
+		t.Fatalf("expected root %q, got %q", root, got)
 	}
 }

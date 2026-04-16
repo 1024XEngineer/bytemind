@@ -78,7 +78,7 @@ func (m model) loadSessionsCmd() tea.Cmd {
 		if m.store == nil {
 			return sessionsLoadedMsg{}
 		}
-		summaries, _, err := m.store.List(m.sessionLimit)
+		summaries, _, err := m.store.List(sessionListFetchLimit())
 		return sessionsLoadedMsg{Summaries: summaries, Err: err}
 	}
 }

@@ -792,7 +792,6 @@ func (m *InMemoryTaskManager) cancelChildTasks(ctx context.Context, childIDs []c
 	}
 	return nil
 }
-
 func (m *InMemoryTaskManager) removeWaiter(id corepkg.TaskID, waiter chan TaskResult) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	snapshotEventType = "session_snapshot"
-	schemaVersion     = 1
+	legacySnapshotEventType = "session_snapshot"
+	legacySchemaVersion     = 1
 )
 
-func loadSessionFile(files *storagepkg.SessionFileStore, path string) (*Session, error) {
+func loadLegacySessionFile(files *storagepkg.SessionFileStore, path string) (*Session, error) {
 	if strings.ToLower(filepath.Ext(path)) != ".jsonl" {
 		return nil, errors.New("unsupported session file extension")
 	}
@@ -22,7 +22,7 @@ func loadSessionFile(files *storagepkg.SessionFileStore, path string) (*Session,
 }
 
 func loadJSONLSession(files *storagepkg.SessionFileStore, path string) (*Session, error) {
-	rawPayload, err := storagepkg.ReadLatestJSONLSnapshot(files, path, snapshotEventType)
+	rawPayload, err := storagepkg.ReadLatestJSONLSnapshot(files, path, legacySnapshotEventType)
 	if err != nil {
 		return nil, err
 	}
@@ -35,5 +35,5 @@ func loadJSONLSession(files *storagepkg.SessionFileStore, path string) (*Session
 }
 
 func writeSessionSnapshot(files *storagepkg.SessionFileStore, path string, session *Session) error {
-	return storagepkg.WriteJSONLSnapshot(files, path, snapshotEventType, schemaVersion, *session, session.UpdatedAt)
+	return storagepkg.WriteJSONLSnapshot(files, path, legacySnapshotEventType, legacySchemaVersion, *session, session.UpdatedAt)
 }

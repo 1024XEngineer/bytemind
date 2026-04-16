@@ -19,19 +19,14 @@ type ToolAccessDecision struct {
 
 // DecideToolAccess evaluates whether a tool can run under active allow/deny constraints.
 func DecideToolAccess(in ToolAccessInput) ToolAccessDecision {
-	name := strings.TrimSpace(in.ToolName)
-	if name == "" {
-		return ToolAccessDecision{Decision: corepkg.DecisionDeny, Reason: "tool name is empty"}
+	eval := Evaluate(EvaluateInput{
+		ToolName:          strings.TrimSpace(in.ToolName),
+		Allowed:           in.Allowed,
+		Denied:            in.Denied,
+		SkipRuntimeChecks: true,
+	})
+	if eval.MainDecision == MainDecisionAllow {
+		return ToolAccessDecision{Decision: corepkg.DecisionAllow, Reason: eval.MainReason}
 	}
-	if len(in.Allowed) > 0 {
-		if _, ok := in.Allowed[name]; !ok {
-			return ToolAccessDecision{Decision: corepkg.DecisionDeny, Reason: "tool is not in active allowlist"}
-		}
-	}
-	if len(in.Denied) > 0 {
-		if _, blocked := in.Denied[name]; blocked {
-			return ToolAccessDecision{Decision: corepkg.DecisionDeny, Reason: "tool is in active denylist"}
-		}
-	}
-	return ToolAccessDecision{Decision: corepkg.DecisionAllow}
+	return ToolAccessDecision{Decision: corepkg.DecisionDeny, Reason: eval.MainReason}
 }

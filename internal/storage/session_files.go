@@ -63,6 +63,37 @@ func (s *SessionFileStore) WriteAtomic(path string, content []byte) error {
 	return nil
 }
 
+func (s *SessionFileStore) AppendLine(path string, line []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	if len(line) == 0 || line[len(line)-1] != '\n' {
+		line = append(line, '\n')
+	}
+	if _, err := file.Write(line); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SessionFileStore) Root() string {
+	if s == nil {
+		return ""
+	}
+	return s.root
+}
+
 func (s *SessionFileStore) SessionPath(projectID, sessionID string) (string, error) {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {

@@ -60,6 +60,10 @@ func (t *fakeTool) Definition() llm.ToolDefinition {
 		Type: "function",
 		Function: llm.FunctionDefinition{
 			Name: t.name,
+			Parameters: map[string]any{
+				"type":                 "object",
+				"additionalProperties": true,
+			},
 		},
 	}
 }

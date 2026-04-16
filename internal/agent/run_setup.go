@@ -45,6 +45,7 @@ func (r *Runner) prepareRunPrompt(sess *session.Session, input RunPromptInput, m
 
 	activeSkill := r.resolveActiveSkill(sess)
 	allowedTools, deniedTools := resolveSkillToolSets(activeSkill)
+	promptHint := policypkg.EvaluatePromptHint(userInput)
 	availableTools := []string(nil)
 	if r.registry != nil {
 		availableTools = toolNames(r.registry.DefinitionsForMode(runMode))
@@ -62,7 +63,7 @@ func (r *Runner) prepareRunPrompt(sess *session.Session, input RunPromptInput, m
 		AvailableSkills:      r.promptSkills(),
 		AvailableTools:       availableTools,
 		InstructionText:      loadAGENTSInstruction(r.workspace),
-		WebLookupInstruction: policypkg.ExplicitWebLookupInstruction(userInput),
+		WebLookupInstruction: promptHint.Instruction,
 		PromptTokens:         contextpkg.EstimateRequestTokens([]llm.Message{input.UserMessage}),
 	}, nil
 }

@@ -114,6 +114,9 @@ func NormalizeToolSpec(spec ToolSpec) ToolSpec {
 			spec.SafetyClass = SafetyClassModerate
 		}
 	}
+	if spec.SafetyClass == SafetyClassDestructive {
+		spec.Destructive = true
+	}
 	if spec.MaxTimeoutS <= 0 {
 		spec.MaxTimeoutS = 300
 	}

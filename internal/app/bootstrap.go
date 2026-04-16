@@ -101,7 +101,15 @@ func Bootstrap(req BootstrapRequest) (Runtime, error) {
 		promptStore = storagepkg.NopPromptHistoryStore{}
 	}
 
-	taskManager := runtimepkg.NewInMemoryTaskManager()
+	var taskEventStore runtimepkg.TaskEventStore
+	taskEventStore, err = storagepkg.NewDefaultRuntimeTaskStore()
+	if err != nil {
+		taskEventStore = runtimepkg.NopTaskEventStore{}
+	}
+
+	taskManager := runtimepkg.NewInMemoryTaskManager(
+		runtimepkg.WithTaskEventStore(taskEventStore),
+	)
 	extensions := extensionspkg.NopManager{}
 	runner := agent.NewRunner(agent.Options{
 		Workspace:   workspace,

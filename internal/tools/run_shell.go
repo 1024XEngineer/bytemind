@@ -14,10 +14,10 @@ import (
 	"runtime"
 	"strings"
 	"time"
-	"unicode"
 
 	"bytemind/internal/llm"
 	planpkg "bytemind/internal/plan"
+	policypkg "bytemind/internal/policy"
 )
 
 type RunShellTool struct{}
@@ -117,99 +117,35 @@ func (RunShellTool) Run(ctx context.Context, raw json.RawMessage, execCtx *Execu
 
 func requireApproval(command string, execCtx *ExecutionContext) error {
 	mode := planpkg.ModeBuild
+	approvalPolicy := ""
 	if execCtx != nil {
 		mode = planpkg.NormalizeMode(string(execCtx.Mode))
-	}
-	if mode == planpkg.ModePlan {
-		if !isPlanSafeCommand(command) {
-			return errors.New("shell command is unavailable in plan mode unless it matches the strict read-only allowlist")
-		}
-		return nil
+		approvalPolicy = strings.TrimSpace(execCtx.ApprovalPolicy)
 	}
 
-	assessment := assessShellCommand(command)
-	if assessment.Risk == shellRiskBlocked {
-		return errors.New(assessment.Reason)
-	}
-
-	switch execCtx.ApprovalPolicy {
-	case "never":
+	eval := policypkg.Evaluate(policypkg.EvaluateInput{
+		ToolName:       "run_shell",
+		ToolSpec:       policypkg.ToolSpec{Name: "run_shell", Destructive: false},
+		ShellCommand:   command,
+		Mode:           mode,
+		ApprovalPolicy: approvalPolicy,
+	})
+	switch eval.MainDecision {
+	case policypkg.MainDecisionAllow:
 		return nil
-	case "always":
-		return promptForApproval(command, assessment.Reason, execCtx)
+	case policypkg.MainDecisionEscalate:
+		return promptForApproval(command, eval.MainReason, execCtx)
 	default:
-		if assessment.Risk == shellRiskApproval {
-			return promptForApproval(command, assessment.Reason, execCtx)
+		reason := strings.TrimSpace(eval.MainReason)
+		if reason == "" {
+			reason = "shell command is unavailable by active policy"
 		}
-		return nil
+		return errors.New(reason)
 	}
 }
 
 func isPlanSafeCommand(command string) bool {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return false
-	}
-	if hasWriteRedirection(command) {
-		return false
-	}
-	segments := splitCommandSegments(command)
-	if len(segments) != 1 {
-		return false
-	}
-	fields := splitCommandFields(segments[0])
-	if len(fields) == 0 {
-		return false
-	}
-	first := strings.ToLower(strings.TrimSpace(fields[0]))
-	if first == "" {
-		return false
-	}
-	if looksLikeScript(first) {
-		return false
-	}
-	for _, field := range fields {
-		trimmed := strings.TrimSpace(field)
-		switch trimmed {
-		case "|", ">", ">>", "<", ";", "&&", "||":
-			return false
-		}
-	}
-
-	switch first {
-	case "ls", "dir", "pwd", "cat", "type", "rg", "grep", "find", "tree":
-		return true
-	case "git":
-		if len(fields) < 2 {
-			return false
-		}
-		sub := strings.ToLower(fields[1])
-		return sub == "status" || sub == "diff" || sub == "log"
-	case "go":
-		if len(fields) < 2 {
-			return false
-		}
-		sub := strings.ToLower(fields[1])
-		return sub == "env" || sub == "list"
-	case "bash", "sh", "pwsh", "powershell", "python", "python3", "node":
-		return false
-	default:
-		return false
-	}
-}
-
-func looksLikeScript(command string) bool {
-	command = strings.ToLower(strings.TrimSpace(command))
-	if strings.HasPrefix(command, "./") || strings.HasPrefix(command, ".\\") {
-		return true
-	}
-	ext := strings.ToLower(filepath.Ext(command))
-	switch ext {
-	case ".sh", ".ps1", ".bat", ".cmd":
-		return true
-	default:
-		return false
-	}
+	return policypkg.IsPlanSafeShellCommand(command)
 }
 
 func promptForApproval(command, reason string, execCtx *ExecutionContext) error {
@@ -249,250 +185,15 @@ func promptForApproval(command, reason string, execCtx *ExecutionContext) error 
 }
 
 func assessShellCommand(command string) shellAssessment {
-	segments := splitCommandSegments(command)
-	result := shellAssessment{Risk: shellRiskSafe}
-	for _, segment := range segments {
-		assessment := assessCommandSegment(segment)
-		if assessment.Risk > result.Risk {
-			result = assessment
-		}
-		if result.Risk == shellRiskBlocked {
-			return result
-		}
-	}
-	return result
-}
-
-func assessCommandSegment(segment string) shellAssessment {
-	segment = strings.TrimSpace(segment)
-	if segment == "" {
-		return shellAssessment{Risk: shellRiskSafe}
-	}
-	if hasWriteRedirection(segment) {
-		return shellAssessment{Risk: shellRiskApproval, Reason: "uses shell redirection"}
-	}
-
-	fields := splitCommandFields(segment)
-	if len(fields) == 0 {
-		return shellAssessment{Risk: shellRiskSafe}
-	}
-
-	command := strings.ToLower(fields[0])
-	if isBlockedCommand(command, fields) {
-		return shellAssessment{Risk: shellRiskBlocked, Reason: fmt.Sprintf("blocked dangerous shell command: %s", strings.TrimSpace(segment))}
-	}
-	if isReadOnlyCommand(command, fields) {
-		return shellAssessment{Risk: shellRiskSafe}
-	}
-	if isApprovalCommand(command, fields) {
-		return shellAssessment{Risk: shellRiskApproval, Reason: fmt.Sprintf("may modify files or environment: %s", fields[0])}
-	}
-	return shellAssessment{Risk: shellRiskApproval, Reason: fmt.Sprintf("requires approval for non-read-only command: %s", fields[0])}
-}
-
-func splitCommandSegments(command string) []string {
-	normalized := strings.ReplaceAll(command, "\r\n", "\n")
-	segments := make([]string, 0, 4)
-	var builder strings.Builder
-	inSingle := false
-	inDouble := false
-
-	flush := func() {
-		segment := strings.TrimSpace(builder.String())
-		if segment != "" {
-			segments = append(segments, segment)
-		}
-		builder.Reset()
-	}
-
-	for i := 0; i < len(normalized); i++ {
-		ch := normalized[i]
-		switch ch {
-		case '\'':
-			if !inDouble {
-				inSingle = !inSingle
-			}
-			builder.WriteByte(ch)
-		case '"':
-			if !inSingle {
-				inDouble = !inDouble
-			}
-			builder.WriteByte(ch)
-		case '\n', ';':
-			if inSingle || inDouble {
-				builder.WriteByte(ch)
-				continue
-			}
-			flush()
-		case '|', '&':
-			if inSingle || inDouble {
-				builder.WriteByte(ch)
-				continue
-			}
-			flush()
-			if i+1 < len(normalized) && normalized[i+1] == ch {
-				i++
-			}
-		default:
-			builder.WriteByte(ch)
-		}
-	}
-	flush()
-	return segments
-}
-
-func splitCommandFields(segment string) []string {
-	fields := make([]string, 0, 8)
-	var builder strings.Builder
-	inSingle := false
-	inDouble := false
-
-	flush := func() {
-		if builder.Len() == 0 {
-			return
-		}
-		fields = append(fields, builder.String())
-		builder.Reset()
-	}
-
-	for i := 0; i < len(segment); i++ {
-		ch := segment[i]
-		switch ch {
-		case '\'':
-			if !inDouble {
-				inSingle = !inSingle
-				continue
-			}
-		case '"':
-			if !inSingle {
-				inDouble = !inDouble
-				continue
-			}
-		}
-		if !inSingle && !inDouble && unicode.IsSpace(rune(ch)) {
-			flush()
-			continue
-		}
-		builder.WriteByte(ch)
-	}
-	flush()
-	return fields
-}
-
-func hasWriteRedirection(segment string) bool {
-	inSingle := false
-	inDouble := false
-	for i := 0; i < len(segment); i++ {
-		ch := segment[i]
-		switch ch {
-		case '\'':
-			if !inDouble {
-				inSingle = !inSingle
-			}
-		case '"':
-			if !inSingle {
-				inDouble = !inDouble
-			}
-		case '>':
-			if !inSingle && !inDouble {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func isBlockedCommand(command string, fields []string) bool {
-	switch command {
-	case "rm", "rmdir", "del", "erase", "remove-item", "ri", "rd", "format", "diskpart", "mkfs", "dd", "shutdown", "reboot", "halt", "poweroff":
-		return true
-	case "git":
-		return isBlockedGit(fields)
+	assessment := policypkg.AssessShellCommand(command)
+	switch assessment.Risk {
+	case policypkg.ShellRiskBlocked:
+		return shellAssessment{Risk: shellRiskBlocked, Reason: assessment.Reason}
+	case policypkg.ShellRiskApproval:
+		return shellAssessment{Risk: shellRiskApproval, Reason: assessment.Reason}
 	default:
-		return false
+		return shellAssessment{Risk: shellRiskSafe, Reason: assessment.Reason}
 	}
-}
-
-func isBlockedGit(fields []string) bool {
-	if len(fields) < 2 {
-		return false
-	}
-	sub := strings.ToLower(fields[1])
-	switch sub {
-	case "reset":
-		return hasAnyArg(fields[2:], "--hard")
-	case "clean":
-		for _, arg := range fields[2:] {
-			if strings.HasPrefix(arg, "-f") || strings.Contains(arg, "f") && strings.HasPrefix(arg, "-") {
-				return true
-			}
-		}
-	case "checkout":
-		return hasAnyArg(fields[2:], "--")
-	case "restore":
-		return len(fields) > 2
-	}
-	return false
-}
-
-func isReadOnlyCommand(command string, fields []string) bool {
-	switch command {
-	case "cat", "type", "ls", "dir", "pwd", "echo", "rg", "grep", "find", "where", "which", "env", "printenv", "uname", "whoami", "head", "tail", "sort", "uniq", "wc", "tree", "get-childitem", "get-content", "select-string", "get-location", "resolve-path":
-		return true
-	case "git":
-		return isReadOnlyGit(fields)
-	case "go":
-		return len(fields) > 1 && isOneOf(strings.ToLower(fields[1]), "env", "list", "version")
-	case "npm", "pnpm", "yarn":
-		return len(fields) > 1 && isOneOf(strings.ToLower(fields[1]), "list", "info", "view", "why")
-	default:
-		return false
-	}
-}
-
-func isApprovalCommand(command string, fields []string) bool {
-	switch command {
-	case "cp", "copy", "copy-item", "mv", "move", "move-item", "rename", "rename-item", "new-item", "mkdir", "md", "touch", "tee", "set-content", "add-content", "out-file":
-		return true
-	case "git":
-		return len(fields) > 1
-	case "go":
-		return len(fields) > 1 && isOneOf(strings.ToLower(fields[1]), "test", "build", "run", "mod", "get")
-	case "npm", "pnpm", "yarn":
-		return len(fields) > 1 && isOneOf(strings.ToLower(fields[1]), "install", "add", "remove", "update", "run")
-	case "pip", "pip3", "uv", "cargo", "make", "cmake", "python", "python3", "node", "pwsh", "powershell", "sh", "bash":
-		return true
-	default:
-		return false
-	}
-}
-
-func isReadOnlyGit(fields []string) bool {
-	if len(fields) < 2 {
-		return false
-	}
-	sub := strings.ToLower(fields[1])
-	return isOneOf(sub, "status", "diff", "log", "show", "rev-parse", "ls-files", "grep", "branch") && len(fields) == 2
-}
-
-func hasAnyArg(args []string, targets ...string) bool {
-	for _, arg := range args {
-		for _, target := range targets {
-			if strings.EqualFold(arg, target) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func isOneOf(value string, options ...string) bool {
-	for _, option := range options {
-		if value == option {
-			return true
-		}
-	}
-	return false
 }
 
 func shellCommand(ctx context.Context, command string) *exec.Cmd {
