@@ -162,7 +162,7 @@ func promptForWriteApproval(toolName string, execCtx *ExecutionContext) error {
 			Reason:  reason,
 		})
 		if err != nil {
-			return err
+			return NewToolExecError(ToolErrorPermissionDenied, err.Error(), false, err)
 		}
 		if !approved {
 			return NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q was not run because approval was denied", toolName), false, nil)
@@ -296,8 +296,14 @@ func schemaAllowsUnknownFields(parameters map[string]any) bool {
 	if !ok {
 		return false
 	}
-	allowed, ok := value.(bool)
-	return ok && allowed
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case map[string]any:
+		return true
+	default:
+		return false
+	}
 }
 
 func executionTimeout(raw json.RawMessage, spec ToolSpec) time.Duration {

@@ -96,6 +96,42 @@ func TestExecutorAllowsUnknownArgumentsWhenSchemaAllowsThem(t *testing.T) {
 	}
 }
 
+func TestExecutorAllowsUnknownArgumentsWhenSchemaUsesAdditionalPropertiesObject(t *testing.T) {
+	registry := &Registry{}
+	registry.Add(executorTestTool{
+		name:   "strict_tool",
+		result: `{"ok":true}`,
+	})
+	registry.tools["strict_tool"] = ResolvedTool{
+		Definition: llm.ToolDefinition{
+			Type: "function",
+			Function: llm.FunctionDefinition{
+				Name: "strict_tool",
+				Parameters: map[string]any{
+					"type": "object",
+					"additionalProperties": map[string]any{
+						"type": "string",
+					},
+					"properties": map[string]any{
+						"path": map[string]any{"type": "string"},
+					},
+				},
+			},
+		},
+		Spec: registry.tools["strict_tool"].Spec,
+		Tool: registry.tools["strict_tool"].Tool,
+	}
+	executor := NewExecutor(registry)
+
+	got, err := executor.Execute(context.Background(), "strict_tool", `{"path":"a.txt","extra":"v"}`, &ExecutionContext{})
+	if err != nil {
+		t.Fatalf("expected extra field to be allowed, got %v", err)
+	}
+	if got != `{"ok":true}` {
+		t.Fatalf("unexpected result: %q", got)
+	}
+}
+
 func TestExecutorMapsPolicyFailuresToPermissionDenied(t *testing.T) {
 	registry := &Registry{}
 	registry.Add(executorTestTool{name: "strict_tool", result: `{"ok":true}`})
@@ -142,6 +178,40 @@ func TestExecutorPromptsApprovalForDestructiveTools(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(workspace, "a.txt")); !os.IsNotExist(statErr) {
 		t.Fatalf("expected file not to be created, got %v", statErr)
+	}
+}
+
+func TestExecutorWrapsApprovalCallbackError(t *testing.T) {
+	registry := DefaultRegistry()
+	executor := NewExecutor(registry)
+	workspace := t.TempDir()
+	cause := errors.New("approval backend failed")
+
+	_, err := executor.Execute(context.Background(), "write_file", `{"path":"a.txt","content":"ok"}`, &ExecutionContext{
+		Workspace:      workspace,
+		ApprovalPolicy: "on-request",
+		Approval: func(req ApprovalRequest) (bool, error) {
+			if req.Command != "write_file" {
+				t.Fatalf("unexpected approval command: %q", req.Command)
+			}
+			return false, cause
+		},
+	})
+	if err == nil {
+		t.Fatal("expected approval callback failure")
+	}
+	execErr, ok := AsToolExecError(err)
+	if !ok {
+		t.Fatalf("expected ToolExecError, got %T", err)
+	}
+	if execErr.Code != ToolErrorPermissionDenied {
+		t.Fatalf("unexpected code: %s", execErr.Code)
+	}
+	if execErr.Retryable {
+		t.Fatal("approval callback failure should not be retryable")
+	}
+	if !errors.Is(err, cause) {
+		t.Fatal("expected wrapped approval callback cause")
 	}
 }
 
