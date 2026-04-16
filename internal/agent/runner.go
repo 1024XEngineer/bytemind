@@ -35,23 +35,24 @@ const (
 )
 
 type Options struct {
-	Workspace    string
-	Config       config.Config
-	Client       llm.Client
-	Store        SessionStore
-	Registry     ToolRegistry
-	Executor     ToolExecutor
-	TaskManager  runtimepkg.TaskManager
-	Runtime      RuntimeGateway
-	Extensions   extensionspkg.Manager
-	SkillManager *skills.Manager
-	TokenManager *tokenusage.TokenUsageManager
-	AuditStore   storagepkg.AuditStore
-	PromptStore  storagepkg.PromptHistoryWriter
-	Observer     Observer
-	Approval     tools.ApprovalHandler
-	Stdin        io.Reader
-	Stdout       io.Writer
+	Workspace     string
+	Config        config.Config
+	Client        llm.Client
+	Store         SessionStore
+	Registry      ToolRegistry
+	Executor      ToolExecutor
+	PolicyGateway PolicyGateway
+	Engine        Engine
+	TaskManager   runtimepkg.TaskManager
+	Extensions    extensionspkg.Manager
+	SkillManager  *skills.Manager
+	TokenManager  *tokenusage.TokenUsageManager
+	AuditStore    storagepkg.AuditStore
+	PromptStore   storagepkg.PromptHistoryWriter
+	Observer      Observer
+	Approval      tools.ApprovalHandler
+	Stdin         io.Reader
+	Stdout        io.Writer
 }
 
 type RunPromptInput struct {
@@ -61,23 +62,24 @@ type RunPromptInput struct {
 }
 
 type Runner struct {
-	workspace    string
-	config       config.Config
-	client       llm.Client
-	store        SessionStore
-	registry     ToolRegistry
-	executor     ToolExecutor
-	taskManager  runtimepkg.TaskManager
-	runtime      RuntimeGateway
-	extensions   extensionspkg.Manager
-	skillManager *skills.Manager
-	tokenManager *tokenusage.TokenUsageManager
-	auditStore   storagepkg.AuditStore
-	promptStore  storagepkg.PromptHistoryWriter
-	observer     Observer
-	approval     tools.ApprovalHandler
-	stdin        io.Reader
-	stdout       io.Writer
+	workspace     string
+	config        config.Config
+	client        llm.Client
+	store         SessionStore
+	registry      ToolRegistry
+	executor      ToolExecutor
+	policyGateway PolicyGateway
+	engine        Engine
+	taskManager   runtimepkg.TaskManager
+	extensions    extensionspkg.Manager
+	skillManager  *skills.Manager
+	tokenManager  *tokenusage.TokenUsageManager
+	auditStore    storagepkg.AuditStore
+	promptStore   storagepkg.PromptHistoryWriter
+	observer      Observer
+	approval      tools.ApprovalHandler
+	stdin         io.Reader
+	stdout        io.Writer
 }
 
 func NewRunner(opts Options) *Runner {
@@ -95,6 +97,10 @@ func NewRunner(opts Options) *Runner {
 			executor = tools.NewExecutor(concrete)
 		}
 	}
+	policyGateway := opts.PolicyGateway
+	if policyGateway == nil {
+		policyGateway = NewDefaultPolicyGateway()
+	}
 	auditStore := opts.AuditStore
 	if auditStore == nil {
 		auditStore = storagepkg.NopAuditStore{}
@@ -107,33 +113,37 @@ func NewRunner(opts Options) *Runner {
 	if taskManager == nil {
 		taskManager = runtimepkg.NewInMemoryTaskManager()
 	}
-	runtimeGateway := opts.Runtime
-	if runtimeGateway == nil {
-		runtimeGateway = newDefaultRuntimeGateway(taskManager)
-	}
 	extensions := opts.Extensions
 	if extensions == nil {
 		extensions = extensionspkg.NopManager{}
 	}
-	return &Runner{
-		workspace:    opts.Workspace,
-		config:       opts.Config,
-		client:       opts.Client,
-		store:        opts.Store,
-		registry:     registry,
-		executor:     executor,
-		taskManager:  taskManager,
-		runtime:      runtimeGateway,
-		extensions:   extensions,
-		skillManager: manager,
-		tokenManager: opts.TokenManager,
-		auditStore:   auditStore,
-		promptStore:  promptStore,
-		observer:     opts.Observer,
-		approval:     opts.Approval,
-		stdin:        opts.Stdin,
-		stdout:       opts.Stdout,
+	runner := &Runner{
+		workspace:     opts.Workspace,
+		config:        opts.Config,
+		client:        opts.Client,
+		store:         opts.Store,
+		registry:      registry,
+		executor:      executor,
+		policyGateway: policyGateway,
+		taskManager:   taskManager,
+		extensions:    extensions,
+		skillManager:  manager,
+		tokenManager:  opts.TokenManager,
+		auditStore:    auditStore,
+		promptStore:   promptStore,
+		observer:      opts.Observer,
+		approval:      opts.Approval,
+		stdin:         opts.Stdin,
+		stdout:        opts.Stdout,
 	}
+
+	engine := opts.Engine
+	if engine == nil {
+		engine = NewDefaultEngine(runner)
+	}
+	runner.engine = engine
+
+	return runner
 }
 
 func (r *Runner) RunPrompt(ctx context.Context, sess *session.Session, userInput, mode string, out io.Writer) (string, error) {
