@@ -26,7 +26,7 @@ func TestStorePreservesUTF8Content(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	path := filepath.Join(dir, storagepkg.WorkspaceProjectID(sess.Workspace), sess.ID+".jsonl")
+	path := filepath.Join(dir, storagepkg.WorkspaceProjectID(sess.Workspace), sess.ID, eventsFileName)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

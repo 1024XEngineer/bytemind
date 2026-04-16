@@ -64,6 +64,9 @@ func ExecuteSlashCommand(store *session.Store, current *session.Session, input s
 			out.UsageHint = "usage: /resume <id>"
 			return out, nil
 		}
+		if _, err := store.CleanupZeroMessageSessions(current.Workspace, current.ID); err != nil {
+			return out, err
+		}
 		next, err := ResumeSessionInWorkspace(store, current.Workspace, fields[1])
 		if err != nil {
 			return out, err
@@ -73,6 +76,9 @@ func ExecuteSlashCommand(store *session.Store, current *session.Session, input s
 		return out, nil
 	case "/new":
 		out.Command = "new"
+		if _, err := store.CleanupZeroMessageSessions(current.Workspace, current.ID); err != nil {
+			return out, err
+		}
 		next, err := CreateSession(store, current.Workspace)
 		if err != nil {
 			return out, err
