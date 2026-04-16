@@ -205,12 +205,19 @@ func (a *clientAdapter) Stream(ctx context.Context, req Request) (<-chan Event, 
 			})
 		})
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+				return
+			}
+			mapped := mapCompatError(a.providerID, err)
+			if mapped == nil {
+				return
+			}
 			_ = emit(ctx, stream, Event{
 				Type:       EventError,
 				TraceID:    req.TraceID,
 				ProviderID: a.providerID,
 				ModelID:    modelID,
-				Error:      mapCompatError(a.providerID, err),
+				Error:      mapped,
 			})
 			return
 		}
