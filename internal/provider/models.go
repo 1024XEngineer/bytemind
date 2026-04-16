@@ -19,53 +19,68 @@ func ListModels(ctx context.Context, reg Registry) ([]ModelInfo, []Warning, erro
 	warnings := make([]Warning, 0)
 	seen := make(map[string]struct{})
 	var mu sync.Mutex
-	sem := make(chan struct{}, listModelsConcurrency)
+	jobs := make(chan ProviderID)
 	var wg sync.WaitGroup
-	for _, id := range ids {
-		id := id
+	workerCount := listModelsConcurrency
+	if len(ids) < workerCount {
+		workerCount = len(ids)
+	}
+	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			select {
-			case <-ctx.Done():
-				return
-			case sem <- struct{}{}:
-			}
-			defer func() { <-sem }()
-			client, ok := reg.Get(ctx, id)
-			if ctx.Err() != nil {
-				return
-			}
-			if !ok {
-				mu.Lock()
-				warnings = append(warnings, Warning{ProviderID: id, Reason: providerNotFoundWarningReason})
-				mu.Unlock()
-				return
-			}
-			providerModels, err := client.ListModels(ctx)
-			if ctx.Err() != nil {
-				return
-			}
-			if err != nil {
-				mu.Lock()
-				warnings = append(warnings, Warning{ProviderID: id, Reason: listModelsWarningReason})
-				mu.Unlock()
-				return
-			}
-			mu.Lock()
-			defer mu.Unlock()
-			for _, model := range providerModels {
-				providerID := id
-				key := string(providerID) + "\x00" + string(model.ModelID)
-				if _, exists := seen[key]; exists {
-					continue
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case id, ok := <-jobs:
+					if !ok {
+						return
+					}
+					client, ok := reg.Get(ctx, id)
+					if ctx.Err() != nil {
+						return
+					}
+					if !ok {
+						mu.Lock()
+						warnings = append(warnings, Warning{ProviderID: id, Reason: providerNotFoundWarningReason})
+						mu.Unlock()
+						continue
+					}
+					providerModels, err := client.ListModels(ctx)
+					if ctx.Err() != nil {
+						return
+					}
+					if err != nil {
+						mu.Lock()
+						warnings = append(warnings, Warning{ProviderID: id, Reason: listModelsWarningReason})
+						mu.Unlock()
+						continue
+					}
+					mu.Lock()
+					for _, model := range providerModels {
+						providerID := id
+						key := string(providerID) + "\x00" + string(model.ModelID)
+						if _, exists := seen[key]; exists {
+							continue
+						}
+						seen[key] = struct{}{}
+						model.ProviderID = providerID
+						models = append(models, model)
+					}
+					mu.Unlock()
 				}
-				seen[key] = struct{}{}
-				model.ProviderID = providerID
-				models = append(models, model)
 			}
 		}()
 	}
+	for _, id := range ids {
+		select {
+		case <-ctx.Done():
+			break
+		case jobs <- id:
+		}
+	}
+	close(jobs)
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err

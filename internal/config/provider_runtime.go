@@ -16,6 +16,7 @@ func LegacyProviderRuntimeConfig(cfg ProviderConfig) ProviderRuntimeConfig {
 	case "anthropic":
 		providerID = "anthropic"
 	}
+	cfg.Type = providerID
 	return ProviderRuntimeConfig{
 		DefaultProvider: providerID,
 		DefaultModel:    cfg.Model,

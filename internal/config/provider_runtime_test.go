@@ -26,7 +26,7 @@ func TestLegacyProviderRuntimeConfigNormalizesProviderIDs(t *testing.T) {
 			if runtime.DefaultModel != "test-model" {
 				t.Fatalf("unexpected default model %q", runtime.DefaultModel)
 			}
-			if len(runtime.Providers) != 1 || runtime.Providers[tt.want].Type != tt.typeValue {
+			if len(runtime.Providers) != 1 || runtime.Providers[tt.want].Type != tt.want {
 				t.Fatalf("unexpected providers %#v", runtime.Providers)
 			}
 		})

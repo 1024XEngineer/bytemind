@@ -159,6 +159,23 @@ func TestNewDomainClientNormalizesOpenAIProviderIDVariants(t *testing.T) {
 	}
 }
 
+func TestLegacyRuntimeConfigWithEmptyTypeBuildsRegistry(t *testing.T) {
+	runtime := config.LegacyProviderRuntimeConfig(config.ProviderConfig{
+		Type:    "",
+		BaseURL: "https://api.openai.com/v1",
+		APIKey:  "test-key",
+		Model:   "gpt-5.4",
+	})
+	reg, err := NewRegistry(runtime)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	client, ok := reg.Get(context.Background(), "openai")
+	if !ok || client == nil {
+		t.Fatalf("expected openai client from legacy runtime config, got %#v ok=%v", client, ok)
+	}
+}
+
 func TestNewDomainClientRejectsEmptyType(t *testing.T) {
 	client, err := NewDomainClient(config.ProviderConfig{
 		Type:    "",
