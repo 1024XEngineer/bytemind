@@ -9,6 +9,8 @@ import (
 	"testing"
 )
 
+const fakeClaudeTimeoutSec = 15
+
 func TestTruncateString(t *testing.T) {
 	if got := truncateString("abcdef", 3); got != "abc" {
 		t.Fatalf("truncateString mismatch: %q", got)
@@ -37,13 +39,13 @@ func TestRunSingleQueryAndExecuteEvalWithFakeClaude(t *testing.T) {
 	installFakeClaude(t, project)
 	t.Setenv("CODEX_FAKE_TRIGGER", "1")
 
-	triggered, err := runSingleQuery("query", "demo-skill", "desc", 5, project, "")
+	triggered, err := runSingleQuery("query", "demo-skill", "desc", fakeClaudeTimeoutSec, project, "")
 	if err != nil {
 		t.Fatalf("runSingleQuery error: %v", err)
 	}
 	_ = triggered
 
-	out, err := executeEval([]evalQuery{{Query: "q1", ShouldTrigger: true}}, "demo-skill", "desc", 1, 5, 2, 0.5, project, "")
+	out, err := executeEval([]evalQuery{{Query: "q1", ShouldTrigger: true}}, "demo-skill", "desc", 1, fakeClaudeTimeoutSec, 2, 0.5, project, "")
 	if err != nil {
 		t.Fatalf("executeEval error: %v", err)
 	}
@@ -163,7 +165,7 @@ func TestRunOptimizationLoopAndRunRunLoop(t *testing.T) {
 		Content:     "# skill content",
 	}
 	evals := []evalQuery{{Query: "needs trigger", ShouldTrigger: true}}
-	out, err := runOptimizationLoop(evals, doc, doc.Description, 1, 5, 2, 1, 0.5, 0, "fake-model", false, "", "")
+	out, err := runOptimizationLoop(evals, doc, doc.Description, 1, fakeClaudeTimeoutSec, 2, 1, 0.5, 0, "fake-model", false, "", "")
 	if err != nil {
 		t.Fatalf("runOptimizationLoop: %v", err)
 	}
