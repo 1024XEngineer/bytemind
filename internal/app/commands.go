@@ -12,7 +12,7 @@ var defaultSlashCommands = []SlashCommand{
 	{Name: "/help", Usage: "/help", Description: "Show available commands"},
 	{Name: "/session", Usage: "/session", Description: "Show the current session"},
 	{Name: "/sessions", Usage: "/sessions [limit]", Description: "List recent sessions"},
-	{Name: "/resume", Usage: "/resume <id>", Description: "Resume a recent session by id or prefix"},
+	{Name: "/resume", Usage: "/resume <id>", Description: "Resume a recent session by id or prefix (CLI only)"},
 	{Name: "/new", Usage: "/new", Description: "Start a new session in the current workspace"},
 	{Name: "/quit", Usage: "/quit", Description: "Exit the CLI"},
 }

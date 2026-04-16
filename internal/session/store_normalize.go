@@ -18,6 +18,10 @@ func normalizeLoadedSession(sess *Session, path string) {
 	if sess.UpdatedAt.IsZero() && !sess.CreatedAt.IsZero() {
 		sess.UpdatedAt = sess.CreatedAt
 	}
+	sess.Title = strings.TrimSpace(sess.Title)
+	if sess.Title == "" {
+		sess.Title = sessionTitle(sess)
+	}
 	normalizeSessionConversation(sess)
 	if sess.Mode == "" {
 		sess.Mode = planpkg.ModeBuild

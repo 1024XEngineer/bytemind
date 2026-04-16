@@ -3,6 +3,7 @@ package session
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"bytemind/internal/llm"
@@ -22,6 +23,7 @@ func (s *Store) Save(session *Session) error {
 	if session.Mode == "" {
 		session.Mode = planpkg.ModeBuild
 	}
+	session.Title = strings.TrimSpace(session.Title)
 	normalizeSessionConversation(session)
 	for i, message := range session.Conversation.Timeline {
 		if err := llm.ValidateMessage(message); err != nil {

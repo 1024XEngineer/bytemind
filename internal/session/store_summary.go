@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"strings"
 
 	"bytemind/internal/llm"
@@ -32,6 +33,31 @@ func sessionTimeline(sess *Session) []llm.Message {
 		return sess.Conversation.Timeline
 	}
 	return sess.Messages
+}
+
+func sessionTitle(sess *Session) string {
+	if sess == nil {
+		return ""
+	}
+	title := strings.TrimSpace(sess.Title)
+	if title != "" {
+		return title
+	}
+	if sess.Conversation.Meta == nil {
+		return ""
+	}
+	raw, ok := sess.Conversation.Meta["title"]
+	if !ok || raw == nil {
+		return ""
+	}
+	switch value := raw.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case fmt.Stringer:
+		return strings.TrimSpace(value.String())
+	default:
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
 }
 
 func summarizeMessage(text string, limit int) string {

@@ -68,4 +68,6 @@ type SessionStore interface {
 	Save(session *session.Session) error
 	Load(id string) (*session.Session, error)
 	List(limit int) ([]session.Summary, []string, error)
+	DeleteInWorkspace(workspace, id string) error
+	CleanupZeroMessageSessions(workspace, activeSessionID string) (session.CleanupResult, error)
 }

@@ -552,9 +552,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionsLoadedMsg:
 		if msg.Err == nil {
 			m.sessions = msg.Summaries
-			if m.sessionCursor >= len(m.sessions) && len(m.sessions) > 0 {
-				m.sessionCursor = len(m.sessions) - 1
-			}
+			m.clampSessionCursor()
 		}
 		return m, nil
 	case promptHistoryLoadedMsg:
@@ -903,28 +901,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.sessionsOpen {
-		switch msg.String() {
-		case "esc":
-			m.sessionsOpen = false
-		case "up", "k":
-			if m.sessionCursor > 0 {
-				m.sessionCursor--
-			}
-		case "down", "j":
-			if m.sessionCursor < len(m.sessions)-1 {
-				m.sessionCursor++
-			}
-		case "enter":
-			if m.busy || len(m.sessions) == 0 {
-				return m, nil
-			}
-			if err := m.resumeSession(m.sessions[m.sessionCursor].ID); err != nil {
-				m.statusNote = err.Error()
-			} else {
-				m.sessionsOpen = false
-			}
-		}
-		return m, nil
+		return m.handleSessionsModalKey(msg)
 	}
 
 	if isInputNewlineKey(msg) {
@@ -959,7 +936,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+l":
 		if !m.busy {
-			m.sessionsOpen = true
+			if err := m.openSessionsModal(); err != nil {
+				m.statusNote = err.Error()
+				return m, nil
+			}
 		}
 		return m, m.loadSessionsCmd()
 	case "alt+v":

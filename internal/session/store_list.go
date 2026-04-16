@@ -26,13 +26,24 @@ func (s *Store) List(limit int) ([]Summary, []string, error) {
 			continue
 		}
 
+		timeline := sessionTimeline(sess)
+		metrics := CountMessageMetrics(timeline)
+		preview := summarizeMessage(lastUserMessage(timeline), 72)
+		title := summarizeMessage(sessionTitle(sess), 72)
 		summaries = append(summaries, Summary{
-			ID:              sess.ID,
-			Workspace:       sess.Workspace,
-			CreatedAt:       sess.CreatedAt,
-			UpdatedAt:       sess.UpdatedAt,
-			LastUserMessage: summarizeMessage(lastUserMessage(sessionTimeline(sess)), 72),
-			MessageCount:    len(sessionTimeline(sess)),
+			ID:                            sess.ID,
+			Workspace:                     sess.Workspace,
+			Title:                         title,
+			Preview:                       preview,
+			CreatedAt:                     sess.CreatedAt,
+			UpdatedAt:                     sess.UpdatedAt,
+			LastUserMessage:               preview,
+			MessageCount:                  metrics.RawMessageCount,
+			RawMessageCount:               metrics.RawMessageCount,
+			UserEffectiveInputCount:       metrics.UserEffectiveInputCount,
+			AssistantEffectiveOutputCount: metrics.AssistantEffectiveOutputCount,
+			ZeroMsgSession:                IsZeroMessageSession(metrics),
+			NoReplySession:                IsNoReplySession(metrics),
 		})
 	}
 

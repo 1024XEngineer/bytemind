@@ -2091,6 +2091,8 @@ func TestHelpTextOnlyMentionsSupportedEntryPoints(t *testing.T) {
 		"go run ./cmd/bytemind chat",
 		"go run ./cmd/bytemind run -prompt",
 		"/session",
+		"TUI does not expose `/resume`",
+		"CLI keeps `/resume <id>`",
 		"/skill clear",
 		"/skill delete <name>",
 		"/quit",
@@ -4332,6 +4334,9 @@ func TestResumeSessionClearsInterruptState(t *testing.T) {
 	workspace := t.TempDir()
 	current := session.New(workspace)
 	target := session.New(workspace)
+	target.Messages = []llm.Message{
+		llm.NewUserTextMessage("recover me"),
+	}
 	if err := store.Save(current); err != nil {
 		t.Fatal(err)
 	}

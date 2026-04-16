@@ -17,6 +17,7 @@ type ActiveSkill struct {
 type Session struct {
 	ID           string            `json:"id"`
 	Workspace    string            `json:"workspace"`
+	Title        string            `json:"title,omitempty"`
 	CreatedAt    time.Time         `json:"created_at"`
 	UpdatedAt    time.Time         `json:"updated_at"`
 	Conversation Conversation      `json:"conversation,omitempty"`
@@ -53,12 +54,19 @@ type Store struct {
 }
 
 type Summary struct {
-	ID              string    `json:"id"`
-	Workspace       string    `json:"workspace"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	LastUserMessage string    `json:"last_user_message,omitempty"`
-	MessageCount    int       `json:"message_count"`
+	ID                            string    `json:"id"`
+	Workspace                     string    `json:"workspace"`
+	Title                         string    `json:"title,omitempty"`
+	Preview                       string    `json:"preview,omitempty"`
+	CreatedAt                     time.Time `json:"created_at"`
+	UpdatedAt                     time.Time `json:"updated_at"`
+	LastUserMessage               string    `json:"last_user_message,omitempty"`
+	MessageCount                  int       `json:"message_count"`
+	RawMessageCount               int       `json:"raw_msg_count"`
+	UserEffectiveInputCount       int       `json:"user_effective_input_count"`
+	AssistantEffectiveOutputCount int       `json:"assistant_effective_output_count"`
+	ZeroMsgSession                bool      `json:"zero_msg_session"`
+	NoReplySession                bool      `json:"no_reply_session"`
 }
 
 func New(workspace string) *Session {
