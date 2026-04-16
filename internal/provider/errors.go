@@ -34,6 +34,9 @@ func mapError(providerID ProviderID, err error) *Error {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
 	var providerErr *Error
 	if errors.As(err, &providerErr) && providerErr != nil {
 		providerErr.Retryable = isRetryableCode(providerErr.Code)
@@ -51,9 +54,6 @@ func mapError(providerID ProviderID, err error) *Error {
 	}
 	if errors.Is(err, context.DeadlineExceeded) || isTimeoutError(err) {
 		return newError(ErrCodeTimeout, providerID, "provider request timed out", err, err.Error())
-	}
-	if errors.Is(err, context.Canceled) {
-		return newError(ErrCodeUnavailable, providerID, "provider unavailable", err, err.Error())
 	}
 	return newError(ErrCodeUnavailable, providerID, "provider unavailable", err, err.Error())
 }

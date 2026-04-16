@@ -74,46 +74,34 @@ func (c *RoutedClient) execute(ctx context.Context, req llm.ChatRequest, stream 
 		}
 		callReq := Request{ChatRequest: req}
 		callReq.Model = string(target.ModelID)
-		msg, deltas, err := executeTarget(ctx, target, callReq)
+		msg, err := executeTarget(ctx, target, callReq, stream, onDelta)
 		if err == nil {
-			if stream && onDelta != nil {
-				for _, delta := range deltas {
-					onDelta(delta)
-				}
-			}
 			return msg, nil
 		}
-		lastErr = err
-		var providerErr *Error
-		if errors.As(err, &providerErr) {
-			if !providerErr.Retryable {
-				return llm.Message{}, providerErr
-			}
-			continue
+		if errors.Is(err, context.Canceled) {
+			return llm.Message{}, err
 		}
 		mapped := mapCompatError(target.ProviderID, err)
+		if mapped == nil {
+			return llm.Message{}, err
+		}
+		lastErr = mapped
 		if !mapped.Retryable {
 			return llm.Message{}, mapped
 		}
-		lastErr = mapped
 	}
 	if lastErr != nil {
-		var providerErr *Error
-		if errors.As(lastErr, &providerErr) {
-			return llm.Message{}, providerErr
-		}
-		return llm.Message{}, mapCompatError("", lastErr)
+		return llm.Message{}, lastErr
 	}
 	return llm.Message{}, unavailableRouteError("no provider candidates available")
 }
 
-func executeTarget(ctx context.Context, target RouteTarget, req Request) (llm.Message, []string, error) {
+func executeTarget(ctx context.Context, target RouteTarget, req Request, stream bool, onDelta func(string)) (llm.Message, error) {
 	streamCh, err := target.Client.Stream(ctx, req)
 	if err != nil {
-		return llm.Message{}, nil, err
+		return llm.Message{}, err
 	}
 	var result llm.Message
-	var deltas []string
 	hasTerminal := false
 	hasDelta := false
 	for event := range streamCh {
@@ -121,8 +109,10 @@ func executeTarget(ctx context.Context, target RouteTarget, req Request) (llm.Me
 		case EventDelta:
 			if event.Delta != "" {
 				result.Content += event.Delta
-				deltas = append(deltas, event.Delta)
 				hasDelta = true
+				if stream && onDelta != nil {
+					onDelta(event.Delta)
+				}
 			}
 		case EventToolCall:
 			if event.ToolCall != nil {
@@ -147,29 +137,29 @@ func executeTarget(ctx context.Context, target RouteTarget, req Request) (llm.Me
 					merged.Usage = &usage
 				}
 				merged.Normalize()
-				return merged, deltas, nil
+				return merged, nil
 			}
 			result.Normalize()
-			return result, deltas, nil
+			return result, nil
 		case EventError:
 			hasTerminal = true
 			if event.Error != nil {
-				return llm.Message{}, nil, event.Error
+				return llm.Message{}, mapCompatError(target.ProviderID, event.Error)
 			}
-			return llm.Message{}, nil, unavailableRouteError("provider stream emitted error event without error payload")
+			return llm.Message{}, unavailableRouteError("provider stream emitted error event without error payload")
 		}
 	}
 	if !hasTerminal {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return llm.Message{}, nil, ctxErr
+			return llm.Message{}, ctxErr
 		}
 		if hasDelta || len(result.ToolCalls) > 0 || result.Usage != nil {
-			return llm.Message{}, nil, unavailableRouteError("provider stream terminated without terminal event")
+			return llm.Message{}, unavailableRouteError("provider stream terminated without terminal event")
 		}
-		return llm.Message{}, nil, unavailableRouteError("provider stream terminated unexpectedly")
+		return llm.Message{}, unavailableRouteError("provider stream terminated unexpectedly")
 	}
 	result.Normalize()
-	return result, deltas, nil
+	return result, nil
 }
 
 func (a *clientAdapter) ProviderID() ProviderID {

@@ -31,6 +31,9 @@ func TestMapErrorHandlesTimeoutSources(t *testing.T) {
 	if mapped.Code != ErrCodeTimeout || !mapped.Retryable {
 		t.Fatalf("unexpected net timeout mapping %#v", mapped)
 	}
+	if mapped := mapError("openai", context.Canceled); mapped != nil {
+		t.Fatalf("expected context cancellation to bypass provider mapping, got %#v", mapped)
+	}
 }
 
 func TestMapLLMProviderErrorStatusRules(t *testing.T) {
