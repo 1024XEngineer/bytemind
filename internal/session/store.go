@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -108,9 +109,13 @@ func NewStore(dir string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	locker, err := storagepkg.NewDefaultLocker(filepath.Join(dir, ".locks"))
+	if err != nil {
+		return nil, err
+	}
 	return &Store{
 		files:          files,
-		locker:         storagepkg.NewInMemoryLocker(),
+		locker:         locker,
 		recentEventIDs: make(map[string]*eventIDWindow),
 		now: func() time.Time {
 			return time.Now().UTC()

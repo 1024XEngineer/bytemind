@@ -73,7 +73,11 @@ func NewFileTaskStore(root string, locker Locker) (*FileTaskStore, error) {
 		return nil, err
 	}
 	if locker == nil {
-		locker = NewInMemoryLocker()
+		defaultLocker, err := NewDefaultLocker(filepath.Join(root, ".locks"))
+		if err != nil {
+			return nil, err
+		}
+		locker = defaultLocker
 	}
 	return &FileTaskStore{
 		root:   root,
@@ -220,8 +224,14 @@ func (s *FileTaskStore) ReadLogFrom(ctx context.Context, taskID corepkg.TaskID, 
 
 		lineStart := next
 		line, readErr := reader.ReadBytes('\n')
+		// Keep offset pinned on trailing partial line (EOF without newline)
+		// so later append can complete and be re-read.
+		if errors.Is(readErr, io.EOF) && len(line) > 0 && line[len(line)-1] != '\n' {
+			next = lineStart
+			break
+		}
 		if len(line) > 0 {
-			next += int64(len(line))
+			next = lineStart + int64(len(line))
 			payload := bytes.TrimSpace(line)
 			if len(payload) > 0 {
 				var envelope taskLogEnvelope

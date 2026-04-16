@@ -243,6 +243,84 @@ func TestStoreReadFromSkipsCorruptedLines(t *testing.T) {
 	}
 }
 
+func TestStoreReadFromKeepsOffsetForTrailingPartialLine(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	paths, err := store.pathForWorkspaceSession(workspace, "offset-partial")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.Events), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	event := SessionEvent{
+		EventID:       "p-1",
+		SessionID:     "offset-partial",
+		Seq:           1,
+		Type:          eventTypeSessionCreated,
+		TS:            time.Now().UTC(),
+		SchemaVersion: eventSchemaVersion,
+		Payload:       json.RawMessage(`{"session":{"id":"offset-partial"}}`),
+	}
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cut := len(encoded) / 2
+	if cut <= 0 || cut >= len(encoded) {
+		t.Fatalf("unexpected cut index %d for payload size %d", cut, len(encoded))
+	}
+
+	if err := os.WriteFile(paths.Events, encoded[:cut], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	items, next, err := store.ReadFrom("offset-partial", 0, 10)
+	if err != nil {
+		t.Fatalf("ReadFrom on trailing partial line failed: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no events for trailing partial line, got %d", len(items))
+	}
+	if next != 0 {
+		t.Fatalf("expected next offset to stay at line start 0, got %d", next)
+	}
+
+	file, err := os.OpenFile(paths.Events, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(append(encoded[cut:], '\n')); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	items, next, err = store.ReadFrom("offset-partial", 0, 10)
+	if err != nil {
+		t.Fatalf("ReadFrom after partial completion failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one event after completion, got %d", len(items))
+	}
+	if items[0].EventID != "p-1" {
+		t.Fatalf("expected event id %q, got %q", "p-1", items[0].EventID)
+	}
+	info, err := os.Stat(paths.Events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != info.Size() {
+		t.Fatalf("expected next offset %d, got %d", info.Size(), next)
+	}
+}
+
 func TestReplaySkipsDuplicateEventID(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewStore(dir)

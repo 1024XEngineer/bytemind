@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -149,6 +150,75 @@ func TestFileTaskStoreReadLogFromSkipsCorruptedLines(t *testing.T) {
 		t.Fatalf("unexpected record sequence: %#v", records)
 	}
 
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != info.Size() {
+		t.Fatalf("expected next offset %d, got %d", info.Size(), next)
+	}
+}
+
+func TestFileTaskStoreReadLogFromKeepsOffsetForTrailingPartialLine(t *testing.T) {
+	store, err := NewFileTaskStore(t.TempDir(), NewInMemoryLocker())
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID := corepkg.TaskID("task-partial")
+	path := store.taskLogPath("task-partial")
+
+	envelope := taskLogEnvelope{
+		Version:   taskLogSchemaVersion,
+		Timestamp: time.Now().UTC(),
+		EventID:   "evt-partial",
+		Type:      "status",
+		Payload:   json.RawMessage(`{"ok":true}`),
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cut := len(encoded) / 2
+	if cut <= 0 || cut >= len(encoded) {
+		t.Fatalf("unexpected cut index %d for payload size %d", cut, len(encoded))
+	}
+	if err := os.WriteFile(path, encoded[:cut], 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	records, next, err := store.ReadLogFrom(context.Background(), taskID, 0, 10)
+	if err != nil {
+		t.Fatalf("ReadLogFrom on trailing partial line failed: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("expected no records for trailing partial line, got %d", len(records))
+	}
+	if next != 0 {
+		t.Fatalf("expected next offset to stay at line start 0, got %d", next)
+	}
+
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(append(encoded[cut:], '\n')); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	records, next, err = store.ReadLogFrom(context.Background(), taskID, 0, 10)
+	if err != nil {
+		t.Fatalf("ReadLogFrom after partial completion failed: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected one record after completion, got %d", len(records))
+	}
+	if records[0].EventID != "evt-partial" {
+		t.Fatalf("expected event id %q, got %q", "evt-partial", records[0].EventID)
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)

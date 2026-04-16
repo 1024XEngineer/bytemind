@@ -652,8 +652,14 @@ func readEventsFromOffset(path string, offset int64, limit int) ([]SessionEvent,
 	for len(events) < limit {
 		lineStart := nextOffset
 		line, readErr := reader.ReadBytes('\n')
+		// Keep offset pinned on trailing partial line (EOF without newline)
+		// so later append can make the record readable.
+		if errors.Is(readErr, io.EOF) && len(line) > 0 && line[len(line)-1] != '\n' {
+			nextOffset = lineStart
+			break
+		}
 		if len(line) > 0 {
-			nextOffset += int64(len(line))
+			nextOffset = lineStart + int64(len(line))
 			payload := bytes.TrimSpace(line)
 			if len(payload) > 0 {
 				var event SessionEvent
