@@ -56,9 +56,9 @@ func TestComponentCommandAndMentionPaletteRenderStates(t *testing.T) {
 		}
 	}
 
-	m.mentionResults = []mention.Candidate{{Path: "internal/tui/model.go", BaseName: "model.go", TypeTag: "go"}}
+	m.mentionResults = []mention.Candidate{{Path: "tui/model.go", BaseName: "model.go", TypeTag: "go"}}
 	mentionView := m.renderMentionPalette()
-	if !strings.Contains(mentionView, "[go] model.go") || !strings.Contains(mentionView, "internal/tui/model.go") {
+	if !strings.Contains(mentionView, "[go] model.go") || !strings.Contains(mentionView, "tui/model.go") {
 		t.Fatalf("expected mention palette row with metadata, got %q", mentionView)
 	}
 }
@@ -89,8 +89,8 @@ func TestComponentPlanPanelContentAndStepRender(t *testing.T) {
 				Title:       "Extract renderPlanPanel",
 				Description: "Move plan rendering into component file",
 				Status:      planpkg.StepInProgress,
-				Files:       []string{"internal/tui/component_plan_panel.go"},
-				Verify:      []string{"go test ./internal/tui -run Plan"},
+				Files:       []string{"tui/component_plan_panel.go"},
+				Verify:      []string{"go test ./tui -run Plan"},
 				Risk:        planpkg.RiskLow,
 			}},
 		},

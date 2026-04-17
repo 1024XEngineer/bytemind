@@ -213,6 +213,25 @@ func TestOpenAICompatibleStreamMessageRejectsInvalidChunk(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleStreamMessageHandlesVeryLongDataLine(t *testing.T) {
+	longContent := strings.Repeat("a", 2*1024*1024)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"" + longContent + "\"}}]}\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatible(Config{BaseURL: server.URL, APIKey: "test-key", Model: "fallback-model"})
+	msg, err := client.StreamMessage(context.Background(), llm.ChatRequest{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Content != longContent {
+		t.Fatalf("expected long streamed content to be preserved, got %d bytes", len(msg.Content))
+	}
+}
+
 func TestOpenAICompatibleCreateMessageDoesNotExposeReasoningOnlyResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{

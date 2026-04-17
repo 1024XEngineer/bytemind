@@ -1,11 +1,9 @@
 package tui
 
 import (
-	"bytemind/internal/agent"
 	"bytemind/internal/assets"
 	"bytemind/internal/config"
 	"bytemind/internal/session"
-	tuiruntime "bytemind/internal/tui/runtime"
 	"os"
 	"runtime"
 	"strconv"
@@ -15,14 +13,13 @@ import (
 )
 
 type Options struct {
-	Runner       *agent.Runner
-	Store        *session.Store
+	Runner       Runner
+	Store        SessionStore
 	Session      *session.Session
 	ImageStore   assets.ImageStore
 	Config       config.Config
 	Workspace    string
 	StartupGuide StartupGuide
-	Runtime      tuiruntime.UIAPI
 }
 
 type StartupGuide struct {

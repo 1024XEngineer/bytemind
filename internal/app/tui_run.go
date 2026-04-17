@@ -3,7 +3,7 @@ package app
 import (
 	"io"
 
-	"bytemind/internal/tui"
+	"bytemind/tui"
 )
 
 func RunTUIArgs(args []string, stdin io.Reader, stdout, stderr io.Writer) error {

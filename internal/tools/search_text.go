@@ -200,7 +200,7 @@ func searchTextWithRipgrep(ctx context.Context, args searchTextArgs, workspace, 
 	truncated := false
 	reason := ""
 	scanner := bufio.NewScanner(stdoutPipe)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		var event struct {
 			Type string `json:"type"`
@@ -326,6 +326,7 @@ func searchTextByWalking(ctx context.Context, args searchTextArgs, workspace, ro
 		stats.FilesScanned++
 
 		scanner := bufio.NewScanner(bytes.NewReader(data))
+		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 		lineNumber := 0
 		for scanner.Scan() {
 			lineNumber++

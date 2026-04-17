@@ -67,6 +67,7 @@ func (ReadFileTool) Run(_ context.Context, raw json.RawMessage, execCtx *Executi
 
 	lines := make([]string, 0, 128)
 	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
 	}

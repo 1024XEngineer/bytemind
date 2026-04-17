@@ -10,7 +10,7 @@ import (
 	"bytemind/internal/assets"
 	"bytemind/internal/config"
 	"bytemind/internal/provider"
-	"bytemind/internal/tui"
+	"bytemind/tui"
 )
 
 type TUIRequest struct {

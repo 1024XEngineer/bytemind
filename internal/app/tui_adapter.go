@@ -11,7 +11,7 @@ import (
 	"bytemind/internal/session"
 	"bytemind/internal/skills"
 	"bytemind/internal/tools"
-	"bytemind/internal/tui"
+	"bytemind/tui"
 )
 
 type tuiRunnerAdapter struct {

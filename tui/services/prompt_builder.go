@@ -10,8 +10,8 @@ import (
 	"bytemind/internal/agent"
 	"bytemind/internal/llm"
 	"bytemind/internal/session"
-	tuiapi "bytemind/internal/tui/api"
-	tuiruntime "bytemind/internal/tui/runtime"
+	tuiapi "bytemind/tui/api"
+	tuiruntime "bytemind/tui/runtime"
 )
 
 var (

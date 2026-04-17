@@ -2,8 +2,8 @@ package services
 
 import (
 	"bytemind/internal/session"
-	"bytemind/internal/tui/api"
-	tuiruntime "bytemind/internal/tui/runtime"
+	"bytemind/tui/api"
+	tuiruntime "bytemind/tui/runtime"
 )
 
 type Provider struct {

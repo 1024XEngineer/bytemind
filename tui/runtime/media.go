@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"bytemind/internal/assets"
+	corepkg "bytemind/internal/core"
 	"bytemind/internal/llm"
 	"bytemind/internal/session"
 )
@@ -78,8 +79,9 @@ func (s *Service) PutSessionImage(sess *session.Session, imageID int, mediaType,
 	}
 
 	s.EnsureSessionImageAssets(sess)
+	sessionID := corepkg.SessionID(sess.ID)
 	meta, err := s.imageStore.PutImage(context.Background(), assets.PutImageInput{
-		SessionID: sess.ID,
+		SessionID: sessionID,
 		ImageID:   imageID,
 		MediaType: mediaType,
 		FileName:  fileName,
@@ -91,7 +93,7 @@ func (s *Service) PutSessionImage(sess *session.Session, imageID int, mediaType,
 
 	assetID := meta.AssetID
 	if strings.TrimSpace(string(assetID)) == "" {
-		assetID = assets.AssetID(sess.ID, meta.ImageID)
+		assetID = assets.AssetID(sessionID, meta.ImageID)
 	}
 	sess.Conversation.Assets.Images[assetID] = session.ImageAssetMeta{
 		ImageID:   meta.ImageID,
@@ -149,7 +151,7 @@ func (s *Service) LoadSessionImageAsset(sess *session.Session, assetID string) (
 	if s == nil || s.imageStore == nil {
 		return assets.ImageBlob{}, fmt.Errorf("image store unavailable")
 	}
-	return s.imageStore.GetImageByAssetID(context.Background(), sess.ID, llm.AssetID(assetID))
+	return s.imageStore.GetImageByAssetID(context.Background(), corepkg.SessionID(sess.ID), llm.AssetID(assetID))
 }
 
 func (s *Service) HydrateHistoricalAssets(sess *session.Session, current map[string]ImagePayload) map[string]ImagePayload {
@@ -171,7 +173,7 @@ func (s *Service) HydrateHistoricalAssets(sess *session.Session, current map[str
 		if _, ok := current[key]; ok {
 			continue
 		}
-		blob, err := s.imageStore.GetImageByAssetID(context.Background(), sess.ID, assetID)
+		blob, err := s.imageStore.GetImageByAssetID(context.Background(), corepkg.SessionID(sess.ID), assetID)
 		if err != nil || len(blob.Data) == 0 {
 			continue
 		}

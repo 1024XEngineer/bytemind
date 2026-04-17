@@ -342,7 +342,7 @@ run_shell
 | 模块 | 职责 |
 |---|---|
 | `cmd/bytemind` | 启动入口、参数解析、模式路由 |
-| `internal/tui` | TUI 界面、会话交互、弹窗、快捷操作 |
+| `tui` | TUI 界面、会话交互、弹窗、快捷操作 |
 | `internal/agent` | 对话循环、工具调用、预算控制、停止总结 |
 | `internal/session` | 会话创建、保存、恢复、列表 |
 | `internal/tools` | 文件工具、Shell 工具 |

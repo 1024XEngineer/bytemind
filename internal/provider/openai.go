@@ -141,11 +141,20 @@ func (c *OpenAICompatible) StreamMessage(ctx context.Context, req llm.ChatReques
 	assembled := llm.Message{Role: llm.RoleAssistant}
 	toolCalls := map[int]*llm.ToolCall{}
 
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	reader := bufio.NewReader(resp.Body)
+	for {
+		rawLine, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return llm.Message{}, err
+		}
+		line := strings.TrimSpace(rawLine)
+		if err == io.EOF && line == "" {
+			break
+		}
 		if line == "" || !strings.HasPrefix(line, "data:") {
+			if err == io.EOF {
+				break
+			}
 			continue
 		}
 		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
@@ -200,9 +209,9 @@ func (c *OpenAICompatible) StreamMessage(ctx context.Context, req llm.ChatReques
 		if usage := parseOpenAIUsage(chunk.Usage); usage != nil {
 			assembled.Usage = usage
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return llm.Message{}, err
+		if err == io.EOF {
+			break
+		}
 	}
 
 	if len(toolCalls) > 0 {

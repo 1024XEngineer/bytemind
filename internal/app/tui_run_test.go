@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	itui "bytemind/internal/tui"
+	itui "bytemind/tui"
 )
 
 func TestRunTUIBuildsOptionsAndInvokesProgram(t *testing.T) {

@@ -76,6 +76,80 @@ func (c *compactCommandTestClient) StreamMessage(ctx context.Context, req llm.Ch
 	return reply, nil
 }
 
+type testRunnerAdapter struct {
+	*agent.Runner
+}
+
+func wrapTestRunner(r *agent.Runner) Runner {
+	if r == nil {
+		return nil
+	}
+	return testRunnerAdapter{Runner: r}
+}
+
+func (a testRunnerAdapter) RunPromptWithInput(ctx context.Context, sess *session.Session, input RunPromptInput, mode string, out io.Writer) (string, error) {
+	return a.Runner.RunPromptWithInput(ctx, sess, agent.RunPromptInput{
+		UserMessage: input.UserMessage,
+		Assets:      input.Assets,
+		DisplayText: input.DisplayText,
+	}, mode, out)
+}
+
+func (a testRunnerAdapter) SetObserver(observer Observer) {
+	a.Runner.SetObserver(agent.ObserverFunc(func(event agent.Event) {
+		if observer == nil {
+			return
+		}
+		observer(Event{
+			Type:          mapTestEventType(event.Type),
+			SessionID:     string(event.SessionID),
+			UserInput:     event.UserInput,
+			Content:       event.Content,
+			ToolName:      event.ToolName,
+			ToolArguments: event.ToolArguments,
+			ToolResult:    event.ToolResult,
+			Error:         event.Error,
+			Plan:          event.Plan,
+			Usage:         event.Usage,
+		})
+	}))
+}
+
+func (a testRunnerAdapter) SetApprovalHandler(handler ApprovalHandler) {
+	a.Runner.SetApprovalHandler(func(req tools.ApprovalRequest) (bool, error) {
+		if handler == nil {
+			return false, nil
+		}
+		return handler(ApprovalRequest{
+			Command: req.Command,
+			Reason:  req.Reason,
+		})
+	})
+}
+
+func mapTestEventType(value agent.EventType) EventType {
+	switch value {
+	case agent.EventRunStarted:
+		return EventRunStarted
+	case agent.EventAssistantDelta:
+		return EventAssistantDelta
+	case agent.EventAssistantMessage:
+		return EventAssistantMessage
+	case agent.EventToolCallStarted:
+		return EventToolCallStarted
+	case agent.EventToolCallCompleted:
+		return EventToolCallCompleted
+	case agent.EventPlanUpdated:
+		return EventPlanUpdated
+	case agent.EventUsageUpdated:
+		return EventUsageUpdated
+	case agent.EventRunFinished:
+		return EventRunFinished
+	default:
+		return EventType(value)
+	}
+}
+
 func TestHandleMouseScrollsViewport(t *testing.T) {
 	m := model{
 		screen: screenChat,
@@ -606,8 +680,8 @@ func TestHandleAgentEventUsageUpdatedAccumulatesRealTokens(t *testing.T) {
 		tokenBudget: 5000,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type: agent.EventUsageUpdated,
+	m.handleAgentEvent(Event{
+		Type: EventUsageUpdated,
 		Usage: llm.Usage{
 			InputTokens:   120,
 			OutputTokens:  40,
@@ -633,9 +707,9 @@ func TestAssistantDeltaDoesNotChangeUsageWithoutOfficialUsage(t *testing.T) {
 		tokenBudget: 5000,
 	}
 
-	m.handleAgentEvent(agent.Event{Type: agent.EventRunStarted})
-	m.handleAgentEvent(agent.Event{
-		Type:    agent.EventAssistantDelta,
+	m.handleAgentEvent(Event{Type: EventRunStarted})
+	m.handleAgentEvent(Event{
+		Type:    EventAssistantDelta,
 		Content: "This streamed delta should not change usage counters.",
 	})
 
@@ -643,8 +717,8 @@ func TestAssistantDeltaDoesNotChangeUsageWithoutOfficialUsage(t *testing.T) {
 		t.Fatalf("expected no provisional usage without official usage, used=%d output=%d", m.tokenUsedTotal, m.tokenOutput)
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type: agent.EventUsageUpdated,
+	m.handleAgentEvent(Event{
+		Type: EventUsageUpdated,
 		Usage: llm.Usage{
 			InputTokens:   20,
 			OutputTokens:  7,
@@ -667,8 +741,8 @@ func TestApplyUsageFallsBackToBreakdownWhenTotalIsZero(t *testing.T) {
 		tokenBudget: 5000,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type: agent.EventUsageUpdated,
+	m.handleAgentEvent(Event{
+		Type: EventUsageUpdated,
 		Usage: llm.Usage{
 			InputTokens:   11,
 			OutputTokens:  5,
@@ -871,6 +945,43 @@ func TestCtrlLFromLandingOpensSessions(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatalf("expected ctrl+l on landing screen to trigger session loading")
+	}
+}
+
+func TestCtrlLFromLandingShowsCleanupError(t *testing.T) {
+	dir := t.TempDir()
+	store, err := session.NewStore(dir)
+	if err != nil {
+		t.Fatalf("failed to create session store: %v", err)
+	}
+	workspace := t.TempDir()
+	current := session.New(workspace)
+	if err := store.Save(current); err != nil {
+		t.Fatalf("failed to save current session: %v", err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatalf("failed to remove session store dir: %v", err)
+	}
+
+	m := model{
+		screen:       screenLanding,
+		sessionLimit: defaultSessionLimit,
+		store:        store,
+		workspace:    workspace,
+		sess:         current,
+	}
+
+	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlL})
+	updated := got.(model)
+
+	if cmd != nil {
+		t.Fatalf("expected ctrl+l cleanup error path to avoid loading command")
+	}
+	if updated.sessionsOpen {
+		t.Fatalf("expected ctrl+l cleanup error path not to open sessions modal")
+	}
+	if strings.TrimSpace(updated.statusNote) == "" {
+		t.Fatalf("expected ctrl+l cleanup error path to report status note")
 	}
 }
 
@@ -1099,6 +1210,114 @@ func TestPromptSearchPanelSupportsPageNavigation(t *testing.T) {
 	back := got.(model)
 	if back.promptSearchCursor != 0 {
 		t.Fatalf("expected pgup to move cursor back to 0, got %d", back.promptSearchCursor)
+	}
+}
+
+func TestCtrlFOpensPromptSearchStartsAsyncHistoryLoad(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	m := model{
+		input: input,
+	}
+
+	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
+	opened := got.(model)
+	if !opened.promptSearchOpen {
+		t.Fatalf("expected ctrl+f to open prompt search")
+	}
+	if !opened.promptHistoryLoading {
+		t.Fatalf("expected prompt history async loading state")
+	}
+	if cmd == nil {
+		t.Fatalf("expected async prompt history load command")
+	}
+	if opened.statusNote != "Prompt history loading..." {
+		t.Fatalf("expected loading status note, got %q", opened.statusNote)
+	}
+}
+
+func TestUpdatePromptHistoryLoadedMsgSuccessUpdatesPromptSearchState(t *testing.T) {
+	m := model{
+		promptSearchOpen:     true,
+		promptSearchMode:     promptSearchModeQuick,
+		promptHistoryLoading: true,
+	}
+
+	got, _ := m.Update(promptHistoryLoadedMsg{
+		Entries: []history.PromptEntry{
+			{Prompt: "first prompt"},
+			{Prompt: "second prompt"},
+		},
+	})
+	updated := got.(model)
+	if !updated.promptHistoryLoaded || updated.promptHistoryLoading {
+		t.Fatalf("expected prompt history load state to settle, got loaded=%v loading=%v", updated.promptHistoryLoaded, updated.promptHistoryLoading)
+	}
+	if len(updated.promptHistoryEntries) != 2 || len(updated.promptSearchMatches) != 2 {
+		t.Fatalf("expected loaded entries and matches, got entries=%d matches=%d", len(updated.promptHistoryEntries), len(updated.promptSearchMatches))
+	}
+	if updated.statusNote != "Prompt history ready (2 matches)." {
+		t.Fatalf("expected ready status note, got %q", updated.statusNote)
+	}
+}
+
+func TestUpdatePromptHistoryLoadedMsgErrorSetsUnavailableStatus(t *testing.T) {
+	m := model{
+		promptSearchOpen:     true,
+		promptSearchMode:     promptSearchModePanel,
+		promptHistoryLoading: true,
+		promptHistoryEntries: []history.PromptEntry{
+			{Prompt: "old prompt"},
+		},
+	}
+
+	got, _ := m.Update(promptHistoryLoadedMsg{Err: errors.New("history read failed")})
+	updated := got.(model)
+	if !updated.promptHistoryLoaded || updated.promptHistoryLoading {
+		t.Fatalf("expected prompt history error to finish loading state, got loaded=%v loading=%v", updated.promptHistoryLoaded, updated.promptHistoryLoading)
+	}
+	if len(updated.promptHistoryEntries) != 0 || len(updated.promptSearchMatches) != 0 {
+		t.Fatalf("expected entries and matches to clear on load error, got entries=%d matches=%d", len(updated.promptHistoryEntries), len(updated.promptSearchMatches))
+	}
+	if !strings.Contains(updated.promptHistoryLoadErr, "history read failed") {
+		t.Fatalf("expected load error to be stored, got %q", updated.promptHistoryLoadErr)
+	}
+	if !strings.Contains(updated.statusNote, "Prompt history unavailable:") {
+		t.Fatalf("expected unavailable status note, got %q", updated.statusNote)
+	}
+}
+
+func TestOpenPromptSearchPanelReadyAndUnavailableStatus(t *testing.T) {
+	inputReady := textarea.New()
+	inputReady.Focus()
+	inputReady.SetValue("draft")
+	m := model{
+		input:               inputReady,
+		promptHistoryLoaded: true,
+		promptHistoryEntries: []history.PromptEntry{
+			{Prompt: "fix tui layout"},
+		},
+	}
+
+	if cmd := m.openPromptSearch(promptSearchModePanel); cmd != nil {
+		t.Fatalf("expected no load command when history already loaded")
+	}
+	if m.statusNote != "History panel ready (1 matches)." {
+		t.Fatalf("expected panel ready status note, got %q", m.statusNote)
+	}
+
+	inputUnavailable := textarea.New()
+	inputUnavailable.Focus()
+	m2 := model{
+		input:                inputUnavailable,
+		promptHistoryLoaded:  true,
+		promptHistoryLoadErr: "permission denied while reading history",
+	}
+	if cmd := m2.openPromptSearch(promptSearchModeQuick); cmd != nil {
+		t.Fatalf("expected no load command when history is already marked loaded")
+	}
+	if !strings.Contains(m2.statusNote, "Prompt history unavailable:") {
+		t.Fatalf("expected unavailable quick-search status note, got %q", m2.statusNote)
 	}
 }
 
@@ -1834,7 +2053,78 @@ func TestPasteEnterDoesNotSubmitAndKeepsNewline(t *testing.T) {
 	}
 }
 
-func TestSuppressedEnterAfterPasteIsInsertedAsNewline(t *testing.T) {
+func TestShortBracketedPastePayloadKeepsTrailingNewlineBoundary(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	got, _ := m.handlePastePayload("# 主标题\n")
+	updated := got.(model)
+
+	if updated.input.Value() != "# 主标题\n" {
+		t.Fatalf("expected short paste payload to preserve trailing newline, got %q", updated.input.Value())
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected short paste payload not to auto submit, got %d chat items", len(updated.chatItems))
+	}
+}
+
+func TestRapidBareEnterAfterRecentBurstIsTreatedAsPasteContinuation(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetWidth(40)
+	input.SetHeight(3)
+	input.SetValue("# main heading")
+	input.CursorEnd()
+
+	m := model{
+		screen:         screenChat,
+		input:          input,
+		workspace:      "E:\\bytemind",
+		sess:           session.New("E:\\bytemind"),
+		lastInputAt:    time.Now(),
+		inputBurstSize: len("# main heading"),
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected rapid bare enter to avoid submit, got %d chat items", len(updated.chatItems))
+	}
+	if !strings.Contains(updated.input.Value(), "\n") {
+		t.Fatalf("expected rapid bare enter to insert newline, got %q", updated.input.Value())
+	}
+}
+
+func TestBareEnterAfterRecentMarkdownBurstIsTreatedAsPasteContinuation(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetWidth(40)
+	input.SetHeight(3)
+	input.SetValue("# 主标题")
+	input.CursorEnd()
+
+	m := model{
+		screen:         screenChat,
+		input:          input,
+		workspace:      "E:\\bytemind",
+		sess:           session.New("E:\\bytemind"),
+		lastInputAt:    time.Now().Add(-200 * time.Millisecond),
+		inputBurstSize: 4,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected markdown burst enter to avoid submit, got %d chat items", len(updated.chatItems))
+	}
+	if !strings.Contains(updated.input.Value(), "\n") {
+		t.Fatalf("expected markdown burst enter to insert newline, got %q", updated.input.Value())
+	}
+}
+
+func TestSuppressedEnterAfterPasteIsSwallowed(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	input.SetWidth(40)
@@ -1858,8 +2148,8 @@ func TestSuppressedEnterAfterPasteIsInsertedAsNewline(t *testing.T) {
 	if len(updated.chatItems) != 0 {
 		t.Fatalf("expected suppressed enter not to submit, got %d chat items", len(updated.chatItems))
 	}
-	if updated.input.Value() != "line1\n" {
-		t.Fatalf("expected suppressed enter to become newline, got %q", updated.input.Value())
+	if updated.input.Value() != "line1" {
+		t.Fatalf("expected suppressed enter to be swallowed, got %q", updated.input.Value())
 	}
 }
 
@@ -1909,6 +2199,8 @@ func TestHelpTextOnlyMentionsSupportedEntryPoints(t *testing.T) {
 		"go run ./cmd/bytemind chat",
 		"go run ./cmd/bytemind run -prompt",
 		"/session",
+		"TUI does not expose `/resume`",
+		"CLI keeps `/resume <id>`",
 		"/skill clear",
 		"/skill delete <name>",
 		"/quit",
@@ -1982,6 +2274,103 @@ func TestRenderFooterInfoLineCombinesModeAndHints(t *testing.T) {
 		if !strings.Contains(infoLine, want) {
 			t.Fatalf("expected combined info line to contain %q, got %q", want, infoLine)
 		}
+	}
+}
+
+func TestRenderFooterDoesNotShowBusyRunIndicator(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		width:        120,
+		input:        input,
+		busy:         true,
+		phase:        "thinking",
+		runStartedAt: time.Time{},
+	}
+
+	footer := m.renderFooter()
+	if strings.Contains(footer, "thinking...") || strings.Contains(footer, "(00:00)") {
+		t.Fatalf("expected busy footer not to include run indicator, got %q", footer)
+	}
+}
+
+func TestBeginRunShowsThinkingCardInConversation(t *testing.T) {
+	m := model{
+		screen:         screenChat,
+		width:          120,
+		height:         28,
+		input:          textarea.New(),
+		viewport:       viewport.New(60, 10),
+		tokenUsage:     newTokenUsageComponent(),
+		streamingIndex: -1,
+	}
+
+	cmd := m.beginRunWithInput(RunPromptInput{
+		UserMessage: llm.NewUserTextMessage("inspect repo"),
+		DisplayText: "inspect repo",
+	}, string(modeBuild), "Request sent to LLM. Waiting for response...")
+	if cmd == nil {
+		t.Fatalf("expected beginRunWithInput to return command batch")
+	}
+	if len(m.chatItems) == 0 {
+		t.Fatalf("expected beginRunWithInput to append thinking card")
+	}
+	last := m.chatItems[len(m.chatItems)-1]
+	if last.Kind != "assistant" || last.Status != "pending" || last.Title != thinkingLabel {
+		t.Fatalf("expected pending assistant thinking card, got %+v", last)
+	}
+	if !strings.Contains(last.Body, "thinking...") {
+		t.Fatalf("expected thinking card body to include thinking text, got %q", last.Body)
+	}
+	if m.streamingIndex != len(m.chatItems)-1 {
+		t.Fatalf("expected streamingIndex to point to thinking card, got %d", m.streamingIndex)
+	}
+}
+
+func TestRunIndicatorPhaseText(t *testing.T) {
+	cases := []struct {
+		phase string
+		want  string
+	}{
+		{phase: "thinking", want: "thinking..."},
+		{phase: "responding", want: "Responding..."},
+		{phase: "tool", want: "Running tool..."},
+		{phase: "interrupting", want: "Interrupting..."},
+		{phase: "approval", want: "Waiting for approval..."},
+		{phase: "idle", want: "Working..."},
+	}
+
+	for _, tc := range cases {
+		if got := runIndicatorPhaseText(tc.phase); got != tc.want {
+			t.Fatalf("unexpected phase indicator for %q: got %q want %q", tc.phase, got, tc.want)
+		}
+	}
+}
+
+func TestFormatElapsedClock(t *testing.T) {
+	start := time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC)
+	now := start.Add(42 * time.Second)
+	if got := formatElapsedClock(start, now); got != "00:42" {
+		t.Fatalf("expected 42-second elapsed clock, got %q", got)
+	}
+
+	if got := formatElapsedClock(start, start.Add(125*time.Second)); got != "02:05" {
+		t.Fatalf("expected minute-second elapsed clock, got %q", got)
+	}
+
+	if got := formatElapsedClock(time.Time{}, now); got != "00:00" {
+		t.Fatalf("expected zero clock for unset start time, got %q", got)
+	}
+}
+
+func TestFormatElapsedWords(t *testing.T) {
+	start := time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC)
+	now := start.Add(78 * time.Second)
+	if got := formatElapsedWords(start, now); got != "1m 18s" {
+		t.Fatalf("expected 1m 18s, got %q", got)
+	}
+
+	if got := formatElapsedWords(start, start.Add(time.Hour+time.Minute+5*time.Second)); got != "1h 1m 5s" {
+		t.Fatalf("expected 1h 1m 5s, got %q", got)
 	}
 }
 
@@ -2162,7 +2551,7 @@ func TestHandleSlashCompactCompactsSession(t *testing.T) {
 	})
 
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2223,7 +2612,7 @@ func TestHandleSlashSkillsListsDiscoveredSkills(t *testing.T) {
 	})
 
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2282,7 +2671,7 @@ func TestHandleSlashSkillActivateAndClear(t *testing.T) {
 	})
 
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2329,7 +2718,7 @@ func TestHandleSlashSkillAuthorIsUnsupported(t *testing.T) {
 	})
 
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2377,7 +2766,7 @@ func TestHandleSlashSkillDeleteDeletesProjectSkill(t *testing.T) {
 	})
 
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2430,7 +2819,7 @@ func TestHandleSlashSkillClearOnlyClearsActiveSkill(t *testing.T) {
 	})
 
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2494,7 +2883,7 @@ func TestFilteredCommandsIncludeSkillSlashCommands(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("/re")
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2548,7 +2937,7 @@ func TestFilteredCommandsIncludeProjectSkillSlashCommands(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("/review")
 	m := model{
-		runner:    runner,
+		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
 		workspace: workspace,
@@ -2761,7 +3150,7 @@ func TestAtOpensMentionPaletteWithPrefilledToken(t *testing.T) {
 		screen: screenChat,
 		input:  input,
 		mentionIndex: mention.NewStaticWorkspaceFileIndex([]mention.Candidate{
-			{Path: "internal/tui/model.go", BaseName: "model.go"},
+			{Path: "tui/model.go", BaseName: "model.go"},
 		}, 0, false),
 	}
 
@@ -2785,7 +3174,7 @@ func TestMentionPaletteFiltersAsUserTypes(t *testing.T) {
 	m := model{
 		input: input,
 		mentionIndex: mention.NewStaticWorkspaceFileIndex([]mention.Candidate{
-			{Path: "internal/tui/model.go", BaseName: "model.go"},
+			{Path: "tui/model.go", BaseName: "model.go"},
 			{Path: "README.md", BaseName: "README.md"},
 		}, 0, false),
 	}
@@ -2795,8 +3184,8 @@ func TestMentionPaletteFiltersAsUserTypes(t *testing.T) {
 	if !m.mentionOpen {
 		t.Fatalf("expected mention palette to stay open for @mod")
 	}
-	if len(m.mentionResults) != 1 || m.mentionResults[0].Path != "internal/tui/model.go" {
-		t.Fatalf("expected @mod to only match internal/tui/model.go, got %+v", m.mentionResults)
+	if len(m.mentionResults) != 1 || m.mentionResults[0].Path != "tui/model.go" {
+		t.Fatalf("expected @mod to only match tui/model.go, got %+v", m.mentionResults)
 	}
 }
 
@@ -2807,7 +3196,7 @@ func TestMentionPaletteEnterInsertsMentionInsteadOfSubmitting(t *testing.T) {
 		screen: screenLanding,
 		input:  input,
 		mentionIndex: mention.NewStaticWorkspaceFileIndex([]mention.Candidate{
-			{Path: "internal/tui/model.go", BaseName: "model.go"},
+			{Path: "tui/model.go", BaseName: "model.go"},
 			{Path: "README.md", BaseName: "README.md"},
 		}, 0, false),
 	}
@@ -2819,7 +3208,7 @@ func TestMentionPaletteEnterInsertsMentionInsteadOfSubmitting(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("expected Enter on mention selection to avoid submit command")
 	}
-	if updated.input.Value() != "@internal/tui/model.go " {
+	if updated.input.Value() != "@tui/model.go " {
 		t.Fatalf("expected mention selection to rewrite input, got %q", updated.input.Value())
 	}
 	if updated.mentionOpen {
@@ -2828,7 +3217,7 @@ func TestMentionPaletteEnterInsertsMentionInsteadOfSubmitting(t *testing.T) {
 	if len(updated.chatItems) != 0 {
 		t.Fatalf("expected mention insertion to avoid sending message")
 	}
-	if updated.mentionRecent["internal/tui/model.go"] <= 0 {
+	if updated.mentionRecent["tui/model.go"] <= 0 {
 		t.Fatalf("expected selected mention to be recorded as recent")
 	}
 }
@@ -2840,7 +3229,7 @@ func TestMentionPaletteEscClosesWithoutResettingInput(t *testing.T) {
 		screen: screenChat,
 		input:  input,
 		mentionIndex: mention.NewStaticWorkspaceFileIndex([]mention.Candidate{
-			{Path: "internal/tui/model.go", BaseName: "model.go"},
+			{Path: "tui/model.go", BaseName: "model.go"},
 		}, 0, false),
 	}
 	m.syncInputOverlays()
@@ -2896,7 +3285,7 @@ func TestMentionPaletteTabInsertsMentionWithoutTogglingMode(t *testing.T) {
 		mode:   modeBuild,
 		input:  input,
 		mentionIndex: mention.NewStaticWorkspaceFileIndex([]mention.Candidate{
-			{Path: "internal/tui/model.go", BaseName: "model.go", TypeTag: "go"},
+			{Path: "tui/model.go", BaseName: "model.go", TypeTag: "go"},
 		}, 0, false),
 	}
 	m.syncInputOverlays()
@@ -2910,7 +3299,7 @@ func TestMentionPaletteTabInsertsMentionWithoutTogglingMode(t *testing.T) {
 	if updated.mode != modeBuild {
 		t.Fatalf("expected tab in mention palette not to toggle mode, got %q", updated.mode)
 	}
-	if updated.input.Value() != "@internal/tui/model.go " {
+	if updated.input.Value() != "@tui/model.go " {
 		t.Fatalf("expected Tab to insert mention, got %q", updated.input.Value())
 	}
 }
@@ -3111,7 +3500,7 @@ func TestRenderConversationIncludesToolEntries(t *testing.T) {
 		}(),
 		chatItems: []chatEntry{
 			{Kind: "user", Title: "You", Body: "check repo", Status: "final"},
-			{Kind: "tool", Title: "Tool Call | read_file", Body: "Read internal/tui/model.go lines 1-20", Status: "done"},
+			{Kind: "tool", Title: "Tool Call | read_file", Body: "Read tui/model.go lines 1-20", Status: "done"},
 		},
 	}
 
@@ -3119,8 +3508,62 @@ func TestRenderConversationIncludesToolEntries(t *testing.T) {
 	if !strings.Contains(got, "Tool Call | read_file") {
 		t.Fatalf("expected conversation to show tool entry, got %q", got)
 	}
-	if !strings.Contains(got, "Read internal/tui/model.go lines 1-20") {
+	if !strings.Contains(got, "Read tui/model.go lines 1-20") {
 		t.Fatalf("expected conversation to show tool summary, got %q", got)
+	}
+}
+
+func TestRenderThinkingRowShowsBodyText(t *testing.T) {
+	m := model{}
+
+	got := m.renderThinkingRow(chatEntry{
+		Kind:   "assistant",
+		Title:  thinkingLabel,
+		Body:   "Inspecting repository structure and entrypoints.",
+		Status: "thinking",
+	}, 60)
+
+	if !strings.Contains(got, "thinking") {
+		t.Fatalf("expected thinking row title, got %q", got)
+	}
+	if !strings.Contains(got, "Inspecting repository structure and entrypoints.") {
+		t.Fatalf("expected thinking row to show body text, got %q", got)
+	}
+	if strings.Contains(got, "鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€") || strings.Contains(got, "> ") {
+		t.Fatalf("expected thinking row without dividers or prompt prefix, got %q", got)
+	}
+}
+
+func TestRenderThinkingRowOmitsDuplicateFallbackText(t *testing.T) {
+	m := model{}
+
+	got := m.renderThinkingRow(chatEntry{
+		Kind:   "assistant",
+		Title:  thinkingLabel,
+		Body:   "",
+		Status: "thinking",
+	}, 60)
+
+	if strings.Count(got, "thinking") != 1 {
+		t.Fatalf("expected only one thinking label, got %q", got)
+	}
+	if strings.Contains(got, "鈹?") {
+		t.Fatalf("expected empty thinking row to omit detail body, got %q", got)
+	}
+}
+
+func TestRenderThinkingRowUsesDetailPrefixStyle(t *testing.T) {
+	m := model{}
+
+	got := m.renderThinkingRow(chatEntry{
+		Kind:   "assistant",
+		Title:  thinkingLabel,
+		Body:   "Checking the repository layout and docs.",
+		Status: "thinking",
+	}, 60)
+
+	if !strings.Contains(got, "Checking the repository layout and docs.") {
+		t.Fatalf("expected thinking detail body, got %q", got)
 	}
 }
 
@@ -3205,15 +3648,15 @@ func TestHandleAgentEventShowsToolProgressInChat(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
 			{Kind: "user", Title: "You", Body: "what project is this", Status: "final"},
-			{Kind: "assistant", Title: thinkingLabel, Body: "thinking", Status: "thinking"},
+			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
 		},
 		streamingIndex: 1,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:          agent.EventToolCallStarted,
+	m.handleAgentEvent(Event{
+		Type:          EventToolCallStarted,
 		ToolName:      "read_file",
-		ToolArguments: `{"path":"internal/tui/model.go"}`,
+		ToolArguments: `{"path":"tui/model.go"}`,
 	})
 	if len(m.chatItems) != 3 {
 		t.Fatalf("expected tool start to keep assistant step then append tool call, got %d items", len(m.chatItems))
@@ -3228,10 +3671,10 @@ func TestHandleAgentEventShowsToolProgressInChat(t *testing.T) {
 		t.Fatalf("expected tool call body to hide params, got %q", m.chatItems[2].Body)
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:       agent.EventToolCallCompleted,
+	m.handleAgentEvent(Event{
+		Type:       EventToolCallCompleted,
 		ToolName:   "read_file",
-		ToolResult: `{"path":"internal/tui/model.go","start_line":1,"end_line":20}`,
+		ToolResult: `{"path":"tui/model.go","start_line":1,"end_line":20}`,
 	})
 	if len(m.chatItems) != 3 {
 		t.Fatalf("expected completed tool to update existing tool call, got %d", len(m.chatItems))
@@ -3242,7 +3685,7 @@ func TestHandleAgentEventShowsToolProgressInChat(t *testing.T) {
 	if m.chatItems[2].Status != "done" {
 		t.Fatalf("expected completed tool call status to be done, got %q", m.chatItems[2].Status)
 	}
-	if !strings.Contains(m.chatItems[2].Body, "Read internal/tui/model.go lines 1-20") {
+	if !strings.Contains(m.chatItems[2].Body, "Read tui/model.go lines 1-20") {
 		t.Fatalf("expected completed tool summary in tool call item, got %q", m.chatItems[2].Body)
 	}
 }
@@ -3253,45 +3696,45 @@ func TestHandleAgentEventTracksRunLifecyclePhases(t *testing.T) {
 		llmConnected: true,
 		chatItems: []chatEntry{
 			{Kind: "user", Title: "You", Body: "inspect tui", Status: "final"},
-			{Kind: "assistant", Title: thinkingLabel, Body: "thinking", Status: "thinking"},
+			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
 		},
 		streamingIndex: 1,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:    agent.EventAssistantDelta,
+	m.handleAgentEvent(Event{
+		Type:    EventAssistantDelta,
 		Content: "Inspecting the TUI flow...",
 	})
 	if m.phase != "responding" || m.statusNote != "LLM is responding..." {
 		t.Fatalf("expected assistant delta to move UI into responding phase, got phase=%q note=%q", m.phase, m.statusNote)
 	}
-	if m.chatItems[1].Status != "thinking" || !strings.Contains(m.chatItems[1].Body, "Thinking") {
-		t.Fatalf("expected thinking assistant card after delta, got %+v", m.chatItems[1])
+	if m.chatItems[1].Status != "streaming" || !strings.Contains(m.chatItems[1].Body, "Inspecting the TUI flow") {
+		t.Fatalf("expected streaming assistant card after delta, got %+v", m.chatItems[1])
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:          agent.EventToolCallStarted,
+	m.handleAgentEvent(Event{
+		Type:          EventToolCallStarted,
 		ToolName:      "read_file",
-		ToolArguments: `{"path":"internal/tui/model.go","start_line":1,"end_line":5}`,
+		ToolArguments: `{"path":"tui/model.go","start_line":1,"end_line":5}`,
 	})
 	if m.phase != "tool" || m.statusNote != "Running tool: read_file" {
 		t.Fatalf("expected tool start to move UI into tool phase, got phase=%q note=%q", m.phase, m.statusNote)
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:       agent.EventToolCallCompleted,
+	m.handleAgentEvent(Event{
+		Type:       EventToolCallCompleted,
 		ToolName:   "read_file",
-		ToolResult: `{"path":"internal/tui/model.go","start_line":1,"end_line":5}`,
+		ToolResult: `{"path":"tui/model.go","start_line":1,"end_line":5}`,
 	})
 	if m.phase != "thinking" {
 		t.Fatalf("expected completed tool to return UI to thinking phase, got %q", m.phase)
 	}
-	if !strings.Contains(m.statusNote, "Read internal/tui/model.go lines 1-5") {
+	if !strings.Contains(m.statusNote, "Read tui/model.go lines 1-5") {
 		t.Fatalf("expected tool result summary in status note, got %q", m.statusNote)
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:    agent.EventRunFinished,
+	m.handleAgentEvent(Event{
+		Type:    EventRunFinished,
 		Content: "Done.",
 	})
 	if m.phase != "idle" || m.statusNote != "Run finished." {
@@ -3308,8 +3751,8 @@ func TestToolStartKeepsStreamedAssistantReasoning(t *testing.T) {
 		streamingIndex: 1,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:          agent.EventToolCallStarted,
+	m.handleAgentEvent(Event{
+		Type:          EventToolCallStarted,
 		ToolName:      "list_files",
 		ToolArguments: `{"path":"."}`,
 	})
@@ -3333,8 +3776,8 @@ func TestToolStartWithoutAssistantDeltaDoesNotInjectThinkingCard(t *testing.T) {
 		streamingIndex: -1,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:          agent.EventToolCallStarted,
+	m.handleAgentEvent(Event{
+		Type:          EventToolCallStarted,
 		ToolName:      "list_files",
 		ToolArguments: `{"path":"."}`,
 	})
@@ -3359,8 +3802,8 @@ func TestToolStartWithGenericToolIntentDoesNotShowThinkingCard(t *testing.T) {
 		streamingIndex: 1,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:          agent.EventToolCallStarted,
+	m.handleAgentEvent(Event{
+		Type:          EventToolCallStarted,
 		ToolName:      "list_files",
 		ToolArguments: `{"path":"."}`,
 	})
@@ -3392,6 +3835,27 @@ func TestRenderChatSectionToolHeaderOmitsStatusWords(t *testing.T) {
 	}
 }
 
+func TestFormatChatBodyHighlightsSearchToolSummaryAndMatches(t *testing.T) {
+	item := chatEntry{
+		Kind: "tool",
+		Body: "Found 12 match(es) for \"func main() {\"\n" +
+			"bytemind/opencode-go/main.go:14 func main() {\n" +
+			"cmd/bytemind/main.go:11 func main() {",
+	}
+
+	got := formatChatBody(item, 80)
+
+	if !strings.Contains(got, toolSearchSummaryStyle.Render("Found 12 match(es) for \"func main() {\"")) {
+		t.Fatalf("expected search summary line to be highlighted, got %q", got)
+	}
+	if !strings.Contains(got, toolSearchMatchStyle.Render("bytemind/opencode-go/main.go:14 func main() {")) {
+		t.Fatalf("expected first search match line to be highlighted, got %q", got)
+	}
+	if !strings.Contains(got, toolSearchMatchStyle.Render("cmd/bytemind/main.go:11 func main() {")) {
+		t.Fatalf("expected second search match line to be highlighted, got %q", got)
+	}
+}
+
 func TestAssistantDeltaPlanningTextRendersAsThinking(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
@@ -3400,8 +3864,8 @@ func TestAssistantDeltaPlanningTextRendersAsThinking(t *testing.T) {
 		streamingIndex: -1,
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:    agent.EventAssistantDelta,
+	m.handleAgentEvent(Event{
+		Type:    EventAssistantDelta,
 		Content: "I will first inspect structure and config, then code organization and dependencies, and finally verify with build and tests.",
 	})
 
@@ -3428,7 +3892,7 @@ func TestFinishAssistantMessageAppendsFinalCardAfterThinking(t *testing.T) {
 		t.Fatalf("expected final answer to be appended after thinking, got %d items", len(m.chatItems))
 	}
 	if m.chatItems[1].Title != thinkingLabel || m.chatItems[1].Status != "thinking_done" {
-		t.Fatalf("expected thinking card to remain visible, got %+v", m.chatItems[1])
+		t.Fatalf("expected thinking card to remain visible as done, got %+v", m.chatItems[1])
 	}
 	if m.chatItems[2].Title != assistantLabel || m.chatItems[2].Status != "final" || m.chatItems[2].Body != "This is a Go TUI project." {
 		t.Fatalf("expected final assistant card after thinking, got %+v", m.chatItems[2])
@@ -3441,14 +3905,14 @@ func TestApprovalBannerRendersAboveInput(t *testing.T) {
 		width: 120,
 		input: input,
 		approval: &approvalPrompt{
-			Command: "go test ./internal/tui",
+			Command: "go test ./tui",
 			Reason:  "run tests",
 		},
 	}
 
 	footer := m.renderFooter()
 	for _, want := range []string{
-		"go test ./internal/tui",
+		"go test ./tui",
 		"run tests",
 		"Y / Enter",
 		"N / Esc",
@@ -3489,8 +3953,8 @@ func TestUpdateApprovalRequestMsgSetsApprovalPhase(t *testing.T) {
 	m := model{async: make(chan tea.Msg, 1)}
 
 	got, cmd := m.Update(approvalRequestMsg{
-		Request: tools.ApprovalRequest{
-			Command: "go test ./internal/tui",
+		Request: ApprovalRequest{
+			Command: "go test ./tui",
 			Reason:  "run focused tests",
 		},
 		Reply: reply,
@@ -3503,7 +3967,7 @@ func TestUpdateApprovalRequestMsgSetsApprovalPhase(t *testing.T) {
 	if updated.approval == nil {
 		t.Fatalf("expected approval prompt to be stored on the model")
 	}
-	if updated.approval.Command != "go test ./internal/tui" || updated.approval.Reason != "run focused tests" {
+	if updated.approval.Command != "go test ./tui" || updated.approval.Reason != "run focused tests" {
 		t.Fatalf("expected approval prompt contents to be preserved, got %+v", updated.approval)
 	}
 	if updated.phase != "approval" || updated.statusNote != "Approval required." {
@@ -3516,7 +3980,7 @@ func TestApprovalKeysTransitionStateAndSendDecision(t *testing.T) {
 		reply := make(chan approvalDecision, 1)
 		m := model{
 			approval: &approvalPrompt{
-				Command: "go test ./internal/tui",
+				Command: "go test ./tui",
 				Reason:  "run focused tests",
 				Reply:   reply,
 			},
@@ -3547,7 +4011,7 @@ func TestApprovalKeysTransitionStateAndSendDecision(t *testing.T) {
 		reply := make(chan approvalDecision, 1)
 		m := model{
 			approval: &approvalPrompt{
-				Command: "go test ./internal/tui",
+				Command: "go test ./tui",
 				Reason:  "run focused tests",
 				Reply:   reply,
 			},
@@ -3616,7 +4080,7 @@ func TestUpdateRunFinishedMsgResetsBusyState(t *testing.T) {
 			llmConnected:   true,
 			chatItems: []chatEntry{
 				{Kind: "user", Title: "You", Body: "inspect repo", Status: "final"},
-				{Kind: "assistant", Title: thinkingLabel, Body: "thinking", Status: "thinking"},
+				{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
 			},
 		}
 
@@ -3656,8 +4120,8 @@ func TestRunFinishedKeepsStreamingSlotForLateAssistantMessage(t *testing.T) {
 		t.Fatalf("expected run finished to keep streaming index for late final message, got %d", updated.streamingIndex)
 	}
 
-	updated.handleAgentEvent(agent.Event{
-		Type:    agent.EventAssistantMessage,
+	updated.handleAgentEvent(Event{
+		Type:    EventAssistantMessage,
 		Content: "received, response looks good.",
 	})
 
@@ -3790,6 +4254,80 @@ func TestBusyEnterSuppressedForRecentPasteBurstSingleLine(t *testing.T) {
 	}
 }
 
+func TestBusyEnterSuppressedForImplicitPasteBurstWithoutPasteFlag(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("A long multiline paste-burst candidate mentioning `main.go` should not auto-submit.")
+	input.CursorEnd()
+
+	canceled := false
+	now := time.Now()
+	m := model{
+		screen:         screenChat,
+		busy:           true,
+		input:          input,
+		lastInputAt:    now,
+		inputBurstSize: 64,
+		sess:           session.New("E:\\bytemind"),
+		workspace:      "E:\\bytemind",
+		runCancel:      func() { canceled = true },
+	}
+
+	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if cmd != nil {
+		t.Fatalf("expected implicit paste-burst enter not to schedule a command")
+	}
+	if canceled {
+		t.Fatalf("expected implicit paste-burst enter not to cancel current run")
+	}
+	if updated.interrupting || len(updated.pendingBTW) != 0 || len(updated.chatItems) != 0 {
+		t.Fatalf("expected no BTW side effects, got interrupting=%v pending=%#v chat=%#v", updated.interrupting, updated.pendingBTW, updated.chatItems)
+	}
+}
+
+func TestIdleEnterCompressesImplicitLongPasteBurstWithoutPasteFlag(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	longPaste := strings.Join([]string{
+		"func normalize(items []string) []string {",
+		"    out := make([]string, 0, len(items))",
+		"    for _, item := range items {",
+		"        v := strings.TrimSpace(item)",
+		"        if v == \"\" {",
+		"            continue",
+		"        }",
+		"        out = append(out, strings.ToLower(v))",
+		"    }",
+		"    sort.Strings(out)",
+		"    return out",
+		"}",
+	}, "\n")
+	input.SetValue(longPaste)
+	input.CursorEnd()
+
+	now := time.Now()
+	m := model{
+		screen:         screenChat,
+		input:          input,
+		lastInputAt:    now,
+		inputBurstSize: len(longPaste),
+		sess:           session.New("E:\\bytemind"),
+		workspace:      "E:\\bytemind",
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(updated.input.Value()) {
+		t.Fatalf("expected implicit long paste burst to compress into marker, got %q", updated.input.Value())
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected compression step not to submit chat immediately, got %d items", len(updated.chatItems))
+	}
+}
+
 func TestBusyEnterInToolPhaseDefersBTWCancel(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
@@ -3825,7 +4363,7 @@ func TestRenderChatCardToolUsesVisualSeparator(t *testing.T) {
 	got := renderChatCard(chatEntry{
 		Kind:   "tool",
 		Title:  "Tool Call | read_file",
-		Body:   "Read internal/tui/model.go lines 1-20",
+		Body:   "Read tui/model.go lines 1-20",
 		Status: "done",
 	}, 64)
 
@@ -3884,10 +4422,10 @@ func TestToolCallCompletedTriggersDeferredBTWCancel(t *testing.T) {
 		runCancel:     func() { canceled = true },
 	}
 
-	m.handleAgentEvent(agent.Event{
-		Type:       agent.EventToolCallCompleted,
+	m.handleAgentEvent(Event{
+		Type:       EventToolCallCompleted,
 		ToolName:   "read_file",
-		ToolResult: `{"path":"internal/tui/model.go","start_line":1,"end_line":3}`,
+		ToolResult: `{"path":"tui/model.go","start_line":1,"end_line":3}`,
 	})
 
 	if !canceled {
@@ -4095,6 +4633,9 @@ func TestResumeSessionClearsInterruptState(t *testing.T) {
 	workspace := t.TempDir()
 	current := session.New(workspace)
 	target := session.New(workspace)
+	target.Messages = []llm.Message{
+		llm.NewUserTextMessage("recover me"),
+	}
 	if err := store.Save(current); err != nil {
 		t.Fatal(err)
 	}
@@ -4818,6 +5359,58 @@ func TestHandleKeyPasteCompressesLongTextImmediately(t *testing.T) {
 	}
 	if strings.Contains(updated.input.Value(), "normalize(items") {
 		t.Fatalf("expected no raw pasted code to remain in input, got %q", updated.input.Value())
+	}
+}
+
+func TestUpdatePasteMsgCompressesLongTextImmediately(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	longPaste := strings.Join([]string{
+		"package main",
+		"",
+		"func add(a int, b int) int {",
+		"    return a + b",
+		"}",
+		"",
+		"func main() {",
+		"    _ = add(1, 2)",
+		"}",
+		"// line 10",
+		"// line 11",
+		"// line 12",
+	}, "\n")
+
+	got, _ := m.handlePastePayload(longPaste + "\n")
+	updated := got.(model)
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(updated.input.Value()) {
+		t.Fatalf("expected marker-only input for paste msg, got %q", updated.input.Value())
+	}
+	if strings.Contains(updated.input.Value(), "func add") {
+		t.Fatalf("expected raw pasted text to be intercepted, got %q", updated.input.Value())
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected paste msg not to auto submit, got %d chat items", len(updated.chatItems))
+	}
+}
+
+func TestUpdatePasteMsgSuppressesImmediateEnterSubmit(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	longPaste := strings.Join([]string{
+		"line 1", "line 2", "line 3", "line 4", "line 5", "line 6",
+		"line 7", "line 8", "line 9", "line 10", "line 11", "line 12",
+	}, "\n")
+
+	got, _ := m.handlePastePayload(longPaste + "\r\n")
+	afterPaste := got.(model)
+	got, _ = afterPaste.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	afterEnter := got.(model)
+
+	if len(afterEnter.chatItems) != 0 {
+		t.Fatalf("expected immediate enter after paste to be suppressed, got %d chat items", len(afterEnter.chatItems))
+	}
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(afterEnter.input.Value()) {
+		t.Fatalf("expected compressed marker to remain after suppressed enter, got %q", afterEnter.input.Value())
 	}
 }
 

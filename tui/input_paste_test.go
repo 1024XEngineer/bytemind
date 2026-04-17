@@ -126,7 +126,7 @@ func TestApplyLongPastedTextPipelineCompressesEarlyAndMergesFollowupPasteChunk(t
 	}
 }
 
-func TestApplyLongPastedTextPipelineCompressesBurstTypedPasteFallback(t *testing.T) {
+func TestApplyLongPastedTextPipelineDoesNotCompressManualLongTyping(t *testing.T) {
 	m := newImagePipelineModel(t)
 	longPaste := strings.Join([]string{
 		"func demo() {",
@@ -149,12 +149,15 @@ func TestApplyLongPastedTextPipelineCompressesBurstTypedPasteFallback(t *testing
 		m.input.SetValue(after)
 		m.handleInputMutation(before, after, "rune")
 		before = m.input.Value()
-		if strings.HasPrefix(before, "[Paste #") {
-			break
-		}
 	}
-	if !strings.HasPrefix(m.input.Value(), "[Paste #") {
-		t.Fatalf("expected burst fallback compression, got %q", m.input.Value())
+	if got := m.input.Value(); got != longPaste {
+		t.Fatalf("expected manual typing to remain literal text, got %q", got)
+	}
+	if len(m.pastedContents) != 0 {
+		t.Fatalf("expected manual typing not to store pasted content, got %d", len(m.pastedContents))
+	}
+	if m.shouldCompressPastedText(m.input.Value(), "enter") {
+		t.Fatalf("expected manually typed long text not to be treated as pasted on submit")
 	}
 }
 
@@ -606,6 +609,36 @@ func TestApplyLongPastedTextPipelineMergesSlashLeadingTrailingText(t *testing.T)
 	}
 }
 
+func TestHandleInputMutationCompressesImplicitRuneBurstImmediately(t *testing.T) {
+	m := newImagePipelineModel(t)
+	longPaste := strings.Join([]string{
+		"package main",
+		"",
+		"func add(a int, b int) int {",
+		"    return a + b",
+		"}",
+		"",
+		"func main() {",
+		"    _ = add(1, 2)",
+		"}",
+		"// line 10",
+		"// line 11",
+		"// line 12",
+	}, "\n")
+
+	before := ""
+	for _, r := range longPaste {
+		after := before + string(r)
+		m.input.SetValue(after)
+		m.handleInputMutation(before, after, "rune")
+		before = m.input.Value()
+	}
+
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(before) {
+		t.Fatalf("expected implicit rune burst to compress immediately into marker, got %q", before)
+	}
+}
+
 func TestShouldCompressPastedTextQuickThresholdWithPasteSignal(t *testing.T) {
 	m := newImagePipelineModel(t)
 	text := strings.Repeat("alpha beta gamma ", 8)
@@ -631,23 +664,23 @@ func TestShouldCompressPastedTextSkipsLikelyPathInput(t *testing.T) {
 	}
 }
 
-func TestShouldCompressPastedTextDetectsFastCharacterBurstWithoutPasteSignal(t *testing.T) {
+func TestShouldCompressPastedTextSkipsFastCharacterBurstWithoutPasteSignal(t *testing.T) {
 	m := newImagePipelineModel(t)
 	text := strings.Repeat("burst payload ", 10)
 	m.inputBurstSize = pasteBurstCharThreshold
 	m.lastInputAt = time.Now()
-	if !m.shouldCompressPastedText(text, "rune") {
-		t.Fatalf("expected rapid burst fallback to trigger compression")
+	if m.shouldCompressPastedText(text, "rune") {
+		t.Fatalf("expected rapid burst without paste signal to skip compression")
 	}
 }
 
-func TestShouldCompressPastedTextDetectsShortRapidBurstEarly(t *testing.T) {
+func TestShouldCompressPastedTextSkipsShortRapidBurstEarlyWithoutPasteSignal(t *testing.T) {
 	m := newImagePipelineModel(t)
 	text := strings.Repeat("x ", pasteBurstImmediateMinChars+2)
 	m.inputBurstSize = pasteBurstImmediateMinChars
 	m.lastInputAt = time.Now()
-	if !m.shouldCompressPastedText(text, "rune") {
-		t.Fatalf("expected short rapid burst to trigger early compression")
+	if m.shouldCompressPastedText(text, "rune") {
+		t.Fatalf("expected short rapid burst without paste signal to skip compression")
 	}
 }
 
@@ -904,7 +937,7 @@ func TestShouldMergeIntoLatestMarkerAllowsFastPasteChunks(t *testing.T) {
 	if !shouldMergeIntoLatestMarker("paste", now.Add(-80*time.Millisecond)) {
 		t.Fatalf("expected immediate paste chunk to merge into latest marker")
 	}
-	if shouldMergeIntoLatestMarker("paste", now.Add(-500*time.Millisecond)) {
+	if shouldMergeIntoLatestMarker("paste", now.Add(-900*time.Millisecond)) {
 		t.Fatalf("expected delayed paste chunk not to merge into latest marker")
 	}
 }
