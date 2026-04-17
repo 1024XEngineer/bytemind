@@ -2,6 +2,7 @@ package extensions
 
 import (
 	"context"
+	"strings"
 
 	corepkg "bytemind/internal/core"
 )
@@ -13,12 +14,55 @@ const (
 	ExtensionSkill ExtensionKind = "skill"
 )
 
+type ExtensionScope string
+
+const (
+	ExtensionScopeBuiltin ExtensionScope = "builtin"
+	ExtensionScopeUser    ExtensionScope = "user"
+	ExtensionScopeProject ExtensionScope = "project"
+	ExtensionScopeRemote  ExtensionScope = "remote"
+)
+
+type ExtensionSource struct {
+	Scope ExtensionScope
+	Ref   string
+}
+
+type CapabilitySet struct {
+	Prompts   int
+	Resources int
+	Tools     int
+	Commands  int
+}
+
 type ExtensionInfo struct {
-	ID          string
-	Name        string
-	Kind        ExtensionKind
-	Version     string
-	Description string
+	ID           string
+	Name         string
+	Kind         ExtensionKind
+	Version      string
+	Title        string
+	Description  string
+	Source       ExtensionSource
+	Capabilities CapabilitySet
+}
+
+func (info ExtensionInfo) Valid() bool {
+	if strings.TrimSpace(info.ID) == "" {
+		return false
+	}
+	if strings.TrimSpace(info.Name) == "" {
+		return false
+	}
+	switch info.Kind {
+	case ExtensionMCP, ExtensionSkill:
+		return true
+	default:
+		return false
+	}
+}
+
+func (info ExtensionInfo) IsZero() bool {
+	return strings.TrimSpace(info.ID) == "" && strings.TrimSpace(info.Name) == "" && strings.TrimSpace(string(info.Kind)) == ""
 }
 
 type Manager interface {
