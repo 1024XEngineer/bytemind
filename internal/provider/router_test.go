@@ -24,6 +24,22 @@ func (s stubHealthChecker) Check(_ context.Context, id ProviderID) error {
 	if s.calls != nil {
 		s.calls[id]++
 	}
+	if s.statuses != nil {
+		snapshot := s.statuses[id]
+		if snapshot.ProviderID == "" {
+			snapshot.ProviderID = id
+		}
+		if err, ok := s.errors[id]; ok && err != nil {
+			snapshot.Status = HealthStatusUnavailable
+			s.statuses[id] = snapshot
+			return err
+		}
+		if snapshot.Status == "" {
+			snapshot.Status = HealthStatusHealthy
+			s.statuses[id] = snapshot
+		}
+		return nil
+	}
 	if s.errors == nil {
 		return nil
 	}
@@ -154,7 +170,7 @@ func TestRouterFiltersUnhealthyProviders(t *testing.T) {
 	reg, _ := NewRegistry(config.ProviderRuntimeConfig{})
 	_ = reg.Register(context.Background(), &stubRouterClient{providerID: "openai", models: []ModelInfo{{ProviderID: "openai", ModelID: "gpt-5.4"}}})
 	_ = reg.Register(context.Background(), &stubRouterClient{providerID: "backup", models: []ModelInfo{{ProviderID: "backup", ModelID: "gpt-5.4"}}})
-	router := NewRouter(reg, stubHealthChecker{errors: map[ProviderID]error{"openai": errors.New("down")}}, RouterConfig{})
+	router := NewRouter(reg, stubHealthChecker{errors: map[ProviderID]error{"openai": errors.New("down")}, statuses: map[ProviderID]HealthSnapshot{"openai": {ProviderID: "openai", Status: HealthStatusHealthy}, "backup": {ProviderID: "backup", Status: HealthStatusHealthy}}}, RouterConfig{})
 	result, err := router.Route(context.Background(), "gpt-5.4", RouteContext{AllowFallback: true})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -188,7 +204,7 @@ func TestRoutedClientFallsBackOnRetryableProviderError(t *testing.T) {
 	reg, _ := NewRegistry(config.ProviderRuntimeConfig{})
 	_ = reg.Register(context.Background(), primary)
 	_ = reg.Register(context.Background(), fallback)
-	client := NewRoutedClientWithPolicy(NewRouter(reg, nil, RouterConfig{DefaultProvider: "openai"}), true)
+	client := NewRoutedClientWithPolicy(NewRouter(reg, nil, RouterConfig{DefaultProvider: "openai"}), nil, true)
 	msg, err := client.CreateMessage(context.Background(), llm.ChatRequest{Model: "gpt-5.4"})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -216,7 +232,7 @@ func TestRoutedClientStopsOnNonRetryableProviderError(t *testing.T) {
 	reg, _ := NewRegistry(config.ProviderRuntimeConfig{})
 	_ = reg.Register(context.Background(), primary)
 	_ = reg.Register(context.Background(), fallback)
-	client := NewRoutedClientWithPolicy(NewRouter(reg, nil, RouterConfig{DefaultProvider: "openai"}), true)
+	client := NewRoutedClientWithPolicy(NewRouter(reg, nil, RouterConfig{DefaultProvider: "openai"}), nil, true)
 	_, err := client.CreateMessage(context.Background(), llm.ChatRequest{Model: "gpt-5.4"})
 	var providerErr *Error
 	if !errors.As(err, &providerErr) || providerErr.Code != ErrCodeBadRequest || providerErr.Retryable {
@@ -280,7 +296,7 @@ func TestRouterRouteHandlesNilRegistryAndNoHealthyCandidates(t *testing.T) {
 		t.Fatal("expected nil router error")
 	}
 	reg := stubRegistry{ids: []ProviderID{"openai"}, clients: map[ProviderID]Client{"openai": &stubRouterClient{providerID: "openai", models: []ModelInfo{{ModelID: "gpt-5.4"}}}}}
-	_, err := NewRouter(reg, stubHealthChecker{errors: map[ProviderID]error{"openai": errors.New("down")}}, RouterConfig{}).Route(context.Background(), "gpt-5.4", RouteContext{AllowFallback: true})
+	_, err := NewRouter(reg, stubHealthChecker{errors: map[ProviderID]error{"openai": errors.New("down")}, statuses: map[ProviderID]HealthSnapshot{"openai": {ProviderID: "openai", Status: HealthStatusHealthy}}}, RouterConfig{}).Route(context.Background(), "gpt-5.4", RouteContext{AllowFallback: true})
 	if err == nil {
 		t.Fatal("expected unavailable error")
 	}
@@ -290,14 +306,14 @@ func TestRouterRouteHandlesNilRegistryAndNoHealthyCandidates(t *testing.T) {
 		t.Fatalf("expected list models cancellation to propagate, got %v", err)
 	}
 	reg = stubRegistry{ids: []ProviderID{"openai"}, clients: map[ProviderID]Client{"openai": &stubRouterClient{providerID: "openai", models: []ModelInfo{{ModelID: "gpt-5.4"}}}}}
-	_, err = NewRouter(reg, stubHealthChecker{errors: map[ProviderID]error{"openai": context.Canceled}}, RouterConfig{}).Route(context.Background(), "gpt-5.4", RouteContext{})
+	_, err = NewRouter(reg, stubHealthChecker{errors: map[ProviderID]error{"openai": context.Canceled}, statuses: map[ProviderID]HealthSnapshot{"openai": {ProviderID: "openai", Status: HealthStatusHealthy}}}, RouterConfig{}).Route(context.Background(), "gpt-5.4", RouteContext{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected health check cancellation to propagate, got %v", err)
 	}
 }
 
 func TestFilterHealthyCandidatesChecksEachProviderOnce(t *testing.T) {
-	health := stubHealthChecker{calls: map[ProviderID]int{}, errors: map[ProviderID]error{"backup": errors.New("down")}}
+	health := stubHealthChecker{calls: map[ProviderID]int{}, statuses: map[ProviderID]HealthSnapshot{}, errors: map[ProviderID]error{"backup": errors.New("down")}}
 	candidates := []routeCandidate{{ProviderID: "openai", ModelID: "gpt-5.4"}, {ProviderID: "openai", ModelID: "gpt-4.1"}, {ProviderID: "backup", ModelID: "gpt-5.4"}, {ProviderID: "backup", ModelID: "gpt-4.1"}}
 	filtered, err := filterHealthyCandidates(context.Background(), health, candidates)
 	if err != nil {
@@ -323,14 +339,14 @@ func TestFilterHealthyCandidatesSkipsUnavailableAndAllowsHalfOpen(t *testing.T) 
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if len(filtered) != 2 || filtered[0].ProviderID != "half" || filtered[1].ProviderID != "up" {
+	if len(filtered) != 1 || filtered[0].ProviderID != "up" {
 		t.Fatalf("unexpected filtered candidates %#v", filtered)
 	}
-	if filtered[0].HealthStatus != HealthStatusHalfOpen || filtered[1].HealthStatus != HealthStatusHealthy {
+	if filtered[0].HealthStatus != HealthStatusHealthy {
 		t.Fatalf("unexpected candidate health %#v", filtered)
 	}
-	if _, ok := health.calls["down"]; ok {
-		t.Fatalf("expected unavailable provider to skip active check, got %#v", health.calls)
+	if health.calls["down"] != 1 || health.calls["half"] != 1 || health.calls["up"] != 1 {
+		t.Fatalf("expected all providers to be checked once, got %#v", health.calls)
 	}
 }
 
@@ -441,7 +457,7 @@ func TestNewRoutedClientAndExecuteBranches(t *testing.T) {
 	}
 	cancelCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := NewRoutedClientWithPolicy(NewRouter(reg, nil, RouterConfig{DefaultProvider: "openai"}), true).CreateMessage(cancelCtx, llm.ChatRequest{Model: "gpt-5.4"}); !errors.Is(err, context.Canceled) {
+	if _, err := NewRoutedClientWithPolicy(NewRouter(reg, nil, RouterConfig{DefaultProvider: "openai"}), nil, true).CreateMessage(cancelCtx, llm.ChatRequest{Model: "gpt-5.4"}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
 	if len(fallback.streamReqs) != 0 {

@@ -165,32 +165,28 @@ func filterHealthyCandidates(ctx context.Context, health HealthChecker, candidat
 		return append([]routeCandidate(nil), candidates...), nil
 	}
 	filtered := make([]routeCandidate, 0, len(candidates))
-	snapshots := make(map[ProviderID]HealthSnapshot, len(candidates))
-	checked := make(map[ProviderID]error, len(candidates))
+	checked := make(map[ProviderID]HealthSnapshot, len(candidates))
 	for _, candidate := range candidates {
-		snapshot, ok := snapshots[candidate.ProviderID]
+		snapshot, ok := checked[candidate.ProviderID]
 		if !ok {
+			err := health.Check(ctx, candidate.ProviderID)
+			if errors.Is(err, context.Canceled) {
+				return nil, err
+			}
 			snapshot = health.Status(ctx, candidate.ProviderID)
-			snapshots[candidate.ProviderID] = snapshot
+			checked[candidate.ProviderID] = snapshot
+			if err != nil && snapshot.Status != HealthStatusHalfOpen && snapshot.Status != HealthStatusHealthy && snapshot.Status != HealthStatusDegraded {
+				continue
+			}
 		}
 		if snapshot.Status == HealthStatusUnavailable {
 			continue
 		}
-		err, ok := checked[candidate.ProviderID]
-		if !ok {
-			err = health.Check(ctx, candidate.ProviderID)
-			if errors.Is(err, context.Canceled) {
-				return nil, err
-			}
-			checked[candidate.ProviderID] = err
+		candidate.HealthStatus = snapshot.Status
+		if candidate.HealthStatus == "" {
+			candidate.HealthStatus = HealthStatusHealthy
 		}
-		if err == nil || snapshot.Status == HealthStatusHalfOpen {
-			candidate.HealthStatus = snapshot.Status
-			if candidate.HealthStatus == "" {
-				candidate.HealthStatus = HealthStatusHealthy
-			}
-			filtered = append(filtered, candidate)
-		}
+		filtered = append(filtered, candidate)
 	}
 	return filtered, nil
 }
