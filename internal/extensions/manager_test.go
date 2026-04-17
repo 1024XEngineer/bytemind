@@ -128,6 +128,30 @@ func TestManagerUnloadIgnoresUnrelatedBrokenManifest(t *testing.T) {
 	}
 }
 
+func TestManagerUnloadCanDisableBrokenExtension(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, ".bytemind", "skills")
+	bad := filepath.Join(project, "bad")
+	if err := os.MkdirAll(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bad, "skill.json"), []byte(`{"name":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(root)
+	if err := mgr.Unload(context.Background(), "skill.bad"); err != nil {
+		t.Fatalf("expected broken extension to be disable-able, got %v", err)
+	}
+	items, err := mgr.List(context.Background())
+	if err != nil {
+		t.Fatalf("expected discovery error to clear after unload, got %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no visible extensions, got %#v", items)
+	}
+}
+
 func TestManagerListDiscoversAcrossScopesWithPriority(t *testing.T) {
 	root := t.TempDir()
 	builtin := filepath.Join(root, "builtin")

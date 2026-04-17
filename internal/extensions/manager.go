@@ -77,13 +77,12 @@ func (m *extensionManager) Unload(_ context.Context, extensionID string) error {
 	defer m.mu.Unlock()
 	if _, ok := m.catalog[id]; !ok {
 		if _, ok := m.manual[id]; !ok {
-			if err, ok := m.discoverErrs[id]; ok {
-				return err
+			if _, ok := m.discoverErrs[id]; !ok {
+				if discoverErr := m.discoveryErrorLocked(); discoverErr != nil {
+					return discoverErr
+				}
+				return wrapError(ErrCodeNotFound, "extension not found", nil)
 			}
-			if discoverErr := m.discoveryErrorLocked(); discoverErr != nil {
-				return discoverErr
-			}
-			return wrapError(ErrCodeNotFound, "extension not found", nil)
 		}
 	}
 	delete(m.catalog, id)
@@ -172,6 +171,10 @@ func (m *extensionManager) reload() error {
 	m.mu.Lock()
 	for id, entry := range m.manual {
 		loaded[id] = entry
+	}
+	for id := range m.disabled {
+		delete(loaded, id)
+		delete(discoverErrs, id)
 	}
 	m.catalog = loaded
 	m.discoverErrs = discoverErrs
