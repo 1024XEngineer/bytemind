@@ -30,13 +30,18 @@ type turnProcessParams struct {
 	Out              io.Writer
 }
 
-func (r *Runner) processTurn(ctx context.Context, p turnProcessParams) (string, bool, error) {
-	if r.registry == nil {
+func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (string, bool, error) {
+	if e == nil || e.runner == nil {
+		return "", false, fmt.Errorf("agent engine is unavailable")
+	}
+	runner := e.runner
+
+	if runner.registry == nil {
 		return "", false, fmt.Errorf("tool registry is unavailable")
 	}
-	filteredTools := r.registry.DefinitionsForModeWithFilters(p.RunMode, p.AllowedToolNames, p.DeniedToolNames)
+	filteredTools := runner.registry.DefinitionsForModeWithFilters(p.RunMode, p.AllowedToolNames, p.DeniedToolNames)
 	request := contextpkg.BuildChatRequest(contextpkg.ChatRequestInput{
-		Model:       r.config.Provider.Model,
+		Model:       runner.config.Provider.Model,
 		Messages:    p.Messages,
 		Tools:       filteredTools,
 		Assets:      p.Assets,
@@ -45,20 +50,20 @@ func (r *Runner) processTurn(ctx context.Context, p turnProcessParams) (string, 
 
 	streamedText := false
 	turnStart := time.Now()
-	reply, err := r.completeTurn(ctx, request, p.Out, &streamedText)
+	reply, err := e.completeTurn(ctx, request, p.Out, &streamedText)
 	turnLatency := time.Since(turnStart)
 	if err != nil {
 		estimatedUsage := tokenusage.ResolveTurnUsage(request, nil)
-		r.recordTokenUsage(ctx, p.Session, request, estimatedUsage, turnLatency, false)
+		runner.recordTokenUsage(ctx, p.Session, request, estimatedUsage, turnLatency, false)
 		return "", false, err
 	}
 	reply.Normalize()
 	turnUsage := tokenusage.ResolveTurnUsage(request, &reply)
-	r.recordTokenUsage(ctx, p.Session, request, turnUsage, turnLatency, true)
-	r.emitUsageEvent(p.Session, &turnUsage)
+	runner.recordTokenUsage(ctx, p.Session, request, turnUsage, turnLatency, true)
+	runner.emitUsageEvent(p.Session, &turnUsage)
 
 	if len(reply.ToolCalls) == 0 {
-		answer, finalizeErr := r.finalizeTurnWithoutTools(p.RunMode, p.Session, reply, p.Out, streamedText)
+		answer, finalizeErr := e.finalizeTurnWithoutTools(p.RunMode, p.Session, reply, p.Out, streamedText)
 		return answer, true, finalizeErr
 	}
 
@@ -72,13 +77,13 @@ func (r *Runner) processTurn(ctx context.Context, p turnProcessParams) (string, 
 			Reason:        fmt.Sprintf("I stopped because the assistant repeated the same tool sequence %d times in a row (%s).", sequenceObservation.RepeatCount, strings.Join(sequenceObservation.UniqueToolNames, ", ")),
 			ExecutedTools: *p.ExecutedTools,
 		})
-		answer, summaryErr := r.finishWithSummary(p.Session, summary, p.Out, streamedText)
+		answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
 		return answer, true, summaryErr
 	}
 
 	p.Session.Messages = append(p.Session.Messages, reply)
-	if r.store != nil {
-		if err := r.store.Save(p.Session); err != nil {
+	if runner.store != nil {
+		if err := runner.store.Save(p.Session); err != nil {
 			return "", false, err
 		}
 	}
@@ -88,9 +93,22 @@ func (r *Runner) processTurn(ctx context.Context, p turnProcessParams) (string, 
 	}
 	for _, call := range reply.ToolCalls {
 		*p.ExecutedTools = append(*p.ExecutedTools, call.Function.Name)
-		if err := r.executeToolCall(ctx, p.Session, p.RunMode, call, p.Out, p.AllowedTools, p.DeniedTools); err != nil {
+		emitTurnEvent(ctx, TurnEvent{
+			Type: TurnEventToolUse,
+			Payload: map[string]any{
+				"tool_name":      call.Function.Name,
+				"tool_arguments": call.Function.Arguments,
+				"tool_call_id":   call.ID,
+			},
+		})
+		if err := e.executeToolCall(ctx, p.Session, p.RunMode, call, p.Out, p.AllowedTools, p.DeniedTools); err != nil {
 			return "", false, err
 		}
 	}
 	return "", false, nil
+}
+
+func (r *Runner) processTurn(ctx context.Context, p turnProcessParams) (string, bool, error) {
+	engine := &defaultEngine{runner: r}
+	return engine.processTurn(ctx, p)
 }

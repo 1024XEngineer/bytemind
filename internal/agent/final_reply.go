@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"io"
 	"strings"
 
@@ -10,7 +11,11 @@ import (
 	"bytemind/internal/session"
 )
 
-func (r *Runner) finalizeTurnWithoutTools(runMode planpkg.AgentMode, sess *session.Session, reply llm.Message, out io.Writer, streamedText bool) (string, error) {
+func (e *defaultEngine) finalizeTurnWithoutTools(runMode planpkg.AgentMode, sess *session.Session, reply llm.Message, out io.Writer, streamedText bool) (string, error) {
+	if e == nil || e.runner == nil {
+		return "", fmt.Errorf("agent engine is unavailable")
+	}
+
 	answer := strings.TrimSpace(reply.Content)
 	if answer == "" {
 		reply.Content = emptyReplyFallback
@@ -23,7 +28,7 @@ func (r *Runner) finalizeTurnWithoutTools(runMode planpkg.AgentMode, sess *sessi
 		reply = llm.NewAssistantTextMessage(answer)
 	}
 
-	if err := r.persistAssistantReply(sess, reply); err != nil {
+	if err := e.persistAssistantReply(sess, reply); err != nil {
 		return "", err
 	}
 
@@ -35,25 +40,40 @@ func (r *Runner) finalizeTurnWithoutTools(runMode planpkg.AgentMode, sess *sessi
 	return answer, nil
 }
 
-func (r *Runner) persistAssistantReply(sess *session.Session, reply llm.Message) error {
+func (e *defaultEngine) persistAssistantReply(sess *session.Session, reply llm.Message) error {
+	if e == nil || e.runner == nil {
+		return fmt.Errorf("agent engine is unavailable")
+	}
+	runner := e.runner
+
 	if err := llm.ValidateMessage(reply); err != nil {
 		return err
 	}
 	sess.Messages = append(sess.Messages, reply)
-	if r.store != nil {
-		if err := r.store.Save(sess); err != nil {
+	if runner.store != nil {
+		if err := runner.store.Save(sess); err != nil {
 			return err
 		}
 	}
-	r.emit(Event{
+	runner.emit(Event{
 		Type:      EventAssistantMessage,
 		SessionID: corepkg.SessionID(sess.ID),
 		Content:   reply.Content,
 	})
-	r.emit(Event{
+	runner.emit(Event{
 		Type:      EventRunFinished,
 		SessionID: corepkg.SessionID(sess.ID),
 		Content:   reply.Content,
 	})
 	return nil
+}
+
+func (r *Runner) finalizeTurnWithoutTools(runMode planpkg.AgentMode, sess *session.Session, reply llm.Message, out io.Writer, streamedText bool) (string, error) {
+	engine := &defaultEngine{runner: r}
+	return engine.finalizeTurnWithoutTools(runMode, sess, reply, out, streamedText)
+}
+
+func (r *Runner) persistAssistantReply(sess *session.Session, reply llm.Message) error {
+	engine := &defaultEngine{runner: r}
+	return engine.persistAssistantReply(sess, reply)
 }
