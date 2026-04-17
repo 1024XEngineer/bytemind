@@ -116,13 +116,18 @@ func TestManagerUnloadIgnoresUnrelatedBrokenManifest(t *testing.T) {
 	}
 
 	mgr := NewManager(root)
-	if _, err := mgr.Load(context.Background(), good); err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
 	if err := mgr.Unload(context.Background(), "skill.review"); err != nil {
 		t.Fatalf("Unload should ignore unrelated broken manifest: %v", err)
 	}
+	items, err := mgr.List(context.Background())
+	if err != nil {
+		t.Fatalf("List should stay available with localized failures: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected unloaded extension to stay hidden, got %#v", items)
+	}
 }
+
 func TestManagerListDiscoversAcrossScopesWithPriority(t *testing.T) {
 	root := t.TempDir()
 	builtin := filepath.Join(root, "builtin")
@@ -166,11 +171,21 @@ func TestManagerListDiscoversAcrossScopesWithPriority(t *testing.T) {
 	}
 }
 
-func TestManagerListReturnsManifestErrors(t *testing.T) {
+func TestManagerListLocalizesManifestErrors(t *testing.T) {
 	root := t.TempDir()
 	project := filepath.Join(root, "project")
+	good := filepath.Join(project, "good")
 	bad := filepath.Join(project, "bad")
+	if err := os.MkdirAll(good, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(good, "skill.json"), []byte(`{"name":"good","description":"ok"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(good, "SKILL.md"), []byte("# /good"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(bad, "skill.json"), []byte(`{"name":`), 0o644); err != nil {
@@ -178,16 +193,12 @@ func TestManagerListReturnsManifestErrors(t *testing.T) {
 	}
 
 	mgr := NewManagerWithDirs(root, filepath.Join(root, "builtin"), filepath.Join(root, "user"), project)
-	if _, err := mgr.List(context.Background()); err == nil {
-		t.Fatal("expected invalid manifest error")
-	} else {
-		var extErr *ExtensionError
-		if !errors.As(err, &extErr) {
-			t.Fatalf("expected ExtensionError, got %T", err)
-		}
-		if extErr.Code != ErrCodeInvalidManifest {
-			t.Fatalf("unexpected code: %s", extErr.Code)
-		}
+	items, err := mgr.List(context.Background())
+	if err != nil {
+		t.Fatalf("expected localized discovery failures, got %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "skill.good" {
+		t.Fatalf("expected healthy extension to remain visible, got %#v", items)
 	}
 }
 

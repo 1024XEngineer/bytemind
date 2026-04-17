@@ -20,9 +20,10 @@ type extensionManager struct {
 	userDir    string
 	projectDir string
 
-	catalog  map[string]ExtensionInfo
-	manual   map[string]ExtensionInfo
-	disabled map[string]struct{}
+	catalog      map[string]ExtensionInfo
+	manual       map[string]ExtensionInfo
+	disabled     map[string]struct{}
+	discoverErrs map[string]error
 }
 
 func NewManager(workspace string) Manager {
@@ -40,13 +41,14 @@ func NewManager(workspace string) Manager {
 
 func NewManagerWithDirs(workspace, builtinDir, userDir, projectDir string) Manager {
 	return &extensionManager{
-		workspace:  workspace,
-		builtinDir: builtinDir,
-		userDir:    userDir,
-		projectDir: projectDir,
-		catalog:    map[string]ExtensionInfo{},
-		manual:     map[string]ExtensionInfo{},
-		disabled:   map[string]struct{}{},
+		workspace:    workspace,
+		builtinDir:   builtinDir,
+		userDir:      userDir,
+		projectDir:   projectDir,
+		catalog:      map[string]ExtensionInfo{},
+		manual:       map[string]ExtensionInfo{},
+		disabled:     map[string]struct{}{},
+		discoverErrs: map[string]error{},
 	}
 }
 
@@ -68,6 +70,9 @@ func (m *extensionManager) Unload(_ context.Context, extensionID string) error {
 	if id == "" {
 		return wrapError(ErrCodeInvalidExtension, "extension id is required", nil)
 	}
+	if err := m.reload(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.catalog[id]; !ok {
@@ -78,6 +83,7 @@ func (m *extensionManager) Unload(_ context.Context, extensionID string) error {
 	delete(m.catalog, id)
 	delete(m.manual, id)
 	m.disabled[id] = struct{}{}
+	delete(m.discoverErrs, id)
 	return nil
 }
 
@@ -122,6 +128,7 @@ func (m *extensionManager) List(_ context.Context) ([]ExtensionInfo, error) {
 
 func (m *extensionManager) reload() error {
 	loaded := map[string]ExtensionInfo{}
+	discoverErrs := map[string]error{}
 	for _, item := range []struct {
 		scope ExtensionScope
 		dir   string
@@ -130,12 +137,15 @@ func (m *extensionManager) reload() error {
 		{scope: ExtensionScopeUser, dir: m.userDir},
 		{scope: ExtensionScopeProject, dir: m.projectDir},
 	} {
-		entries, err := discoverScope(item.scope, item.dir)
+		entries, errs, err := discoverScope(item.scope, item.dir)
 		if err != nil {
 			return err
 		}
 		for _, entry := range entries {
 			loaded[entry.ID] = entry
+		}
+		for id, discoverErr := range errs {
+			discoverErrs[id] = discoverErr
 		}
 	}
 	m.mu.Lock()
@@ -143,6 +153,7 @@ func (m *extensionManager) reload() error {
 		loaded[id] = entry
 	}
 	m.catalog = loaded
+	m.discoverErrs = discoverErrs
 	m.mu.Unlock()
 	return nil
 }
@@ -177,32 +188,35 @@ func (m *extensionManager) discoverOne(source string) (ExtensionInfo, error) {
 	return item, nil
 }
 
-func discoverScope(scope ExtensionScope, root string) ([]ExtensionInfo, error) {
+func discoverScope(scope ExtensionScope, root string) ([]ExtensionInfo, map[string]error, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, wrapError(ErrCodeLoadFailed, fmt.Sprintf("discover extensions from %s", root), err)
+		return nil, nil, wrapError(ErrCodeLoadFailed, fmt.Sprintf("discover extensions from %s", root), err)
 	}
 	items := make([]ExtensionInfo, 0, len(entries))
+	discoverErrs := make(map[string]error)
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		item, ok, err := discoverExtension(scope, filepath.Join(root, entry.Name()), entry.Name())
+		dir := filepath.Join(root, entry.Name())
+		item, ok, err := discoverExtension(scope, dir, entry.Name())
 		if err != nil {
-			return nil, err
+			discoverErrs[extensionIDForDir(entry.Name())] = err
+			continue
 		}
 		if ok {
 			items = append(items, item)
 		}
 	}
-	return items, nil
+	return items, discoverErrs, nil
 }
 
 func discoverExtension(scope ExtensionScope, dir, dirName string) (ExtensionInfo, bool, error) {
@@ -330,6 +344,14 @@ func scopeForPath(path string, m *extensionManager) (ExtensionScope, bool) {
 		}
 	}
 	return "", false
+}
+
+func extensionIDForDir(dirName string) string {
+	name := strings.TrimSpace(dirName)
+	if name == "" {
+		return ""
+	}
+	return "skill." + name
 }
 
 func fileExists(path string) bool {
