@@ -52,7 +52,7 @@ func TestBlueGlamourStyleOverridesCoreBlueThemeSlots(t *testing.T) {
 	if cfg.LinkText.Color == nil || *cfg.LinkText.Color != "#7FE6FF" {
 		t.Fatalf("expected link text color override, got %+v", cfg.LinkText.Color)
 	}
-	if cfg.Code.Color == nil || *cfg.Code.Color != "#FF8F7A" {
+	if cfg.Code.Color == nil || *cfg.Code.Color != "#E6B873" {
 		t.Fatalf("expected inline code color override, got %+v", cfg.Code.Color)
 	}
 	if cfg.Code.BackgroundColor != nil {

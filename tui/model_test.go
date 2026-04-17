@@ -2056,18 +2056,26 @@ func TestPasteEnterDoesNotSubmitAndKeepsNewline(t *testing.T) {
 func TestShortBracketedPastePayloadKeepsTrailingNewlineBoundary(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
-
-	got, _ := m.handlePastePayload("# 主标题\n")
+	got, cmd := m.handlePastePayload("# title\n")
 	updated := got.(model)
-
-	if updated.input.Value() != "# 主标题\n" {
-		t.Fatalf("expected short paste payload to preserve trailing newline, got %q", updated.input.Value())
+	if cmd == nil {
+		t.Fatalf("expected short paste payload to schedule finalize")
+	}
+	if updated.input.Value() != "" {
+		t.Fatalf("expected short paste payload to stay buffered before finalize, got %q", updated.input.Value())
 	}
 	if len(updated.chatItems) != 0 {
 		t.Fatalf("expected short paste payload not to auto submit, got %d chat items", len(updated.chatItems))
 	}
+	if !updated.hasActivePasteSession() {
+		t.Fatalf("expected short paste payload to activate paste session")
+	}
+	got, _ = updated.Update(pasteFinalizeMsg{ID: updated.pasteSession.finalizeID})
+	finalized := got.(model)
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(finalized.input.Value()) {
+		t.Fatalf("expected short multiline paste payload to finalize into marker, got %q", finalized.input.Value())
+	}
 }
-
 func TestRapidBareEnterAfterRecentBurstIsTreatedAsPasteContinuation(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
@@ -2121,6 +2129,66 @@ func TestBareEnterAfterRecentMarkdownBurstIsTreatedAsPasteContinuation(t *testin
 	}
 	if !strings.Contains(updated.input.Value(), "\n") {
 		t.Fatalf("expected markdown burst enter to insert newline, got %q", updated.input.Value())
+	}
+}
+
+func TestSplitPastePayloadFinalizesIntoSingleMarker(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	got, cmd := m.handlePastePayload("# 主标题\n")
+	updated := got.(model)
+	if cmd == nil || !updated.hasActivePasteSession() {
+		t.Fatalf("expected first fragment to open paste session")
+	}
+	if updated.input.Value() != "" {
+		t.Fatalf("expected first fragment to stay buffered, got %q", updated.input.Value())
+	}
+
+	got, cmd = updated.handlePastePayload("## 二级标题\n```go\nfmt.Println(\"hi\")\n```\n")
+	updated = got.(model)
+	if cmd == nil || !updated.hasActivePasteSession() {
+		t.Fatalf("expected second fragment to keep paste session active")
+	}
+
+	got, _ = updated.Update(pasteFinalizeMsg{ID: updated.pasteSession.finalizeID})
+	finalized := got.(model)
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(finalized.input.Value()) {
+		t.Fatalf("expected split paste payload to finalize into one marker, got %q", finalized.input.Value())
+	}
+	if len(finalized.chatItems) != 0 {
+		t.Fatalf("expected split paste payload not to auto submit, got %d items", len(finalized.chatItems))
+	}
+}
+
+func TestRunesEnterRunesPasteFlowDoesNotSubmitFirstLine(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("# 主标题")})
+	updated := got.(model)
+	if cmd == nil || !updated.hasActivePasteSession() {
+		t.Fatalf("expected initial rune burst to activate paste session")
+	}
+	if updated.input.Value() != "" {
+		t.Fatalf("expected initial rune burst to stay buffered, got %q", updated.input.Value())
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected bare enter during paste flow not to submit first line, got %d items", len(updated.chatItems))
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("## 二级标题\n```go\nfmt.Println(\"hi\")\n```")})
+	updated = got.(model)
+	got, _ = updated.Update(pasteFinalizeMsg{ID: updated.pasteSession.finalizeID})
+	finalized := got.(model)
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(finalized.input.Value()) {
+		t.Fatalf("expected rune-enter-rune paste flow to finalize into marker, got %q", finalized.input.Value())
+	}
+	if len(finalized.chatItems) != 0 {
+		t.Fatalf("expected rune-enter-rune paste flow not to auto submit, got %d items", len(finalized.chatItems))
 	}
 }
 

@@ -140,6 +140,10 @@ func renderChatCard(item chatEntry, width int) string {
 	default:
 		if item.Status == "thinking" || item.Status == "thinking_done" {
 			border = chatThinkingStyle
+		} else if item.Status == "streaming" {
+			border = chatStreamingStyle
+		} else if item.Status == "settling" {
+			border = chatSettlingStyle
 		}
 	}
 	contentWidth := max(8, width-border.GetHorizontalFrameSize())
@@ -192,6 +196,18 @@ func renderChatSection(item chatEntry, width int) string {
 			}
 			displayTitle = "thinking"
 			status = ""
+		} else if item.Status == "streaming" {
+			title = assistantStreamingTitleStyle
+			displayTitle = assistantLabel
+			status = ""
+		} else if item.Status == "settling" {
+			title = assistantSettlingTitleStyle
+			displayTitle = assistantLabel
+			status = ""
+		} else if item.Status == "final" {
+			title = assistantFinalTitleStyle
+			displayTitle = assistantLabel
+			status = ""
 		} else {
 			title = assistantMessageStyle
 		}
@@ -202,6 +218,11 @@ func renderChatSection(item chatEntry, width int) string {
 	}
 	if status != "" {
 		headContent = lipgloss.JoinHorizontal(lipgloss.Left, headContent, mutedStyle.Render("  "+status))
+	}
+	if item.Kind == "assistant" {
+		if badge := renderAssistantPhaseBadge(item.Status); badge != "" {
+			headContent = lipgloss.JoinHorizontal(lipgloss.Left, headContent, "  ", badge)
+		}
 	}
 	head := lipgloss.NewStyle().
 		Width(width).
@@ -232,7 +253,7 @@ func renderBytemindRunRow(items []chatEntry, width int) string {
 }
 
 func renderBytemindRunCard(items []chatEntry, width int) string {
-	outer := chatAssistantStyle
+	outer := resolveRunCardStyle(items)
 	contentWidth := max(8, width-outer.GetHorizontalFrameSize())
 	sections := make([]string, 0, len(items))
 	for _, item := range items {
@@ -288,6 +309,34 @@ func (m model) renderThinkingHeadline(status string) string {
 		index = sum % len(dots)
 	}
 	return "thinking" + dots[index]
+}
+
+func renderAssistantPhaseBadge(status string) string {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "streaming":
+		return statusGeneratingStyle.Render("Generating")
+	case "settling":
+		return statusSettlingStyle.Render("Finalizing")
+	case "final":
+		return statusFinalStyle.Render("Answer")
+	default:
+		return ""
+	}
+}
+
+func resolveRunCardStyle(items []chatEntry) lipgloss.Style {
+	for _, item := range items {
+		if item.Kind != "assistant" {
+			continue
+		}
+		switch strings.TrimSpace(strings.ToLower(item.Status)) {
+		case "streaming":
+			return chatStreamingStyle
+		case "settling":
+			return chatSettlingStyle
+		}
+	}
+	return chatAssistantStyle
 }
 
 func renderModal(width, height int, modal string) string {

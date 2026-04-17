@@ -50,6 +50,7 @@ const (
 	conversationViewportZoneID = "bytemind:conversation:viewport"
 	inputEditorZoneID          = "bytemind:input:editor"
 	thinkingSpinnerFPS         = 80 * time.Millisecond
+	pasteAggregateDebounce     = 120 * time.Millisecond
 )
 
 type footerShortcutHint struct {
@@ -218,6 +219,21 @@ type mouseSelectionScrollTickMsg struct {
 	ID int
 }
 
+type pasteFinalizeMsg struct {
+	ID int
+}
+
+type pasteSessionState struct {
+	active       bool
+	startedAt    time.Time
+	lastEventAt  time.Time
+	sourceKind   string
+	baseInput    string
+	bufferedText string
+	sawMultiline bool
+	finalizeID   int
+}
+
 var commandItems = []commandItem{
 	{Name: "/help", Usage: "/help", Description: "Show usage and supported commands.", Kind: "command"},
 	{Name: "/session", Usage: "/session", Description: "Open the recent session list.", Kind: "command"},
@@ -326,6 +342,7 @@ type model struct {
 	nextPasteID           int
 	pastedStateLoaded     bool
 	lastCompressedPasteAt time.Time
+	pasteSession          pasteSessionState
 	clipboard             clipboardImageReader
 	clipboardText         clipboardTextWriter
 	runCancel             context.CancelFunc
@@ -475,6 +492,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case pasteFinalizeMsg:
+		if !m.hasActivePasteSession() {
+			return m, nil
+		}
+		m.finalizePasteSession(msg.ID)
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -675,6 +698,55 @@ func isCtrlVPasteKey(msg tea.KeyMsg) bool {
 		return true
 	}
 	return normalizeKeyName(msg.String()) == "ctrl+v"
+}
+
+func (m model) pasteFragmentFromKey(msg tea.KeyMsg) (string, string, bool) {
+	if msg.Paste {
+		switch {
+		case msg.Type == tea.KeyEnter:
+			return "\n", "paste-key", true
+		case len(msg.Runes) > 0:
+			return string(msg.Runes), "paste-key", true
+		default:
+			return "", "", false
+		}
+	}
+	if m.hasActivePasteSession() {
+		switch {
+		case msg.Type == tea.KeyEnter && m.shouldAppendEnterToActivePasteSession():
+			return "\n", "rapid-enter", true
+		case msg.Type == tea.KeyRunes && len(msg.Runes) > 0:
+			return string(msg.Runes), "rune", true
+		default:
+			return "", "", false
+		}
+	}
+	if msg.Type != tea.KeyRunes || len(msg.Runes) == 0 {
+		return "", "", false
+	}
+	fragment := string(msg.Runes)
+	if shouldStartPasteAggregationFromRunes(fragment) {
+		return fragment, "rune", true
+	}
+	return "", "", false
+}
+
+func shouldStartPasteAggregationFromRunes(fragment string) bool {
+	normalized := normalizeNewlines(fragment)
+	trimmed := strings.TrimSpace(normalized)
+	if trimmed == "" {
+		return false
+	}
+	if strings.Contains(normalized, "\n") {
+		return true
+	}
+	if len([]rune(fragment)) <= 1 {
+		return false
+	}
+	if looksLikeMarkdownPasteFragment(trimmed) {
+		return true
+	}
+	return len([]rune(trimmed)) >= pasteBurstImmediateMinChars
 }
 
 func inputMutationSource(msg tea.KeyMsg) string {
@@ -935,13 +1007,15 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if msg.Type == tea.KeyEnter && !msg.Paste && !m.shouldSuppressEnterAfterPaste() && m.shouldTreatRapidEnterAsPasteContinuation() {
 		before := m.input.Value()
-		m.input.SetValue(before + "\n")
-		if m.input.Value() != before {
-			m.lastInputAt = time.Now()
-			m.inputBurstSize = max(1, len(m.input.Value())-len(before))
-			m.syncInputOverlays()
-		}
+		after := before + "\n"
+		m.setInputValue(after)
+		_ = m.handleInputMutation(before, after, "rapid-enter")
+		m.syncInputOverlays()
 		return m, nil
+	}
+
+	if fragment, source, ok := m.pasteFragmentFromKey(msg); ok {
+		return m, m.ingestPasteFragment(fragment, source)
 	}
 
 	ctrlVPasteDetected := isCtrlVPasteKey(msg)
@@ -996,6 +1070,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.String() == "enter" && !msg.Paste {
+		if m.hasActivePasteSession() {
+			m.finalizePasteSession(m.pasteSession.finalizeID)
+			return m, nil
+		}
 		rawValue := m.input.Value()
 		if next, handled := m.handleSuppressedPasteEnter(rawValue); handled {
 			return next, nil
@@ -1199,9 +1277,6 @@ func (m model) hasImplicitPasteBurst() bool {
 }
 
 func (m model) shouldTreatRapidEnterAsPasteContinuation() bool {
-	if m.busy {
-		return false
-	}
 	if m.lastInputAt.IsZero() {
 		return false
 	}
@@ -1216,6 +1291,16 @@ func (m model) shouldTreatRapidEnterAsPasteContinuation() bool {
 		return true
 	}
 	return m.inputBurstSize >= pasteBurstImmediateMinChars
+}
+
+func (m model) shouldAppendEnterToActivePasteSession() bool {
+	if !m.hasActivePasteSession() {
+		return false
+	}
+	if m.pasteSession.lastEventAt.IsZero() {
+		return false
+	}
+	return time.Since(m.pasteSession.lastEventAt) <= 400*time.Millisecond
 }
 
 func looksLikeMarkdownPasteFragment(value string) bool {

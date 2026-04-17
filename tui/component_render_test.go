@@ -114,3 +114,45 @@ func TestComponentPlanPanelContentAndStepRender(t *testing.T) {
 		t.Fatalf("expected zero plan panel render height when panel is disabled, got %d", height)
 	}
 }
+
+func TestRenderChatSectionShowsSimpleAssistantStateLabels(t *testing.T) {
+	streaming := renderChatSection(chatEntry{
+		Kind:   "assistant",
+		Title:  assistantLabel,
+		Body:   "Streaming partial answer",
+		Status: "streaming",
+	}, 60)
+	if !strings.Contains(streaming, "Generating") {
+		t.Fatalf("expected streaming assistant section to show generating label, got %q", streaming)
+	}
+
+	final := renderChatSection(chatEntry{
+		Kind:   "assistant",
+		Title:  assistantLabel,
+		Body:   "Completed answer",
+		Status: "final",
+	}, 60)
+	if !strings.Contains(final, "Answer") {
+		t.Fatalf("expected final assistant section to show answer label, got %q", final)
+	}
+	if strings.Contains(final, "Generating") {
+		t.Fatalf("expected final assistant section not to look in-progress, got %q", final)
+	}
+}
+
+func TestRenderConversationKeepsProgressBlueAndFinalNeutral(t *testing.T) {
+	m := model{}
+	m.viewport.Width = 80
+	m.chatItems = []chatEntry{
+		{Kind: "user", Title: "You", Body: "Help me improve the UI"},
+		{Kind: "assistant", Title: assistantLabel, Body: "Still working", Status: "streaming"},
+		{Kind: "assistant", Title: assistantLabel, Body: "Updated the UI distinction.", Status: "final"},
+	}
+
+	view := m.renderConversation()
+	for _, want := range []string{"Generating", "Answer", "Updated the UI distinction."} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected conversation to contain %q, got %q", want, view)
+		}
+	}
+}

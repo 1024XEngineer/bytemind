@@ -67,52 +67,180 @@ func trimTrailingPasteTerminators(input string) string {
 	return normalizeNewlines(input)
 }
 
-func (m model) handlePastePayload(payload string) (tea.Model, tea.Cmd) {
-	if m.sessionsOpen || m.helpOpen || m.commandOpen || m.approval != nil {
-		return m, nil
-	}
+func schedulePasteFinalize(id int) tea.Cmd {
+	return tea.Tick(pasteAggregateDebounce, func(time.Time) tea.Msg {
+		return pasteFinalizeMsg{ID: id}
+	})
+}
 
-	before := m.input.Value()
-	source := "paste"
-	pasted := trimTrailingPasteTerminators(payload)
-	candidate := strings.ReplaceAll(pasted, ctrlVMarkerRune, "")
-	if strings.TrimSpace(candidate) == "" {
-		return m, nil
+func (m *model) beginPasteSession(source string) {
+	if m == nil {
+		return
 	}
+	if m.pasteSession.active {
+		return
+	}
+	now := time.Now()
+	m.pasteSession = pasteSessionState{
+		active:      true,
+		startedAt:   now,
+		lastEventAt: now,
+		sourceKind:  source,
+		baseInput:   m.input.Value(),
+	}
+}
 
-	// Immediately check if this is a long paste that should be compressed
-	if m.isLongPastedText(candidate) && isPasteLikeSource(source) {
-		marker, _, err := m.compressPastedText(candidate)
-		if err != nil {
-			m.statusNote = err.Error()
-			return m, nil
+func (m *model) syncPasteSessionPreview() {
+	if m == nil || !m.pasteSession.active {
+		return
+	}
+	preview := m.pasteSession.baseInput + normalizeNewlines(m.pasteSession.bufferedText)
+	if m.input.Value() != preview {
+		m.setInputValue(preview)
+	}
+	m.syncInputOverlays()
+}
+
+func shouldPreviewPasteSession(source string) bool {
+	source = strings.TrimSpace(strings.ToLower(source))
+	return source == "paste-key"
+}
+
+func (m *model) appendPasteSessionFragment(fragment, source string) int {
+	if m == nil {
+		return 0
+	}
+	if !m.pasteSession.active {
+		m.beginPasteSession(source)
+	}
+	now := time.Now()
+	m.pasteSession.lastEventAt = now
+	if strings.TrimSpace(source) != "" {
+		m.pasteSession.sourceKind = source
+	}
+	normalized := normalizeNewlines(fragment)
+	if normalized != "" {
+		m.pasteSession.bufferedText += normalized
+		if strings.Contains(normalized, "\n") {
+			m.pasteSession.sawMultiline = true
 		}
+		m.lastInputAt = now
+		m.inputBurstSize = max(m.inputBurstSize, len([]rune(strings.TrimSpace(normalized))))
+	}
+	m.pasteSession.finalizeID++
+	m.lastPasteAt = now
+	m.armPasteSubmitGuard(now)
+	return m.pasteSession.finalizeID
+}
 
-		// Directly set the input value with the marker to avoid any intermediate display
-		m.input.SetValue(before + marker)
-		after := m.input.Value()
-		if after != before {
-			m.handleInputMutation(before, after, source)
-		} else {
-			now := time.Now()
+func (m *model) clearPasteSession() {
+	if m == nil {
+		return
+	}
+	m.pasteSession = pasteSessionState{}
+}
+
+func (m *model) hasActivePasteSession() bool {
+	return m != nil && m.pasteSession.active
+}
+
+func (m *model) shouldFinalizePasteImmediately(source, fragment string) bool {
+	if m == nil || !m.pasteSession.active {
+		return false
+	}
+	if !isPasteLikeSource(source) {
+		return false
+	}
+	normalized := normalizeNewlines(fragment)
+	if strings.Count(normalized, "\n") < 2 {
+		return false
+	}
+	return m.isLongPastedText(normalized) || strings.Count(normalized, "\n") >= longPasteLineThreshold
+}
+
+func (m *model) finalizePasteSession(id int) {
+	if m == nil || !m.pasteSession.active {
+		return
+	}
+	if id > 0 && id != m.pasteSession.finalizeID {
+		return
+	}
+
+	base := m.pasteSession.baseInput
+	content := normalizeNewlines(m.pasteSession.bufferedText)
+	source := m.pasteSession.sourceKind
+	m.clearPasteSession()
+
+	candidate := strings.ReplaceAll(content, ctrlVMarkerRune, "")
+	if candidate == "" {
+		m.setInputValue(base)
+		m.syncInputOverlays()
+		return
+	}
+
+	now := time.Now()
+	if source == "paste-key" && !m.shouldCompressPastedText(candidate, source) && !m.isLongPastedText(candidate) {
+		m.setInputValue(base + candidate)
+		if strings.Contains(candidate, "\n") || isPasteLikeSource(source) {
 			m.lastPasteAt = now
 			m.armPasteSubmitGuard(now)
 		}
+		m.lastInputAt = now
+		m.inputBurstSize = max(1, len([]rune(candidate)))
 		m.syncInputOverlays()
-		return m, nil
+		return
+	}
+	if (source != "paste-key" && strings.Contains(candidate, "\n")) || m.shouldCompressPastedText(candidate, source) || (isPasteLikeSource(source) && m.isLongPastedText(candidate)) {
+		marker, stored, err := m.compressPastedText(candidate)
+		if err != nil {
+			m.statusNote = err.Error()
+			m.setInputValue(base)
+			m.syncInputOverlays()
+			return
+		}
+		m.setInputValue(base + marker)
+		m.lastPasteAt = now
+		m.armPasteSubmitGuard(now)
+		m.statusNote = fmt.Sprintf("Long pasted text (%d lines) compressed as %s. Use [Paste #%s], [Paste #%s line10], or [Paste #%s line10~line20].",
+			stored.Lines, marker, stored.ID, stored.ID, stored.ID)
+		m.syncInputOverlays()
+		return
 	}
 
-	// For shorter text or non-paste sources, use the regular flow
-	preview := m.input
-	var cmd tea.Cmd
-	preview, cmd = preview.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(pasted), Paste: true})
-	m.input = preview
-	after := m.input.Value()
-	if after != before {
-		m.handleInputMutation(before, after, source)
+	m.setInputValue(base + candidate)
+	if isPasteLikeSource(source) || strings.Contains(candidate, "\n") {
+		m.lastPasteAt = now
+		m.armPasteSubmitGuard(now)
 	}
+	m.lastInputAt = now
+	m.inputBurstSize = max(1, len([]rune(candidate)))
 	m.syncInputOverlays()
-	return m, cmd
+}
+
+func (m *model) ingestPasteFragment(fragment, source string) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	if m.sessionsOpen || m.helpOpen || m.commandOpen || m.approval != nil {
+		return nil
+	}
+	candidate := strings.ReplaceAll(normalizeNewlines(fragment), ctrlVMarkerRune, "")
+	if candidate == "" {
+		return nil
+	}
+	id := m.appendPasteSessionFragment(candidate, source)
+	if m.shouldFinalizePasteImmediately(source, candidate) {
+		m.finalizePasteSession(id)
+		return nil
+	}
+	if shouldPreviewPasteSession(source) {
+		m.syncPasteSessionPreview()
+	}
+	return schedulePasteFinalize(id)
+}
+
+func (m model) handlePastePayload(payload string) (tea.Model, tea.Cmd) {
+	return m, m.ingestPasteFragment(trimTrailingPasteTerminators(payload), "paste-payload")
 }
 
 func (m *model) ensurePastedContentState() {

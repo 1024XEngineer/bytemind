@@ -16,6 +16,7 @@ var (
 	colorMuted        = lipgloss.Color("#93A4B8")
 	colorDanger       = lipgloss.Color("#FF8F8F")
 	colorSuccess      = lipgloss.Color("#7EE0B5")
+	colorStreamBorder = lipgloss.Color("#3A5F86")
 
 	colorUserWarm      = lipgloss.Color("#FFD39B")
 	colorAICool        = lipgloss.Color("#E6EAF2")
@@ -174,8 +175,20 @@ var (
 	chatAssistantStyle = lipgloss.NewStyle().
 				Padding(0, 0)
 
+	chatStreamingStyle = lipgloss.NewStyle().
+				BorderLeft(true).
+				BorderForeground(colorStreamBorder).
+				PaddingLeft(1)
+
+	chatSettlingStyle = lipgloss.NewStyle().
+				BorderLeft(true).
+				BorderForeground(colorStreamBorder).
+				PaddingLeft(1)
+
 	chatThinkingStyle = lipgloss.NewStyle().
-				Padding(0, 0)
+				BorderLeft(true).
+				BorderForeground(lipgloss.Color("#314156")).
+				PaddingLeft(1)
 
 	chatUserStyle = lipgloss.NewStyle().
 			Background(lipgloss.Color("#171B23")).
@@ -342,6 +355,30 @@ var (
 	assistantMessageStyle = lipgloss.NewStyle().
 				Foreground(colorAICool).
 				Padding(0, 0)
+
+	assistantStreamingTitleStyle = lipgloss.NewStyle().
+					Foreground(colorThinkingBlue).
+					Bold(true)
+
+	assistantSettlingTitleStyle = lipgloss.NewStyle().
+					Foreground(colorThinkingBlue).
+					Bold(true)
+
+	assistantFinalTitleStyle = lipgloss.NewStyle().
+					Foreground(colorAICool).
+					Bold(true)
+
+	statusGeneratingStyle = lipgloss.NewStyle().
+				Foreground(colorThinkingBlue).
+				Bold(true)
+
+	statusSettlingStyle = lipgloss.NewStyle().
+				Foreground(colorThinkingBlue).
+				Bold(true)
+
+	statusFinalStyle = lipgloss.NewStyle().
+				Foreground(colorMuted).
+				Bold(true)
 
 	toolMessageStyle = lipgloss.NewStyle().
 				Foreground(colorToolNeutral).

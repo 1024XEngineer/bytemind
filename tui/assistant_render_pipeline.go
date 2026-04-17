@@ -38,12 +38,9 @@ var (
 )
 
 func renderAssistantBody(text string, width int) string {
-	if !isTerminalOutput() {
-		return renderAssistantBodyLegacy(text, width)
-	}
-	rendered, err := renderAssistantBodyWithMarkdownAndTags(text, width)
-	if err == nil && strings.TrimSpace(rendered) != "" {
-		return rendered
+	result := renderStructuredMarkdown(markdownSurfaceAssistant, text, width)
+	if strings.TrimSpace(result.Display) != "" {
+		return result.Display
 	}
 	return renderAssistantBodyLegacy(text, width)
 }
@@ -150,7 +147,7 @@ func blueGlamourStyle() ansi.StyleConfig {
 	secondaryHeading := "#B8DDFF"
 	linkCyan := "#7FE6FF"
 	quoteGold := "#E7C27D"
-	inlineCodeText := "#FF8F7A"
+	inlineCodeText := "#E6B873"
 	strongText := "#F6FBFF"
 	emphasisCyan := "#8FDFFF"
 	codeText := "#D7E3F4"

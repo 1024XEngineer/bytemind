@@ -9,6 +9,14 @@ import (
 )
 
 func formatChatBody(item chatEntry, width int) string {
+	return formatChatBodyMode(item, width, false)
+}
+
+func formatChatCopyBody(item chatEntry, width int) string {
+	return formatChatBodyMode(item, width, true)
+}
+
+func formatChatBodyMode(item chatEntry, width int, copyMode bool) string {
 	text := strings.ReplaceAll(item.Body, "\r\n", "\n")
 	if item.Kind == "user" {
 		return strings.TrimRight(wrapPlainText(text, width), "\n")
@@ -20,7 +28,13 @@ func formatChatBody(item chatEntry, width int) string {
 		return strings.TrimRight(renderSemanticPlainBody(text, width), "\n")
 	}
 	if isHelpMarkdownText(text) {
+		if copyMode {
+			return strings.TrimRight(renderHelpMarkdownCopy(text, width), "\n")
+		}
 		return strings.TrimRight(renderHelpMarkdown(text, width), "\n")
+	}
+	if copyMode {
+		return strings.TrimRight(renderAssistantCopyBody(text, width), "\n")
 	}
 	return strings.TrimRight(renderAssistantBody(text, width), "\n")
 }
@@ -30,6 +44,30 @@ func isHelpMarkdownText(text string) bool {
 }
 
 func renderHelpMarkdown(text string, width int) string {
+	result := renderStructuredMarkdown(markdownSurfaceHelp, text, width)
+	if strings.TrimSpace(result.Display) != "" {
+		return result.Display
+	}
+	return renderHelpMarkdownLegacy(text, width)
+}
+
+func renderHelpMarkdownCopy(text string, width int) string {
+	result := renderStructuredMarkdown(markdownSurfaceHelp, text, width)
+	if strings.TrimSpace(result.Copy) != "" {
+		return result.Copy
+	}
+	return stripANSI(renderHelpMarkdownLegacy(text, width))
+}
+
+func renderAssistantCopyBody(text string, width int) string {
+	result := renderStructuredMarkdown(markdownSurfaceAssistant, text, width)
+	if strings.TrimSpace(result.Copy) != "" {
+		return result.Copy
+	}
+	return stripANSI(renderAssistantBodyLegacy(text, width))
+}
+
+func renderHelpMarkdownLegacy(text string, width int) string {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	out := make([]string, 0, len(lines))
 	prevBlank := true
