@@ -124,7 +124,6 @@ func NewRunner(opts Options) *Runner {
 	if extensions == nil {
 		extensions = extensionspkg.NopManager{}
 	}
-
 	runner := &Runner{
 		workspace:     opts.Workspace,
 		config:        opts.Config,

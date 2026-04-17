@@ -807,6 +807,76 @@ func TestInMemoryTaskManagerNoExecutorFailsTaskAndWakesWaiters(t *testing.T) {
 	}
 }
 
+func TestInMemoryTaskManagerRetryCancelRaceConverges(t *testing.T) {
+	const iterations = 25
+
+	for i := 0; i < iterations; i++ {
+		var runs atomic.Int32
+		manager := NewInMemoryTaskManager(WithTaskExecutor(func(ctx context.Context, _ Task) ([]byte, error) {
+			if runs.Add(1) == 1 {
+				return nil, errors.New("first failed")
+			}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}))
+
+		id, err := manager.Submit(context.Background(), TaskSpec{
+			Name:       "race",
+			MaxRetries: 1,
+		})
+		if err != nil {
+			t.Fatalf("iteration %d: submit failed: %v", i, err)
+		}
+
+		first, err := manager.Wait(context.Background(), id)
+		if err != nil {
+			t.Fatalf("iteration %d: wait first attempt failed: %v", i, err)
+		}
+		if first.Status != corepkg.TaskFailed {
+			t.Fatalf("iteration %d: expected first attempt failed, got %s", i, first.Status)
+		}
+
+		start := make(chan struct{})
+		retryErrCh := make(chan error, 1)
+		cancelErrCh := make(chan error, 1)
+		go func() {
+			<-start
+			_, retryErr := manager.Retry(context.Background(), id)
+			retryErrCh <- retryErr
+		}()
+		go func() {
+			<-start
+			cancelErrCh <- manager.Cancel(context.Background(), id, "race")
+		}()
+		close(start)
+
+		retryErr := <-retryErrCh
+		cancelErr := <-cancelErrCh
+
+		if retryErr != nil && !hasErrorCode(retryErr, ErrorCodeInvalidTransition) {
+			t.Fatalf("iteration %d: retry returned unexpected error: %v", i, retryErr)
+		}
+		if cancelErr != nil && !hasErrorCode(cancelErr, ErrorCodeInvalidTransition) {
+			t.Fatalf("iteration %d: cancel returned unexpected error: %v", i, cancelErr)
+		}
+		if retryErr == nil && hasErrorCode(cancelErr, ErrorCodeInvalidTransition) {
+			if err := manager.Cancel(context.Background(), id, "post-race-converge"); err != nil && !hasErrorCode(err, ErrorCodeInvalidTransition) {
+				t.Fatalf("iteration %d: post-race cancel failed: %v", i, err)
+			}
+		}
+
+		finalCtx, finalCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		final, err := manager.Wait(finalCtx, id)
+		finalCancel()
+		if err != nil {
+			t.Fatalf("iteration %d: wait final failed: %v", i, err)
+		}
+		if !IsTerminalTaskStatus(final.Status) {
+			t.Fatalf("iteration %d: expected terminal status, got %s", i, final.Status)
+		}
+	}
+}
+
 func TestNewTaskIDWithSameTimestampUsesSequenceSuffix(t *testing.T) {
 	ts := time.Date(2026, time.January, 1, 10, 11, 12, 123456789, time.UTC)
 

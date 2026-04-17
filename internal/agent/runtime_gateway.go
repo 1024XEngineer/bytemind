@@ -93,7 +93,7 @@ func (g *defaultRuntimeGateway) RunSync(ctx context.Context, request RuntimeTask
 
 	registry, ok := g.taskManager.(runtimepkg.TaskExecutionRegistry)
 	if !ok {
-		return RuntimeTaskExecution{}, fmt.Errorf("runtime task manager does not support task execution registry")
+		return RuntimeTaskExecution{}, fmt.Errorf("runtime task manager must implement TaskExecutionRegistry")
 	}
 	token := g.buildExecutionToken(spec)
 	if spec.Metadata == nil {

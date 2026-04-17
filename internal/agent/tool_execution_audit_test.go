@@ -10,6 +10,7 @@ import (
 	"bytemind/internal/config"
 	corepkg "bytemind/internal/core"
 	"bytemind/internal/llm"
+	runtimepkg "bytemind/internal/runtime"
 	"bytemind/internal/session"
 	storagepkg "bytemind/internal/storage"
 	"bytemind/internal/tools"
@@ -114,5 +115,97 @@ func TestRunPromptRecordsTaskStateChangedAuditWithSessionTaskTrace(t *testing.T)
 	}
 	if !seenTerminal {
 		t.Fatalf("expected at least one terminal task_state_changed event, got %+v", stateEvents)
+	}
+}
+
+type stubRuntimeGateway struct {
+	mu    sync.Mutex
+	calls []RuntimeTaskRequest
+}
+
+func (g *stubRuntimeGateway) RunSync(_ context.Context, request RuntimeTaskRequest) (RuntimeTaskExecution, error) {
+	g.mu.Lock()
+	g.calls = append(g.calls, request)
+	g.mu.Unlock()
+	return RuntimeTaskExecution{
+		TaskID: "runtime-task-1",
+		Result: runtimepkg.TaskResult{
+			TaskID: "runtime-task-1",
+			Status: corepkg.TaskCompleted,
+			Output: []byte(`{"ok":true,"via":"runtime_gateway"}`),
+		},
+	}, nil
+}
+
+func TestRunPromptExecutesToolThroughRuntimeGatewayBoundary(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "tool-via-runtime",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{}`,
+				},
+			}},
+		},
+		{
+			Role:    llm.RoleAssistant,
+			Content: "done",
+		},
+	}}
+	gateway := &stubRuntimeGateway{}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 4,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Runtime:  gateway,
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "run tool", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "done" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+
+	gateway.mu.Lock()
+	callCount := len(gateway.calls)
+	var call RuntimeTaskRequest
+	if callCount > 0 {
+		call = gateway.calls[0]
+	}
+	gateway.mu.Unlock()
+	if callCount != 1 {
+		t.Fatalf("expected exactly 1 runtime gateway call, got %d", callCount)
+	}
+	if call.Name != "list_files" || call.Kind != "tool" {
+		t.Fatalf("expected runtime gateway tool request, got %+v", call)
+	}
+
+	if len(sess.Messages) < 3 {
+		t.Fatalf("expected tool result message to be persisted, got %#v", sess.Messages)
+	}
+	toolResult := sess.Messages[2].Content
+	if !strings.Contains(toolResult, `"via":"runtime_gateway"`) {
+		t.Fatalf("expected tool result from runtime gateway, got %q", toolResult)
 	}
 }
