@@ -3,9 +3,10 @@ package provider
 import "errors"
 
 type routeCandidate struct {
-	ProviderID ProviderID
-	ModelID    ModelID
-	Client     Client
+	ProviderID   ProviderID
+	ModelID      ModelID
+	Client       Client
+	HealthStatus HealthStatus
 }
 
 var errorsUnavailable = errors.New(string(ErrCodeUnavailable))
@@ -25,6 +26,21 @@ func preferredRouteProvider(requested ModelID, rc RouteContext) ProviderID {
 		return ProviderOpenAI
 	}
 	return ""
+}
+
+func routeHealthRank(status HealthStatus) int {
+	switch status {
+	case "", HealthStatusHealthy:
+		return 1
+	case HealthStatusDegraded:
+		return 2
+	case HealthStatusHalfOpen:
+		return 3
+	case HealthStatusUnavailable:
+		return 4
+	default:
+		return 5
+	}
 }
 
 func routeRankLatency(id ProviderID) int {

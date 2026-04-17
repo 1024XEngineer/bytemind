@@ -100,9 +100,10 @@ func (r *registryRouter) collectCandidates(ctx context.Context) ([]routeCandidat
 			}
 			seen[key] = struct{}{}
 			candidates = append(candidates, routeCandidate{
-				ProviderID: providerID,
-				ModelID:    modelID,
-				Client:     client,
+				ProviderID:   providerID,
+				ModelID:      modelID,
+				Client:       client,
+				HealthStatus: HealthStatusHealthy,
 			})
 		}
 	}
@@ -164,8 +165,17 @@ func filterHealthyCandidates(ctx context.Context, health HealthChecker, candidat
 		return append([]routeCandidate(nil), candidates...), nil
 	}
 	filtered := make([]routeCandidate, 0, len(candidates))
+	snapshots := make(map[ProviderID]HealthSnapshot, len(candidates))
 	checked := make(map[ProviderID]error, len(candidates))
 	for _, candidate := range candidates {
+		snapshot, ok := snapshots[candidate.ProviderID]
+		if !ok {
+			snapshot = health.Status(ctx, candidate.ProviderID)
+			snapshots[candidate.ProviderID] = snapshot
+		}
+		if snapshot.Status == HealthStatusUnavailable {
+			continue
+		}
 		err, ok := checked[candidate.ProviderID]
 		if !ok {
 			err = health.Check(ctx, candidate.ProviderID)
@@ -174,7 +184,11 @@ func filterHealthyCandidates(ctx context.Context, health HealthChecker, candidat
 			}
 			checked[candidate.ProviderID] = err
 		}
-		if err == nil {
+		if err == nil || snapshot.Status == HealthStatusHalfOpen {
+			candidate.HealthStatus = snapshot.Status
+			if candidate.HealthStatus == "" {
+				candidate.HealthStatus = HealthStatusHealthy
+			}
 			filtered = append(filtered, candidate)
 		}
 	}
@@ -188,9 +202,20 @@ func sortRouteCandidates(candidates []routeCandidate, requested ModelID, rc Rout
 	preferredProvider := preferredRouteProvider(requested, rc)
 	preferLatency := rc.PreferLatency
 	preferLowCost := rc.PreferLowCost
+	preference := make(map[ProviderID]int, len(ordered))
+	for _, candidate := range ordered {
+		if _, ok := preference[candidate.ProviderID]; ok {
+			continue
+		}
+		preference[candidate.ProviderID] = routeHealthRank(candidate.HealthStatus)
+	}
 	sort.SliceStable(ordered, func(i, j int) bool {
 		left := ordered[i]
 		right := ordered[j]
+		leftHealth, rightHealth := routeHealthRank(left.HealthStatus), routeHealthRank(right.HealthStatus)
+		if leftHealth != rightHealth {
+			return leftHealth < rightHealth
+		}
 		if left.ProviderID == preferredProvider && right.ProviderID != preferredProvider {
 			return true
 		}

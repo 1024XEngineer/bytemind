@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"time"
 
 	"bytemind/internal/llm"
 )
@@ -28,6 +29,9 @@ type Router interface {
 
 type HealthChecker interface {
 	Check(ctx context.Context, id ProviderID) error
+	Status(ctx context.Context, id ProviderID) HealthSnapshot
+	RecordSuccess(ctx context.Context, id ProviderID)
+	RecordFailure(ctx context.Context, id ProviderID, err error)
 }
 
 type Request struct {
@@ -54,4 +58,25 @@ type RouteTarget struct {
 	ProviderID ProviderID
 	ModelID    ModelID
 	Client     Client
+}
+
+type HealthConfig struct {
+	CheckIntervalSec        int
+	FailThreshold           int
+	RecoverProbeSec         int
+	RecoverSuccessThreshold int
+	WindowSize              int
+}
+
+type HealthSnapshot struct {
+	ProviderID       ProviderID
+	Status           HealthStatus
+	FailureCount     int
+	SuccessCount     int
+	WindowSize       int
+	NextProbeAt      time.Time
+	LastCheckAt      time.Time
+	LastFailureAt    time.Time
+	LastSuccessAt    time.Time
+	LastErrorMessage string
 }

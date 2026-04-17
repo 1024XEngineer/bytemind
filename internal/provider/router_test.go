@@ -13,8 +13,11 @@ import (
 )
 
 type stubHealthChecker struct {
-	errors map[ProviderID]error
-	calls  map[ProviderID]int
+	errors    map[ProviderID]error
+	statuses  map[ProviderID]HealthSnapshot
+	calls     map[ProviderID]int
+	successes map[ProviderID]int
+	failures  map[ProviderID]int
 }
 
 func (s stubHealthChecker) Check(_ context.Context, id ProviderID) error {
@@ -25,6 +28,28 @@ func (s stubHealthChecker) Check(_ context.Context, id ProviderID) error {
 		return nil
 	}
 	return s.errors[id]
+}
+
+func (s stubHealthChecker) Status(_ context.Context, id ProviderID) HealthSnapshot {
+	if s.statuses == nil {
+		return HealthSnapshot{ProviderID: id, Status: HealthStatusHealthy}
+	}
+	if snapshot, ok := s.statuses[id]; ok {
+		return snapshot
+	}
+	return HealthSnapshot{ProviderID: id, Status: HealthStatusHealthy}
+}
+
+func (s stubHealthChecker) RecordSuccess(_ context.Context, id ProviderID) {
+	if s.successes != nil {
+		s.successes[id]++
+	}
+}
+
+func (s stubHealthChecker) RecordFailure(_ context.Context, id ProviderID, _ error) {
+	if s.failures != nil {
+		s.failures[id]++
+	}
 }
 
 type stubRouterClient struct {
@@ -136,6 +161,14 @@ func TestRouterFiltersUnhealthyProviders(t *testing.T) {
 	}
 	if result.Primary.ProviderID != "backup" {
 		t.Fatalf("unexpected primary %#v", result.Primary)
+	}
+}
+
+func TestRouterOrdersByHealthStatus(t *testing.T) {
+	candidates := []routeCandidate{{ProviderID: "degraded", ModelID: "gpt-5.4", HealthStatus: HealthStatusDegraded}, {ProviderID: "healthy", ModelID: "gpt-5.4", HealthStatus: HealthStatusHealthy}, {ProviderID: "half", ModelID: "gpt-5.4", HealthStatus: HealthStatusHalfOpen}}
+	ordered := sortRouteCandidates(candidates, "gpt-5.4", RouteContext{}, RouterConfig{})
+	if ordered[0].ProviderID != "healthy" || ordered[1].ProviderID != "degraded" || ordered[2].ProviderID != "half" {
+		t.Fatalf("unexpected health order %#v", ordered)
 	}
 }
 
@@ -275,6 +308,29 @@ func TestFilterHealthyCandidatesChecksEachProviderOnce(t *testing.T) {
 	}
 	if health.calls["openai"] != 1 || health.calls["backup"] != 1 {
 		t.Fatalf("expected one health check per provider, got %#v", health.calls)
+	}
+	for _, candidate := range filtered {
+		if candidate.HealthStatus != HealthStatusHealthy {
+			t.Fatalf("expected healthy status, got %#v", filtered)
+		}
+	}
+}
+
+func TestFilterHealthyCandidatesSkipsUnavailableAndAllowsHalfOpen(t *testing.T) {
+	health := stubHealthChecker{calls: map[ProviderID]int{}, errors: map[ProviderID]error{"half": errors.New("probe failed")}, statuses: map[ProviderID]HealthSnapshot{"down": {ProviderID: "down", Status: HealthStatusUnavailable}, "half": {ProviderID: "half", Status: HealthStatusHalfOpen}}}
+	candidates := []routeCandidate{{ProviderID: "down", ModelID: "gpt-5.4"}, {ProviderID: "half", ModelID: "gpt-5.4"}, {ProviderID: "up", ModelID: "gpt-5.4"}}
+	filtered, err := filterHealthyCandidates(context.Background(), health, candidates)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(filtered) != 2 || filtered[0].ProviderID != "half" || filtered[1].ProviderID != "up" {
+		t.Fatalf("unexpected filtered candidates %#v", filtered)
+	}
+	if filtered[0].HealthStatus != HealthStatusHalfOpen || filtered[1].HealthStatus != HealthStatusHealthy {
+		t.Fatalf("unexpected candidate health %#v", filtered)
+	}
+	if _, ok := health.calls["down"]; ok {
+		t.Fatalf("expected unavailable provider to skip active check, got %#v", health.calls)
 	}
 }
 
