@@ -18,12 +18,15 @@ func (s stubCompatClient) CreateMessage(context.Context, llm.ChatRequest) (llm.M
 	return s.message, s.err
 }
 
-func (s stubCompatClient) StreamMessage(_ context.Context, _ llm.ChatRequest, onDelta func(string)) (llm.Message, error) {
+func (s stubCompatClient) StreamMessage(ctx context.Context, _ llm.ChatRequest, onDelta func(string)) (llm.Message, error) {
+	if s.err != nil {
+		return llm.Message{}, s.err
+	}
 	if onDelta != nil {
 		onDelta("hello")
 		onDelta(" world")
 	}
-	return s.message, s.err
+	return s.message, nil
 }
 
 func TestWrapClientStreamEmitsNormalizedEvents(t *testing.T) {
@@ -81,20 +84,17 @@ func TestWrapClientStreamEmitsErrorEvent(t *testing.T) {
 	for event := range stream {
 		events = append(events, event)
 	}
-	if len(events) != 4 {
-		t.Fatalf("expected 4 events, got %#v", events)
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %#v", events)
 	}
 	if events[0].Type != EventStart {
 		t.Fatalf("expected start event, got %#v", events[0])
 	}
-	if events[1].Type != EventDelta || events[2].Type != EventDelta {
-		t.Fatalf("expected delta events before error, got %#v", events)
+	if events[1].Type != EventError || events[1].Error == nil {
+		t.Fatalf("expected error event, got %#v", events[1])
 	}
-	if events[3].Type != EventError || events[3].Error == nil {
-		t.Fatalf("expected error event, got %#v", events[3])
-	}
-	if events[3].Error.Code != ErrCodeUnavailable {
-		t.Fatalf("unexpected error code %#v", events[3].Error)
+	if events[1].Error.Code != ErrCodeUnavailable {
+		t.Fatalf("unexpected error code %#v", events[1].Error)
 	}
 }
 
@@ -112,14 +112,29 @@ func TestWrapClientStreamMapsProviderErrors(t *testing.T) {
 			code: ErrCodeRateLimited, retryable: true, message: "provider rate limited",
 		},
 		{
+			name: "unauthorized",
+			err:  &llm.ProviderError{Code: llm.ErrorCodeUnknown, Provider: "openai", Status: 401, Retryable: true, Message: "bad auth"},
+			code: ErrCodeUnauthorized, retryable: false, message: "provider unauthorized",
+		},
+		{
 			name: "context too long",
 			err:  &llm.ProviderError{Code: llm.ErrorCodeContextTooLong, Provider: "anthropic", Status: 413, Retryable: false, Message: "prompt is too long with raw details"},
 			code: ErrCodeBadRequest, retryable: false, message: "request exceeds provider context limit",
 		},
 		{
+			name: "bad request",
+			err:  &llm.ProviderError{Code: llm.ErrorCodeUnknown, Provider: "openai", Status: 400, Retryable: true, Message: "invalid payload"},
+			code: ErrCodeBadRequest, retryable: false, message: "provider rejected request",
+		},
+		{
+			name: "gateway timeout",
+			err:  &llm.ProviderError{Code: llm.ErrorCodeUnknown, Provider: "openai", Status: 504, Retryable: false, Message: "gateway timeout"},
+			code: ErrCodeTimeout, retryable: true, message: "provider request timed out",
+		},
+		{
 			name: "fallback unavailable",
 			err:  errors.New("sensitive raw body"),
-			code: ErrCodeUnavailable, retryable: false, message: "provider request failed",
+			code: ErrCodeUnavailable, retryable: true, message: "provider unavailable",
 		},
 	}
 
@@ -166,6 +181,21 @@ func TestWrapClientStreamStopsWhenContextCancelled(t *testing.T) {
 	}
 }
 
+func TestWrapClientStreamDoesNotEmitNilErrorOnContextCanceled(t *testing.T) {
+	adapter := WrapClient(ProviderOpenAI, ModelID("gpt-5.4"), stubCompatClient{err: context.Canceled})
+	stream, err := adapter.Stream(context.Background(), Request{ChatRequest: llm.ChatRequest{Model: "gpt-5.4"}, TraceID: "trace-cancel-err"})
+	if err != nil {
+		t.Fatalf("expected no setup error, got %v", err)
+	}
+	var events []Event
+	for event := range stream {
+		events = append(events, event)
+	}
+	if len(events) != 1 || events[0].Type != EventStart {
+		t.Fatalf("expected only start event before cancel shutdown, got %#v", events)
+	}
+}
+
 func TestEmitReturnsFalseWhenContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -193,7 +223,7 @@ func TestWrapClientCoversNilClientAndEmptyModel(t *testing.T) {
 
 func TestMapCompatErrorDefaultProviderErrorBranch(t *testing.T) {
 	mapped := mapCompatError(ProviderAnthropic, &llm.ProviderError{Code: llm.ErrorCodeUnknown, Retryable: true, Message: "hidden upstream body"})
-	if mapped.Code != ErrCodeUnavailable || !mapped.Retryable || mapped.Message != "provider unavailable" || mapped.Provider != ProviderAnthropic {
+	if mapped.Code != ErrCodeUnavailable || !mapped.Retryable || mapped.Message != "provider unavailable" || mapped.Provider != ProviderAnthropic || mapped.Detail != "hidden upstream body" {
 		t.Fatalf("unexpected mapped error %#v", mapped)
 	}
 }

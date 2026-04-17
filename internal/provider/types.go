@@ -76,6 +76,7 @@ type Error struct {
 	Message   string
 	Retryable bool
 	Err       error
+	Detail    string
 }
 
 func (e *Error) Error() string {
