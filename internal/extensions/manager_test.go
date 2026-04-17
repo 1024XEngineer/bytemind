@@ -1,8 +1,17 @@
 package extensions
 
-import (
-	"testing"
-)
+import "testing"
+
+func TestNopManagerGet(t *testing.T) {
+	mgr := NopManager{}
+	item, err := mgr.Get(nil, "skill.review")
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	if !item.IsZero() {
+		t.Fatal("expected zero extension info")
+	}
+}
 
 func TestNopManagerList(t *testing.T) {
 	mgr := NopManager{}
@@ -24,6 +33,7 @@ func TestExtensionInfoValid(t *testing.T) {
 			Scope: ExtensionScopeProject,
 			Ref:   ".bytemind/skills/review",
 		},
+		Status:       ExtensionStatusReady,
 		Capabilities: CapabilitySet{Prompts: 1, Tools: 2},
 	}
 	if !valid.Valid() {
@@ -46,7 +56,36 @@ func TestExtensionInfoIsZero(t *testing.T) {
 	if !((ExtensionInfo{}).IsZero()) {
 		t.Fatal("expected zero extension info")
 	}
-	if (ExtensionInfo{ID: "skill.review"}).IsZero() {
-		t.Fatal("expected non-zero extension info")
+
+	cases := []ExtensionInfo{
+		{ID: "skill.review"},
+		{Version: "1.0.0"},
+		{Title: "Review"},
+		{Description: "desc"},
+		{Source: ExtensionSource{Scope: ExtensionScopeProject}},
+		{Source: ExtensionSource{Ref: ".bytemind/skills/review"}},
+		{Capabilities: CapabilitySet{Tools: 1}},
+		{Manifest: Manifest{Name: "review"}},
+		{Health: HealthSnapshot{Status: ExtensionStatusReady}},
+		{Status: ExtensionStatusReady},
+	}
+	for _, tc := range cases {
+		if tc.IsZero() {
+			t.Fatalf("expected non-zero extension info: %+v", tc)
+		}
+	}
+}
+
+func TestExtensionErrorWrap(t *testing.T) {
+	err := wrapError(ErrCodeLoadFailed, "load extension", nil)
+	extErr, ok := err.(*ExtensionError)
+	if !ok {
+		t.Fatalf("expected ExtensionError, got %T", err)
+	}
+	if extErr.Code != ErrCodeLoadFailed {
+		t.Fatalf("unexpected code: %s", extErr.Code)
+	}
+	if extErr.Message == "" {
+		t.Fatal("expected message")
 	}
 }
