@@ -199,7 +199,8 @@ func (a *clientAdapter) Stream(ctx context.Context, req Request) (<-chan Event, 
 		if modelID == "" {
 			modelID = a.defaultModel
 		}
-		if !emit(ctx, stream, Event{
+		normalizer := newStreamNormalizer(req.TraceID, a.providerID, modelID)
+		if !normalizeEvent(ctx, normalizer, stream, Event{
 			Type:       EventStart,
 			TraceID:    req.TraceID,
 			ProviderID: a.providerID,
@@ -211,7 +212,7 @@ func (a *clientAdapter) Stream(ctx context.Context, req Request) (<-chan Event, 
 			if strings.TrimSpace(delta) == "" {
 				return
 			}
-			_ = emit(ctx, stream, Event{
+			_ = normalizeEvent(ctx, normalizer, stream, Event{
 				Type:       EventDelta,
 				TraceID:    req.TraceID,
 				ProviderID: a.providerID,
@@ -227,7 +228,7 @@ func (a *clientAdapter) Stream(ctx context.Context, req Request) (<-chan Event, 
 			if mapped == nil {
 				return
 			}
-			_ = emit(ctx, stream, Event{
+			_ = normalizeEvent(ctx, normalizer, stream, Event{
 				Type:       EventError,
 				TraceID:    req.TraceID,
 				ProviderID: a.providerID,
@@ -237,7 +238,7 @@ func (a *clientAdapter) Stream(ctx context.Context, req Request) (<-chan Event, 
 			return
 		}
 		if message.Usage != nil {
-			if !emit(ctx, stream, Event{
+			if !normalizeEvent(ctx, normalizer, stream, Event{
 				Type:       EventUsage,
 				TraceID:    req.TraceID,
 				ProviderID: a.providerID,
@@ -254,7 +255,7 @@ func (a *clientAdapter) Stream(ctx context.Context, req Request) (<-chan Event, 
 		message.Normalize()
 		for _, toolCall := range message.ToolCalls {
 			call := toolCall
-			if !emit(ctx, stream, Event{
+			if !normalizeEvent(ctx, normalizer, stream, Event{
 				Type:       EventToolCall,
 				TraceID:    req.TraceID,
 				ProviderID: a.providerID,
@@ -264,7 +265,7 @@ func (a *clientAdapter) Stream(ctx context.Context, req Request) (<-chan Event, 
 				return
 			}
 		}
-		_ = emit(ctx, stream, Event{
+		_ = normalizeEvent(ctx, normalizer, stream, Event{
 			Type:       EventResult,
 			TraceID:    req.TraceID,
 			ProviderID: a.providerID,
