@@ -166,6 +166,7 @@ func filterHealthyCandidates(ctx context.Context, health HealthChecker, candidat
 	}
 	filtered := make([]routeCandidate, 0, len(candidates))
 	checked := make(map[ProviderID]HealthSnapshot, len(candidates))
+	checkErrs := make(map[ProviderID]error, len(candidates))
 	for _, candidate := range candidates {
 		snapshot, ok := checked[candidate.ProviderID]
 		if !ok {
@@ -175,9 +176,13 @@ func filterHealthyCandidates(ctx context.Context, health HealthChecker, candidat
 			}
 			snapshot = health.Status(ctx, candidate.ProviderID)
 			checked[candidate.ProviderID] = snapshot
+			checkErrs[candidate.ProviderID] = err
 			if err != nil {
 				continue
 			}
+		}
+		if checkErrs[candidate.ProviderID] != nil {
+			continue
 		}
 		if snapshot.Status == HealthStatusUnavailable {
 			continue

@@ -350,6 +350,21 @@ func TestFilterHealthyCandidatesSkipsUnavailableAndAllowsHalfOpen(t *testing.T) 
 	}
 }
 
+func TestFilterHealthyCandidatesRejectsAllModelsAfterProviderCheckError(t *testing.T) {
+	health := stubHealthChecker{calls: map[ProviderID]int{}, statuses: map[ProviderID]HealthSnapshot{"bad": {ProviderID: "bad", Status: HealthStatusHealthy}}, errors: map[ProviderID]error{"bad": &Error{Code: ErrCodeBadRequest, Provider: "bad", Message: "bad config", Retryable: false}}}
+	candidates := []routeCandidate{{ProviderID: "bad", ModelID: "gpt-5.4"}, {ProviderID: "bad", ModelID: "gpt-4.1"}, {ProviderID: "good", ModelID: "gpt-5.4"}}
+	filtered, err := filterHealthyCandidates(context.Background(), health, candidates)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].ProviderID != "good" {
+		t.Fatalf("expected only healthy provider candidates, got %#v", filtered)
+	}
+	if health.calls["bad"] != 1 {
+		t.Fatalf("expected bad provider to be checked once, got %#v", health.calls)
+	}
+}
+
 func TestRouteHelpersAndPolicyBranches(t *testing.T) {
 	if normalizeRouteProviderID(" OpenAI ") != "openai" || normalizeRouteModelID(" gpt-5.4 ") != "gpt-5.4" {
 		t.Fatal("expected normalization to trim values")
