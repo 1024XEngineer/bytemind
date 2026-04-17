@@ -23,8 +23,23 @@ func TestNewClientReturnsOpenAICompatible(t *testing.T) {
 	}
 }
 
+func TestNewBaseClientReturnsOpenAICompatible(t *testing.T) {
+	client, err := newBaseClient(config.ProviderConfig{
+		Type:    "openai-compatible",
+		BaseURL: "https://api.openai.com/v1",
+		APIKey:  "test-key",
+		Model:   "gpt-5.4",
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if _, ok := client.(*OpenAICompatible); !ok {
+		t.Fatalf("expected *OpenAICompatible, got %T", client)
+	}
+}
+
 func TestNewClientPropagatesOpenAICompatibleGatewayConfig(t *testing.T) {
-	client, err := NewClient(config.ProviderConfig{
+	client, err := newBaseClient(config.ProviderConfig{
 		Type:         "openai-compatible",
 		BaseURL:      "https://api.openai.com/v1",
 		APIPath:      "/gateway/chat",
@@ -46,8 +61,8 @@ func TestNewClientPropagatesOpenAICompatibleGatewayConfig(t *testing.T) {
 	}
 }
 
-func TestNewClientReturnsOpenAICompatibleForOpenAIAlias(t *testing.T) {
-	client, err := NewClient(config.ProviderConfig{
+func TestNewBaseClientReturnsOpenAICompatibleForOpenAIAlias(t *testing.T) {
+	client, err := newBaseClient(config.ProviderConfig{
 		Type:    "openai",
 		BaseURL: "https://api.openai.com/v1",
 		APIKey:  "test-key",
@@ -61,8 +76,8 @@ func TestNewClientReturnsOpenAICompatibleForOpenAIAlias(t *testing.T) {
 	}
 }
 
-func TestNewClientReturnsAnthropic(t *testing.T) {
-	client, err := NewClient(config.ProviderConfig{
+func TestNewBaseClientReturnsAnthropic(t *testing.T) {
+	client, err := newBaseClient(config.ProviderConfig{
 		Type:             "anthropic",
 		BaseURL:          "https://api.anthropic.com",
 		APIKey:           "test-key",
@@ -74,21 +89,6 @@ func TestNewClientReturnsAnthropic(t *testing.T) {
 	}
 	if _, ok := client.(*Anthropic); !ok {
 		t.Fatalf("expected *Anthropic, got %T", client)
-	}
-}
-
-func TestNewClientRejectsUnsupportedProviderType(t *testing.T) {
-	_, err := NewClient(config.ProviderConfig{
-		Type:    "unsupported",
-		BaseURL: "https://example.com",
-		APIKey:  "test-key",
-		Model:   "test-model",
-	})
-	if err == nil {
-		t.Fatal("expected unsupported provider type error")
-	}
-	if !strings.Contains(err.Error(), "unsupported provider type") {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -114,16 +114,18 @@ func TestNewDomainClientWrapsBaseClient(t *testing.T) {
 	}
 }
 
-func TestNewClientAcceptsNormalizedTypeVariants(t *testing.T) {
-	cases := []config.ProviderConfig{
-		{Type: " OPENAI ", BaseURL: "https://api.openai.com/v1", APIKey: "test-key", Model: "gpt-5.4"},
-		{Type: "OpenAI-Compatible", BaseURL: "https://api.openai.com/v1", APIKey: "test-key", Model: "gpt-5.4"},
-		{Type: " ANTHROPIC ", BaseURL: "https://api.anthropic.com", APIKey: "test-key", Model: "claude-sonnet", AnthropicVersion: "2023-06-01"},
+func TestNewBaseClientRejectsUnsupportedProviderType(t *testing.T) {
+	_, err := newBaseClient(config.ProviderConfig{
+		Type:    "unsupported",
+		BaseURL: "https://example.com",
+		APIKey:  "test-key",
+		Model:   "test-model",
+	})
+	if err == nil {
+		t.Fatal("expected unsupported provider type error")
 	}
-	for _, cfg := range cases {
-		if _, err := NewClient(cfg); err != nil {
-			t.Fatalf("expected normalized type %q to succeed, got %v", cfg.Type, err)
-		}
+	if !strings.Contains(err.Error(), "unsupported provider type") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -179,6 +181,34 @@ func TestNewDomainClientNormalizesOpenAIProviderIDVariants(t *testing.T) {
 	}
 	if client.ProviderID() != ProviderOpenAI {
 		t.Fatalf("expected provider id %q, got %q", ProviderOpenAI, client.ProviderID())
+	}
+}
+
+func TestNewBaseClientAcceptsNormalizedTypeVariants(t *testing.T) {
+	cases := []config.ProviderConfig{
+		{Type: " OPENAI ", BaseURL: "https://api.openai.com/v1", APIKey: "test-key", Model: "gpt-5.4"},
+		{Type: "OpenAI-Compatible", BaseURL: "https://api.openai.com/v1", APIKey: "test-key", Model: "gpt-5.4"},
+		{Type: " ANTHROPIC ", BaseURL: "https://api.anthropic.com", APIKey: "test-key", Model: "claude-sonnet", AnthropicVersion: "2023-06-01"},
+	}
+	for _, cfg := range cases {
+		if _, err := newBaseClient(cfg); err != nil {
+			t.Fatalf("expected normalized type %q to succeed, got %v", cfg.Type, err)
+		}
+	}
+}
+
+func TestNewClientFromRuntimeUsesRouterFacade(t *testing.T) {
+	client, err := NewClientFromRuntime(config.LegacyProviderRuntimeConfig(config.ProviderConfig{
+		Type:    "openai-compatible",
+		BaseURL: "https://api.openai.com/v1",
+		APIKey:  "test-key",
+		Model:   "gpt-5.4",
+	}), nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if _, ok := client.(*RoutedClient); !ok {
+		t.Fatalf("expected routed client, got %T", client)
 	}
 }
 
