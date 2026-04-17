@@ -125,7 +125,13 @@ func TestBootstrapFallsBackToLegacyRuntimeTaskStoreWhenUnifiedInitFails(t *testi
 		t.Fatalf("Submit failed: %v", err)
 	}
 	if err := rt.TaskManager.Cancel(context.Background(), taskID, "test"); err != nil {
-		t.Fatalf("Cancel failed: %v", err)
+		task, getErr := rt.TaskManager.Get(context.Background(), taskID)
+		if getErr != nil {
+			t.Fatalf("Cancel failed: %v (and Get failed: %v)", err, getErr)
+		}
+		if task.Status != "failed" || task.ErrorCode != runtimepkg.ErrorCodeTaskExecutionFailed {
+			t.Fatalf("Cancel failed: %v (task status=%s error_code=%s)", err, task.Status, task.ErrorCode)
+		}
 	}
 
 	legacyEventFiles, err := filepath.Glob(filepath.Join(home, "runtime", "tasks", "events", "*.jsonl"))
