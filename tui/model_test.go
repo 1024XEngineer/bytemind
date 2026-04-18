@@ -2901,6 +2901,42 @@ func TestPlainTypingDoesNotPollClipboardWithoutPasteSignal(t *testing.T) {
 	}
 }
 
+func TestFastTypingDoesNotArmClipboardCapture(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	reader := &countingClipboardTextReader{
+		text: strings.Join([]string{
+			"clipboard line 1",
+			"clipboard line 2",
+			"clipboard line 3",
+			"clipboard line 4",
+		}, "\n"),
+	}
+	m.clipboardRead = reader
+
+	fastTypingGap := clipboardCaptureRapidRuneGap + 15*time.Millisecond
+	if fastTypingGap >= clipboardCaptureImplicitGap {
+		t.Fatalf("invalid test setup: fast typing gap %v must be less than implicit gap %v", fastTypingGap, clipboardCaptureImplicitGap)
+	}
+
+	typed := "abcdefghijklmnopqrstuvwxyz"
+	for _, r := range typed {
+		// Keep cadence fast enough to maintain burst accumulation while still
+		// representing normal rapid typing instead of paste echo speed.
+		m.lastInputAt = time.Now().Add(-fastTypingGap)
+		got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		next := got.(model)
+		m = &next
+	}
+
+	if reader.calls != 0 {
+		t.Fatalf("expected rapid manual typing not to read clipboard, got %d reads", reader.calls)
+	}
+	if m.input.Value() != typed {
+		t.Fatalf("expected typed input to remain literal, got %q", m.input.Value())
+	}
+}
+
 func TestClipboardCaptureConvertsBeforeFullStreamArrives(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat

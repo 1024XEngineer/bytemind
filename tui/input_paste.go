@@ -24,6 +24,7 @@ const (
 	pasteContinuationWindow        = 1500 * time.Millisecond
 	clipboardCaptureArmWindow      = 1200 * time.Millisecond
 	clipboardCaptureImplicitGap    = 80 * time.Millisecond
+	clipboardCaptureRapidRuneGap   = 30 * time.Millisecond
 	maxSinglePastedCharLength      = 200000
 	pasteSoftWrapWidth             = 72
 	clipboardCaptureMinPrefixRunes = 4
@@ -146,9 +147,6 @@ func (m *model) shouldArmClipboardCaptureFromImplicitMutation(before, after, sou
 	if delta <= 0 || m.inputBurstSize < clipboardCaptureMinPrefixRunes {
 		return false
 	}
-	if gap <= clipboardCaptureImplicitGap {
-		return true
-	}
 	_, inserted, _ := insertionDiff(before, after)
 	inserted = strings.ReplaceAll(normalizeNewlines(inserted), ctrlVMarkerRune, "")
 	if inserted == "" {
@@ -157,7 +155,13 @@ func (m *model) shouldArmClipboardCaptureFromImplicitMutation(before, after, sou
 	if strings.Contains(inserted, "\n") || strings.Contains(inserted, "\t") {
 		return true
 	}
-	return len([]rune(inserted)) >= clipboardCaptureMinPrefixRunes
+	insertedRunes := len([]rune(inserted))
+	if insertedRunes >= clipboardCaptureMinPrefixRunes {
+		return true
+	}
+	// Treat single-rune bursts as implicit paste only at a cadence that's
+	// far faster than typical manual typing.
+	return insertedRunes == 1 && gap <= clipboardCaptureRapidRuneGap
 }
 
 func (m *model) shouldAttemptClipboardPasteCapture(before, after, source string) bool {
