@@ -90,7 +90,7 @@ func (e *defaultEngine) buildTurnMessages(sess *session.Session, setup runPrompt
 		SystemPrompt: systemPrompt(PromptInput{
 			Workspace:      runner.workspace,
 			ApprovalPolicy: runner.config.ApprovalPolicy,
-			Model:          runner.modelID(),
+			Model:          runner.config.Provider.Model,
 			Mode:           setup.Mode,
 			Skills:         setup.AvailableSkills,
 			Tools:          setup.AvailableTools,

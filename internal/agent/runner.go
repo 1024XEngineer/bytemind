@@ -88,6 +88,11 @@ type Runner struct {
 }
 
 func NewRunner(opts Options) *Runner {
+	cfg := opts.Config
+	if model := strings.TrimSpace(cfg.ProviderRuntime.DefaultModel); model != "" {
+		cfg.Provider.Model = model
+	}
+
 	manager := opts.SkillManager
 	if manager == nil {
 		manager = skills.NewManager(opts.Workspace)
@@ -132,7 +137,7 @@ func NewRunner(opts Options) *Runner {
 	}
 	runner := &Runner{
 		workspace:     opts.Workspace,
-		config:        opts.Config,
+		config:        cfg,
 		client:        client,
 		store:         opts.Store,
 		registry:      registry,
