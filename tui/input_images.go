@@ -599,7 +599,7 @@ func (m *model) buildPromptInput(raw string) (RunPromptInput, string, error) {
 		return RunPromptInput{}, "", fmt.Errorf("prompt is empty")
 	}
 	m.syncInputImageRefs(raw)
-	resolvedRaw, err := m.resolvePastedLineReference(raw)
+	resolvedRaw, err := m.resolvePromptPastedInput(raw)
 	if err != nil {
 		return RunPromptInput{}, "", err
 	}
@@ -795,7 +795,8 @@ func (m *model) findAssetByImageID(imageID int) (llm.AssetID, session.ImageAsset
 func classifyInputMutation(before, after, source string) (inputMutationClass, int, string, int) {
 	prefix, inserted, suffix := insertionDiff(before, after)
 	cleanInserted := strings.ReplaceAll(inserted, ctrlVMarkerRune, "")
-	pasteSignal := isCtrlVKey(source) || strings.Contains(strings.ToLower(source), "paste") || strings.Contains(cleanInserted, "\n") || len(cleanInserted) > 1
+	normalizedSource := strings.ToLower(strings.TrimSpace(source))
+	pasteSignal := isCtrlVKey(source) || strings.Contains(normalizedSource, "paste")
 	if shouldTriggerClipboardImagePaste(before, after, source) {
 		return inputMutationPasteEmpty, prefix, inserted, suffix
 	}

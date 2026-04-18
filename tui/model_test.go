@@ -46,6 +46,23 @@ func (f *fakeClipboardTextWriter) WriteText(ctx context.Context, text string) er
 	return nil
 }
 
+type fakeClipboardTextReader struct {
+	text       string
+	err        error
+	waitForCtx bool
+}
+
+func (f fakeClipboardTextReader) ReadText(ctx context.Context) (string, error) {
+	if f.waitForCtx {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.text, nil
+}
+
 type compactCommandTestClient struct {
 	replies  []llm.Message
 	requests []llm.ChatRequest
@@ -1949,6 +1966,31 @@ func TestCtrlVWithoutImageShowsStatusNote(t *testing.T) {
 	}
 }
 
+func TestCtrlVWithoutImageFallsBackToClipboardTextAndCompresses(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	m.clipboard = fakeClipboardImageReader{
+		err: errors.New("clipboard backend unavailable"),
+	}
+	m.clipboardRead = fakeClipboardTextReader{
+		text: strings.Join([]string{
+			"# heading",
+			"line 2",
+			"line 3",
+			"line 4",
+		}, "\n"),
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlV})
+	updated := got.(model)
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(updated.input.Value()) {
+		t.Fatalf("expected ctrl+v clipboard text fallback to compress into marker, got %q", updated.input.Value())
+	}
+	if len(updated.pastedOrder) != 1 {
+		t.Fatalf("expected one stored pasted content item, got %d", len(updated.pastedOrder))
+	}
+}
+
 func TestTerminalPasteEventWithEmptyPayloadPastesClipboardImage(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
@@ -1982,7 +2024,7 @@ func TestTerminalPasteEventWithTextDoesNotForceClipboardImage(t *testing.T) {
 	}
 }
 
-func TestRapidRuneInputForImagePathTriggersFallbackPlaceholder(t *testing.T) {
+func TestRapidRuneInputForImagePathDoesNotTriggerPasteFallback(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
 
@@ -1996,8 +2038,8 @@ func TestRapidRuneInputForImagePathTriggersFallbackPlaceholder(t *testing.T) {
 		next := got.(model)
 		m = &next
 	}
-	if m.input.Value() != "[Image #1]" {
-		t.Fatalf("expected rapid path input to convert to placeholder, got %q", m.input.Value())
+	if m.input.Value() != imagePath {
+		t.Fatalf("expected non-paste rapid rune input to stay literal, got %q", m.input.Value())
 	}
 }
 
@@ -2053,30 +2095,179 @@ func TestPasteEnterDoesNotSubmitAndKeepsNewline(t *testing.T) {
 	}
 }
 
-func TestShortBracketedPastePayloadKeepsTrailingNewlineBoundary(t *testing.T) {
+func TestShortBracketedPastePayloadKeepsLiteralMultilineInput(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
 	got, cmd := m.handlePastePayload("# title\n")
 	updated := got.(model)
-	if cmd == nil {
-		t.Fatalf("expected short paste payload to schedule finalize")
+	if cmd != nil {
+		t.Fatalf("expected short paste payload to be handled immediately")
 	}
-	if updated.input.Value() != "" {
-		t.Fatalf("expected short paste payload to stay buffered before finalize, got %q", updated.input.Value())
+	if updated.input.Value() != "# title\n" {
+		t.Fatalf("expected short multiline paste payload to remain literal, got %q", updated.input.Value())
 	}
 	if len(updated.chatItems) != 0 {
 		t.Fatalf("expected short paste payload not to auto submit, got %d chat items", len(updated.chatItems))
 	}
-	if !updated.hasActivePasteSession() {
-		t.Fatalf("expected short paste payload to activate paste session")
+}
+
+func TestPasteMsgTransactionConsumesEchoedPlainKeyStream(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	got, _ := m.handlePastePayload("echo line\n")
+	updated := got.(model)
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected paste transaction to activate for paste payload")
 	}
-	got, _ = updated.Update(pasteFinalizeMsg{ID: updated.pasteSession.finalizeID})
-	finalized := got.(model)
-	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(finalized.input.Value()) {
-		t.Fatalf("expected short multiline paste payload to finalize into marker, got %q", finalized.input.Value())
+	afterPaste := updated.input.Value()
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("echo line")})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+
+	if updated.input.Value() != afterPaste {
+		t.Fatalf("expected echoed paste stream to be consumed, got %q", updated.input.Value())
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected echoed paste stream not to submit, got %d items", len(updated.chatItems))
+	}
+	if updated.pasteTransaction.Active {
+		t.Fatalf("expected paste transaction to clear after payload echo is consumed")
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected enter after transaction completion to submit")
 	}
 }
-func TestRapidBareEnterAfterRecentBurstIsTreatedAsPasteContinuation(t *testing.T) {
+
+func TestPasteKeyTransactionConsumesEchoedPlainKeyStream(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("title\nbody"), Paste: true})
+	updated := got.(model)
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected paste-key flow to activate paste transaction")
+	}
+	afterPaste := updated.input.Value()
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("title")})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("body")})
+	updated = got.(model)
+
+	if updated.input.Value() != afterPaste {
+		t.Fatalf("expected echoed plain stream after paste-key boundary to be consumed, got %q", updated.input.Value())
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected echoed plain stream not to submit, got %d items", len(updated.chatItems))
+	}
+	if updated.pasteTransaction.Active {
+		t.Fatalf("expected paste transaction to clear after full payload echo")
+	}
+}
+
+func TestPasteKeyTransactionAccumulatesSplitPasteFragmentsForEchoConsumption(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("title"), Paste: true})
+	updated := got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter, Paste: true})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("body"), Paste: true})
+	updated = got.(model)
+
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected split paste-key flow to keep one active transaction")
+	}
+	afterPaste := updated.input.Value()
+	if afterPaste != "title\nbody" {
+		t.Fatalf("expected split paste fragments to be applied directly, got %q", afterPaste)
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("title")})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("body")})
+	updated = got.(model)
+
+	if updated.input.Value() != afterPaste {
+		t.Fatalf("expected echoed plain stream to be consumed after split paste fragments, got %q", updated.input.Value())
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected echoed plain stream not to submit, got %d items", len(updated.chatItems))
+	}
+	if updated.pasteTransaction.Active {
+		t.Fatalf("expected transaction to clear after split payload echo is consumed")
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected enter after split-transaction completion to submit")
+	}
+}
+
+func TestCtrlVTextTransactionIgnoresControlMarkerEcho(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	m.clipboard = fakeClipboardImageReader{
+		err: errors.New("clipboard backend unavailable"),
+	}
+	m.clipboardRead = fakeClipboardTextReader{
+		text: "echo line\n",
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlV})
+	updated := got.(model)
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected ctrl+v text fallback to start paste transaction")
+	}
+	afterPaste := updated.input.Value()
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\x16'}})
+	updated = got.(model)
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected ctrl+v marker rune to be ignored without clearing transaction")
+	}
+	if updated.input.Value() != afterPaste {
+		t.Fatalf("expected ctrl+v marker rune not to change input, got %q", updated.input.Value())
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyCtrlV})
+	updated = got.(model)
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected ctrl+v key event to be ignored without clearing transaction")
+	}
+	if updated.input.Value() != afterPaste {
+		t.Fatalf("expected ctrl+v key event not to change input, got %q", updated.input.Value())
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("echo line")})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+
+	if updated.input.Value() != afterPaste {
+		t.Fatalf("expected echoed stream to be consumed after ctrl+v control noise, got %q", updated.input.Value())
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected echoed ctrl+v stream not to submit, got %d items", len(updated.chatItems))
+	}
+	if updated.pasteTransaction.Active {
+		t.Fatalf("expected transaction to clear after payload echo is consumed")
+	}
+}
+
+func TestRapidBareEnterAfterRecentBurstSubmitsNormally(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	input.SetWidth(40)
@@ -2096,15 +2287,15 @@ func TestRapidBareEnterAfterRecentBurstIsTreatedAsPasteContinuation(t *testing.T
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	updated := got.(model)
 
-	if len(updated.chatItems) != 0 {
-		t.Fatalf("expected rapid bare enter to avoid submit, got %d chat items", len(updated.chatItems))
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected rapid bare enter to submit")
 	}
-	if !strings.Contains(updated.input.Value(), "\n") {
-		t.Fatalf("expected rapid bare enter to insert newline, got %q", updated.input.Value())
+	if updated.chatItems[0].Body != "# main heading" {
+		t.Fatalf("expected submitted body to preserve input, got %q", updated.chatItems[0].Body)
 	}
 }
 
-func TestBareEnterAfterRecentMarkdownBurstIsTreatedAsPasteContinuation(t *testing.T) {
+func TestBareEnterAfterRecentMarkdownBurstSubmitsNormally(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	input.SetWidth(40)
@@ -2124,75 +2315,109 @@ func TestBareEnterAfterRecentMarkdownBurstIsTreatedAsPasteContinuation(t *testin
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	updated := got.(model)
 
-	if len(updated.chatItems) != 0 {
-		t.Fatalf("expected markdown burst enter to avoid submit, got %d chat items", len(updated.chatItems))
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected markdown burst enter to submit")
 	}
-	if !strings.Contains(updated.input.Value(), "\n") {
-		t.Fatalf("expected markdown burst enter to insert newline, got %q", updated.input.Value())
+	if updated.chatItems[0].Body != "# 主标题" {
+		t.Fatalf("expected submitted body to preserve markdown text, got %q", updated.chatItems[0].Body)
 	}
 }
 
-func TestSplitPastePayloadFinalizesIntoSingleMarker(t *testing.T) {
+func TestSplitPastePayloadProcessesEachBoundaryImmediately(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
 
 	got, cmd := m.handlePastePayload("# 主标题\n")
 	updated := got.(model)
-	if cmd == nil || !updated.hasActivePasteSession() {
-		t.Fatalf("expected first fragment to open paste session")
+	if cmd != nil {
+		t.Fatalf("expected first fragment to be processed immediately")
 	}
-	if updated.input.Value() != "" {
-		t.Fatalf("expected first fragment to stay buffered, got %q", updated.input.Value())
+	if updated.input.Value() != "# 主标题\n" {
+		t.Fatalf("expected first fragment to remain literal, got %q", updated.input.Value())
 	}
 
 	got, cmd = updated.handlePastePayload("## 二级标题\n```go\nfmt.Println(\"hi\")\n```\n")
 	updated = got.(model)
-	if cmd == nil || !updated.hasActivePasteSession() {
-		t.Fatalf("expected second fragment to keep paste session active")
+	if cmd != nil {
+		t.Fatalf("expected second fragment to be processed immediately")
 	}
-
-	got, _ = updated.Update(pasteFinalizeMsg{ID: updated.pasteSession.finalizeID})
-	finalized := got.(model)
-	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(finalized.input.Value()) {
-		t.Fatalf("expected split paste payload to finalize into one marker, got %q", finalized.input.Value())
+	if !strings.Contains(updated.input.Value(), "# 主标题\n") {
+		t.Fatalf("expected first fragment to stay in input, got %q", updated.input.Value())
 	}
-	if len(finalized.chatItems) != 0 {
-		t.Fatalf("expected split paste payload not to auto submit, got %d items", len(finalized.chatItems))
+	if !regexp.MustCompile(`\[Paste #\d+ ~\d+ lines\]`).MatchString(updated.input.Value()) {
+		t.Fatalf("expected long second fragment to compress into marker, got %q", updated.input.Value())
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected split paste payload not to auto submit, got %d items", len(updated.chatItems))
 	}
 }
 
-func TestRunesEnterRunesPasteFlowDoesNotSubmitFirstLine(t *testing.T) {
+func TestRunesEnterRunesPasteFlowDoesNotAutoSubmitWithoutBareEnter(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
 
-	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("# 主标题")})
+	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("# 主标题"), Paste: true})
 	updated := got.(model)
-	if cmd == nil || !updated.hasActivePasteSession() {
-		t.Fatalf("expected initial rune burst to activate paste session")
+	if cmd != nil {
+		t.Fatalf("expected pasted rune burst to be handled without extra command")
 	}
-	if updated.input.Value() != "" {
-		t.Fatalf("expected initial rune burst to stay buffered, got %q", updated.input.Value())
+	if updated.input.Value() != "# 主标题" {
+		t.Fatalf("expected pasted rune burst to update input directly, got %q", updated.input.Value())
 	}
 
-	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter, Paste: true})
 	updated = got.(model)
 	if len(updated.chatItems) != 0 {
-		t.Fatalf("expected bare enter during paste flow not to submit first line, got %d items", len(updated.chatItems))
+		t.Fatalf("expected pasted enter not to submit first line, got %d items", len(updated.chatItems))
 	}
 
-	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("## 二级标题\n```go\nfmt.Println(\"hi\")\n```")})
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("## 二级标题\n```go\nfmt.Println(\"hi\")\n```"), Paste: true})
 	updated = got.(model)
-	got, _ = updated.Update(pasteFinalizeMsg{ID: updated.pasteSession.finalizeID})
-	finalized := got.(model)
-	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(finalized.input.Value()) {
-		t.Fatalf("expected rune-enter-rune paste flow to finalize into marker, got %q", finalized.input.Value())
+	if !regexp.MustCompile(`\[Paste #\d+ ~\d+ lines\]`).MatchString(updated.input.Value()) {
+		t.Fatalf("expected long pasted fragment to compress into marker, got %q", updated.input.Value())
 	}
-	if len(finalized.chatItems) != 0 {
-		t.Fatalf("expected rune-enter-rune paste flow not to auto submit, got %d items", len(finalized.chatItems))
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected rune-enter-rune paste flow not to auto submit, got %d items", len(updated.chatItems))
 	}
 }
 
-func TestSuppressedEnterAfterPasteIsSwallowed(t *testing.T) {
+func TestMultiRuneBurstWithoutPasteFlagCompressesAsPasteBoundary(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	longPaste := strings.Join([]string{
+		"line 1", "line 2", "line 3", "line 4", "line 5", "line 6",
+		"line 7", "line 8", "line 9", "line 10", "line 11", "line 12",
+	}, "\n")
+
+	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(longPaste)})
+	updated := got.(model)
+	if cmd != nil {
+		t.Fatalf("expected rune burst paste boundary to be handled directly")
+	}
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(updated.input.Value()) {
+		t.Fatalf("expected long multiline rune burst to compress into marker, got %q", updated.input.Value())
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected rune burst paste boundary not to auto submit, got %d items", len(updated.chatItems))
+	}
+}
+
+func TestShortMultiRuneBurstWithoutPasteFlagStaysLiteral(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("你好")})
+	updated := got.(model)
+	if updated.input.Value() != "你好" {
+		t.Fatalf("expected short rune burst to remain literal, got %q", updated.input.Value())
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected short rune burst not to auto submit, got %d items", len(updated.chatItems))
+	}
+}
+
+func TestImmediateEnterAfterPasteSubmits(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	input.SetWidth(40)
@@ -2213,11 +2438,233 @@ func TestSuppressedEnterAfterPasteIsSwallowed(t *testing.T) {
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	updated := got.(model)
 
-	if len(updated.chatItems) != 0 {
-		t.Fatalf("expected suppressed enter not to submit, got %d chat items", len(updated.chatItems))
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected enter after paste to submit")
 	}
-	if updated.input.Value() != "line1" {
-		t.Fatalf("expected suppressed enter to be swallowed, got %q", updated.input.Value())
+	if updated.chatItems[0].Body != "line1" {
+		t.Fatalf("expected submitted body to match input, got %q", updated.chatItems[0].Body)
+	}
+}
+
+func TestEnterCompressesClipboardMatchedLongInputWhenBoundaryMissing(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	longPaste := strings.Join([]string{
+		"func normalize(items []string) []string {",
+		"    out := make([]string, 0, len(items))",
+		"    for _, item := range items {",
+		"        v := strings.TrimSpace(item)",
+		"        if v == \"\" {",
+		"            continue",
+		"        }",
+		"        out = append(out, strings.ToLower(v))",
+		"    }",
+		"    return out",
+		"}",
+	}, "\n")
+	input.SetValue(longPaste)
+	input.CursorEnd()
+
+	m := model{
+		screen:         screenChat,
+		input:          input,
+		workspace:      "E:\\bytemind",
+		sess:           session.New("E:\\bytemind"),
+		clipboardRead:  fakeClipboardTextReader{text: longPaste},
+		pastedContents: make(map[string]pastedContent, maxStoredPastedContents),
+		pastedOrder:    make([]string, 0, maxStoredPastedContents),
+		nextPasteID:    1,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected first enter to compress clipboard-matched long paste without submitting, got %d items", len(updated.chatItems))
+	}
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(updated.input.Value()) {
+		t.Fatalf("expected clipboard-matched long paste to compress into marker, got %q", updated.input.Value())
+	}
+	if !strings.Contains(updated.statusNote, "clipboard-matched") {
+		t.Fatalf("expected clipboard-matched compression note, got %q", updated.statusNote)
+	}
+}
+
+func TestEnterTreatsClipboardContinuationAsPasteNewline(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("line 1")
+	input.CursorEnd()
+
+	clipboardText := strings.Join([]string{
+		"line 1",
+		"line 2",
+		"line 3",
+		"line 4",
+	}, "\n")
+
+	m := model{
+		screen:         screenChat,
+		input:          input,
+		workspace:      "E:\\bytemind",
+		sess:           session.New("E:\\bytemind"),
+		clipboardRead:  fakeClipboardTextReader{text: clipboardText},
+		pastedContents: make(map[string]pastedContent, maxStoredPastedContents),
+		pastedOrder:    make([]string, 0, maxStoredPastedContents),
+		nextPasteID:    1,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected enter in clipboard continuation to avoid submit, got %d items", len(updated.chatItems))
+	}
+	if updated.input.Value() != "line 1\n" {
+		t.Fatalf("expected enter to be treated as paste newline continuation, got %q", updated.input.Value())
+	}
+}
+
+func TestEnterSubmitsLongInputWhenClipboardDoesNotMatch(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	longInput := strings.Join([]string{
+		"line 1", "line 2", "line 3", "line 4", "line 5", "line 6",
+		"line 7", "line 8", "line 9", "line 10", "line 11", "line 12",
+	}, "\n")
+	input.SetValue(longInput)
+	input.CursorEnd()
+
+	m := model{
+		screen:        screenChat,
+		input:         input,
+		workspace:     "E:\\bytemind",
+		sess:          session.New("E:\\bytemind"),
+		clipboardRead: fakeClipboardTextReader{text: "different clipboard text"},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected non-matching clipboard long input to submit")
+	}
+	if updated.chatItems[0].Body != longInput {
+		t.Fatalf("expected submitted body to remain unchanged, got %q", updated.chatItems[0].Body)
+	}
+}
+
+func TestPlainRuneStreamCompressesToMarkerWhenItMatchesLongClipboard(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	longPaste := strings.Join([]string{
+		"func normalize(items []string) []string {",
+		"    out := make([]string, 0, len(items))",
+		"    for _, item := range items {",
+		"        v := strings.TrimSpace(item)",
+		"        if v == \"\" {",
+		"            continue",
+		"        }",
+		"        out = append(out, strings.ToLower(v))",
+		"    }",
+		"    return out",
+		"}",
+	}, "\n")
+	m.clipboardRead = fakeClipboardTextReader{text: longPaste}
+
+	for _, r := range longPaste {
+		got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		next := got.(model)
+		m = &next
+	}
+
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(m.input.Value()) {
+		t.Fatalf("expected plain rune stream matching clipboard to compress into marker, got %q", m.input.Value())
+	}
+	if len(m.pastedOrder) != 1 {
+		t.Fatalf("expected one stored pasted content item, got %d", len(m.pastedOrder))
+	}
+}
+
+func TestClipboardCaptureConvertsBeforeFullStreamArrives(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	longPaste := strings.Join([]string{
+		"func normalize(items []string) []string {",
+		"    out := make([]string, 0, len(items))",
+		"    for _, item := range items {",
+		"        v := strings.TrimSpace(item)",
+		"        if v == \"\" {",
+		"            continue",
+		"        }",
+		"        out = append(out, strings.ToLower(v))",
+		"    }",
+		"    return out",
+		"}",
+	}, "\n")
+	m.clipboardRead = fakeClipboardTextReader{text: longPaste}
+
+	runes := []rune(longPaste)
+	for i := 0; i < clipboardCaptureMinPrefixRunes && i < len(runes); i++ {
+		got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{runes[i]}})
+		next := got.(model)
+		m = &next
+	}
+
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(m.input.Value()) {
+		t.Fatalf("expected clipboard capture to convert early into marker, got %q", m.input.Value())
+	}
+	if strings.Contains(m.input.Value(), "normalize(") {
+		t.Fatalf("expected no raw content after early capture, got %q", m.input.Value())
+	}
+	if !m.pasteTransaction.Active {
+		t.Fatalf("expected paste transaction to stay active after early clipboard capture")
+	}
+}
+
+func TestClipboardCaptureConsumesTrailingEnterEchoAndDoesNotAutoSubmit(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	longPaste := strings.Join([]string{
+		"func normalize(items []string) []string {",
+		"    out := make([]string, 0, len(items))",
+		"    for _, item := range items {",
+		"        v := strings.TrimSpace(item)",
+		"        if v == \"\" {",
+		"            continue",
+		"        }",
+		"        out = append(out, strings.ToLower(v))",
+		"    }",
+		"    return out",
+		"}",
+	}, "\n")
+	m.clipboardRead = fakeClipboardTextReader{text: longPaste}
+
+	for _, r := range longPaste {
+		got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		next := got.(model)
+		m = &next
+	}
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(m.input.Value()) {
+		t.Fatalf("expected clipboard capture marker, got %q", m.input.Value())
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected trailing enter echo to be consumed without submit, got %d items", len(updated.chatItems))
+	}
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(updated.input.Value()) {
+		t.Fatalf("expected marker to remain after consumed trailing enter, got %q", updated.input.Value())
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected second enter to submit marker prompt")
 	}
 }
 
@@ -3072,7 +3519,7 @@ func TestCommandPaletteEnterOnQuitReturnsQuitCmd(t *testing.T) {
 	}
 }
 
-func TestCommandPaletteBusyPlainTextQueuesBTW(t *testing.T) {
+func TestCommandPaletteBusyPlainTextDoesNotSubmitBTW(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	input.SetValue("focus only on unit tests")
@@ -3092,17 +3539,17 @@ func TestCommandPaletteBusyPlainTextQueuesBTW(t *testing.T) {
 	got, _ := m.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
 	updated := got.(model)
 
-	if !canceled {
-		t.Fatalf("expected command palette busy submit to cancel active run")
+	if canceled {
+		t.Fatalf("expected busy plain-text enter not to cancel active run")
 	}
-	if updated.commandOpen {
-		t.Fatalf("expected command palette to close after busy plain-text submit")
+	if !updated.commandOpen {
+		t.Fatalf("expected command palette to remain open for plain text while busy")
 	}
-	if len(updated.pendingBTW) != 1 || updated.pendingBTW[0] != "focus only on unit tests" {
-		t.Fatalf("expected plain text to queue as btw, got %#v", updated.pendingBTW)
+	if len(updated.pendingBTW) != 0 || len(updated.chatItems) != 0 || updated.interrupting {
+		t.Fatalf("expected no BTW side effects, got pending=%#v chat=%#v interrupting=%v", updated.pendingBTW, updated.chatItems, updated.interrupting)
 	}
-	if !updated.interrupting {
-		t.Fatalf("expected busy plain-text submit to enter interrupting state")
+	if updated.statusNote != "Run is in progress. Use /btw <message> to interject, or Esc to interrupt." {
+		t.Fatalf("expected explicit btw usage note, got %q", updated.statusNote)
 	}
 }
 
@@ -4219,7 +4666,7 @@ func TestBusyInputStillEditable(t *testing.T) {
 	}
 }
 
-func TestBusyEnterQueuesBTWAndCancelsRun(t *testing.T) {
+func TestBusyEnterWithPlainTextDoesNotSubmitBTW(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	input.SetValue("focus only on unit tests")
@@ -4238,124 +4685,18 @@ func TestBusyEnterQueuesBTWAndCancelsRun(t *testing.T) {
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	updated := got.(model)
 
-	if !canceled {
-		t.Fatalf("expected busy enter to cancel the active run")
-	}
-	if !updated.interrupting {
-		t.Fatalf("expected model to enter interrupting state")
-	}
-	if len(updated.pendingBTW) != 1 || updated.pendingBTW[0] != "focus only on unit tests" {
-		t.Fatalf("expected pending btw queue to capture input, got %#v", updated.pendingBTW)
-	}
-	if updated.input.Value() != "" {
-		t.Fatalf("expected btw submit to reset input, got %q", updated.input.Value())
-	}
-	if len(updated.chatItems) != 1 || updated.chatItems[0].Body != "focus only on unit tests" {
-		t.Fatalf("expected btw submit to append a user chat entry, got %#v", updated.chatItems)
-	}
-	if !strings.Contains(updated.chatItems[0].Meta, "btw") {
-		t.Fatalf("expected btw marker in chat meta, got %q", updated.chatItems[0].Meta)
-	}
-}
-
-func TestBusyEnterSuppressedAfterRecentMultilinePaste(t *testing.T) {
-	input := textarea.New()
-	input.Focus()
-	input.SetValue("Design a plugin platform\n- dynamic plugin loading\n- permission isolation")
-	input.CursorEnd()
-
-	canceled := false
-	m := model{
-		screen:      screenChat,
-		busy:        true,
-		input:       input,
-		lastPasteAt: time.Now(),
-		sess:        session.New("E:\\bytemind"),
-		workspace:   "E:\\bytemind",
-		runCancel:   func() { canceled = true },
-	}
-
-	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	updated := got.(model)
-
-	if cmd != nil {
-		t.Fatalf("expected suppressed enter not to schedule a command")
-	}
 	if canceled {
-		t.Fatalf("expected suppressed enter not to cancel current run")
+		t.Fatalf("expected busy plain-text enter not to cancel the active run")
 	}
 	if updated.interrupting || len(updated.pendingBTW) != 0 || len(updated.chatItems) != 0 {
 		t.Fatalf("expected no BTW side effects, got interrupting=%v pending=%#v chat=%#v", updated.interrupting, updated.pendingBTW, updated.chatItems)
 	}
-}
-
-func TestBusyEnterSuppressedForRecentPasteBurstSingleLine(t *testing.T) {
-	input := textarea.New()
-	input.Focus()
-	input.SetValue("dynamic plugin loading")
-	input.CursorEnd()
-
-	canceled := false
-	now := time.Now()
-	m := model{
-		screen:      screenChat,
-		busy:        true,
-		input:       input,
-		lastPasteAt: now,
-		lastInputAt: now,
-		sess:        session.New("E:\\bytemind"),
-		workspace:   "E:\\bytemind",
-		runCancel:   func() { canceled = true },
-	}
-
-	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	updated := got.(model)
-
-	if cmd != nil {
-		t.Fatalf("expected suppressed burst enter not to schedule a command")
-	}
-	if canceled {
-		t.Fatalf("expected suppressed burst enter not to cancel current run")
-	}
-	if updated.interrupting || len(updated.pendingBTW) != 0 || len(updated.chatItems) != 0 {
-		t.Fatalf("expected no BTW side effects, got interrupting=%v pending=%#v chat=%#v", updated.interrupting, updated.pendingBTW, updated.chatItems)
+	if updated.statusNote != "Run is in progress. Use /btw <message> to interject, or Esc to interrupt." {
+		t.Fatalf("expected explicit btw usage note, got %q", updated.statusNote)
 	}
 }
 
-func TestBusyEnterSuppressedForImplicitPasteBurstWithoutPasteFlag(t *testing.T) {
-	input := textarea.New()
-	input.Focus()
-	input.SetValue("A long multiline paste-burst candidate mentioning `main.go` should not auto-submit.")
-	input.CursorEnd()
-
-	canceled := false
-	now := time.Now()
-	m := model{
-		screen:         screenChat,
-		busy:           true,
-		input:          input,
-		lastInputAt:    now,
-		inputBurstSize: 64,
-		sess:           session.New("E:\\bytemind"),
-		workspace:      "E:\\bytemind",
-		runCancel:      func() { canceled = true },
-	}
-
-	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	updated := got.(model)
-
-	if cmd != nil {
-		t.Fatalf("expected implicit paste-burst enter not to schedule a command")
-	}
-	if canceled {
-		t.Fatalf("expected implicit paste-burst enter not to cancel current run")
-	}
-	if updated.interrupting || len(updated.pendingBTW) != 0 || len(updated.chatItems) != 0 {
-		t.Fatalf("expected no BTW side effects, got interrupting=%v pending=%#v chat=%#v", updated.interrupting, updated.pendingBTW, updated.chatItems)
-	}
-}
-
-func TestIdleEnterCompressesImplicitLongPasteBurstWithoutPasteFlag(t *testing.T) {
+func TestIdleEnterSubmitsImplicitLongPasteBurstWithoutPasteFlag(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	longPaste := strings.Join([]string{
@@ -4388,18 +4729,18 @@ func TestIdleEnterCompressesImplicitLongPasteBurstWithoutPasteFlag(t *testing.T)
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	updated := got.(model)
 
-	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(updated.input.Value()) {
-		t.Fatalf("expected implicit long paste burst to compress into marker, got %q", updated.input.Value())
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected idle enter to submit prompt")
 	}
-	if len(updated.chatItems) != 0 {
-		t.Fatalf("expected compression step not to submit chat immediately, got %d items", len(updated.chatItems))
+	if updated.chatItems[0].Body != longPaste {
+		t.Fatalf("expected submitted body to keep original content, got %q", updated.chatItems[0].Body)
 	}
 }
 
 func TestBusyEnterInToolPhaseDefersBTWCancel(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
-	input.SetValue("change plan after this step")
+	input.SetValue("/btw change plan after this step")
 	input.CursorEnd()
 
 	canceled := false
@@ -4621,7 +4962,7 @@ func TestComposeBTWPromptIgnoresEmptyEntries(t *testing.T) {
 func TestSubmitBTWShowsDropHintWhenQueueCapped(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
-	input.SetValue("new update")
+	input.SetValue("/btw new update")
 	input.CursorEnd()
 
 	m := model{
@@ -5461,7 +5802,7 @@ func TestUpdatePasteMsgCompressesLongTextImmediately(t *testing.T) {
 	}
 }
 
-func TestUpdatePasteMsgSuppressesImmediateEnterSubmit(t *testing.T) {
+func TestUpdatePasteMsgAllowsImmediateEnterSubmit(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
 	longPaste := strings.Join([]string{
@@ -5474,11 +5815,11 @@ func TestUpdatePasteMsgSuppressesImmediateEnterSubmit(t *testing.T) {
 	got, _ = afterPaste.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	afterEnter := got.(model)
 
-	if len(afterEnter.chatItems) != 0 {
-		t.Fatalf("expected immediate enter after paste to be suppressed, got %d chat items", len(afterEnter.chatItems))
+	if len(afterEnter.chatItems) == 0 {
+		t.Fatalf("expected immediate enter after paste to submit")
 	}
-	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(afterEnter.input.Value()) {
-		t.Fatalf("expected compressed marker to remain after suppressed enter, got %q", afterEnter.input.Value())
+	if !strings.Contains(afterEnter.chatItems[0].Body, "[Paste #") {
+		t.Fatalf("expected submitted body to include compressed marker, got %q", afterEnter.chatItems[0].Body)
 	}
 }
 

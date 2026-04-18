@@ -69,11 +69,13 @@ func (m model) handleCommandPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.statusNote = "This command is unavailable while a run is in progress. Use /btw <message>."
 					return m, nil
 				}
-				m.closeCommandPalette()
-				return m.submitBTW(value)
+				m.statusNote = "Run is in progress. Use /btw <message> to interject, or Esc to interrupt."
+				return m, nil
 			}
 			m.closeCommandPalette()
 			m.input.Reset()
+			m.clearPasteTransaction()
+			m.clearVirtualPasteParts()
 			next, cmd, err := m.executeCommand(value)
 			if err != nil {
 				m.statusNote = err.Error()
@@ -91,6 +93,8 @@ func (m model) handleCommandPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.input.Reset()
+			m.clearPasteTransaction()
+			m.clearVirtualPasteParts()
 			next, cmd, err := m.executeCommand(selected.Name)
 			if err != nil {
 				m.statusNote = err.Error()
@@ -416,6 +420,8 @@ func (m *model) closeCommandPalette() {
 	m.commandCursor = 0
 	m.closeMentionPalette()
 	m.input.Reset()
+	m.clearPasteTransaction()
+	m.clearVirtualPasteParts()
 }
 
 func (m model) selectedCommandItem() (commandItem, bool) {

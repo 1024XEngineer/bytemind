@@ -145,6 +145,9 @@ func (m *model) newSession() error {
 	m.nextPasteID = 1
 	m.pastedStateLoaded = false
 	m.lastCompressedPasteAt = time.Time{}
+	m.virtualPasteParts = make([]virtualPastePart, 0, maxStoredPastedContents)
+	m.nextVirtualPastePart = 1
+	m.pasteTransaction = pasteTransactionState{}
 	m.ensurePastedContentState()
 	m.pendingBTW = nil
 	m.interrupting = false
@@ -199,6 +202,9 @@ func (m *model) resumeSession(prefix string) error {
 	m.nextPasteID = 1
 	m.pastedStateLoaded = false
 	m.lastCompressedPasteAt = time.Time{}
+	m.virtualPasteParts = make([]virtualPastePart, 0, maxStoredPastedContents)
+	m.nextVirtualPastePart = 1
+	m.pasteTransaction = pasteTransactionState{}
 	m.ensurePastedContentState()
 	m.syncInputImageRefs("")
 	m.pendingBTW = nil

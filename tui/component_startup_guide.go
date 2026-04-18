@@ -37,6 +37,8 @@ func (m *model) handleStartupGuideSubmission(rawInput string) error {
 		}
 		m.setStartupGuideStep(next, "")
 		m.input.Reset()
+		m.clearPasteTransaction()
+		m.clearVirtualPasteParts()
 		return nil
 	case startupFieldAPIKey:
 		return m.verifyAndFinalizeStartupAPIKey(rawInput)
@@ -92,6 +94,8 @@ func (m *model) verifyAndFinalizeStartupAPIKey(rawInput string) error {
 	}
 	m.syncInputStyle()
 	m.input.Reset()
+	m.clearPasteTransaction()
+	m.clearVirtualPasteParts()
 	return nil
 }
 

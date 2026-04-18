@@ -50,7 +50,6 @@ const (
 	conversationViewportZoneID = "bytemind:conversation:viewport"
 	inputEditorZoneID          = "bytemind:input:editor"
 	thinkingSpinnerFPS         = 80 * time.Millisecond
-	pasteAggregateDebounce     = 120 * time.Millisecond
 )
 
 type footerShortcutHint struct {
@@ -219,19 +218,18 @@ type mouseSelectionScrollTickMsg struct {
 	ID int
 }
 
-type pasteFinalizeMsg struct {
-	ID int
+type pasteTransactionState struct {
+	Active             bool
+	Source             string
+	Payload            string
+	Consumed           int
+	AwaitTrailingEnter bool
 }
 
-type pasteSessionState struct {
-	active       bool
-	startedAt    time.Time
-	lastEventAt  time.Time
-	sourceKind   string
-	baseInput    string
-	bufferedText string
-	sawMultiline bool
-	finalizeID   int
+type virtualPastePart struct {
+	PartID      string
+	PasteID     string
+	Placeholder string
 }
 
 var commandItems = []commandItem{
@@ -296,7 +294,6 @@ type model struct {
 	mentionRecent         map[string]int
 	mentionSeq            int
 	lastPasteAt           time.Time
-	pasteSubmitGuardUntil time.Time
 	lastInputAt           time.Time
 	inputBurstSize        int
 	chatAutoFollow        bool
@@ -342,8 +339,11 @@ type model struct {
 	nextPasteID           int
 	pastedStateLoaded     bool
 	lastCompressedPasteAt time.Time
-	pasteSession          pasteSessionState
+	virtualPasteParts     []virtualPastePart
+	nextVirtualPastePart  int
+	pasteTransaction      pasteTransactionState
 	clipboard             clipboardImageReader
+	clipboardRead         clipboardTextReader
 	clipboardText         clipboardTextWriter
 	runCancel             context.CancelFunc
 	pendingBTW            []string
@@ -398,45 +398,48 @@ func newModel(opts Options) model {
 	}
 
 	m := model{
-		runner:             opts.Runner,
-		store:              opts.Store,
-		sess:               opts.Session,
-		imageStore:         opts.ImageStore,
-		cfg:                opts.Config,
-		workspace:          opts.Workspace,
-		async:              async,
-		viewport:           vp,
-		copyView:           copyVP,
-		planView:           planVP,
-		input:              input,
-		spinner:            spin,
-		chatItems:          chatItems,
-		toolRuns:           toolRuns,
-		plan:               copyPlanState(opts.Session.Plan),
-		sessions:           nil,
-		sessionLimit:       defaultSessionLimit,
-		screen:             initialScreen(opts.Session),
-		mode:               toAgentMode(opts.Session.Mode),
-		streamingIndex:     -1,
-		statusNote:         "Ready.",
-		phase:              "idle",
-		llmConnected:       true,
-		chatAutoFollow:     true,
-		mentionIndex:       mention.NewWorkspaceFileIndex(opts.Workspace),
-		tokenUsage:         newTokenUsageComponent(),
-		tokenBudget:        max(1, opts.Config.TokenQuota),
-		tokenEstimator:     newRealtimeTokenEstimator(opts.Config.Provider.Model),
-		inputImageRefs:     make(map[int]llm.AssetID, 8),
-		inputImageMentions: make(map[string]llm.AssetID, 8),
-		orphanedImages:     make(map[llm.AssetID]time.Time, 8),
-		nextImageID:        nextSessionImageID(opts.Session),
-		pastedContents:     make(map[string]pastedContent, maxStoredPastedContents),
-		pastedOrder:        make([]string, 0, maxStoredPastedContents),
-		nextPasteID:        1,
-		clipboard:          defaultClipboardImageReader{},
-		clipboardText:      defaultClipboardTextWriter{},
-		startupGuide:       opts.StartupGuide,
-		mouseYOffset:       resolveMouseYOffset(),
+		runner:               opts.Runner,
+		store:                opts.Store,
+		sess:                 opts.Session,
+		imageStore:           opts.ImageStore,
+		cfg:                  opts.Config,
+		workspace:            opts.Workspace,
+		async:                async,
+		viewport:             vp,
+		copyView:             copyVP,
+		planView:             planVP,
+		input:                input,
+		spinner:              spin,
+		chatItems:            chatItems,
+		toolRuns:             toolRuns,
+		plan:                 copyPlanState(opts.Session.Plan),
+		sessions:             nil,
+		sessionLimit:         defaultSessionLimit,
+		screen:               initialScreen(opts.Session),
+		mode:                 toAgentMode(opts.Session.Mode),
+		streamingIndex:       -1,
+		statusNote:           "Ready.",
+		phase:                "idle",
+		llmConnected:         true,
+		chatAutoFollow:       true,
+		mentionIndex:         mention.NewWorkspaceFileIndex(opts.Workspace),
+		tokenUsage:           newTokenUsageComponent(),
+		tokenBudget:          max(1, opts.Config.TokenQuota),
+		tokenEstimator:       newRealtimeTokenEstimator(opts.Config.Provider.Model),
+		inputImageRefs:       make(map[int]llm.AssetID, 8),
+		inputImageMentions:   make(map[string]llm.AssetID, 8),
+		orphanedImages:       make(map[llm.AssetID]time.Time, 8),
+		nextImageID:          nextSessionImageID(opts.Session),
+		pastedContents:       make(map[string]pastedContent, maxStoredPastedContents),
+		pastedOrder:          make([]string, 0, maxStoredPastedContents),
+		nextPasteID:          1,
+		virtualPasteParts:    make([]virtualPastePart, 0, maxStoredPastedContents),
+		nextVirtualPastePart: 1,
+		clipboard:            defaultClipboardImageReader{},
+		clipboardRead:        defaultClipboardTextReader{},
+		clipboardText:        defaultClipboardTextWriter{},
+		startupGuide:         opts.StartupGuide,
+		mouseYOffset:         resolveMouseYOffset(),
 	}
 	if opts.StartupGuide.Active {
 		m.statusNote = opts.StartupGuide.Status
@@ -492,12 +495,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case pasteFinalizeMsg:
-		if !m.hasActivePasteSession() {
-			return m, nil
-		}
-		m.finalizePasteSession(msg.ID)
-		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -697,7 +694,8 @@ func isCtrlVPasteKey(msg tea.KeyMsg) bool {
 	if len(msg.Runes) == 1 && msg.Runes[0] == []rune(ctrlVMarkerRune)[0] {
 		return true
 	}
-	return normalizeKeyName(msg.String()) == "ctrl+v"
+	key := normalizeKeyName(msg.String())
+	return key == "ctrl+v" || key == "ctrl+shift+v" || key == "shift+insert"
 }
 
 func (m model) pasteFragmentFromKey(msg tea.KeyMsg) (string, string, bool) {
@@ -711,42 +709,15 @@ func (m model) pasteFragmentFromKey(msg tea.KeyMsg) (string, string, bool) {
 			return "", "", false
 		}
 	}
-	if m.hasActivePasteSession() {
-		switch {
-		case msg.Type == tea.KeyEnter && m.shouldAppendEnterToActivePasteSession():
-			return "\n", "rapid-enter", true
-		case msg.Type == tea.KeyRunes && len(msg.Runes) > 0:
-			return string(msg.Runes), "rune", true
-		default:
-			return "", "", false
+	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
+		fragment := string(msg.Runes)
+		candidate := strings.ReplaceAll(normalizeNewlines(fragment), ctrlVMarkerRune, "")
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed != "" && (strings.Contains(candidate, "\n") || m.isLongPastedText(candidate)) {
+			return fragment, "rune-burst-paste", true
 		}
 	}
-	if msg.Type != tea.KeyRunes || len(msg.Runes) == 0 {
-		return "", "", false
-	}
-	fragment := string(msg.Runes)
-	if shouldStartPasteAggregationFromRunes(fragment) {
-		return fragment, "rune", true
-	}
 	return "", "", false
-}
-
-func shouldStartPasteAggregationFromRunes(fragment string) bool {
-	normalized := normalizeNewlines(fragment)
-	trimmed := strings.TrimSpace(normalized)
-	if trimmed == "" {
-		return false
-	}
-	if strings.Contains(normalized, "\n") {
-		return true
-	}
-	if len([]rune(fragment)) <= 1 {
-		return false
-	}
-	if looksLikeMarkdownPasteFragment(trimmed) {
-		return true
-	}
-	return len([]rune(trimmed)) >= pasteBurstImmediateMinChars
 }
 
 func inputMutationSource(msg tea.KeyMsg) string {
@@ -1005,33 +976,45 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	if msg.Type == tea.KeyEnter && !msg.Paste && !m.shouldSuppressEnterAfterPaste() && m.shouldTreatRapidEnterAsPasteContinuation() {
-		before := m.input.Value()
-		after := before + "\n"
-		m.setInputValue(after)
-		_ = m.handleInputMutation(before, after, "rapid-enter")
-		m.syncInputOverlays()
+	if m.consumePasteEchoKey(msg) {
 		return m, nil
 	}
 
 	if fragment, source, ok := m.pasteFragmentFromKey(msg); ok {
-		return m, m.ingestPasteFragment(fragment, source)
+		m.beginOrAppendPasteTransaction(fragment, source)
+		m.applyDirectPasteInput(fragment, source)
+		return m, nil
 	}
 
 	ctrlVPasteDetected := isCtrlVPasteKey(msg)
 	// Prefer Ctrl+V image paste first. If clipboard has no image, fall through
 	// so regular terminal paste behavior can continue.
 	if ctrlVPasteDetected {
-		if note := m.handleEmptyClipboardPaste(); strings.TrimSpace(note) != "" {
-			m.statusNote = note
-			if strings.Contains(note, "Attached image from clipboard") {
-				m.syncInputOverlays()
-				return m, nil
+		beforeClipboard := m.input.Value()
+		clipboardNote := strings.TrimSpace(m.handleEmptyClipboardPaste())
+		if m.input.Value() != beforeClipboard {
+			if clipboardNote != "" {
+				m.statusNote = clipboardNote
 			}
-			if !isClipboardNoImageNote(note) {
-				m.syncInputOverlays()
-				return m, nil
+			m.syncInputOverlays()
+			return m, nil
+		}
+		// If clipboard has text, treat Ctrl+V as one explicit paste boundary and
+		// handle insertion ourselves so long text can be summarized immediately.
+		if payload, ok := m.readClipboardTextForPaste(); ok {
+			m.beginPasteTransaction(payload, "ctrl+v")
+			m.applyDirectPasteInput(payload, "ctrl+v")
+			if strings.TrimSpace(m.statusNote) == "" || isClipboardNoImageNote(clipboardNote) {
+				m.statusNote = "Pasted text from clipboard."
 			}
+			m.syncInputOverlays()
+			return m, nil
+		}
+		if clipboardNote != "" {
+			m.clearPasteTransaction()
+			m.statusNote = clipboardNote
+			m.syncInputOverlays()
+			return m, nil
 		}
 	}
 
@@ -1070,50 +1053,18 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.String() == "enter" && !msg.Paste {
-		if m.hasActivePasteSession() {
-			m.finalizePasteSession(m.pasteSession.finalizeID)
+		rawValue := m.input.Value()
+		if m.shouldTreatEnterAsClipboardPasteContinuation(rawValue) {
+			m.applyDirectPasteInput("\n", "clipboard-paste-continuation")
+			m.syncInputOverlays()
 			return m, nil
 		}
-		rawValue := m.input.Value()
-		if next, handled := m.handleSuppressedPasteEnter(rawValue); handled {
-			return next, nil
-		}
-		if markerChain, ok := extractLeadingCompressedMarker(rawValue); ok {
-			tail := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rawValue), markerChain))
-			if tail != "" {
-				if m.shouldCompressPastedText(tail, "paste-enter") {
-					marker, content, err := m.compressPastedText(tail)
-					if err != nil {
-						m.statusNote = err.Error()
-						return m, nil
-					}
-					combined := strings.TrimSpace(markerChain) + marker
-					m.setInputValue(combined)
-					m.syncInputOverlays()
-					m.statusNote = fmt.Sprintf("Detected another pasted block and compressed it as %s (%d lines). Press Enter again to send.", marker, content.Lines)
-					return m, nil
-				}
-				if len(tail) >= 24 || strings.Contains(tail, "\n") {
-					m.setInputValue(strings.TrimSpace(markerChain))
-					m.syncInputOverlays()
-					m.statusNote = "Detected continued paste chunk after compressed marker. Kept compressed markers only; press Enter again to send."
-					return m, nil
-				}
-			}
-		}
-		// Check whether the input has already been compressed.
-		isAlreadyCompressed := strings.Contains(rawValue, "[Paste #") || strings.Contains(rawValue, "[Pasted #")
-
-		// Compress long pasted content before sending.
-		if !isAlreadyCompressed && m.shouldCompressPastedText(rawValue, inputMutationSource(msg)) {
-			marker, content, err := m.compressPastedText(rawValue)
-			if err != nil {
-				m.statusNote = err.Error()
-				return m, nil
-			}
-			m.setInputValue(marker)
+		if replacement, note, ok := m.tryCompressClipboardMatchedPaste(rawValue); ok {
+			m.setInputValue(replacement)
 			m.syncInputOverlays()
-			m.statusNote = fmt.Sprintf("Long pasted text (%d lines) compressed as %s. Press Enter again to send. Use [Paste #%s] or [Paste #%s line10~line20] later.", content.Lines, marker, content.ID, content.ID)
+			if strings.TrimSpace(note) != "" {
+				m.statusNote = note
+			}
 			return m, nil
 		}
 		value := strings.TrimSpace(rawValue)
@@ -1143,10 +1094,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.busy {
 			if strings.HasPrefix(value, "/") {
-				m.statusNote = "This command is unavailable while a run is in progress. Use /btw <message> or plain text."
+				m.statusNote = "This command is unavailable while a run is in progress. Use /btw <message>."
 				return m, nil
 			}
-			return m.submitBTW(value)
+			m.statusNote = "Run is in progress. Use /btw <message> to interject, or Esc to interrupt."
+			return m, nil
 		}
 		if isContinueExecutionInput(value) && planpkg.HasStructuredPlan(m.plan) {
 			state, err := preparePlanForContinuation(m.plan)
@@ -1169,6 +1121,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if strings.HasPrefix(value, "/") {
 			m.input.Reset()
+			m.clearPasteTransaction()
+			m.clearVirtualPasteParts()
 			next, cmd, err := m.executeCommand(value)
 			if err != nil {
 				m.statusNote = err.Error()
@@ -1223,162 +1177,6 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.syncInputOverlays()
 	return m, cmd
-}
-
-func (m model) shouldSuppressEnterAfterPaste() bool {
-	if !m.pasteSubmitGuardUntil.IsZero() && time.Now().Before(m.pasteSubmitGuardUntil) {
-		return true
-	}
-	if m.hasImplicitPasteBurst() {
-		return true
-	}
-	if m.lastPasteAt.IsZero() {
-		return false
-	}
-	if time.Since(m.lastPasteAt) > pasteSubmitGuard {
-		return false
-	}
-	if strings.Contains(m.input.Value(), "\n") {
-		return true
-	}
-	if strings.Contains(m.input.Value(), "[Paste #") || strings.Contains(m.input.Value(), "[Pasted #") {
-		return true
-	}
-	return time.Since(m.lastInputAt) <= 120*time.Millisecond
-}
-
-func (m model) hasImplicitPasteBurst() bool {
-	if m.lastInputAt.IsZero() {
-		return false
-	}
-	if time.Since(m.lastInputAt) > 250*time.Millisecond {
-		return false
-	}
-	if m.inputBurstSize < pasteBurstImmediateMinChars {
-		return false
-	}
-	trimmed := strings.TrimSpace(m.input.Value())
-	if trimmed == "" {
-		return false
-	}
-	if strings.Contains(trimmed, "[Paste #") || strings.Contains(trimmed, "[Pasted #") {
-		return true
-	}
-	if strings.Contains(trimmed, "\n") {
-		return true
-	}
-	if m.busy && m.inputBurstSize >= pasteBurstImmediateMinChars {
-		return looksLikePastedFragment(trimmed)
-	}
-	if m.inputBurstSize < pasteBurstCharThreshold {
-		return false
-	}
-	return looksLikePastedFragment(trimmed)
-}
-
-func (m model) shouldTreatRapidEnterAsPasteContinuation() bool {
-	if m.lastInputAt.IsZero() {
-		return false
-	}
-	if time.Since(m.lastInputAt) > 400*time.Millisecond {
-		return false
-	}
-	trimmed := strings.TrimSpace(m.input.Value())
-	if trimmed == "" {
-		return false
-	}
-	if m.inputBurstSize >= 2 && looksLikeMarkdownPasteFragment(trimmed) {
-		return true
-	}
-	return m.inputBurstSize >= pasteBurstImmediateMinChars
-}
-
-func (m model) shouldAppendEnterToActivePasteSession() bool {
-	if !m.hasActivePasteSession() {
-		return false
-	}
-	if m.pasteSession.lastEventAt.IsZero() {
-		return false
-	}
-	return time.Since(m.pasteSession.lastEventAt) <= 400*time.Millisecond
-}
-
-func looksLikeMarkdownPasteFragment(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return false
-	}
-	switch {
-	case strings.HasPrefix(value, "#"),
-		strings.HasPrefix(value, ">"),
-		strings.HasPrefix(value, "- "),
-		strings.HasPrefix(value, "* "),
-		strings.HasPrefix(value, "```"):
-		return true
-	}
-	if len(value) >= 3 && value[0] >= '0' && value[0] <= '9' {
-		if dot := strings.Index(value, ". "); dot > 0 && dot <= 2 {
-			return true
-		}
-	}
-	return false
-}
-
-func (m model) handleSuppressedPasteEnter(rawValue string) (tea.Model, bool) {
-	if !m.shouldSuppressEnterAfterPaste() {
-		return m, false
-	}
-	rawValue = strings.TrimSpace(rawValue)
-	if rawValue == "" {
-		return m, true
-	}
-	if markerChain, ok := extractLeadingCompressedMarker(rawValue); ok {
-		tail := strings.TrimSpace(strings.TrimPrefix(rawValue, markerChain))
-		if tail != "" {
-			if m.shouldCompressPastedText(tail, "paste-enter") || m.isLongPastedText(tail) {
-				marker, content, err := m.compressPastedText(tail)
-				if err != nil {
-					m.statusNote = err.Error()
-					return m, true
-				}
-				combined := strings.TrimSpace(markerChain) + marker
-				m.setInputValue(combined)
-				m.syncInputOverlays()
-				m.statusNote = fmt.Sprintf("Detected another pasted block and compressed it as %s (%d lines). Press Enter again to send.", marker, content.Lines)
-				return m, true
-			}
-			if len(tail) >= 24 || strings.Contains(tail, "\n") {
-				m.setInputValue(strings.TrimSpace(markerChain))
-				m.syncInputOverlays()
-				m.statusNote = "Detected continued paste chunk after compressed marker. Kept compressed markers only; press Enter again to send."
-				return m, true
-			}
-		}
-		return m, true
-	}
-	if m.shouldCompressPastedText(rawValue, "paste-enter") || (m.hasImplicitPasteBurst() && m.isLongPastedText(rawValue)) {
-		marker, content, err := m.compressPastedText(rawValue)
-		if err != nil {
-			m.statusNote = err.Error()
-			return m, true
-		}
-		m.setInputValue(marker)
-		m.syncInputOverlays()
-		m.statusNote = fmt.Sprintf("Long pasted text (%d lines) compressed as %s. Press Enter again to send. Use [Paste #%s] or [Paste #%s line10~line20] later.", content.Lines, marker, content.ID, content.ID)
-		return m, true
-	}
-	m.pasteSubmitGuardUntil = time.Time{}
-	return m, true
-}
-
-func (m *model) armPasteSubmitGuard(now time.Time) {
-	if m == nil {
-		return
-	}
-	if now.IsZero() {
-		now = time.Now()
-	}
-	m.pasteSubmitGuardUntil = now.Add(pasteSubmitGuard)
 }
 
 func extractBracketedPastePayload(msg tea.Msg) (string, bool) {
