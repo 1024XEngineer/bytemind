@@ -15,7 +15,7 @@ import (
 	"bytemind/internal/tools"
 )
 
-func (r *Runner) executeToolCall(
+func (e *defaultEngine) executeToolCall(
 	ctx context.Context,
 	sess *session.Session,
 	runMode planpkg.AgentMode,
@@ -24,30 +24,35 @@ func (r *Runner) executeToolCall(
 	allowedTools map[string]struct{},
 	deniedTools map[string]struct{},
 ) error {
-	if r.executor == nil {
+	if e == nil || e.runner == nil {
+		return fmt.Errorf("agent engine is unavailable")
+	}
+	runner := e.runner
+
+	if runner.executor == nil {
 		return fmt.Errorf("tool executor is unavailable")
 	}
-	if r.policyGateway == nil {
+	if runner.policyGateway == nil {
 		return fmt.Errorf("policy gateway is unavailable")
 	}
-	if r.runtime == nil {
+	if runner.runtime == nil {
 		return fmt.Errorf("runtime gateway is unavailable")
 	}
 
 	traceID := buildToolTraceID(call)
 	sessionID := corepkg.SessionID(sess.ID)
 
-	decision, err := r.policyGateway.DecideTool(ctx, ToolDecisionInput{
+	decision, err := runner.policyGateway.DecideTool(ctx, ToolDecisionInput{
 		ToolName:       call.Function.Name,
 		AllowedTools:   allowedTools,
 		DeniedTools:    deniedTools,
-		ApprovalPolicy: r.config.ApprovalPolicy,
-		SafetyClass:    r.toolSafetyClass(call.Function.Name),
+		ApprovalPolicy: runner.config.ApprovalPolicy,
+		SafetyClass:    e.toolSafetyClass(call.Function.Name),
 	})
 	if err != nil {
 		return err
 	}
-	r.appendAudit(ctx, storagepkg.AuditEvent{
+	runner.appendAudit(ctx, storagepkg.AuditEvent{
 		SessionID:  sessionID,
 		TraceID:    traceID,
 		Actor:      "agent",
@@ -62,16 +67,16 @@ func (r *Runner) executeToolCall(
 	})
 
 	if decision.Decision == corepkg.DecisionDeny {
-		return r.handleRejectedToolCall(ctx, sess, call, out, decision)
+		return e.handleRejectedToolCall(ctx, sess, call, out, decision)
 	}
 
-	r.emit(Event{
+	runner.emit(Event{
 		Type:          EventToolCallStarted,
 		SessionID:     sessionID,
 		ToolName:      call.Function.Name,
 		ToolArguments: call.Function.Arguments,
 	})
-	r.appendAudit(ctx, storagepkg.AuditEvent{
+	runner.appendAudit(ctx, storagepkg.AuditEvent{
 		SessionID: sessionID,
 		TraceID:   traceID,
 		Actor:     "agent",
@@ -85,7 +90,7 @@ func (r *Runner) executeToolCall(
 	}
 
 	execStartedAt := time.Now()
-	execution, runtimeErr := r.runtime.RunSync(ctx, RuntimeTaskRequest{
+	execution, runtimeErr := runner.runtime.RunSync(ctx, RuntimeTaskRequest{
 		SessionID: sessionID,
 		TraceID:   traceID,
 		Name:      call.Function.Name,
@@ -94,23 +99,23 @@ func (r *Runner) executeToolCall(
 			"tool_name": call.Function.Name,
 		},
 		Execute: func(execCtx context.Context) ([]byte, error) {
-			output, err := r.executor.ExecuteForMode(execCtx, runMode, call.Function.Name, call.Function.Arguments, &tools.ExecutionContext{
-				Workspace:      r.workspace,
-				ApprovalPolicy: r.config.ApprovalPolicy,
-				Approval:       r.approval,
+			output, err := runner.executor.ExecuteForMode(execCtx, runMode, call.Function.Name, call.Function.Arguments, &tools.ExecutionContext{
+				Workspace:      runner.workspace,
+				ApprovalPolicy: runner.config.ApprovalPolicy,
+				Approval:       runner.approval,
 				Session:        sess,
-				TaskManager:    r.taskManager,
-				Extensions:     r.extensions,
+				TaskManager:    runner.taskManager,
+				Extensions:     runner.extensions,
 				Mode:           runMode,
-				Stdin:          r.stdin,
-				Stdout:         r.stdout,
+				Stdin:          runner.stdin,
+				Stdout:         runner.stdout,
 				AllowedTools:   allowedTools,
 				DeniedTools:    deniedTools,
 			})
 			return []byte(output), err
 		},
 		OnTaskStateChanged: func(task runtimepkg.Task) {
-			r.appendTaskStateAudit(ctx, sessionID, traceID, call.Function.Name, task)
+			runner.appendTaskStateAudit(ctx, sessionID, traceID, call.Function.Name, task)
 		},
 	})
 
@@ -136,19 +141,28 @@ func (r *Runner) executeToolCall(
 		})
 	}
 	if out != nil {
-		r.renderToolFeedback(out, call.Function.Name, result)
+		runner.renderToolFeedback(out, call.Function.Name, result)
 	}
 
 	errText := ""
 	if execErr != nil {
 		errText = execErr.Error()
 	}
-	r.emit(Event{
+	runner.emit(Event{
 		Type:       EventToolCallCompleted,
 		SessionID:  sessionID,
 		ToolName:   call.Function.Name,
 		ToolResult: result,
 		Error:      errText,
+	})
+	emitTurnEvent(ctx, TurnEvent{
+		Type: TurnEventToolResult,
+		Payload: map[string]any{
+			"tool_name":    call.Function.Name,
+			"tool_call_id": call.ID,
+			"tool_result":  result,
+			"error":        errText,
+		},
 	})
 
 	auditResult := "ok"
@@ -162,7 +176,7 @@ func (r *Runner) executeToolCall(
 	if execution.Result.ErrorCode != "" {
 		metadata["error_code"] = execution.Result.ErrorCode
 	}
-	r.appendAudit(ctx, storagepkg.AuditEvent{
+	runner.appendAudit(ctx, storagepkg.AuditEvent{
 		SessionID: sessionID,
 		TaskID:    execution.TaskID,
 		TraceID:   traceID,
@@ -178,13 +192,13 @@ func (r *Runner) executeToolCall(
 		return err
 	}
 	sess.Messages = append(sess.Messages, toolMessage)
-	if r.store != nil {
-		if err := r.store.Save(sess); err != nil {
+	if runner.store != nil {
+		if err := runner.store.Save(sess); err != nil {
 			return err
 		}
 	}
 	if call.Function.Name == "update_plan" {
-		r.emit(Event{
+		runner.emit(Event{
 			Type:      EventPlanUpdated,
 			SessionID: sessionID,
 			Plan:      planpkg.CloneState(sess.Plan),
@@ -193,11 +207,16 @@ func (r *Runner) executeToolCall(
 	return nil
 }
 
-func (r *Runner) toolSafetyClass(name string) tools.SafetyClass {
+func (e *defaultEngine) toolSafetyClass(name string) tools.SafetyClass {
+	if e == nil || e.runner == nil {
+		return tools.SafetyClassModerate
+	}
+	runner := e.runner
+
 	type toolSpecLookup interface {
 		Spec(name string) (tools.ToolSpec, bool)
 	}
-	lookup, ok := r.registry.(toolSpecLookup)
+	lookup, ok := runner.registry.(toolSpecLookup)
 	if !ok {
 		return tools.SafetyClassModerate
 	}
@@ -208,13 +227,18 @@ func (r *Runner) toolSafetyClass(name string) tools.SafetyClass {
 	return spec.SafetyClass
 }
 
-func (r *Runner) handleRejectedToolCall(
+func (e *defaultEngine) handleRejectedToolCall(
 	ctx context.Context,
 	sess *session.Session,
 	call llm.ToolCall,
 	out io.Writer,
 	decision ToolDecision,
 ) error {
+	if e == nil || e.runner == nil {
+		return fmt.Errorf("agent engine is unavailable")
+	}
+	runner := e.runner
+
 	errorText := fmt.Sprintf("tool %q blocked by policy (%s): %s", call.Function.Name, decision.ReasonCode, decision.Reason)
 	if decision.ReasonCode == policyReasonExplicitDeny {
 		errorText = fmt.Sprintf("tool %q is unavailable by active skill policy: %s", call.Function.Name, decision.Reason)
@@ -227,18 +251,27 @@ func (r *Runner) handleRejectedToolCall(
 	})
 
 	if out != nil {
-		r.renderToolFeedback(out, call.Function.Name, result)
+		runner.renderToolFeedback(out, call.Function.Name, result)
 	}
 
-	r.emit(Event{
+	runner.emit(Event{
 		Type:       EventToolCallCompleted,
 		SessionID:  corepkg.SessionID(sess.ID),
 		ToolName:   call.Function.Name,
 		ToolResult: result,
 		Error:      errorText,
 	})
+	emitTurnEvent(ctx, TurnEvent{
+		Type: TurnEventToolResult,
+		Payload: map[string]any{
+			"tool_name":    call.Function.Name,
+			"tool_call_id": call.ID,
+			"tool_result":  result,
+			"error":        errorText,
+		},
+	})
 
-	r.appendAudit(ctx, storagepkg.AuditEvent{
+	runner.appendAudit(ctx, storagepkg.AuditEvent{
 		SessionID: corepkg.SessionID(sess.ID),
 		Actor:     "agent",
 		Action:    "tool_execute_result",
@@ -255,10 +288,39 @@ func (r *Runner) handleRejectedToolCall(
 		return err
 	}
 	sess.Messages = append(sess.Messages, toolMessage)
-	if r.store != nil {
-		if err := r.store.Save(sess); err != nil {
+	if runner.store != nil {
+		if err := runner.store.Save(sess); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (r *Runner) executeToolCall(
+	ctx context.Context,
+	sess *session.Session,
+	runMode planpkg.AgentMode,
+	call llm.ToolCall,
+	out io.Writer,
+	allowedTools map[string]struct{},
+	deniedTools map[string]struct{},
+) error {
+	engine := &defaultEngine{runner: r}
+	return engine.executeToolCall(ctx, sess, runMode, call, out, allowedTools, deniedTools)
+}
+
+func (r *Runner) toolSafetyClass(name string) tools.SafetyClass {
+	engine := &defaultEngine{runner: r}
+	return engine.toolSafetyClass(name)
+}
+
+func (r *Runner) handleRejectedToolCall(
+	ctx context.Context,
+	sess *session.Session,
+	call llm.ToolCall,
+	out io.Writer,
+	decision ToolDecision,
+) error {
+	engine := &defaultEngine{runner: r}
+	return engine.handleRejectedToolCall(ctx, sess, call, out, decision)
 }
