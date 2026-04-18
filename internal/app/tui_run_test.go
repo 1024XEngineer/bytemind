@@ -47,6 +47,12 @@ func TestRunTUIBuildsOptionsAndInvokesProgram(t *testing.T) {
 		if opts.Config.MaxIterations != 9 {
 			t.Fatalf("expected max-iterations override to apply, got %d", opts.Config.MaxIterations)
 		}
+		if opts.Config.ApprovalMode != "away" {
+			t.Fatalf("expected approval mode override to apply, got %q", opts.Config.ApprovalMode)
+		}
+		if opts.Config.AwayPolicy != "fail_fast" {
+			t.Fatalf("expected away policy override to apply, got %q", opts.Config.AwayPolicy)
+		}
 		return sentinel
 	}
 
@@ -57,6 +63,8 @@ func TestRunTUIBuildsOptionsAndInvokesProgram(t *testing.T) {
 			"-workspace", workspace,
 			"-model", "gpt-5.4",
 			"-stream", "true",
+			"-approval-mode", "away",
+			"-away-policy", "fail_fast",
 			"-max-iterations", "9",
 		},
 		Stdin:  strings.NewReader(""),
@@ -99,6 +107,38 @@ func TestRunTUIRejectsInvalidStreamValue(t *testing.T) {
 		t.Fatal("expected invalid stream error")
 	}
 	if !strings.Contains(err.Error(), "invalid -stream value") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunTUIRejectsInvalidApprovalModeValue(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	writeTUIRunTestConfig(t, workspace, map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.openai.com/v1",
+			"model":    "gpt-5.4-mini",
+			"api_key":  "test-key",
+		},
+		"stream": false,
+	})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := RunTUI(TUIRequest{
+		Args:   []string{"-workspace", workspace, "-approval-mode", "batch"},
+		Stdin:  strings.NewReader(""),
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}, func(opts itui.Options) error {
+		t.Fatalf("did not expect tui program runner on invalid approval-mode")
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected invalid approval-mode error")
+	}
+	if !strings.Contains(err.Error(), "invalid -approval-mode value") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

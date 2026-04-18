@@ -48,7 +48,7 @@ func TestRunOneShotAcceptsTrailingPromptText(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	err := RunOneShot(RunOneShotRequest{
-		Args:   []string{"inspect", "repo"},
+		Args:   []string{"-approval-mode", "away", "-away-policy", "fail_fast", "inspect", "repo"},
 		Stdin:  strings.NewReader(""),
 		Stdout: &stdout,
 		Stderr: &stderr,

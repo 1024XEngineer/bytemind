@@ -27,6 +27,8 @@ func TestLoadRuntimeConfigAppliesOverrides(t *testing.T) {
 		ConfigPath:            workspace + "/config.json",
 		ModelOverride:         "gpt-5.4",
 		StreamOverride:        "true",
+		ApprovalModeOverride:  "away",
+		AwayPolicyOverride:    "fail_fast",
 		MaxIterationsOverride: 9,
 	})
 	if err != nil {
@@ -40,6 +42,12 @@ func TestLoadRuntimeConfigAppliesOverrides(t *testing.T) {
 	}
 	if cfg.MaxIterations != 9 {
 		t.Fatalf("unexpected max iterations: %d", cfg.MaxIterations)
+	}
+	if cfg.ApprovalMode != "away" {
+		t.Fatalf("unexpected approval mode: %q", cfg.ApprovalMode)
+	}
+	if cfg.AwayPolicy != "fail_fast" {
+		t.Fatalf("unexpected away policy: %q", cfg.AwayPolicy)
 	}
 }
 
@@ -66,6 +74,60 @@ func TestLoadRuntimeConfigRejectsInvalidStream(t *testing.T) {
 		t.Fatal("expected error for invalid stream")
 	}
 	if !strings.Contains(err.Error(), "invalid -stream value") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRuntimeConfigRejectsInvalidApprovalMode(t *testing.T) {
+	workspace := t.TempDir()
+	writeCfg := `{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-5.4-mini",
+    "api_key": "test-key"
+  }
+}`
+	if err := osWriteFile(workspace+"/config.json", writeCfg); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := LoadRuntimeConfig(ConfigRequest{
+		Workspace:            workspace,
+		ConfigPath:           workspace + "/config.json",
+		ApprovalModeOverride: "batch",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid approval mode")
+	}
+	if !strings.Contains(err.Error(), "invalid -approval-mode value") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRuntimeConfigRejectsInvalidAwayPolicy(t *testing.T) {
+	workspace := t.TempDir()
+	writeCfg := `{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-5.4-mini",
+    "api_key": "test-key"
+  }
+}`
+	if err := osWriteFile(workspace+"/config.json", writeCfg); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := LoadRuntimeConfig(ConfigRequest{
+		Workspace:          workspace,
+		ConfigPath:         workspace + "/config.json",
+		AwayPolicyOverride: "queue",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid away policy")
+	}
+	if !strings.Contains(err.Error(), "invalid -away-policy value") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

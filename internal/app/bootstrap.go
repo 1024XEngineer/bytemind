@@ -24,6 +24,8 @@ type BootstrapRequest struct {
 	ModelOverride         string
 	SessionID             string
 	StreamOverride        string
+	ApprovalModeOverride  string
+	AwayPolicyOverride    string
 	MaxIterationsOverride int
 	RequireAPIKey         bool
 	Stdin                 io.Reader
@@ -50,6 +52,8 @@ func Bootstrap(req BootstrapRequest) (Runtime, error) {
 		ConfigPath:            req.ConfigPath,
 		ModelOverride:         req.ModelOverride,
 		StreamOverride:        req.StreamOverride,
+		ApprovalModeOverride:  req.ApprovalModeOverride,
+		AwayPolicyOverride:    req.AwayPolicyOverride,
 		MaxIterationsOverride: req.MaxIterationsOverride,
 	})
 	if err != nil {

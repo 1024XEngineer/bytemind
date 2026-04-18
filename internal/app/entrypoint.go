@@ -8,6 +8,8 @@ type EntrypointRequest struct {
 	ModelOverride         string
 	SessionID             string
 	StreamOverride        string
+	ApprovalModeOverride  string
+	AwayPolicyOverride    string
 	MaxIterationsOverride int
 	RequireAPIKey         bool
 	Stdin                 io.Reader
@@ -26,6 +28,8 @@ func BootstrapEntrypoint(req EntrypointRequest) (Runtime, error) {
 		ModelOverride:         req.ModelOverride,
 		SessionID:             req.SessionID,
 		StreamOverride:        req.StreamOverride,
+		ApprovalModeOverride:  req.ApprovalModeOverride,
+		AwayPolicyOverride:    req.AwayPolicyOverride,
 		MaxIterationsOverride: req.MaxIterationsOverride,
 		RequireAPIKey:         req.RequireAPIKey,
 		Stdin:                 req.Stdin,

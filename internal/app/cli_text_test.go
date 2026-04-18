@@ -11,6 +11,12 @@ func TestDefaultUsageLinesIncludeInstall(t *testing.T) {
 	if !strings.Contains(joined, "bytemind install") {
 		t.Fatalf("expected usage to include install command, got %q", joined)
 	}
+	if !strings.Contains(joined, "-approval-mode interactive|away") {
+		t.Fatalf("expected usage to include approval-mode flag, got %q", joined)
+	}
+	if !strings.Contains(joined, "-away-policy auto_deny_continue|fail_fast") {
+		t.Fatalf("expected usage to include away-policy flag, got %q", joined)
+	}
 }
 
 func TestDefaultHelpLines(t *testing.T) {

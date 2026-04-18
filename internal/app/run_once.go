@@ -33,6 +33,8 @@ func RunOneShot(req RunOneShotRequest) error {
 	sessionID := fs.String("session", "", "Reuse an existing session")
 	prompt := fs.String("prompt", "", "Prompt to send")
 	streamOverride := fs.String("stream", "", "Override streaming: true or false")
+	approvalMode := fs.String("approval-mode", "", "Override approval mode: interactive or away")
+	awayPolicy := fs.String("away-policy", "", "Override away mode policy: auto_deny_continue or fail_fast")
 	workspaceOverride := fs.String("workspace", "", "Workspace to operate on; defaults to current directory")
 	maxIterations := fs.Int("max-iterations", 0, "Override execution budget for this run")
 
@@ -53,6 +55,8 @@ func RunOneShot(req RunOneShotRequest) error {
 		ModelOverride:         *model,
 		SessionID:             *sessionID,
 		StreamOverride:        *streamOverride,
+		ApprovalModeOverride:  *approvalMode,
+		AwayPolicyOverride:    *awayPolicy,
 		MaxIterationsOverride: *maxIterations,
 		RequireAPIKey:         true,
 		Stdin:                 req.Stdin,

@@ -40,6 +40,8 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 	model := fs.String("model", "", "Override model name")
 	sessionID := fs.String("session", "", "Resume an existing session")
 	streamOverride := fs.String("stream", "", "Override streaming: true or false")
+	approvalMode := fs.String("approval-mode", "", "Override approval mode: interactive or away")
+	awayPolicy := fs.String("away-policy", "", "Override away mode policy: auto_deny_continue or fail_fast")
 	workspaceOverride := fs.String("workspace", "", "Workspace to operate on; defaults to current directory")
 	maxIterations := fs.Int("max-iterations", 0, "Override execution budget for this run")
 
@@ -57,6 +59,8 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 		ConfigPath:            *configPath,
 		ModelOverride:         *model,
 		StreamOverride:        *streamOverride,
+		ApprovalModeOverride:  *approvalMode,
+		AwayPolicyOverride:    *awayPolicy,
 		MaxIterationsOverride: *maxIterations,
 	})
 	if err != nil {
@@ -84,6 +88,8 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 		ModelOverride:         *model,
 		SessionID:             *sessionID,
 		StreamOverride:        *streamOverride,
+		ApprovalModeOverride:  *approvalMode,
+		AwayPolicyOverride:    *awayPolicy,
 		MaxIterationsOverride: *maxIterations,
 		RequireAPIKey:         requireAPIKey,
 		Stdin:                 req.Stdin,
