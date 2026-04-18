@@ -78,9 +78,6 @@ func (m *extensionManager) Unload(_ context.Context, extensionID string) error {
 	if _, ok := m.catalog[id]; !ok {
 		if _, ok := m.manual[id]; !ok {
 			if _, ok := m.discoverErrs[id]; !ok {
-				if discoverErr := m.discoveryErrorLocked(); discoverErr != nil {
-					return discoverErr
-				}
 				return wrapError(ErrCodeNotFound, "extension not found", nil)
 			}
 		}
@@ -112,7 +109,7 @@ func (m *extensionManager) Get(_ context.Context, extensionID string) (Extension
 		if err, ok := m.discoverErrs[id]; ok {
 			return ExtensionInfo{}, err
 		}
-		return ExtensionInfo{}, discoverErr
+		return ExtensionInfo{}, wrapError(ErrCodeNotFound, "extension not found", nil)
 	}
 	if _, disabled := m.disabled[id]; disabled {
 		return ExtensionInfo{}, wrapError(ErrCodeNotFound, "extension not found", nil)

@@ -264,6 +264,31 @@ func TestManagerGetReturnsHealthyExtensionWithObservableDiscoveryError(t *testin
 	}
 }
 
+func TestManagerGetMissingReturnsNotFoundDespiteOtherDiscoveryErrors(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	bad := filepath.Join(project, "bad")
+	if err := os.MkdirAll(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bad, "skill.json"), []byte(`{"name":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManagerWithDirs(root, filepath.Join(root, "builtin"), filepath.Join(root, "user"), project)
+	item, err := mgr.Get(context.Background(), "skill.missing")
+	if item != (ExtensionInfo{}) {
+		t.Fatal("expected zero extension info")
+	}
+	var extErr *ExtensionError
+	if !errors.As(err, &extErr) {
+		t.Fatalf("expected ExtensionError, got %T", err)
+	}
+	if extErr.Code != ErrCodeNotFound {
+		t.Fatalf("unexpected code: %s", extErr.Code)
+	}
+}
+
 func TestManagerGetReturnsNotFound(t *testing.T) {
 	mgr := NewManager(t.TempDir())
 	item, err := mgr.Get(context.Background(), "skill.review")
@@ -273,6 +298,28 @@ func TestManagerGetReturnsNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected not found error")
 	}
+	var extErr *ExtensionError
+	if !errors.As(err, &extErr) {
+		t.Fatalf("expected ExtensionError, got %T", err)
+	}
+	if extErr.Code != ErrCodeNotFound {
+		t.Fatalf("unexpected code: %s", extErr.Code)
+	}
+}
+
+func TestManagerUnloadMissingReturnsNotFoundDespiteOtherDiscoveryErrors(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	bad := filepath.Join(project, "bad")
+	if err := os.MkdirAll(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bad, "skill.json"), []byte(`{"name":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManagerWithDirs(root, filepath.Join(root, "builtin"), filepath.Join(root, "user"), project)
+	err := mgr.Unload(context.Background(), "skill.missing")
 	var extErr *ExtensionError
 	if !errors.As(err, &extErr) {
 		t.Fatalf("expected ExtensionError, got %T", err)
