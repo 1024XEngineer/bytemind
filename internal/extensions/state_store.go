@@ -83,6 +83,7 @@ func (s *stateStore) delete(id string, events ...ExtensionEvent) {
 	defer s.mu.Unlock()
 	delete(s.items, id)
 	delete(s.loading, id)
+	delete(s.locks, id)
 	s.events = append(s.events, cloneEvents(events)...)
 }
 

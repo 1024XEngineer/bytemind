@@ -429,6 +429,49 @@ func TestManagerRejectsInvalidSourceAndManifest(t *testing.T) {
 	}
 }
 
+func TestDiscoverOneRejectsMissingDirectory(t *testing.T) {
+	mgr := NewManager(t.TempDir())
+	_, err := mgr.(*extensionManager).discoverOne("missing")
+	if err == nil {
+		t.Fatal("expected invalid source error")
+	}
+}
+
+func TestDiscoverScopeCollectsManifestErrors(t *testing.T) {
+	root := t.TempDir()
+	bad := filepath.Join(root, "bad")
+	if err := os.MkdirAll(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bad, "skill.json"), []byte(`{"name":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	items, errs, err := discoverScope(ExtensionScopeProject, root)
+	if err != nil {
+		t.Fatalf("discoverScope failed: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no discovered items, got %d", len(items))
+	}
+	if len(errs) != 1 {
+		t.Fatalf("expected one discovery error, got %d", len(errs))
+	}
+}
+
+func TestDiscoveryErrorReturnsWrappedFirstFailure(t *testing.T) {
+	err := discoveryError(map[string]error{
+		"skill.z": wrapError(ErrCodeInvalidManifest, "bad", nil),
+		"skill.a": wrapError(ErrCodeLoadFailed, "boom", nil),
+	})
+	var extErr *ExtensionError
+	if !errors.As(err, &extErr) {
+		t.Fatalf("expected ExtensionError, got %T", err)
+	}
+	if extErr.Code != ErrCodeLoadFailed {
+		t.Fatalf("unexpected code: %s", extErr.Code)
+	}
+}
+
 func TestScopeForPathReturnsFoundFlag(t *testing.T) {
 	mgr := &extensionManager{
 		builtinDir: filepath.Join("repo", "internal", "skills"),

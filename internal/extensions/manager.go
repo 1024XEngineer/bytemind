@@ -138,12 +138,7 @@ func (m *extensionManager) Unload(_ context.Context, extensionID string) error {
 		m.disabled[id] = struct{}{}
 		delete(m.discoverErrs, id)
 		m.mu.Unlock()
-		if _, ok := m.discoverErrs[id]; ok {
-			return nil
-		}
-		if reloadErr != nil {
-			return nil
-		}
+		_ = reloadErr
 		return nil
 	})
 }

@@ -24,6 +24,53 @@ func TestActivateTransitionRejectsInvalidState(t *testing.T) {
 	}
 }
 
+func TestDegradeTransitionUsesDefaults(t *testing.T) {
+	info := ExtensionInfo{ID: "skill.review", Kind: ExtensionSkill, Status: ExtensionStatusActive}
+	next, event, err := degradeTransition(info, "", ErrCodeLoadFailed)
+	if err != nil {
+		t.Fatalf("degrade failed: %v", err)
+	}
+	if next.Status != ExtensionStatusDegraded {
+		t.Fatalf("unexpected status: %q", next.Status)
+	}
+	if next.Health.LastError != ErrCodeLoadFailed {
+		t.Fatalf("unexpected error code: %q", next.Health.LastError)
+	}
+	if event.Reason != "extension degraded" {
+		t.Fatalf("unexpected reason: %q", event.Reason)
+	}
+}
+
+func TestDegradeTransitionRejectsInvalidState(t *testing.T) {
+	info := ExtensionInfo{ID: "skill.review", Kind: ExtensionSkill, Status: ExtensionStatusLoaded}
+	_, _, err := degradeTransition(info, "broken", ErrCodeLoadFailed)
+	if err == nil {
+		t.Fatal("expected invalid transition error")
+	}
+}
+
+func TestRecoverTransitionUsesDefaults(t *testing.T) {
+	info := ExtensionInfo{ID: "skill.review", Kind: ExtensionSkill, Status: ExtensionStatusDegraded}
+	next, event, err := recoverTransition(info, "")
+	if err != nil {
+		t.Fatalf("recover failed: %v", err)
+	}
+	if next.Status != ExtensionStatusActive {
+		t.Fatalf("unexpected status: %q", next.Status)
+	}
+	if event.Reason != "extension recovered" {
+		t.Fatalf("unexpected reason: %q", event.Reason)
+	}
+}
+
+func TestRecoverTransitionRejectsInvalidState(t *testing.T) {
+	info := ExtensionInfo{ID: "skill.review", Kind: ExtensionSkill, Status: ExtensionStatusLoaded}
+	_, _, err := recoverTransition(info, "ok")
+	if err == nil {
+		t.Fatal("expected invalid transition error")
+	}
+}
+
 func TestStopTransitionRejectsStoppedToStopped(t *testing.T) {
 	info := ExtensionInfo{ID: "skill.review", Kind: ExtensionSkill, Status: ExtensionStatusStopped}
 	_, _, err := stopTransition(info, "stop")

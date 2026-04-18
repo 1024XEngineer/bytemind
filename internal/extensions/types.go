@@ -25,7 +25,7 @@ const (
 	ExtensionStatusPending  ExtensionStatus = "pending"
 	ExtensionStatusLoaded   ExtensionStatus = "loaded"
 	ExtensionStatusActive   ExtensionStatus = "active"
-	ExtensionStatusReady    ExtensionStatus = ExtensionStatusActive
+	ExtensionStatusReady    ExtensionStatus = "ready"
 	ExtensionStatusDegraded ExtensionStatus = "degraded"
 	ExtensionStatusFailed   ExtensionStatus = "failed"
 	ExtensionStatusStopped  ExtensionStatus = "stopped"
