@@ -15,7 +15,11 @@ import (
 	"bytemind/internal/llm"
 )
 
-const legacyToolCallIndex = -1
+const (
+	legacyToolCallIndex         = -1
+	sseScannerInitialBufferSize = 64 * 1024
+	sseScannerMaxTokenSize      = 8 * 1024 * 1024
+)
 
 type Config struct {
 	Type             string
@@ -142,7 +146,7 @@ func (c *OpenAICompatible) StreamMessage(ctx context.Context, req llm.ChatReques
 	toolCalls := map[int]*llm.ToolCall{}
 
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 0, sseScannerInitialBufferSize), sseScannerMaxTokenSize)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || !strings.HasPrefix(line, "data:") {

@@ -74,7 +74,7 @@ func Default(workspace string) Config {
 		ApprovalPolicy: "on-request",
 		MaxIterations:  32,
 		Stream:         true,
-		TokenQuota:     5000,
+		TokenQuota:     300000,
 		TokenUsage: TokenUsageConfig{
 			StorageType:     "file",
 			StoragePath:     ".bytemind/token_usage.json",
