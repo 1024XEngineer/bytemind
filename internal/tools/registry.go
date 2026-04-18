@@ -102,7 +102,7 @@ func (r *Registry) Add(tool Tool) {
 	if r.tools == nil {
 		r.tools = map[string]ResolvedTool{}
 	}
-	definition := tool.Definition()
+	definition := normalizeDefinitionSchema(tool.Definition())
 	spec := DefaultToolSpec(definition)
 	if provider, ok := tool.(ToolSpecProvider); ok {
 		spec = MergeToolSpec(spec, provider.Spec())
@@ -111,6 +111,7 @@ func (r *Registry) Add(tool Tool) {
 	if err := ValidateToolSpec(spec); err != nil {
 		panic(err)
 	}
+	definition = applySpecToDefinitionSchema(definition, spec)
 	r.tools[definition.Function.Name] = ResolvedTool{
 		Definition: definition,
 		Spec:       spec,
@@ -213,4 +214,44 @@ func toNameSet(items []string) map[string]struct{} {
 		result[item] = struct{}{}
 	}
 	return result
+}
+
+func toolAllowedByPolicy(name string, execCtx *ExecutionContext) bool {
+	if execCtx == nil {
+		return true
+	}
+	if len(execCtx.AllowedTools) > 0 {
+		if _, ok := execCtx.AllowedTools[name]; !ok {
+			return false
+		}
+	}
+	if len(execCtx.DeniedTools) > 0 {
+		if _, blocked := execCtx.DeniedTools[name]; blocked {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeDefinitionSchema(def llm.ToolDefinition) llm.ToolDefinition {
+	if def.Function.Parameters == nil {
+		def.Function.Parameters = map[string]any{}
+	}
+	if _, ok := def.Function.Parameters["type"]; !ok {
+		def.Function.Parameters["type"] = "object"
+	}
+	if _, ok := def.Function.Parameters["properties"]; !ok {
+		def.Function.Parameters["properties"] = map[string]any{}
+	}
+	return def
+}
+
+func applySpecToDefinitionSchema(def llm.ToolDefinition, spec ToolSpec) llm.ToolDefinition {
+	if !spec.StrictArgs {
+		return def
+	}
+	if _, ok := def.Function.Parameters["additionalProperties"]; !ok {
+		def.Function.Parameters["additionalProperties"] = false
+	}
+	return def
 }

@@ -74,3 +74,21 @@ func TestDefaultRegistryDefinitionsForPlanModeIncludeWebTools(t *testing.T) {
 		t.Fatalf("did not expect write_file in plan mode definitions: %v", names)
 	}
 }
+
+func TestRegistryAddDefaultsAdditionalPropertiesToFalseForStrictTools(t *testing.T) {
+	registry := &Registry{tools: map[string]ResolvedTool{}}
+	registry.Add(executorTestTool{name: "fake_tool", result: `{"ok":true}`})
+
+	resolved, err := registry.ResolveForMode(planpkg.ModeBuild, "fake_tool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, ok := resolved.Definition.Function.Parameters["additionalProperties"]
+	if !ok {
+		t.Fatal("expected additionalProperties to be defaulted")
+	}
+	allowed, ok := value.(bool)
+	if !ok || allowed {
+		t.Fatalf("expected additionalProperties=false, got %#v", value)
+	}
+}
