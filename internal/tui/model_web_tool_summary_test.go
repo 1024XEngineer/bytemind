@@ -35,3 +35,30 @@ func TestSummarizeToolForWebSearchAndWebFetch(t *testing.T) {
 	}
 }
 
+func TestSummarizeToolPendingApprovalUsesDedicatedStatus(t *testing.T) {
+	payload := `{"ok":false,"error":"permission_denied: shell command was not run because approval was denied","status":"denied","reason_code":"permission_denied"}`
+	summary, lines, status := summarizeTool("run_shell", payload)
+	if status != "pending_approval" {
+		t.Fatalf("expected pending_approval status, got %q", status)
+	}
+	if summary != "Pending approval required." {
+		t.Fatalf("unexpected pending approval summary %q", summary)
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], "approval was denied") {
+		t.Fatalf("expected pending approval detail line, got %+v", lines)
+	}
+}
+
+func TestSummarizeToolNonApprovalErrorStaysError(t *testing.T) {
+	payload := `{"ok":false,"error":"invalid_args: unknown argument \"bad\"","status":"error","reason_code":"invalid_args"}`
+	summary, lines, status := summarizeTool("run_shell", payload)
+	if status != "error" {
+		t.Fatalf("expected error status, got %q", status)
+	}
+	if !strings.Contains(summary, "invalid_args") {
+		t.Fatalf("expected invalid_args summary, got %q", summary)
+	}
+	if len(lines) != 0 {
+		t.Fatalf("expected no detail lines for non-approval error, got %+v", lines)
+	}
+}

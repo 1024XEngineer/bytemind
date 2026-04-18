@@ -1236,10 +1236,29 @@ func chatBubbleWidth(item chatEntry, width int) int {
 
 func summarizeTool(name, payload string) (string, []string, string) {
 	var envelope struct {
-		OK    *bool  `json:"ok"`
-		Error string `json:"error"`
+		OK         *bool  `json:"ok"`
+		Error      string `json:"error"`
+		Status     string `json:"status"`
+		ReasonCode string `json:"reason_code"`
 	}
 	if err := json.Unmarshal([]byte(payload), &envelope); err == nil && envelope.Error != "" {
+		status := strings.ToLower(strings.TrimSpace(envelope.Status))
+		reasonCode := strings.ToLower(strings.TrimSpace(envelope.ReasonCode))
+		if status == "denied" || reasonCode == "permission_denied" {
+			message := strings.TrimSpace(envelope.Error)
+			prefix := strings.TrimSpace(reasonCode)
+			if prefix != "" {
+				prefix += ":"
+				if strings.HasPrefix(strings.ToLower(message), strings.ToLower(prefix)) {
+					message = strings.TrimSpace(message[len(prefix):])
+				}
+			}
+			lines := make([]string, 0, 1)
+			if message != "" {
+				lines = append(lines, message)
+			}
+			return "Pending approval required.", lines, "pending_approval"
+		}
 		return envelope.Error, nil, "error"
 	}
 
@@ -1422,7 +1441,7 @@ func legacyAssistantToolFollowUp(toolName, summary, status string) string {
 		return "I have the tool result. Let me organize the next step."
 	}
 	switch status {
-	case "error", "warn":
+	case "error", "warn", "pending_approval":
 		return fmt.Sprintf("`%s` returned a result. I will continue from that signal.", toolName)
 	default:
 		return fmt.Sprintf("`%s` finished successfully. I will keep using the result.", toolName)
@@ -1441,7 +1460,7 @@ func assistantToolFollowUp(toolName, summary, status string) string {
 		return "I have the tool result. Let me organize the next step."
 	}
 	switch status {
-	case "error", "warn":
+	case "error", "warn", "pending_approval":
 		return fmt.Sprintf("`%s` returned a result. I will continue from that signal.", toolName)
 	default:
 		return fmt.Sprintf("`%s` finished successfully. I will keep using the result.", toolName)
@@ -1830,6 +1849,8 @@ func statusGlyph(status string) string {
 		switch status {
 		case "warn":
 			return warnStyle.Render("!")
+		case "pending_approval":
+			return warnStyle.Render("?")
 		case "error":
 			return errorStyle.Render("x")
 		default:
