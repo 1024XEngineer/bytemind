@@ -163,6 +163,23 @@ func TestRenderToolFeedbackPendingApprovalBranch(t *testing.T) {
 	}
 }
 
+func TestRenderToolFeedbackSkippedDependencyBranch(t *testing.T) {
+	runner := NewRunner(Options{})
+	var out bytes.Buffer
+
+	runner.renderToolFeedback(&out, "read_file", `{"ok":false,"error":"denied_dependency: tool \"read_file\" was skipped because a prior approval-required action was denied in away mode","status":"skipped","reason_code":"denied_dependency"}`)
+
+	got := out.String()
+	for _, want := range []string{"skipped", "read_file", "prior approval-required action was denied"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected output to contain %q, got %q", want, got)
+		}
+	}
+	if strings.Contains(got, "denied_dependency:") {
+		t.Fatalf("expected reason_code prefix to be trimmed, got %q", got)
+	}
+}
+
 func TestRenderToolFeedbackAdditionalBranches(t *testing.T) {
 	runner := NewRunner(Options{})
 	var out bytes.Buffer

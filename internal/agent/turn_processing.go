@@ -90,8 +90,18 @@ func (r *Runner) processTurn(ctx context.Context, p turnProcessParams) (string, 
 	if streamedText && p.Out != nil {
 		_, _ = io.WriteString(p.Out, "\n")
 	}
+	skipRemaining := false
 	for idx, call := range reply.ToolCalls {
 		*p.ExecutedTools = append(*p.ExecutedTools, call.Function.Name)
+		if skipRemaining {
+			if p.TaskReport != nil {
+				p.TaskReport.RecordSkippedDueToDependency(call.Function.Name)
+			}
+			if err := r.skipToolCallDueToDeniedDependency(ctx, p.Session, call, p.Out); err != nil {
+				return "", false, err
+			}
+			continue
+		}
 		outcome, err := r.executeToolCall(ctx, p.Session, p.RunMode, call, p.Out, p.Approval, p.AllowedTools, p.DeniedTools)
 		if p.TaskReport != nil {
 			if outcome.Executed {
@@ -112,6 +122,15 @@ func (r *Runner) processTurn(ctx context.Context, p turnProcessParams) (string, 
 			}
 			return "", false, err
 		}
+		if outcome.Denied && shouldSkipRemainingToolCallsAfterDeniedInAwayContinue(r.config.ApprovalMode, r.config.AwayPolicy) {
+			skipRemaining = true
+		}
 	}
 	return "", false, nil
+}
+
+func shouldSkipRemainingToolCallsAfterDeniedInAwayContinue(approvalMode, awayPolicy string) bool {
+	mode := strings.ToLower(strings.TrimSpace(approvalMode))
+	policy := strings.ToLower(strings.TrimSpace(awayPolicy))
+	return mode == "away" && policy == "auto_deny_continue"
 }

@@ -48,6 +48,7 @@ const (
 	footerHintText             = "tab agents | / commands | drag select | Ctrl+C copy/quit | Ctrl+F history | Ctrl+L sessions"
 	conversationViewportZoneID = "bytemind:conversation:viewport"
 	inputEditorZoneID          = "bytemind:input:editor"
+	reasonCodeDeniedDependency = "denied_dependency"
 )
 
 type footerShortcutHint struct {
@@ -1266,6 +1267,21 @@ func summarizeTool(name, payload string) (string, []string, string) {
 				lines = append(lines, message)
 			}
 			return "Pending approval required.", lines, "pending_approval"
+		}
+		if status == "skipped" || reasonCode == reasonCodeDeniedDependency {
+			message := strings.TrimSpace(envelope.Error)
+			prefix := strings.TrimSpace(reasonCode)
+			if prefix != "" {
+				prefix += ":"
+				if strings.HasPrefix(strings.ToLower(message), strings.ToLower(prefix)) {
+					message = strings.TrimSpace(message[len(prefix):])
+				}
+			}
+			lines := make([]string, 0, 1)
+			if message != "" {
+				lines = append(lines, message)
+			}
+			return "Skipped due to denied dependency.", lines, "warn"
 		}
 		return envelope.Error, nil, "error"
 	}

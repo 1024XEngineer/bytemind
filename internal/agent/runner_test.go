@@ -593,14 +593,24 @@ func TestRunPromptAwayAutoDenyContinueKeepsRunningAfterPermissionDenied(t *testi
 	client := &fakeClient{replies: []llm.Message{
 		{
 			Role: "assistant",
-			ToolCalls: []llm.ToolCall{{
-				ID:   "call-1",
-				Type: "function",
-				Function: llm.ToolFunctionCall{
-					Name:      "write_file",
-					Arguments: `{"path":"x.txt","content":"x"}`,
+			ToolCalls: []llm.ToolCall{
+				{
+					ID:   "call-1",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "write_file",
+						Arguments: `{"path":"x.txt","content":"x"}`,
+					},
 				},
-			}},
+				{
+					ID:   "call-2",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "read_file",
+						Arguments: `{"path":"x.txt"}`,
+					},
+				},
+			},
 		},
 		{
 			Role:    "assistant",
@@ -631,7 +641,7 @@ func TestRunPromptAwayAutoDenyContinueKeepsRunningAfterPermissionDenied(t *testi
 	if answer != "continued after denied approval" {
 		t.Fatalf("unexpected answer: %q", answer)
 	}
-	if len(sess.Messages) < 3 {
+	if len(sess.Messages) < 4 {
 		t.Fatalf("expected tool result message, got %#v", sess.Messages)
 	}
 	toolMsg := sess.Messages[2]
@@ -640,6 +650,13 @@ func TestRunPromptAwayAutoDenyContinueKeepsRunningAfterPermissionDenied(t *testi
 	}
 	if !strings.Contains(toolMsg.Content, `"status":"denied"`) || !strings.Contains(toolMsg.Content, `"reason_code":"permission_denied"`) {
 		t.Fatalf("expected denied status and permission reason_code, got %q", toolMsg.Content)
+	}
+	skippedMsg := sess.Messages[3]
+	if !strings.Contains(skippedMsg.Content, `"status":"skipped"`) || !strings.Contains(skippedMsg.Content, `"reason_code":"denied_dependency"`) {
+		t.Fatalf("expected skipped due dependency payload, got %q", skippedMsg.Content)
+	}
+	if !strings.Contains(skippedMsg.Content, "skipped because a prior approval-required action was denied") {
+		t.Fatalf("expected skipped message to describe denied dependency, got %q", skippedMsg.Content)
 	}
 }
 

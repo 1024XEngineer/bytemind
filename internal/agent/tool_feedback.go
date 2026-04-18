@@ -21,6 +21,10 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 			fmt.Fprintf(out, "  %spending approval%s %s\n\n", ansiYellow, ansiReset, normalizeApprovalErrorMessage(envelope.Error, reasonCode))
 			return
 		}
+		if status == "skipped" || reasonCode == reasonCodeDeniedDependency {
+			fmt.Fprintf(out, "  %sskipped%s %s\n\n", ansiDim, ansiReset, normalizeSkippedDependencyMessage(envelope.Error, reasonCode))
+			return
+		}
 		fmt.Fprintf(out, "  %serror%s %s\n\n", ansiRed, ansiReset, envelope.Error)
 		return
 	}
@@ -258,6 +262,14 @@ func compactWhitespace(text string, limit int) string {
 }
 
 func normalizeApprovalErrorMessage(message, reasonCode string) string {
+	return normalizeReasonPrefixedMessage(message, reasonCode, "approval required")
+}
+
+func normalizeSkippedDependencyMessage(message, reasonCode string) string {
+	return normalizeReasonPrefixedMessage(message, reasonCode, "skipped due to denied dependency")
+}
+
+func normalizeReasonPrefixedMessage(message, reasonCode, fallback string) string {
 	message = strings.TrimSpace(message)
 	reasonCode = strings.ToLower(strings.TrimSpace(reasonCode))
 	if reasonCode != "" {
@@ -267,7 +279,7 @@ func normalizeApprovalErrorMessage(message, reasonCode string) string {
 		}
 	}
 	if message == "" {
-		return "approval required"
+		return fallback
 	}
 	return message
 }

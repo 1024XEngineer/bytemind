@@ -62,3 +62,17 @@ func TestSummarizeToolNonApprovalErrorStaysError(t *testing.T) {
 		t.Fatalf("expected no detail lines for non-approval error, got %+v", lines)
 	}
 }
+
+func TestSummarizeToolSkippedDependencyUsesWarnStatus(t *testing.T) {
+	payload := `{"ok":false,"error":"denied_dependency: tool \"read_file\" was skipped because a prior approval-required action was denied in away mode","status":"skipped","reason_code":"denied_dependency"}`
+	summary, lines, status := summarizeTool("read_file", payload)
+	if status != "warn" {
+		t.Fatalf("expected warn status, got %q", status)
+	}
+	if summary != "Skipped due to denied dependency." {
+		t.Fatalf("unexpected skipped summary %q", summary)
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], "prior approval-required action was denied") {
+		t.Fatalf("expected skipped detail line, got %+v", lines)
+	}
+}
