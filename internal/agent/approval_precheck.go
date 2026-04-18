@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"sort"
@@ -28,7 +29,7 @@ func (g runApprovalGrants) hasAny() bool {
 }
 
 func (r *Runner) prepareRunApprovalHandler(setup runPromptSetup, out io.Writer) tools.ApprovalHandler {
-	base := r.approval
+	base := r.resolveRunApprovalBaseHandler()
 	r.renderApprovalPrecheck(out, setup)
 	if !shouldAttemptPreapproval(r, setup, base) {
 		return base
@@ -73,6 +74,39 @@ func (r *Runner) prepareRunApprovalHandler(setup runPromptSetup, out io.Writer) 
 			return true, nil
 		}
 		return base(req)
+	}
+}
+
+func (r *Runner) resolveRunApprovalBaseHandler() tools.ApprovalHandler {
+	if r == nil {
+		return nil
+	}
+	if r.approval != nil {
+		return r.approval
+	}
+	if r.stdin == nil {
+		return nil
+	}
+	reader := bufio.NewReader(r.stdin)
+	return func(req tools.ApprovalRequest) (bool, error) {
+		command := strings.TrimSpace(req.Command)
+		if command == "" {
+			command = "unknown action"
+		}
+		reason := strings.TrimSpace(req.Reason)
+		if r.stdout != nil {
+			if reason != "" {
+				fmt.Fprintf(r.stdout, "Approve action (%s) %q? [y/N]: ", reason, command)
+			} else {
+				fmt.Fprintf(r.stdout, "Approve action %q? [y/N]: ", command)
+			}
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return false, err
+		}
+		answer := strings.ToLower(strings.TrimSpace(line))
+		return answer == "y" || answer == "yes", nil
 	}
 }
 

@@ -235,3 +235,76 @@ func TestPrepareRunApprovalHandlerFallsBackWhenPreApprovalDenied(t *testing.T) {
 		t.Fatalf("expected runtime destructive request to call base handler after pre-approval denial, got %d calls", len(requests))
 	}
 }
+
+func TestPrepareRunApprovalHandlerUsesStdinFallbackAndPreApproves(t *testing.T) {
+	var approvalOut bytes.Buffer
+	runner := &Runner{
+		config: config.Config{
+			ApprovalPolicy: "on-request",
+			ApprovalMode:   "interactive",
+		},
+		registry: tools.DefaultRegistry(),
+		stdin:    strings.NewReader("y\ny\n"),
+		stdout:   &approvalOut,
+	}
+
+	handler := runner.prepareRunApprovalHandler(runPromptSetup{RunMode: planpkg.ModeBuild}, io.Discard)
+	if handler == nil {
+		t.Fatal("expected approval handler")
+	}
+	if prompts := strings.Count(approvalOut.String(), "Approve action"); prompts != 2 {
+		t.Fatalf("expected two pre-approval prompts from stdin fallback, got %d (%q)", prompts, approvalOut.String())
+	}
+
+	approved, err := handler(tools.ApprovalRequest{
+		Command: "go test ./...",
+		Reason:  "may modify files or environment: go",
+	})
+	if err != nil || !approved {
+		t.Fatalf("expected run_shell request to be auto-approved after pre-approval, approved=%v err=%v", approved, err)
+	}
+
+	approved, err = handler(tools.ApprovalRequest{
+		Command: "write_file",
+		Reason:  "destructive tool may modify workspace files: write_file",
+	})
+	if err != nil || !approved {
+		t.Fatalf("expected destructive request to be auto-approved after pre-approval, approved=%v err=%v", approved, err)
+	}
+
+	if prompts := strings.Count(approvalOut.String(), "Approve action"); prompts != 2 {
+		t.Fatalf("expected runtime approvals to be skipped after pre-approval, got %d prompts (%q)", prompts, approvalOut.String())
+	}
+}
+
+func TestPrepareRunApprovalHandlerStdinFallbackPromptsAtRuntimeAfterDeniedPreApproval(t *testing.T) {
+	var approvalOut bytes.Buffer
+	runner := &Runner{
+		config: config.Config{
+			ApprovalPolicy: "on-request",
+			ApprovalMode:   "interactive",
+		},
+		registry: tools.DefaultRegistry(),
+		stdin:    strings.NewReader("n\nn\ny\n"),
+		stdout:   &approvalOut,
+	}
+
+	handler := runner.prepareRunApprovalHandler(runPromptSetup{RunMode: planpkg.ModeBuild}, io.Discard)
+	if handler == nil {
+		t.Fatal("expected approval handler")
+	}
+	if prompts := strings.Count(approvalOut.String(), "Approve action"); prompts != 2 {
+		t.Fatalf("expected two pre-approval prompts, got %d (%q)", prompts, approvalOut.String())
+	}
+
+	approved, err := handler(tools.ApprovalRequest{
+		Command: "go test ./...",
+		Reason:  "may modify files or environment: go",
+	})
+	if err != nil || !approved {
+		t.Fatalf("expected runtime prompt fallback to approve run_shell request, approved=%v err=%v", approved, err)
+	}
+	if prompts := strings.Count(approvalOut.String(), "Approve action"); prompts != 3 {
+		t.Fatalf("expected one extra runtime prompt after denied pre-approval, got %d (%q)", prompts, approvalOut.String())
+	}
+}
