@@ -20,8 +20,8 @@ type extensionManager struct {
 	userDir    string
 	projectDir string
 
-	catalog      map[string]ExtensionInfo
-	manual       map[string]ExtensionInfo
+	state        *stateStore
+	manual       map[string]struct{}
 	disabled     map[string]struct{}
 	discoverErrs map[string]error
 }
@@ -45,8 +45,8 @@ func NewManagerWithDirs(workspace, builtinDir, userDir, projectDir string) Manag
 		builtinDir:   builtinDir,
 		userDir:      userDir,
 		projectDir:   projectDir,
-		catalog:      map[string]ExtensionInfo{},
-		manual:       map[string]ExtensionInfo{},
+		state:        newStateStore(),
+		manual:       map[string]struct{}{},
 		disabled:     map[string]struct{}{},
 		discoverErrs: map[string]error{},
 	}
@@ -57,11 +57,56 @@ func (m *extensionManager) Load(_ context.Context, source string) (ExtensionInfo
 	if err != nil {
 		return ExtensionInfo{}, err
 	}
-	m.mu.Lock()
-	m.catalog[loaded.ID] = loaded
-	m.manual[loaded.ID] = loaded
-	delete(m.disabled, loaded.ID)
-	m.mu.Unlock()
+	if err := m.reload(); err != nil {
+		if current, ok := m.state.get(loaded.ID); ok {
+			return current, wrapError(ErrCodeAlreadyLoaded, "extension already loaded", nil)
+		}
+	}
+	if current, ok := m.state.get(loaded.ID); ok {
+		m.mu.RLock()
+		_, manual := m.manual[loaded.ID]
+		m.mu.RUnlock()
+		if manual {
+			return ExtensionInfo{}, wrapError(ErrCodeAlreadyLoaded, "extension already loaded", nil)
+		}
+		if sameExtensionSource(current.Source.Ref, loaded.Source.Ref) {
+			return current, nil
+		}
+	}
+	if err := m.state.withLock(loaded.ID, func() error {
+		if err := m.state.beginLoad(loaded.ID); err != nil {
+			return err
+		}
+		loaded.Status = ExtensionStatusLoaded
+		loaded.Health.Status = ExtensionStatusLoaded
+		loaded.Health.Message = "extension loaded"
+		loaded.Health.LastError = ""
+		loaded.Health.CheckedAtUTC = time.Now().UTC().Format(time.RFC3339)
+		loadEvent := ExtensionEvent{
+			Type:        "load",
+			ExtensionID: loaded.ID,
+			Kind:        loaded.Kind,
+			Status:      loaded.Status,
+			Reason:      "extension loaded",
+			OccurredAt:  loaded.Health.CheckedAtUTC,
+			Message:     "extension loaded",
+		}
+		active, activateEvent, err := activateTransition(loaded)
+		if err != nil {
+			m.state.cancelLoad(loaded.ID)
+			return err
+		}
+		m.state.finishLoad(loaded.ID, active, loadEvent, activateEvent)
+		m.mu.Lock()
+		m.manual[loaded.ID] = struct{}{}
+		delete(m.disabled, loaded.ID)
+		delete(m.discoverErrs, loaded.ID)
+		m.mu.Unlock()
+		loaded = active
+		return nil
+	}); err != nil {
+		return ExtensionInfo{}, err
+	}
 	return loaded, nil
 }
 
@@ -70,23 +115,37 @@ func (m *extensionManager) Unload(_ context.Context, extensionID string) error {
 	if id == "" {
 		return wrapError(ErrCodeInvalidExtension, "extension id is required", nil)
 	}
-	if err := m.reload(); err != nil {
-		return err
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.catalog[id]; !ok {
-		if _, ok := m.manual[id]; !ok {
-			if _, ok := m.discoverErrs[id]; !ok {
-				return wrapError(ErrCodeNotFound, "extension not found", nil)
+	reloadErr := m.reload()
+	return m.state.withLock(id, func() error {
+		item, ok := m.state.get(id)
+		if !ok {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if _, ok := m.discoverErrs[id]; ok {
+				m.disabled[id] = struct{}{}
+				delete(m.discoverErrs, id)
+				return nil
 			}
+			return wrapError(ErrCodeNotFound, "extension not found", nil)
 		}
-	}
-	delete(m.catalog, id)
-	delete(m.manual, id)
-	m.disabled[id] = struct{}{}
-	delete(m.discoverErrs, id)
-	return nil
+		_, event, err := stopTransition(item, "extension unloaded")
+		if err != nil {
+			return err
+		}
+		m.state.delete(id, event)
+		m.mu.Lock()
+		delete(m.manual, id)
+		m.disabled[id] = struct{}{}
+		delete(m.discoverErrs, id)
+		m.mu.Unlock()
+		if _, ok := m.discoverErrs[id]; ok {
+			return nil
+		}
+		if reloadErr != nil {
+			return nil
+		}
+		return nil
+	})
 }
 
 func (m *extensionManager) Get(_ context.Context, extensionID string) (ExtensionInfo, error) {
@@ -95,26 +154,17 @@ func (m *extensionManager) Get(_ context.Context, extensionID string) (Extension
 		return ExtensionInfo{}, wrapError(ErrCodeInvalidExtension, "extension id is required", nil)
 	}
 	if err := m.reload(); err != nil {
-		return ExtensionInfo{}, err
-	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if discoverErr := m.discoveryErrorLocked(); discoverErr != nil {
-		if item, ok := m.catalog[id]; ok {
-			if _, disabled := m.disabled[id]; disabled {
-				return ExtensionInfo{}, wrapError(ErrCodeNotFound, "extension not found", nil)
-			}
-			return item, discoverErr
+		m.mu.RLock()
+		defer m.mu.RUnlock()
+		if item, ok := m.state.get(id); ok {
+			return item, err
 		}
-		if err, ok := m.discoverErrs[id]; ok {
-			return ExtensionInfo{}, err
+		if discoverErr, ok := m.discoverErrs[id]; ok {
+			return ExtensionInfo{}, discoverErr
 		}
 		return ExtensionInfo{}, wrapError(ErrCodeNotFound, "extension not found", nil)
 	}
-	if _, disabled := m.disabled[id]; disabled {
-		return ExtensionInfo{}, wrapError(ErrCodeNotFound, "extension not found", nil)
-	}
-	item, ok := m.catalog[id]
+	item, ok := m.state.get(id)
 	if !ok {
 		return ExtensionInfo{}, wrapError(ErrCodeNotFound, "extension not found", nil)
 	}
@@ -122,38 +172,22 @@ func (m *extensionManager) Get(_ context.Context, extensionID string) (Extension
 }
 
 func (m *extensionManager) List(_ context.Context) ([]ExtensionInfo, error) {
-	if err := m.reload(); err != nil {
-		return nil, err
-	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	items := make([]ExtensionInfo, 0, len(m.catalog))
-	for id, item := range m.catalog {
-		if _, disabled := m.disabled[id]; disabled {
-			continue
-		}
-		items = append(items, item)
-	}
+	err := m.reload()
+	items := m.state.list()
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].ID < items[j].ID
 	})
-	if discoverErr := m.discoveryErrorLocked(); discoverErr != nil {
-		return items, discoverErr
-	}
-	return items, nil
+	return items, err
 }
 
 func (m *extensionManager) reload() error {
-	loaded := map[string]ExtensionInfo{}
-	discoverErrs := map[string]error{}
-	for _, item := range []struct {
+	type scopeDir struct {
 		scope ExtensionScope
 		dir   string
-	}{
-		{scope: ExtensionScopeBuiltin, dir: m.builtinDir},
-		{scope: ExtensionScopeUser, dir: m.userDir},
-		{scope: ExtensionScopeProject, dir: m.projectDir},
-	} {
+	}
+	loaded := map[string]ExtensionInfo{}
+	discoverErrs := map[string]error{}
+	for _, item := range []scopeDir{{ExtensionScopeBuiltin, m.builtinDir}, {ExtensionScopeUser, m.userDir}, {ExtensionScopeProject, m.projectDir}} {
 		entries, errs, err := discoverScope(item.scope, item.dir)
 		if err != nil {
 			return err
@@ -166,17 +200,50 @@ func (m *extensionManager) reload() error {
 		}
 	}
 	m.mu.Lock()
-	for id, entry := range m.manual {
-		loaded[id] = entry
-	}
+	defer m.mu.Unlock()
 	for id := range m.disabled {
 		delete(loaded, id)
 		delete(discoverErrs, id)
 	}
-	m.catalog = loaded
+	for id := range m.manual {
+		if _, ok := loaded[id]; ok {
+			continue
+		}
+		if item, ok := m.state.get(id); ok {
+			loaded[id] = item
+		}
+	}
+	for id, item := range loaded {
+		current, ok := m.state.get(id)
+		if ok {
+			item.Status = current.Status
+			item.Health = current.Health
+		} else {
+			item = prepareLoadedInfo(item)
+		}
+		m.state.set(item)
+	}
+	for _, item := range m.state.list() {
+		if _, ok := loaded[item.ID]; !ok {
+			m.state.delete(item.ID)
+		}
+	}
 	m.discoverErrs = discoverErrs
-	m.mu.Unlock()
-	return nil
+	return discoveryError(discoverErrs)
+}
+
+func prepareLoadedInfo(info ExtensionInfo) ExtensionInfo {
+	loaded := cloneExtensionInfo(info)
+	loaded.Status = ExtensionStatusLoaded
+	loaded.Health.Status = ExtensionStatusLoaded
+	loaded.Health.Message = "extension loaded"
+	loaded.Health.LastError = ""
+	loaded.Health.CheckedAtUTC = time.Now().UTC().Format(time.RFC3339)
+	active, _, err := activateTransition(loaded)
+	if err != nil {
+		return loaded
+	}
+	return active
 }
 
 func (m *extensionManager) discoverOne(source string) (ExtensionInfo, error) {
@@ -316,8 +383,8 @@ func buildExtensionInfo(scope ExtensionScope, dir, dirName string, manifest Mani
 		name = dirName
 	}
 	ref := dir
-	status := ExtensionStatusReady
-	message := "extension discovered"
+	status := ExtensionStatusLoaded
+	message := "extension loaded"
 	if !hasSkill {
 		status = ExtensionStatusDegraded
 		message = "manifest discovered without SKILL.md"
@@ -372,10 +439,6 @@ func discoveryError(discoverErrs map[string]error) error {
 	return wrapError(ErrCodeLoadFailed, fmt.Sprintf("extension discovery encountered errors (first failure: %s)", first), nil)
 }
 
-func (m *extensionManager) discoveryErrorLocked() error {
-	return discoveryError(m.discoverErrs)
-}
-
 func scopeForPath(path string, m *extensionManager) (ExtensionScope, bool) {
 	clean := filepath.Clean(path)
 	for _, item := range []struct {
@@ -407,8 +470,9 @@ func extensionIDForDir(dirName string) string {
 
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
+	return err == nil && !info.IsDir()
+}
+
+func sameExtensionSource(left, right string) bool {
+	return filepath.Clean(strings.TrimSpace(left)) == filepath.Clean(strings.TrimSpace(right))
 }

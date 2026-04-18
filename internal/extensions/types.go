@@ -23,7 +23,9 @@ type ExtensionStatus string
 const (
 	ExtensionStatusUnknown  ExtensionStatus = "unknown"
 	ExtensionStatusPending  ExtensionStatus = "pending"
-	ExtensionStatusReady    ExtensionStatus = "ready"
+	ExtensionStatusLoaded   ExtensionStatus = "loaded"
+	ExtensionStatusActive   ExtensionStatus = "active"
+	ExtensionStatusReady    ExtensionStatus = ExtensionStatusActive
 	ExtensionStatusDegraded ExtensionStatus = "degraded"
 	ExtensionStatusFailed   ExtensionStatus = "failed"
 	ExtensionStatusStopped  ExtensionStatus = "stopped"
@@ -61,7 +63,11 @@ type HealthSnapshot struct {
 type ExtensionEvent struct {
 	Type        string
 	ExtensionID string
+	Kind        ExtensionKind
 	Status      ExtensionStatus
+	Reason      string
+	ErrorCode   ErrorCode
+	OccurredAt  string
 	Message     string
 }
 

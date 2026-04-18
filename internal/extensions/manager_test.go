@@ -29,7 +29,7 @@ func TestManagerLoadDiscoversExtensionFromSource(t *testing.T) {
 	if item.ID != "skill.review" {
 		t.Fatalf("unexpected id: %q", item.ID)
 	}
-	if item.Status != ExtensionStatusReady {
+	if item.Status != ExtensionStatusActive {
 		t.Fatalf("unexpected status: %q", item.Status)
 	}
 	if item.Capabilities.Prompts != 1 || item.Capabilities.Tools != 2 {
@@ -91,6 +91,33 @@ func TestManagerLoadMarksUnknownRootAsRemote(t *testing.T) {
 	}
 	if item.Source.Scope != ExtensionScopeRemote {
 		t.Fatalf("expected remote scope, got %q", item.Source.Scope)
+	}
+}
+
+func TestManagerLoadRejectsAlreadyLoaded(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, ".bytemind", "skills", "review")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "skill.json"), []byte(`{"name":"review"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "SKILL.md"), []byte("# /review"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(t.TempDir())
+	if _, err := mgr.Load(context.Background(), project); err != nil {
+		t.Fatalf("first load failed: %v", err)
+	}
+	_, err := mgr.Load(context.Background(), project)
+	var extErr *ExtensionError
+	if !errors.As(err, &extErr) {
+		t.Fatalf("expected ExtensionError, got %T", err)
+	}
+	if extErr.Code != ErrCodeAlreadyLoaded {
+		t.Fatalf("unexpected code: %s", extErr.Code)
 	}
 }
 

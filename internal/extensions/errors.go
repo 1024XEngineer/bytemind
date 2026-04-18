@@ -5,14 +5,17 @@ import "fmt"
 type ErrorCode string
 
 const (
-	ErrCodeInvalidSource    ErrorCode = "invalid_source"
-	ErrCodeInvalidManifest  ErrorCode = "invalid_manifest"
-	ErrCodeInvalidExtension ErrorCode = "invalid_extension"
-	ErrCodeNotFound         ErrorCode = "not_found"
-	ErrCodeDuplicate        ErrorCode = "duplicate_extension"
-	ErrCodeConflict         ErrorCode = "conflict"
-	ErrCodeLoadFailed       ErrorCode = "load_failed"
-	ErrCodeUnloadFailed     ErrorCode = "unload_failed"
+	ErrCodeInvalidSource     ErrorCode = "invalid_source"
+	ErrCodeInvalidManifest   ErrorCode = "invalid_manifest"
+	ErrCodeInvalidExtension  ErrorCode = "invalid_extension"
+	ErrCodeInvalidTransition ErrorCode = "invalid_transition"
+	ErrCodeNotFound          ErrorCode = "not_found"
+	ErrCodeDuplicate         ErrorCode = "duplicate_extension"
+	ErrCodeAlreadyLoaded     ErrorCode = "already_loaded"
+	ErrCodeConflict          ErrorCode = "conflict"
+	ErrCodeBusy              ErrorCode = "busy"
+	ErrCodeLoadFailed        ErrorCode = "load_failed"
+	ErrCodeUnloadFailed      ErrorCode = "unload_failed"
 )
 
 type ExtensionError struct {
