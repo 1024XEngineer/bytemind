@@ -11,6 +11,10 @@ type TaskReport struct {
 	Denied                 []string `json:"denied,omitempty"`
 	PendingApproval        []string `json:"pending_approval,omitempty"`
 	SkippedDueToDependency []string `json:"skipped_due_to_dependency,omitempty"`
+	StrategyAdjustments    []string `json:"strategy_adjustments,omitempty"`
+	RetryReasons           []string `json:"retry_reasons,omitempty"`
+	NoProgressTurns        int      `json:"no_progress_turns,omitempty"`
+	Escalations            []string `json:"escalations,omitempty"`
 }
 
 func (r *TaskReport) RecordExecuted(name string) {
@@ -29,17 +33,43 @@ func (r *TaskReport) RecordSkippedDueToDependency(name string) {
 	r.appendUnique(&r.SkippedDueToDependency, name)
 }
 
+func (r *TaskReport) RecordStrategyAdjustment(note string) {
+	r.appendUnique(&r.StrategyAdjustments, note)
+}
+
+func (r *TaskReport) RecordRetry(reason string) {
+	r.appendUnique(&r.RetryReasons, reason)
+}
+
+func (r *TaskReport) RecordNoProgressTurn() {
+	if r == nil {
+		return
+	}
+	r.NoProgressTurns++
+}
+
+func (r *TaskReport) RecordEscalation(reason string) {
+	r.appendUnique(&r.Escalations, reason)
+}
+
 func (r TaskReport) IsEmpty() bool {
 	return len(r.Executed) == 0 &&
 		len(r.Denied) == 0 &&
 		len(r.PendingApproval) == 0 &&
-		len(r.SkippedDueToDependency) == 0
+		len(r.SkippedDueToDependency) == 0 &&
+		len(r.StrategyAdjustments) == 0 &&
+		len(r.RetryReasons) == 0 &&
+		r.NoProgressTurns == 0 &&
+		len(r.Escalations) == 0
 }
 
 func (r TaskReport) HasNonSuccessOutcomes() bool {
 	return len(r.Denied) > 0 ||
 		len(r.PendingApproval) > 0 ||
-		len(r.SkippedDueToDependency) > 0
+		len(r.SkippedDueToDependency) > 0 ||
+		len(r.RetryReasons) > 0 ||
+		r.NoProgressTurns > 0 ||
+		len(r.Escalations) > 0
 }
 
 func (r TaskReport) JSON() string {
@@ -70,6 +100,12 @@ func (r TaskReport) HumanSummaryLines() []string {
 	appendLine("Denied", r.Denied)
 	appendLine("Pending approval", r.PendingApproval)
 	appendLine("Skipped due to denied dependency", r.SkippedDueToDependency)
+	appendLine("Strategy adjustments", r.StrategyAdjustments)
+	appendLine("Retry reasons", r.RetryReasons)
+	if r.NoProgressTurns > 0 {
+		lines = append(lines, fmt.Sprintf("- No progress turns: %d", r.NoProgressTurns))
+	}
+	appendLine("Escalations", r.Escalations)
 	return lines
 }
 

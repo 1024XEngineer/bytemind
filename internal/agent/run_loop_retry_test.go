@@ -218,6 +218,81 @@ func TestRunPromptReactiveCompactRetryOnlyOnce(t *testing.T) {
 	}
 }
 
+func TestRunPromptReactiveCompactRetryUsesConfiguredBudget(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	for i := 0; i < 4; i++ {
+		sess.Messages = append(sess.Messages,
+			llm.NewUserTextMessage("history question"),
+			llm.NewAssistantTextMessage("history answer"),
+		)
+	}
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &scriptedTurnClient{
+		steps: []scriptedTurnStep{
+			{
+				err: &llm.ProviderError{
+					Code:    llm.ErrorCodeContextTooLong,
+					Message: "maximum context length exceeded",
+				},
+			},
+			{
+				reply: llm.NewAssistantTextMessage("Goal: continue implementation\nPending: finalize response"),
+			},
+			{
+				err: &llm.ProviderError{
+					Code:    llm.ErrorCodeContextTooLong,
+					Message: "still exceeds context window",
+				},
+			},
+			{
+				reply: llm.NewAssistantTextMessage("Goal: second compaction\nPending: finalize response"),
+			},
+			{
+				reply: llm.NewAssistantTextMessage("final answer"),
+			},
+		},
+	}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 2,
+			Stream:        false,
+			TokenQuota:    200000,
+			ContextBudget: config.ContextBudgetConfig{
+				WarningRatio:     config.DefaultContextBudgetWarningRatio,
+				CriticalRatio:    config.DefaultContextBudgetCriticalRatio,
+				MaxReactiveRetry: 2,
+			},
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "continue implementation", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "final answer" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(client.requests) != 5 {
+		t.Fatalf("expected two failed turns + two compactions + final retry request, got %d", len(client.requests))
+	}
+}
+
 func TestRunPromptReactiveCompactRetryReturnsOriginalErrorWhenCompactionNotPossible(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())

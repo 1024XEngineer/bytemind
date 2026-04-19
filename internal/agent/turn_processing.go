@@ -28,6 +28,7 @@ type turnProcessParams struct {
 	AllowedTools     map[string]struct{}
 	DeniedTools      map[string]struct{}
 	SequenceTracker  *runtimepkg.ToolSequenceTracker
+	AdaptiveState    *adaptiveTurnState
 	ExecutedTools    *[]string
 	Approval         tools.ApprovalHandler
 	TaskReport       *runtimepkg.TaskReport
@@ -63,13 +64,64 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 		return "", false, err
 	}
 	reply.Normalize()
+	intent, cleanedReply, explicitIntent := parseAssistantTurnIntent(reply)
+	reply = cleanedReply
 	turnUsage := tokenusage.ResolveTurnUsage(request, &reply)
 	runner.recordTokenUsage(ctx, p.Session, request, turnUsage, turnLatency, true)
 	runner.emitUsageEvent(p.Session, &turnUsage)
 
 	if len(reply.ToolCalls) == 0 {
+		if intent == turnIntentUnknown {
+			intent = inferAssistantTurnIntent(reply.Content)
+		}
+		switch intent {
+		case turnIntentContinueWork:
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("missing_structured_tool_call")
+				p.TaskReport.RecordStrategyAdjustment("assistant declared continue_work without structured tool calls; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("semantic repair retries exceeded while waiting for structured tool calls")
+					}
+					summary := runtimepkg.BuildStopSummary(runtimepkg.StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept signaling ongoing work without structured tool calls (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingSystemNote(buildSemanticRepairInstruction(reply, attempt, maxAttempts))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant indicated ongoing work but emitted no structured tool calls; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		case turnIntentAskUser, turnIntentFinalize:
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordProgress()
+			}
+		default:
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordProgress()
+			}
+		}
 		answer, finalizeErr := e.finalizeTurnWithoutTools(p.RunMode, p.Session, reply, p.Out, streamedText)
 		return answer, true, finalizeErr
+	}
+	if p.AdaptiveState != nil {
+		p.AdaptiveState.recordProgress()
 	}
 
 	if err := llm.ValidateMessage(reply); err != nil {
@@ -77,9 +129,13 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 	}
 	sequenceObservation := p.SequenceTracker.Observe(reply.ToolCalls)
 	if sequenceObservation.ReachedThreshold {
+		repeatKind := "exact tool+argument sequence"
+		if sequenceObservation.MatchMode == "name_only" {
+			repeatKind = "same tool-name sequence (arguments varied)"
+		}
 		summary := runtimepkg.BuildStopSummary(runtimepkg.StopSummaryInput{
 			SessionID:     corepkg.SessionID(p.Session.ID),
-			Reason:        fmt.Sprintf("I stopped because the assistant repeated the same tool sequence %d times in a row (%s).", sequenceObservation.RepeatCount, strings.Join(sequenceObservation.UniqueToolNames, ", ")),
+			Reason:        fmt.Sprintf("I stopped because the assistant repeated the %s %d times in a row (%s).", repeatKind, sequenceObservation.RepeatCount, strings.Join(sequenceObservation.UniqueToolNames, ", ")),
 			ExecutedTools: *p.ExecutedTools,
 			TaskReport:    p.TaskReport,
 		})
@@ -99,6 +155,9 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 	}
 	for index, call := range reply.ToolCalls {
 		*p.ExecutedTools = append(*p.ExecutedTools, call.Function.Name)
+		if p.TaskReport != nil {
+			p.TaskReport.RecordExecuted(call.Function.Name)
+		}
 		emitTurnEvent(ctx, TurnEvent{
 			Type: TurnEventToolUse,
 			Payload: map[string]any{

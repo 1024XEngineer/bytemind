@@ -573,6 +573,97 @@ func TestStoreReadEventsAndSnapshotOnLegacySource(t *testing.T) {
 	}
 }
 
+func TestReadEventsFromFileHandlesLargeLines(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workspace := t.TempDir()
+	paths, err := store.pathForWorkspaceSession(workspace, "large-line")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	largePayload := map[string]any{
+		"blob": strings.Repeat("x", 200*1024),
+	}
+	rawPayload, err := json.Marshal(largePayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := SessionEvent{
+		EventID:       "large-1",
+		SessionID:     "large-line",
+		Seq:           1,
+		Type:          eventTypeSnapshotCompacted,
+		TS:            time.Now().UTC(),
+		SchemaVersion: eventSchemaVersion,
+		Payload:       rawPayload,
+	}
+	if err := appendEventLine(store.files, paths.Events, event); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := readEventsFromFile(paths.Events, 0)
+	if err != nil {
+		t.Fatalf("readEventsFromFile should parse large line, got %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected one event, got %d", len(events))
+	}
+	if events[0].EventID != "large-1" {
+		t.Fatalf("expected event_id large-1, got %q", events[0].EventID)
+	}
+}
+
+func TestReadEventsFromFileSkipsCorruptedLines(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workspace := t.TempDir()
+	paths, err := store.pathForWorkspaceSession(workspace, "read-events-corrupted")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	makeEvent := func(id string, seq int64) SessionEvent {
+		return SessionEvent{
+			EventID:       id,
+			SessionID:     "read-events-corrupted",
+			Seq:           seq,
+			Type:          eventTypeSessionCreated,
+			TS:            time.Now().UTC(),
+			SchemaVersion: eventSchemaVersion,
+			Payload:       json.RawMessage(`{"session":{"id":"read-events-corrupted"}}`),
+		}
+	}
+	if err := appendEventLine(store.files, paths.Events, makeEvent("ok-1", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.files.AppendLine(paths.Events, []byte(`{this-is-bad-json`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendEventLine(store.files, paths.Events, makeEvent("ok-2", 2)); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := readEventsFromFile(paths.Events, 0)
+	if err != nil {
+		t.Fatalf("readEventsFromFile should skip corrupted lines, got %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 valid events, got %d", len(events))
+	}
+	if events[0].EventID != "ok-1" || events[1].EventID != "ok-2" {
+		t.Fatalf("unexpected events order: %#v", events)
+	}
+}
+
 func TestReplaySkipsDuplicateEventIDAcrossRestart(t *testing.T) {
 	dir := t.TempDir()
 	storeA, err := NewStore(dir)

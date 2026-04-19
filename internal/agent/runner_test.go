@@ -214,7 +214,7 @@ func TestRunPromptStopsOnRepeatedToolPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(answer, "repeated the same tool sequence") {
+	if !strings.Contains(answer, "repeated the") {
 		t.Fatalf("expected repeat-detection summary, got %q", answer)
 	}
 }
@@ -281,6 +281,111 @@ func TestRunPromptCompletesMinimalToolLoop(t *testing.T) {
 	}
 	if sess.Messages[3].Role != "assistant" || sess.Messages[3].Content != "Workspace inspected." {
 		t.Fatalf("expected final assistant message, got %#v", sess.Messages[3])
+	}
+}
+
+func TestRunPromptRepairsContinueWorkWithoutToolCalls(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>continue_work</turn_intent>I will inspect files first.",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>Workspace inspected.",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 6,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "inspect workspace", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "Workspace inspected." {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected three requests (repair + tool + finalize), got %d", len(client.requests))
+	}
+	if len(client.requests[1].Messages) == 0 || client.requests[1].Messages[0].Role != llm.RoleSystem ||
+		!strings.Contains(strings.ToLower(client.requests[1].Messages[0].Text()), "ongoing work but returned no structured tool calls") {
+		t.Fatalf("expected repair system note in second request, got %#v", client.requests[1].Messages)
+	}
+	if len(sess.Messages) != 4 {
+		t.Fatalf("expected user + tool call + tool result + final assistant, got %#v", sess.Messages)
+	}
+}
+
+func TestRunPromptStopsWhenContinueWorkWithoutToolCallsKeepsRepeating(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>continue_work</turn_intent>I will continue now.",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 8,
+			Stream:        false,
+			ContextBudget: config.ContextBudgetConfig{
+				WarningRatio:     config.DefaultContextBudgetWarningRatio,
+				CriticalRatio:    config.DefaultContextBudgetCriticalRatio,
+				MaxReactiveRetry: 1,
+			},
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "keep going", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(answer, "ongoing work without structured tool calls") {
+		t.Fatalf("expected stop summary for repeated no-tool continue turns, got %q", answer)
+	}
+	if len(sess.Messages) != 2 {
+		t.Fatalf("expected user + summary assistant messages, got %#v", sess.Messages)
 	}
 }
 

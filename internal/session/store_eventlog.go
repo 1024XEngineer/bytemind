@@ -591,30 +591,36 @@ type fileAppender interface {
 }
 
 func readEventsFromFile(path string, afterSeq int64) ([]SessionEvent, error) {
-	data, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
+	defer file.Close()
+
 	events := make([]SessionEvent, 0, 32)
-	scanner := bufio.NewScanner(bytes.NewReader(data))
+	reader := bufio.NewReader(file)
 	lineNo := 0
-	for scanner.Scan() {
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return events, readErr
+		}
+		if errors.Is(readErr, io.EOF) && len(line) == 0 {
+			break
+		}
 		lineNo++
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
+		payload := bytes.TrimSpace(line)
+		if len(payload) > 0 {
+			var event SessionEvent
+			if err := json.Unmarshal(payload, &event); err != nil {
+				log.Printf("session: skipped corrupted event line %d in %s: %v", lineNo, path, err)
+			} else if afterSeq <= 0 || event.Seq > afterSeq {
+				events = append(events, event)
+			}
 		}
-		var event SessionEvent
-		if err := json.Unmarshal(line, &event); err != nil {
-			return nil, fmt.Errorf("parse event line %d: %w", lineNo, err)
+		if errors.Is(readErr, io.EOF) {
+			break
 		}
-		if afterSeq > 0 && event.Seq <= afterSeq {
-			continue
-		}
-		events = append(events, event)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
 	}
 	return events, nil
 }

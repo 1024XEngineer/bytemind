@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"io"
@@ -9,7 +8,6 @@ import (
 
 	"bytemind/internal/assets"
 	"bytemind/internal/config"
-	"bytemind/internal/provider"
 	"bytemind/tui"
 )
 
@@ -68,20 +66,7 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 	}
 
 	interactive := isInteractiveStdin(req.Stdin)
-	check := provider.Availability{Ready: true}
-	if interactive {
-		check = provider.CheckAvailability(context.Background(), cfg.Provider)
-	}
-
-	guide := tui.StartupGuide{}
-	if !check.Ready {
-		guide = BuildStartupGuide(cfg, check, workspace, *configPath)
-	}
-
-	requireAPIKey := true
-	if guide.Active && interactive {
-		requireAPIKey = false
-	}
+	guide, requireAPIKey := resolveTUIStartupPolicy(interactive)
 	runtimeBundle, err := BootstrapEntrypoint(EntrypointRequest{
 		WorkspaceOverride:     *workspaceOverride,
 		ConfigPath:            *configPath,
@@ -124,6 +109,12 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 		},
 		close: runner.Close,
 	}, nil
+}
+
+func resolveTUIStartupPolicy(interactive bool) (tui.StartupGuide, bool) {
+	// Startup guide at UI entry is disabled by default.
+	// Keep interactive TUI accessible even when API key is not configured yet.
+	return tui.StartupGuide{}, !interactive
 }
 
 func isInteractiveStdin(stdin io.Reader) bool {

@@ -75,3 +75,25 @@ func TestTaskReportHumanSummaryIncludesPendingApproval(t *testing.T) {
 		t.Fatal("expected report with denied/pending/skipped entries to mark non-success outcomes")
 	}
 }
+
+func TestTaskReportRetryAndNoProgressAreNonSuccess(t *testing.T) {
+	var report TaskReport
+	report.RecordRetry("missing_structured_tool_call")
+	report.RecordNoProgressTurn()
+	report.RecordStrategyAdjustment("asked model to emit structured tool calls")
+	report.RecordEscalation("semantic repair retries exceeded")
+
+	if !report.HasNonSuccessOutcomes() {
+		t.Fatal("expected retry/no-progress/escalation to mark non-success outcomes")
+	}
+	text := report.HumanSummary()
+	for _, want := range []string{
+		"- Retry reasons: missing_structured_tool_call",
+		"- No progress turns: 1",
+		"- Escalations: semantic repair retries exceeded",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected human summary to contain %q, got %q", want, text)
+		}
+	}
+}

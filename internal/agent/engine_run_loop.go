@@ -20,6 +20,7 @@ func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Sessio
 
 	runner := e.runner
 	toolSequenceTracker := runtimepkg.NewToolSequenceTracker(runtimepkg.DefaultRepeatedToolSequenceThreshold)
+	adaptiveState := newAdaptiveTurnState(runner.contextBudgetMaxReactiveRetry())
 	executedToolNames := make([]string, 0, 16)
 	taskReport := &runtimepkg.TaskReport{}
 	approvalHandler := runner.prepareRunApprovalHandler(setup, out)
@@ -28,6 +29,13 @@ func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Sessio
 		messages, err := e.messagesForStep(ctx, sess, setup, step, out)
 		if err != nil {
 			return "", err
+		}
+		if note := adaptiveState.consumePendingSystemNote(); note != "" {
+			noteMessage := llm.NewTextMessage(llm.RoleSystem, note)
+			if err := llm.ValidateMessage(noteMessage); err != nil {
+				return "", err
+			}
+			messages = append([]llm.Message{noteMessage}, messages...)
 		}
 		answer, finished, err := e.processTurnWithReactiveCompaction(ctx, setup, turnProcessParams{
 			Session:          sess,
@@ -39,6 +47,7 @@ func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Sessio
 			AllowedTools:     setup.AllowedTools,
 			DeniedTools:      setup.DeniedTools,
 			SequenceTracker:  toolSequenceTracker,
+			AdaptiveState:    adaptiveState,
 			ExecutedTools:    &executedToolNames,
 			Approval:         approvalHandler,
 			TaskReport:       taskReport,
@@ -68,28 +77,33 @@ func (e *defaultEngine) processTurnWithReactiveCompaction(ctx context.Context, s
 	}
 
 	runner := e.runner
-	answer, finished, err := e.processTurn(ctx, params)
-	if err == nil || !isPromptTooLongError(err) {
-		return answer, finished, err
-	}
+	maxRetry := runner.contextBudgetMaxReactiveRetry()
+	for attempt := 0; ; attempt++ {
+		answer, finished, err := e.processTurn(ctx, params)
+		if err == nil || !isPromptTooLongError(err) {
+			return answer, finished, err
+		}
+		if attempt >= maxRetry {
+			return "", false, err
+		}
 
-	_, compacted, compactErr := runner.compactSession(ctx, params.Session, true, true, "reactive_prompt_too_long")
-	if compactErr != nil {
-		return "", false, compactErr
-	}
-	if !compacted {
-		return "", false, err
-	}
-	if params.Out != nil {
-		fmt.Fprintf(params.Out, "%scontext exceeded model window; compacted and retrying once%s\n", ansiDim, ansiReset)
-	}
+		_, compacted, compactErr := runner.compactSession(ctx, params.Session, true, true, "reactive_prompt_too_long")
+		if compactErr != nil {
+			return "", false, compactErr
+		}
+		if !compacted {
+			return "", false, err
+		}
+		if params.Out != nil {
+			fmt.Fprintf(params.Out, "%scontext exceeded model window; compacted and retrying (%d/%d)%s\n", ansiDim, attempt+1, maxRetry, ansiReset)
+		}
 
-	retryMessages, buildErr := e.buildTurnMessages(params.Session, setup)
-	if buildErr != nil {
-		return "", false, buildErr
+		retryMessages, buildErr := e.buildTurnMessages(params.Session, setup)
+		if buildErr != nil {
+			return "", false, buildErr
+		}
+		params.Messages = retryMessages
 	}
-	params.Messages = retryMessages
-	return e.processTurn(ctx, params)
 }
 
 func (e *defaultEngine) messagesForStep(ctx context.Context, sess *session.Session, setup runPromptSetup, step int, out io.Writer) ([]llm.Message, error) {

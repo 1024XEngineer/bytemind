@@ -31,6 +31,18 @@ func TestSignatureToolCalls(t *testing.T) {
 	}
 }
 
+func TestSignatureToolCallNames(t *testing.T) {
+	calls := []llm.ToolCall{
+		{Function: llm.ToolFunctionCall{Name: "read_file", Arguments: `{"path":"a.go"}`}},
+		{Function: llm.ToolFunctionCall{Name: "search_text", Arguments: `{"query":"todo"}`}},
+	}
+	got := SignatureToolCallNames(calls)
+	want := "read_file|search_text"
+	if got != want {
+		t.Fatalf("unexpected name-only signature: got=%q want=%q", got, want)
+	}
+}
+
 func TestUniqueToolCallNames(t *testing.T) {
 	calls := []llm.ToolCall{
 		{Function: llm.ToolFunctionCall{Name: "read_file"}},
@@ -58,5 +70,27 @@ func TestToolSequenceTrackerObserve(t *testing.T) {
 	second := tracker.Observe(calls)
 	if second.RepeatCount != 2 || !second.ReachedThreshold {
 		t.Fatalf("unexpected second observation: %#v", second)
+	}
+}
+
+func TestToolSequenceTrackerDetectsNameOnlyRepeats(t *testing.T) {
+	tracker := NewToolSequenceTracker(2)
+	first := []llm.ToolCall{
+		{Function: llm.ToolFunctionCall{Name: "read_file", Arguments: `{"path":"a.go"}`}},
+	}
+	second := []llm.ToolCall{
+		{Function: llm.ToolFunctionCall{Name: "read_file", Arguments: `{"path":"b.go"}`}},
+	}
+
+	one := tracker.Observe(first)
+	if one.ReachedThreshold {
+		t.Fatalf("unexpected first observation: %#v", one)
+	}
+	two := tracker.Observe(second)
+	if !two.ReachedThreshold {
+		t.Fatalf("expected name-only repeat threshold, got %#v", two)
+	}
+	if two.MatchMode != "name_only" {
+		t.Fatalf("expected name_only match mode, got %#v", two)
 	}
 }
