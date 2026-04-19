@@ -36,6 +36,7 @@ type BootstrapRequest struct {
 
 // Runtime is the assembled runtime bundle consumed by command entrypoints.
 type Runtime struct {
+	Config      config.Config
 	Runner      *agent.Runner
 	Store       *session.Store
 	Session     *session.Session
@@ -148,6 +149,7 @@ func Bootstrap(req BootstrapRequest) (Runtime, error) {
 	})
 
 	return Runtime{
+		Config:      cfg,
 		Runner:      runner,
 		Store:       store,
 		Session:     sess,

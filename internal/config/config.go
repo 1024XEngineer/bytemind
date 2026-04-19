@@ -31,9 +31,14 @@ type Config struct {
 	AwayPolicy      string                `json:"away_policy"`
 	MaxIterations   int                   `json:"max_iterations"`
 	Stream          bool                  `json:"stream"`
+	UpdateCheck     UpdateCheckConfig     `json:"update_check"`
 	TokenQuota      int                   `json:"token_quota"`
 	TokenUsage      TokenUsageConfig      `json:"token_usage"`
 	ContextBudget   ContextBudgetConfig   `json:"context_budget"`
+}
+
+type UpdateCheckConfig struct {
+	Enabled bool `json:"enabled"`
 }
 
 type ProviderConfig struct {
@@ -81,7 +86,10 @@ func Default(workspace string) Config {
 		AwayPolicy:     "auto_deny_continue",
 		MaxIterations:  32,
 		Stream:         true,
-		TokenQuota:     DefaultTokenQuota,
+		UpdateCheck: UpdateCheckConfig{
+			Enabled: true,
+		},
+		TokenQuota: DefaultTokenQuota,
 		TokenUsage: TokenUsageConfig{
 			StorageType:     "file",
 			StoragePath:     ".bytemind/token_usage.json",
@@ -206,7 +214,10 @@ func ensureDefaultConfigFile(home string) error {
 		AwayPolicy:     "auto_deny_continue",
 		MaxIterations:  32,
 		Stream:         true,
-		TokenQuota:     DefaultTokenQuota,
+		UpdateCheck: UpdateCheckConfig{
+			Enabled: true,
+		},
+		TokenQuota: DefaultTokenQuota,
 		TokenUsage: TokenUsageConfig{
 			StorageType:     "file",
 			StoragePath:     ".bytemind/token_usage.json",
@@ -315,6 +326,11 @@ func applyEnv(cfg *Config) {
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_STREAM")); value != "" {
 		if parsed, err := strconv.ParseBool(value); err == nil {
 			cfg.Stream = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_UPDATE_CHECK")); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			cfg.UpdateCheck.Enabled = parsed
 		}
 	}
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_TOKEN_QUOTA")); value != "" {

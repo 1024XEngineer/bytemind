@@ -84,6 +84,8 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 		return TUIRuntime{}, err
 	}
 
+	maybePrintUpdateReminder(cfg, req.Stderr)
+
 	runner := runtimeBundle.Runner
 	if runner == nil || runtimeBundle.Store == nil || runtimeBundle.Session == nil {
 		return TUIRuntime{}, errors.New("internal error: bootstrap returned nil runtime")
