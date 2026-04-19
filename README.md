@@ -45,6 +45,32 @@
 
 ## 🚀 快速开始
 
+### 0) 一键安装（无需 Go）
+
+macOS / Linux：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
+```
+
+Windows PowerShell：
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
+```
+
+安装指定版本（示例 `v0.3.0`）：
+
+```bash
+BYTEMIND_VERSION=v0.3.0 curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
+```
+
+```powershell
+$env:BYTEMIND_VERSION='v0.3.0'; iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
+```
+
+更多安装方式见：[docs/installation.md](docs/installation.md)
+
 ### 1) 准备配置
 
 先复制示例配置，再把 `api_key` 等字段改成你自己的值：
