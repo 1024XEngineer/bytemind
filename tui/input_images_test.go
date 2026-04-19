@@ -614,3 +614,68 @@ func TestExtractMentionImageSpansOnlyReturnsBoundMentions(t *testing.T) {
 		t.Fatalf("unexpected bound asset id: %q", spans[0].AssetID)
 	}
 }
+
+func TestProtectImagePlaceholderDeletionRemovesOnlyTouchedPlaceholder(t *testing.T) {
+	m := newImagePipelineModel(t)
+	before := "[Image #1] and [Image #2]"
+	first := "[Image #1]"
+	cut := strings.Index(before, first) + len(first) - 1 // simulate deleting trailing ']'
+	after := before[:cut] + before[cut+1:]
+
+	updated, changed := m.protectImagePlaceholderDeletion(before, after, "backspace")
+	if !changed {
+		t.Fatal("expected atomic placeholder deletion to be applied")
+	}
+	if updated != " and [Image #2]" {
+		t.Fatalf("expected only touched placeholder removed, got %q", updated)
+	}
+}
+
+func TestProtectImagePlaceholderDeletionAllowsBulkClear(t *testing.T) {
+	m := newImagePipelineModel(t)
+	before := "[Image #1] keep"
+	after := ""
+
+	updated, changed := m.protectImagePlaceholderDeletion(before, after, "backspace")
+	if changed {
+		t.Fatalf("expected bulk clear not to be intercepted, got %q", updated)
+	}
+	if updated != after {
+		t.Fatalf("expected bulk clear value to remain unchanged, got %q", updated)
+	}
+}
+
+func TestProtectImagePlaceholderDeletionSkipsMalformedPlaceholder(t *testing.T) {
+	m := newImagePipelineModel(t)
+	before := "[Image #x]"
+	after := "[Image #x"
+
+	updated, changed := m.protectImagePlaceholderDeletion(before, after, "backspace")
+	if changed {
+		t.Fatalf("expected malformed placeholder not to trigger atomic deletion, got %q", updated)
+	}
+	if updated != after {
+		t.Fatalf("expected malformed placeholder edit to pass through, got %q", updated)
+	}
+}
+
+func TestRemoveImagePlaceholderSpansHandlesOverlapAndEmptyInput(t *testing.T) {
+	value := "x[Image #1]y"
+	start := strings.Index(value, "[Image #1]")
+	if start < 0 {
+		t.Fatalf("expected placeholder in value %q", value)
+	}
+	end := start + len("[Image #1]")
+
+	if got := removeImagePlaceholderSpans(value, nil); got != value {
+		t.Fatalf("expected empty spans to keep original value, got %q", got)
+	}
+
+	updated := removeImagePlaceholderSpans(value, []imagePlaceholderSpan{
+		{Start: start, End: end},
+		{Start: start + 1, End: end}, // overlap should be ignored safely
+	})
+	if updated != "xy" {
+		t.Fatalf("expected overlap-safe placeholder removal, got %q", updated)
+	}
+}
