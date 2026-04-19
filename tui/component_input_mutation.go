@@ -76,6 +76,9 @@ func (m *model) handleInputMutation(before, after, source string) string {
 			note = "Paste marker is locked to prevent accidental edits."
 		}
 	}
+	if locked, changed := m.protectImagePlaceholderDeletion(before, updated, source); changed {
+		updated = locked
+	}
 
 	if updated != after {
 		m.setInputValue(updated)

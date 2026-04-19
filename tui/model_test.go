@@ -1963,6 +1963,76 @@ func TestCtrlVControlMarkerRunePastesClipboardImage(t *testing.T) {
 	}
 }
 
+func TestBackspaceRemovesImagePlaceholderAsAtomicBlock(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	placeholder := mustIngestTestImage(t, m, "atomic-backspace")
+
+	m.input.SetValue("look " + placeholder + " now")
+	m.syncInputImageRefs(m.input.Value())
+	if _, ok := m.inputImageRefs[1]; !ok {
+		t.Fatalf("expected image placeholder to be tracked before deletion")
+	}
+
+	cursor := strings.Index(m.input.Value(), placeholder) + len(placeholder)
+	m.input.SetCursor(cursor)
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	updated := got.(model)
+	if updated.input.Value() != "look  now" {
+		t.Fatalf("expected backspace to remove whole image placeholder, got %q", updated.input.Value())
+	}
+	if strings.Contains(updated.input.Value(), "[Image #") {
+		t.Fatalf("expected no broken image placeholder text, got %q", updated.input.Value())
+	}
+	if _, ok := updated.inputImageRefs[1]; ok {
+		t.Fatalf("expected image placeholder reference to be cleared after atomic deletion")
+	}
+}
+
+func TestDeleteRemovesImagePlaceholderAsAtomicBlock(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	placeholder := mustIngestTestImage(t, m, "atomic-delete")
+
+	m.input.SetValue("look " + placeholder + " now")
+	m.syncInputImageRefs(m.input.Value())
+	if _, ok := m.inputImageRefs[1]; !ok {
+		t.Fatalf("expected image placeholder to be tracked before deletion")
+	}
+
+	cursor := strings.Index(m.input.Value(), placeholder)
+	m.input.SetCursor(cursor)
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyDelete})
+	updated := got.(model)
+	if updated.input.Value() != "look  now" {
+		t.Fatalf("expected delete to remove whole image placeholder, got %q", updated.input.Value())
+	}
+	if strings.Contains(updated.input.Value(), "[Image #") {
+		t.Fatalf("expected no broken image placeholder text, got %q", updated.input.Value())
+	}
+	if _, ok := updated.inputImageRefs[1]; ok {
+		t.Fatalf("expected image placeholder reference to be cleared after atomic deletion")
+	}
+}
+
+func TestBackspaceOutsideImagePlaceholderDoesNotTriggerAtomicDeletion(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	placeholder := mustIngestTestImage(t, m, "atomic-guard")
+
+	m.input.SetValue("x " + placeholder)
+	cursor := strings.Index(m.input.Value(), " ") + 1
+	m.input.SetCursor(cursor)
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	updated := got.(model)
+	if !strings.Contains(updated.input.Value(), placeholder) {
+		t.Fatalf("expected placeholder to remain when backspace is outside token, got %q", updated.input.Value())
+	}
+}
+
 func TestCtrlVWithoutImageShowsStatusNote(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
