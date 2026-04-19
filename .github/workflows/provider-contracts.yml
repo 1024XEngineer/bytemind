@@ -1,0 +1,42 @@
+name: Provider Contract Gates
+
+on:
+  pull_request:
+    paths:
+      - 'internal/provider/**'
+      - '.github/workflows/provider-contracts.yml'
+      - 'go.mod'
+      - 'go.sum'
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'internal/provider/**'
+      - '.github/workflows/provider-contracts.yml'
+      - 'go.mod'
+      - 'go.sum'
+
+permissions:
+  contents: read
+
+jobs:
+  provider-contracts:
+    name: Provider Contract Gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+
+      - name: Run provider contract matrix
+        run: go test ./internal/provider/... -run 'TestProviderContract|TestNormalizeEvent|TestWrapClientStream|TestMapError|TestMapLLMProviderError|TestRouter|TestListModels|TestRegistry|TestHealth' -count=1 -v
+
+      - name: Run provider package suite
+        run: go test ./internal/provider/... -count=1 -v
