@@ -13,64 +13,92 @@
 </p>
 
 <p align="center">
-  一个用 Go 实现的 AI Coding CLI，目标是提供更接近 OpenCode / ClaudeCode 的工作流能力。
+  涓€涓敤 Go 瀹炵幇鐨?AI Coding CLI锛岀洰鏍囨槸鎻愪緵鏇存帴杩?OpenCode / ClaudeCode 鐨勫伐浣滄祦鑳藉姏銆?
 </p>
 
 <p align="center">
-  <a href="#core-features">核心能力</a> •
-  <a href="#quick-start">快速开始</a> •
-  <a href="#configuration">配置文件</a> •
-  <a href="#project-structure">目录结构</a>
+  <a href="#core-features">鏍稿績鑳藉姏</a> 鈥?
+  <a href="#quick-start">蹇€熷紑濮?/a> 鈥?
+  <a href="#configuration">閰嶇疆鏂囦欢</a> 鈥?
+  <a href="#project-structure">鐩綍缁撴瀯</a>
 </p>
 
 > [!NOTE]
-> 当前版本已具备多轮会话、流式输出、工具调用循环、Shell 执行审批、执行预算控制与重复调用检测等核心能力。
+> 褰撳墠鐗堟湰宸插叿澶囧杞細璇濄€佹祦寮忚緭鍑恒€佸伐鍏疯皟鐢ㄥ惊鐜€丼hell 鎵ц瀹℃壒銆佹墽琛岄绠楁帶鍒朵笌閲嶅璋冪敤妫€娴嬬瓑鏍稿績鑳藉姏銆?
 
 > [!TIP]
-> 长任务建议提高 `-max-iterations`，到达预算后会返回阶段性总结，不会直接失败退出。
+> 闀夸换鍔″缓璁彁楂?`-max-iterations`锛屽埌杈鹃绠楀悗浼氳繑鍥為樁娈垫€ф€荤粨锛屼笉浼氱洿鎺ュけ璐ラ€€鍑恒€?
 
 <a id="core-features"></a>
 
-## 🎯 核心能力
+## 馃幆 鏍稿績鑳藉姏
 
-| 模块 | 说明 | 状态 |
+| 妯″潡 | 璇存槑 | 鐘舵€?|
 | --- | --- | --- |
-| 会话系统 | 多轮会话 + 会话持久化 | ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
-| 对话交互 | 纯 CLI 聊天 + 流式终端输出 | ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
-| Provider 适配 | OpenAI-compatible / Anthropic 双适配层 | ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
-| 工具执行 | 文件读写搜索、补丁替换、命令执行审批 | ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
-| 运行稳定性 | `max_iterations` 预算控制 + 重复调用检测 | ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
+| 浼氳瘽绯荤粺 | 澶氳疆浼氳瘽 + 浼氳瘽鎸佷箙鍖?| ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
+| 瀵硅瘽浜や簰 | 绾?CLI 鑱婂ぉ + 娴佸紡缁堢杈撳嚭 | ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
+| Provider 閫傞厤 | OpenAI-compatible / Anthropic 鍙岄€傞厤灞?| ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
+| 宸ュ叿鎵ц | 鏂囦欢璇诲啓鎼滅储銆佽ˉ涓佹浛鎹€佸懡浠ゆ墽琛屽鎵?| ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
+| 杩愯绋冲畾鎬?| `max_iterations` 棰勭畻鎺у埗 + 閲嶅璋冪敤妫€娴?| ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
 
 <a id="quick-start"></a>
 
-## 🚀 快速开始
+## 馃殌 蹇€熷紑濮?
 
-### 1) 准备配置
+## 瀹夎锛堟棤闇€ Go锛?
 
-先复制示例配置，再把 `api_key` 等字段改成你自己的值：
+### 0) 涓€閿畨瑁?
+
+macOS / Linux锛?
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
+```
+
+Windows PowerShell锛?
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
+```
+
+瀹夎鎸囧畾鐗堟湰锛堢ず渚?`v0.3.0`锛夛細
+
+```bash
+BYTEMIND_VERSION=v0.3.0 curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
+```
+
+```powershell
+$env:BYTEMIND_VERSION='v0.3.0'; iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
+```
+
+鏇村瀹夎鏂瑰紡瑙侊細[docs/installation.md](docs/installation.md)
+
+### 1) 鍑嗗閰嶇疆
+
+鍏堝鍒剁ず渚嬮厤缃紝鍐嶆妸 `api_key` 绛夊瓧娈垫敼鎴愪綘鑷繁鐨勫€硷細
 
 ```powershell
 New-Item -ItemType Directory -Force .bytemind | Out-Null
 Copy-Item config.example.json .bytemind/config.json
 ```
 
-> 兼容说明：工作区 `config.json` 也会被识别；这里推荐 `.bytemind/config.json` 方便与源码分离。
+> 鍏煎璇存槑锛氬伐浣滃尯 `config.json` 涔熶細琚瘑鍒紱杩欓噷鎺ㄨ崘 `.bytemind/config.json` 鏂逛究涓庢簮鐮佸垎绂汇€?
 
-### 2) 运行 ByteMind
+### 2) 杩愯 ByteMind
 
-聊天模式：
+鑱婂ぉ妯″紡锛?
 
 ```powershell
 go run ./cmd/bytemind chat
 ```
 
-单次任务：
+鍗曟浠诲姟锛?
 
 ```powershell
-go run ./cmd/bytemind run -prompt "分析当前项目并生成改进建议"
+go run ./cmd/bytemind run -prompt "鍒嗘瀽褰撳墠椤圭洰骞剁敓鎴愭敼杩涘缓璁?
 ```
 
-提高执行预算：
+鎻愰珮鎵ц棰勭畻锛?
 
 ```powershell
 go run ./cmd/bytemind chat -max-iterations 64
@@ -79,9 +107,9 @@ go run ./cmd/bytemind run -prompt "refactor this module" -max-iterations 64
 
 <a id="configuration"></a>
 
-## ⚙️ 配置文件
+## 鈿欙笍 閰嶇疆鏂囦欢
 
-默认配置（OpenAI-compatible）：
+榛樿閰嶇疆锛圤penAI-compatible锛夛細
 
 ```json
 {
@@ -98,7 +126,7 @@ go run ./cmd/bytemind run -prompt "refactor this module" -max-iterations 64
 ```
 
 <details>
-<summary>Anthropic 配置示例</summary>
+<summary>Anthropic 閰嶇疆绀轰緥</summary>
 
 ```json
 {
@@ -116,26 +144,26 @@ go run ./cmd/bytemind run -prompt "refactor this module" -max-iterations 64
 
 <a id="project-structure"></a>
 
-## 🧱 目录结构
+## 馃П 鐩綍缁撴瀯
 
 ```text
-cmd/bytemind            CLI 入口
-internal/agent          对话循环、系统提示词模板、流式输出
-internal/config         配置加载与环境变量覆盖
-internal/llm            通用消息与工具类型
-internal/provider       多 provider 适配层
-internal/session        会话持久化
-internal/tools          文件工具、patch 工具、shell 工具
+cmd/bytemind            CLI 鍏ュ彛
+internal/agent          瀵硅瘽寰幆銆佺郴缁熸彁绀鸿瘝妯℃澘銆佹祦寮忚緭鍑?
+internal/config         閰嶇疆鍔犺浇涓庣幆澧冨彉閲忚鐩?
+internal/llm            閫氱敤娑堟伅涓庡伐鍏风被鍨?
+internal/provider       澶?provider 閫傞厤灞?
+internal/session        浼氳瘽鎸佷箙鍖?
+internal/tools          鏂囦欢宸ュ叿銆乸atch 宸ュ叿銆乻hell 宸ュ叿
 ```
 
-## 🧭 交互命令
+## 馃Л 浜や簰鍛戒护
 
 - `/help`
 - `/session`
 - `/sessions`
 - `/quit`
 
-## 🧰 已实现工具
+## 馃О 宸插疄鐜板伐鍏?
 
 - `list_files`
 - `read_file`
@@ -145,15 +173,15 @@ internal/tools          文件工具、patch 工具、shell 工具
 - `apply_patch`
 - `run_shell`
 
-## 📝 系统提示词维护
+## 馃摑 绯荤粺鎻愮ず璇嶇淮鎶?
 
-系统提示词模板在：
+绯荤粺鎻愮ず璇嶆ā鏉垮湪锛?
 
 - `internal/agent/prompts/system.md`
 
-运行时由 `internal/agent/prompt.go` 通过 `go:embed` 内嵌 Markdown，并替换 `{{WORKSPACE}}`、`{{APPROVAL_POLICY}}` 占位符。
+杩愯鏃剁敱 `internal/agent/prompt.go` 閫氳繃 `go:embed` 鍐呭祵 Markdown锛屽苟鏇挎崲 `{{WORKSPACE}}`銆乣{{APPROVAL_POLICY}}` 鍗犱綅绗︺€?
 
-## 🌍 Environment Variables
+## 馃實 Environment Variables
 
 See [docs/environment-variables.md](docs/environment-variables.md) for runtime TUI env vars:
 
@@ -161,34 +189,6 @@ See [docs/environment-variables.md](docs/environment-variables.md) for runtime T
 - `BYTEMIND_WINDOWS_INPUT_TTY`
 - `BYTEMIND_MOUSE_Y_OFFSET`
 
-## 📄 License
+## 馃搫 License
 
 MIT License
-
-## 安装（无需 Go）
-
-### 0) 一键安装
-
-macOS / Linux：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
-```
-
-Windows PowerShell：
-
-```powershell
-iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
-```
-
-安装指定版本（示例 `v0.3.0`）：
-
-```bash
-BYTEMIND_VERSION=v0.3.0 curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
-```
-
-```powershell
-$env:BYTEMIND_VERSION='v0.3.0'; iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
-```
-
-更多安装方式见：[docs/installation.md](docs/installation.md)
