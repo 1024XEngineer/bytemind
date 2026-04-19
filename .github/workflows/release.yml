@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Publish Release Assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build release archives
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${GITHUB_REF_NAME}"
+          if [[ -z "${VERSION}" ]]; then
+            echo "GITHUB_REF_NAME is empty"
+            exit 1
+          fi
+
+          mkdir -p dist
+
+          targets=(
+            "linux amd64"
+            "linux arm64"
+            "darwin amd64"
+            "darwin arm64"
+            "windows amd64"
+            "windows arm64"
+          )
+
+          for target in "${targets[@]}"; do
+            os="${target%% *}"
+            arch="${target##* }"
+
+            package="bytemind_${VERSION}_${os}_${arch}"
+            workdir="dist/${package}"
+            binary_name="bytemind"
+            if [[ "${os}" == "windows" ]]; then
+              binary_name="bytemind.exe"
+            fi
+
+            mkdir -p "${workdir}"
+            GOOS="${os}" GOARCH="${arch}" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X bytemind/internal/app.buildVersion=${VERSION}" -o "${workdir}/${binary_name}" ./cmd/bytemind
+
+            if [[ "${os}" == "windows" ]]; then
+              (
+                cd dist
+                zip -rq "${package}.zip" "${package}"
+              )
+            else
+              tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+            fi
+
+            rm -rf "${workdir}"
+          done
+
+          (
+            cd dist
+            sha256sum "bytemind_${VERSION}_"* > checksums.txt
+          )
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: |
+            dist/bytemind_*
+            dist/checksums.txt
+          generate_release_notes: true

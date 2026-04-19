@@ -70,6 +70,37 @@ func TestLoadIgnoresInvalidTokenQuotaEnv(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultsUpdateCheckEnabled(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "secret")
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.UpdateCheck.Enabled {
+		t.Fatalf("expected update_check.enabled default true")
+	}
+}
+
+func TestLoadUsesUpdateCheckEnvOverride(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "secret")
+	t.Setenv("BYTEMIND_UPDATE_CHECK", "false")
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UpdateCheck.Enabled {
+		t.Fatalf("expected BYTEMIND_UPDATE_CHECK=false to disable update checks")
+	}
+}
+
 func TestLoadAppliesTokenUsageDefaults(t *testing.T) {
 	workspace := t.TempDir()
 	home := t.TempDir()
@@ -519,6 +550,9 @@ func TestEnsureHomeLayoutCreatesStandardDirectories(t *testing.T) {
 	}
 	if cfg.TokenUsage.StorageType == "" || cfg.TokenUsage.BackupInterval == "" {
 		t.Fatalf("expected default token_usage config to be present, got %#v", cfg.TokenUsage)
+	}
+	if !cfg.UpdateCheck.Enabled {
+		t.Fatalf("expected default update_check.enabled=true in generated config")
 	}
 }
 

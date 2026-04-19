@@ -66,6 +66,8 @@ func RunOneShot(req RunOneShotRequest) error {
 		return err
 	}
 
+	maybePrintUpdateReminder(runtimeBundle.Config, req.Stderr)
+
 	_, err = runtimeBundle.Runner.RunPrompt(context.Background(), runtimeBundle.Session, *prompt, "build", req.Stdout)
 	return err
 }
