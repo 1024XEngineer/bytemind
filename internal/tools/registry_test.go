@@ -306,6 +306,80 @@ func TestRegistryFindByOriginalName(t *testing.T) {
 	}
 }
 
+func TestRegistryRegisterRejectsCaseInsensitiveOriginalNameConflict(t *testing.T) {
+	registry := &Registry{}
+	if err := registry.Register(testTool{name: "read_file"}, RegisterOptions{Source: RegistrationSourceBuiltin}); err != nil {
+		t.Fatalf("register builtin failed: %v", err)
+	}
+	err := registry.Register(testTool{name: "skill:skill_demo:read_file"}, RegisterOptions{
+		Source:       RegistrationSourceExtension,
+		ExtensionID:  "skill.demo",
+		OriginalName: "Read_File",
+	})
+	if err == nil {
+		t.Fatal("expected duplicate original-name error")
+	}
+	regErr, ok := err.(*RegistryError)
+	if !ok {
+		t.Fatalf("unexpected error type: %T", err)
+	}
+	if regErr.Code != RegistryErrorDuplicateName {
+		t.Fatalf("unexpected error code: %s", regErr.Code)
+	}
+	if regErr.OriginalToolName != "read_file" {
+		t.Fatalf("expected normalized original name, got %q", regErr.OriginalToolName)
+	}
+}
+
+func TestRegistryFindByOriginalNameIsCaseInsensitive(t *testing.T) {
+	registry := &Registry{}
+	if err := registry.Register(testTool{name: "skill:skill_demo:open_doc"}, RegisterOptions{
+		Source:       RegistrationSourceExtension,
+		ExtensionID:  "skill.demo",
+		OriginalName: "Open_Doc",
+	}); err != nil {
+		t.Fatalf("register bridged tool failed: %v", err)
+	}
+	metas := registry.FindByOriginalName("OPEN_doc")
+	if len(metas) != 1 {
+		t.Fatalf("expected one metadata record, got %d", len(metas))
+	}
+	if metas[0].OriginalToolName != "open_doc" {
+		t.Fatalf("expected normalized original name, got %q", metas[0].OriginalToolName)
+	}
+}
+
+func TestRegistryFindByExtensionID(t *testing.T) {
+	registry := &Registry{}
+	if err := registry.Register(testTool{name: "read_file"}, RegisterOptions{Source: RegistrationSourceBuiltin}); err != nil {
+		t.Fatalf("register builtin failed: %v", err)
+	}
+	if err := registry.Register(testTool{name: "skill:skill_demo:open_doc"}, RegisterOptions{
+		Source:       RegistrationSourceExtension,
+		ExtensionID:  "skill.demo",
+		OriginalName: "open_doc",
+	}); err != nil {
+		t.Fatalf("register extension tool failed: %v", err)
+	}
+	if err := registry.Register(testTool{name: "skill:skill_other:search_doc"}, RegisterOptions{
+		Source:       RegistrationSourceExtension,
+		ExtensionID:  "skill.other",
+		OriginalName: "search_doc",
+	}); err != nil {
+		t.Fatalf("register second extension tool failed: %v", err)
+	}
+	metas := registry.FindByExtensionID("skill.demo")
+	if len(metas) != 1 {
+		t.Fatalf("expected one metadata for extension, got %d", len(metas))
+	}
+	if metas[0].ToolKey != "skill:skill_demo:open_doc" {
+		t.Fatalf("unexpected tool key: %q", metas[0].ToolKey)
+	}
+	if got := registry.FindByExtensionID("missing"); len(got) != 0 {
+		t.Fatalf("expected no metadata for missing extension, got %#v", got)
+	}
+}
+
 func TestRegistryResolveForModeRejectsUnavailableTool(t *testing.T) {
 	registry := &Registry{}
 	if err := registry.Register(invalidSpecTool{

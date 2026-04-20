@@ -94,9 +94,9 @@ func buildRegistration(tool Tool, opts RegisterOptions) (RegistrationMeta, Resol
 		return RegistrationMeta{}, ResolvedTool{}, &RegistryError{Code: RegistryErrorInvalidToolKey, Message: "tool key is required", Source: meta.Source, ExtensionID: meta.ExtensionID}
 	}
 	meta.StableToolKey = meta.ToolKey
-	meta.OriginalToolName = strings.TrimSpace(opts.OriginalName)
+	meta.OriginalToolName = normalizeOriginalToolName(opts.OriginalName)
 	if meta.OriginalToolName == "" {
-		meta.OriginalToolName = meta.ToolKey
+		meta.OriginalToolName = normalizeOriginalToolName(meta.ToolKey)
 	}
 	definition.Function.Name = meta.ToolKey
 	if provider, ok := tool.(ToolSpecProvider); ok {
@@ -125,6 +125,10 @@ func normalizeRegistrationSource(source RegistrationSource) RegistrationSource {
 	default:
 		return ""
 	}
+}
+
+func normalizeOriginalToolName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }
 
 func cloneResolvedTool(resolved ResolvedTool) ResolvedTool {

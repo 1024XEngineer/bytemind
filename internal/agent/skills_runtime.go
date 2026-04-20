@@ -7,10 +7,12 @@ import (
 	"time"
 	"unicode"
 
+	extensionspkg "bytemind/internal/extensions"
 	"bytemind/internal/llm"
 	policypkg "bytemind/internal/policy"
 	"bytemind/internal/session"
 	"bytemind/internal/skills"
+	toolspkg "bytemind/internal/tools"
 )
 
 type activeSkillRuntime struct {
@@ -38,11 +40,93 @@ func (r *Runner) resolveActiveSkill(sess *session.Session) *activeSkillRuntime {
 	}
 }
 
-func resolveSkillToolSets(active *activeSkillRuntime) (map[string]struct{}, map[string]struct{}) {
+func resolveSkillToolSets(active *activeSkillRuntime, registry ToolRegistry) (map[string]struct{}, map[string]struct{}, error) {
 	if active == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return policypkg.ResolveToolSets(active.Skill.ToolPolicy)
+	bindings := activeSkillBridgeBindings(active, registry)
+	if len(bindings) == 0 {
+		allow, deny := policypkg.ResolveToolSets(active.Skill.ToolPolicy)
+		return allow, deny, nil
+	}
+	allow, deny, err := extensionspkg.ResolvePolicyToolSets(active.Skill.ToolPolicy, bindings)
+	if err != nil {
+		return nil, nil, err
+	}
+	return allow, deny, nil
+}
+
+type extensionToolMetaFinder interface {
+	FindByExtensionID(extensionID string) []toolspkg.RegistrationMeta
+}
+
+func activeSkillBridgeBindings(active *activeSkillRuntime, registry ToolRegistry) []extensionspkg.BridgeBinding {
+	if active == nil || registry == nil {
+		return nil
+	}
+	finder, ok := registry.(extensionToolMetaFinder)
+	if !ok {
+		return nil
+	}
+	extensionID := activeSkillExtensionID(active)
+	if extensionID == "" {
+		return nil
+	}
+	metas := finder.FindByExtensionID(extensionID)
+	if len(metas) == 0 {
+		return nil
+	}
+	bindings := make([]extensionspkg.BridgeBinding, 0, len(metas))
+	for _, meta := range metas {
+		if meta.Source != toolspkg.RegistrationSourceExtension {
+			continue
+		}
+		stable := strings.TrimSpace(meta.StableToolKey)
+		if stable == "" {
+			stable = strings.TrimSpace(meta.ToolKey)
+		}
+		original := strings.TrimSpace(meta.OriginalToolName)
+		if stable == "" || original == "" {
+			continue
+		}
+		bindings = append(bindings, extensionspkg.BridgeBinding{
+			Source:       bridgeSourceFromStableKey(stable),
+			ExtensionID:  strings.TrimSpace(meta.ExtensionID),
+			OriginalName: original,
+			StableKey:    stable,
+		})
+	}
+	return bindings
+}
+
+func activeSkillExtensionID(active *activeSkillRuntime) string {
+	if active == nil {
+		return ""
+	}
+	name := strings.TrimSpace(active.Skill.Name)
+	if name == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(name), "skill.") {
+		return name
+	}
+	return "skill." + name
+}
+
+func bridgeSourceFromStableKey(stable string) extensionspkg.ExtensionKind {
+	stable = strings.TrimSpace(stable)
+	if stable == "" {
+		return extensionspkg.ExtensionSkill
+	}
+	segments := strings.SplitN(stable, ":", 2)
+	switch strings.ToLower(strings.TrimSpace(segments[0])) {
+	case string(extensionspkg.ExtensionMCP):
+		return extensionspkg.ExtensionMCP
+	case string(extensionspkg.ExtensionSkill):
+		return extensionspkg.ExtensionSkill
+	default:
+		return extensionspkg.ExtensionSkill
+	}
 }
 
 func promptActiveSkill(active *activeSkillRuntime) *PromptActiveSkill {

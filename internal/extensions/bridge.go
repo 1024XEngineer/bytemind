@@ -102,7 +102,7 @@ func mapPolicyItems(policy skillspkg.ToolPolicy, bindings []BridgeBinding) (skil
 		if item == "" {
 			continue
 		}
-		if stable, ok := aliases[item]; ok {
+		if stable, ok := aliases[normalizePolicyAlias(item)]; ok {
 			mappedItems = append(mappedItems, stable)
 			continue
 		}
@@ -123,14 +123,22 @@ func buildPolicyAliases(bindings []BridgeBinding) (map[string]string, error) {
 			return nil, wrapError(ErrCodeInvalidExtension, "bridge binding requires original and stable tool names", nil)
 		}
 		for _, alias := range []string{original, stable} {
-			existing, ok := aliases[alias]
+			normalizedAlias := normalizePolicyAlias(alias)
+			if normalizedAlias == "" {
+				continue
+			}
+			existing, ok := aliases[normalizedAlias]
 			if ok && existing != stable {
 				return nil, wrapError(ErrCodeConflict, fmt.Sprintf("policy alias %q maps to multiple tools", alias), nil)
 			}
-			aliases[alias] = stable
+			aliases[normalizedAlias] = stable
 		}
 	}
 	return aliases, nil
+}
+
+func normalizePolicyAlias(alias string) string {
+	return strings.ToLower(strings.TrimSpace(alias))
 }
 
 func buildBridgedTool(extensionTool ExtensionTool) (toolspkg.Tool, BridgeBinding, error) {

@@ -173,6 +173,27 @@ func TestResolvePolicyToolSetsMapsOriginalNamesToStableKeys(t *testing.T) {
 	}
 }
 
+func TestResolvePolicyToolSetsMapsAliasesCaseInsensitively(t *testing.T) {
+	allow, deny, err := ResolvePolicyToolSets(skillspkg.ToolPolicy{
+		Policy: skillspkg.ToolPolicyAllowlist,
+		Items:  []string{"OPEN_DOC"},
+	}, []BridgeBinding{{
+		Source:       ExtensionSkill,
+		ExtensionID:  "skill.review",
+		OriginalName: "open_doc",
+		StableKey:    "skill:skill_review:open_doc",
+	}})
+	if err != nil {
+		t.Fatalf("ResolvePolicyToolSets failed: %v", err)
+	}
+	if deny != nil {
+		t.Fatalf("expected nil deny set, got %#v", deny)
+	}
+	if _, ok := allow["skill:skill_review:open_doc"]; !ok {
+		t.Fatalf("expected mapped stable key in allow set: %#v", allow)
+	}
+}
+
 func TestResolvePolicyToolSetsRejectsAmbiguousAliases(t *testing.T) {
 	_, _, err := ResolvePolicyToolSets(skillspkg.ToolPolicy{
 		Policy: skillspkg.ToolPolicyAllowlist,
@@ -182,6 +203,36 @@ func TestResolvePolicyToolSetsRejectsAmbiguousAliases(t *testing.T) {
 			Source:       ExtensionSkill,
 			ExtensionID:  "skill.first",
 			OriginalName: "open_doc",
+			StableKey:    "skill:skill_first:open_doc",
+		},
+		{
+			Source:       ExtensionMCP,
+			ExtensionID:  "mcp.docs",
+			OriginalName: "open_doc",
+			StableKey:    "mcp:mcp_docs:open_doc",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected conflict error")
+	}
+	var extErr *ExtensionError
+	if !errors.As(err, &extErr) {
+		t.Fatalf("expected ExtensionError, got %T", err)
+	}
+	if extErr.Code != ErrCodeConflict {
+		t.Fatalf("unexpected error code: %s", extErr.Code)
+	}
+}
+
+func TestResolvePolicyToolSetsRejectsAmbiguousAliasesIgnoringCase(t *testing.T) {
+	_, _, err := ResolvePolicyToolSets(skillspkg.ToolPolicy{
+		Policy: skillspkg.ToolPolicyAllowlist,
+		Items:  []string{"open_doc"},
+	}, []BridgeBinding{
+		{
+			Source:       ExtensionSkill,
+			ExtensionID:  "skill.first",
+			OriginalName: "Open_Doc",
 			StableKey:    "skill:skill_first:open_doc",
 		},
 		{

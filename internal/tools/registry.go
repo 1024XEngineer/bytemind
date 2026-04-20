@@ -190,7 +190,7 @@ func (r *Registry) List() []ResolvedTool {
 }
 
 func (r *Registry) FindByOriginalName(name string) []RegistrationMeta {
-	original := strings.TrimSpace(name)
+	original := normalizeOriginalToolName(name)
 	if original == "" {
 		return nil
 	}
@@ -198,6 +198,29 @@ func (r *Registry) FindByOriginalName(name string) []RegistrationMeta {
 	items := make([]RegistrationMeta, 0, len(r.meta))
 	for _, meta := range r.meta {
 		if meta.OriginalToolName != original {
+			continue
+		}
+		items = append(items, cloneRegistrationMeta(meta))
+	}
+	r.mu.RUnlock()
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].ToolKey < items[j].ToolKey
+	})
+	return items
+}
+
+func (r *Registry) FindByExtensionID(extensionID string) []RegistrationMeta {
+	extensionID = strings.TrimSpace(extensionID)
+	if extensionID == "" {
+		return nil
+	}
+	r.mu.RLock()
+	items := make([]RegistrationMeta, 0, len(r.meta))
+	for _, meta := range r.meta {
+		if meta.Source != RegistrationSourceExtension {
+			continue
+		}
+		if meta.ExtensionID != extensionID {
 			continue
 		}
 		items = append(items, cloneRegistrationMeta(meta))
@@ -280,7 +303,7 @@ func (r *Registry) ensureMapsLocked() {
 }
 
 func (r *Registry) findConflictByOriginalNameLocked(originalName, toolKey string) (RegistrationMeta, bool) {
-	originalName = strings.TrimSpace(originalName)
+	originalName = normalizeOriginalToolName(originalName)
 	toolKey = strings.TrimSpace(toolKey)
 	if originalName == "" {
 		return RegistrationMeta{}, false
