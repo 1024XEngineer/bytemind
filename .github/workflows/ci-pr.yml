@@ -37,7 +37,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: ${{ !github.event.pull_request.head.repo.fork }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.out
