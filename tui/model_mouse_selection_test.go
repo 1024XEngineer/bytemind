@@ -280,27 +280,12 @@ func TestLandingInputSelectionMapsToRenderedInputRow(t *testing.T) {
 		tokenUsage:    newTokenUsageComponent(),
 		clipboardText: writer,
 	}
-
-	view := m.View()
-	lines := strings.Split(strings.ReplaceAll(view, "\r\n", "\n"), "\n")
-	targetRow, targetCol := -1, -1
-	for row, line := range lines {
-		plain := xansi.Strip(line)
-		byteCol := strings.Index(plain, "nihao")
-		if byteCol >= 0 {
-			targetRow = row
-			targetCol = xansi.StringWidth(plain[:byteCol])
-			break
-		}
-	}
-	if targetRow < 0 || targetCol < 0 {
-		t.Fatalf("expected to locate landing input text in rendered view")
-	}
+	targetRow, startX, dragX := locateLandingInputDragPoints(t, m)
 
 	got, _ := m.handleMouse(tea.MouseMsg{
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
-		X:      targetCol,
+		X:      startX,
 		Y:      targetRow,
 	})
 	pressed := got.(model)
@@ -308,7 +293,7 @@ func TestLandingInputSelectionMapsToRenderedInputRow(t *testing.T) {
 	got, _ = pressed.handleMouse(tea.MouseMsg{
 		Action: tea.MouseActionMotion,
 		Button: tea.MouseButtonLeft,
-		X:      targetCol + 1,
+		X:      dragX,
 		Y:      targetRow,
 	})
 	dragged := got.(model)
@@ -316,7 +301,7 @@ func TestLandingInputSelectionMapsToRenderedInputRow(t *testing.T) {
 	got, _ = dragged.handleMouse(tea.MouseMsg{
 		Action: tea.MouseActionRelease,
 		Button: tea.MouseButtonLeft,
-		X:      targetCol + 1,
+		X:      dragX,
 		Y:      targetRow,
 	})
 	released := got.(model)
@@ -395,41 +380,26 @@ func TestLandingInputSelectionIgnoresGlobalMouseYOffset(t *testing.T) {
 		clipboardText: writer,
 		mouseYOffset:  2,
 	}
-
-	view := m.View()
-	lines := strings.Split(strings.ReplaceAll(view, "\r\n", "\n"), "\n")
-	targetRow, targetCol := -1, -1
-	for row, line := range lines {
-		plain := xansi.Strip(line)
-		byteCol := strings.Index(plain, "nihao")
-		if byteCol >= 0 {
-			targetRow = row
-			targetCol = xansi.StringWidth(plain[:byteCol])
-			break
-		}
-	}
-	if targetRow < 0 || targetCol < 0 {
-		t.Fatalf("expected to locate landing input text in rendered view")
-	}
+	targetRow, startX, dragX := locateLandingInputDragPoints(t, m)
 
 	got, _ := m.handleMouse(tea.MouseMsg{
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
-		X:      targetCol,
+		X:      startX,
 		Y:      targetRow,
 	})
 	pressed := got.(model)
 	got, _ = pressed.handleMouse(tea.MouseMsg{
 		Action: tea.MouseActionMotion,
 		Button: tea.MouseButtonLeft,
-		X:      targetCol + 1,
+		X:      dragX,
 		Y:      targetRow,
 	})
 	dragged := got.(model)
 	got, _ = dragged.handleMouse(tea.MouseMsg{
 		Action: tea.MouseActionRelease,
 		Button: tea.MouseButtonLeft,
-		X:      targetCol + 1,
+		X:      dragX,
 		Y:      targetRow,
 	})
 	released := got.(model)
@@ -441,6 +411,39 @@ func TestLandingInputSelectionIgnoresGlobalMouseYOffset(t *testing.T) {
 	if writer.last != "ni" {
 		t.Fatalf("expected landing input copy %q with global y-offset, got %q", "ni", writer.last)
 	}
+}
+
+func locateLandingInputDragPoints(t *testing.T, m model) (targetRow, startX, dragX int) {
+	t.Helper()
+	_ = m.View()
+
+	left, right, top, bottom, _, _, ok := m.inputInnerBounds()
+	if !ok {
+		t.Fatalf("expected landing input bounds to be available")
+	}
+
+	for y := top; y <= bottom; y++ {
+		col0 := -1
+		col1 := -1
+		for x := left; x <= right; x++ {
+			point, ok := m.inputPointFromMouse(x, y, false)
+			if !ok || point.Row != 0 {
+				continue
+			}
+			if point.Col == 0 && col0 < 0 {
+				col0 = x
+			}
+			if point.Col >= 1 && col1 < 0 {
+				col1 = x
+			}
+		}
+		if col0 >= 0 && col1 > col0 {
+			return y, col0, col1
+		}
+	}
+
+	t.Fatalf("expected to locate stable landing input drag points")
+	return 0, 0, 0
 }
 
 func TestViewportSelectionTextUsesVisibleViewportLayout(t *testing.T) {
