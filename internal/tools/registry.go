@@ -131,13 +131,29 @@ func (r *Registry) Register(tool Tool, opts RegisterOptions) error {
 			ConflictWith:     existingMeta,
 		}
 	}
-	if conflict, exists := r.findConflictByOriginalNameLocked(meta.OriginalToolName, meta.ToolKey); exists {
-		if opts.AllowOriginalNameShadowBuiltin &&
-			meta.Source == RegistrationSourceExtension &&
-			conflict.Source == RegistrationSourceBuiltin {
-			r.tools[meta.ToolKey] = resolved
-			r.meta[meta.ToolKey] = meta
-			return nil
+	if conflicts := r.findConflictsByOriginalNameLocked(meta.OriginalToolName, meta.ToolKey); len(conflicts) > 0 {
+		if opts.AllowOriginalNameShadowBuiltin && meta.Source == RegistrationSourceExtension {
+			allBuiltin := true
+			for _, conflict := range conflicts {
+				if conflict.Source == RegistrationSourceBuiltin {
+					continue
+				}
+				allBuiltin = false
+				return &RegistryError{
+					Code:             RegistryErrorDuplicateName,
+					Message:          fmt.Sprintf("tool original name %q already registered", meta.OriginalToolName),
+					ToolKey:          meta.ToolKey,
+					OriginalToolName: meta.OriginalToolName,
+					Source:           meta.Source,
+					ExtensionID:      meta.ExtensionID,
+					ConflictWith:     conflict,
+				}
+			}
+			if allBuiltin {
+				r.tools[meta.ToolKey] = resolved
+				r.meta[meta.ToolKey] = meta
+				return nil
+			}
 		}
 		return &RegistryError{
 			Code:             RegistryErrorDuplicateName,
@@ -146,7 +162,7 @@ func (r *Registry) Register(tool Tool, opts RegisterOptions) error {
 			OriginalToolName: meta.OriginalToolName,
 			Source:           meta.Source,
 			ExtensionID:      meta.ExtensionID,
-			ConflictWith:     conflict,
+			ConflictWith:     conflicts[0],
 		}
 	}
 	r.tools[meta.ToolKey] = resolved
@@ -309,12 +325,13 @@ func (r *Registry) ensureMapsLocked() {
 	}
 }
 
-func (r *Registry) findConflictByOriginalNameLocked(originalName, toolKey string) (RegistrationMeta, bool) {
+func (r *Registry) findConflictsByOriginalNameLocked(originalName, toolKey string) []RegistrationMeta {
 	originalName = normalizeOriginalToolName(originalName)
 	toolKey = strings.TrimSpace(toolKey)
 	if originalName == "" {
-		return RegistrationMeta{}, false
+		return nil
 	}
+	conflicts := make([]RegistrationMeta, 0, len(r.meta))
 	for existingKey, existingMeta := range r.meta {
 		if existingKey == toolKey {
 			continue
@@ -322,9 +339,12 @@ func (r *Registry) findConflictByOriginalNameLocked(originalName, toolKey string
 		if existingMeta.OriginalToolName != originalName {
 			continue
 		}
-		return cloneRegistrationMeta(existingMeta), true
+		conflicts = append(conflicts, cloneRegistrationMeta(existingMeta))
 	}
-	return RegistrationMeta{}, false
+	sort.Slice(conflicts, func(i, j int) bool {
+		return conflicts[i].ToolKey < conflicts[j].ToolKey
+	})
+	return conflicts
 }
 
 func sortedResolvedTools(snapshot map[string]ResolvedTool, allowlist, denylist []string, include func(ResolvedTool) bool) []ResolvedTool {
