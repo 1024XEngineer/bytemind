@@ -83,6 +83,45 @@ func TestPolicyBrokerDeniesCommandOutsideAllowlist(t *testing.T) {
 	}
 }
 
+func TestPolicyBrokerRequiresOrderedExecArguments(t *testing.T) {
+	now := time.Date(2026, 4, 20, 8, 0, 0, 0, time.UTC)
+	roots := sandboxRoots(t)
+	lease, keyring := mustSignedLease(t, now, roots)
+
+	broker := NewPolicyBroker()
+	result, err := broker.Decide(context.Background(), DecisionInput{
+		Lease:   lease,
+		Keyring: keyring,
+		Now:     now.Add(1 * time.Minute),
+		Request: RuntimeRequest{
+			Command: "go",
+			Args:    []string{"./...", "test"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("broker decide: %v", err)
+	}
+	if result.Decision != DecisionDeny || result.ReasonCode != ReasonExecNotAllowed {
+		t.Fatalf("expected ordered-args mismatch to deny, got %#v", result)
+	}
+
+	allowResult, err := broker.Decide(context.Background(), DecisionInput{
+		Lease:   lease,
+		Keyring: keyring,
+		Now:     now.Add(1 * time.Minute),
+		Request: RuntimeRequest{
+			Command: "go",
+			Args:    []string{"test", "./..."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("broker decide allow case: %v", err)
+	}
+	if allowResult.Decision != DecisionAllow {
+		t.Fatalf("expected ordered-args exact match to allow, got %#v", allowResult)
+	}
+}
+
 func TestPolicyBrokerEscalatesCommandOutsideAllowlistWhenInteractiveApprovalAvailable(t *testing.T) {
 	now := time.Date(2026, 4, 20, 8, 0, 0, 0, time.UTC)
 	roots := sandboxRoots(t)

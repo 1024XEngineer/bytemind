@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"path/filepath"
@@ -211,6 +212,86 @@ func TestInProcessWorkerEscalatesRunShellWhenCommandNotInAllowlist(t *testing.T)
 	}
 }
 
+func TestInProcessWorkerEscalatesRunShellWithStdinFallback(t *testing.T) {
+	registry := &Registry{}
+	called := false
+	var out bytes.Buffer
+	registerBuiltinExecutorTool(t, registry, executorTestTool{
+		name: "run_shell",
+		run: func(_ context.Context, _ json.RawMessage, _ *ExecutionContext) (string, error) {
+			called = true
+			return `{"ok":true}`, nil
+		},
+	})
+	resolved, ok := registry.Get("run_shell")
+	if !ok {
+		t.Fatal("expected run_shell tool in registry")
+	}
+	worker := inProcessWorker{}
+	_, err := worker.Run(context.Background(), workerRunRequest{
+		Resolved: resolved,
+		RawArgs:  json.RawMessage(`{"command":"go test ./..."}`),
+		Execution: &ExecutionContext{
+			SandboxEnabled: true,
+			Workspace:      t.TempDir(),
+			ExecAllowlist: []sandboxpkg.ExecRule{
+				{Command: "go run", ArgsPattern: []string{"./cmd/app"}},
+			},
+			ApprovalPolicy: "on-request",
+			ApprovalMode:   "interactive",
+			Stdin:          strings.NewReader("yes\n"),
+			Stdout:         &out,
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected stdin fallback approval to allow run, got %v", err)
+	}
+	if !called {
+		t.Fatal("expected underlying tool to run after stdin approval")
+	}
+	if !strings.Contains(out.String(), `Approve tool (`) {
+		t.Fatalf("expected stdin fallback prompt output, got %q", out.String())
+	}
+}
+
+func TestInProcessWorkerEscalatesRunShellWithStdinFallbackDenied(t *testing.T) {
+	registry := &Registry{}
+	registerBuiltinExecutorTool(t, registry, executorTestTool{
+		name: "run_shell",
+		run: func(_ context.Context, _ json.RawMessage, _ *ExecutionContext) (string, error) {
+			t.Fatal("tool should not run after stdin denial")
+			return "", nil
+		},
+	})
+	resolved, ok := registry.Get("run_shell")
+	if !ok {
+		t.Fatal("expected run_shell tool in registry")
+	}
+	worker := inProcessWorker{}
+	_, err := worker.Run(context.Background(), workerRunRequest{
+		Resolved: resolved,
+		RawArgs:  json.RawMessage(`{"command":"go test ./..."}`),
+		Execution: &ExecutionContext{
+			SandboxEnabled: true,
+			Workspace:      t.TempDir(),
+			ExecAllowlist: []sandboxpkg.ExecRule{
+				{Command: "go run", ArgsPattern: []string{"./cmd/app"}},
+			},
+			ApprovalPolicy: "on-request",
+			ApprovalMode:   "interactive",
+			Stdin:          strings.NewReader("n\n"),
+			Stdout:         &bytes.Buffer{},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected stdin fallback denial error")
+	}
+	execErr, ok := AsToolExecError(err)
+	if !ok || execErr.Code != ToolErrorPermissionDenied {
+		t.Fatalf("expected permission denied tool error, got %#v", err)
+	}
+}
+
 func TestInProcessWorkerDeniesWriteFileOutsideLeaseScope(t *testing.T) {
 	registry := &Registry{}
 	registerBuiltinExecutorTool(t, registry, executorTestTool{
@@ -250,5 +331,62 @@ func TestInProcessWorkerDeniesWriteFileOutsideLeaseScope(t *testing.T) {
 	execErr, ok := AsToolExecError(err)
 	if !ok || execErr.Code != ToolErrorPermissionDenied {
 		t.Fatalf("expected permission denied tool error, got %#v", err)
+	}
+}
+
+func TestResolvePolicyLeaseRejectsProvidedLeaseWithoutKeyring(t *testing.T) {
+	lease := &sandboxpkg.Lease{
+		Version: sandboxpkg.LeaseVersionV1,
+	}
+	_, _, err := resolvePolicyLease(&ExecutionContext{
+		Lease:        lease,
+		LeaseKeyring: map[string][]byte{},
+	})
+	if err == nil {
+		t.Fatal("expected missing keyring error for provided lease")
+	}
+	if !strings.Contains(err.Error(), "sandbox lease keyring is unavailable") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNormalizeWorkerRootsDropsEmptyWritableEntries(t *testing.T) {
+	roots := normalizeWorkerRoots(nil, "workspace", []string{"   ", "out", "\t"})
+	if len(roots) != 2 {
+		t.Fatalf("expected workspace and one writable root, got %#v", roots)
+	}
+	if roots[0] != "workspace" || roots[1] != "out" {
+		t.Fatalf("unexpected normalized roots: %#v", roots)
+	}
+}
+
+func TestRuntimeRequestForReadFileValidationBranches(t *testing.T) {
+	if _, err := runtimeRequestForTool("read_file", json.RawMessage(`{`)); err == nil {
+		t.Fatal("expected read_file invalid json error")
+	}
+	if _, err := runtimeRequestForTool("read_file", json.RawMessage(`{"path":"  "}`)); err == nil {
+		t.Fatal("expected read_file empty path error")
+	}
+}
+
+func TestCloneKeyringHandlesEmptyAndBlankKids(t *testing.T) {
+	if got := cloneKeyring(nil); got != nil {
+		t.Fatalf("expected nil clone for nil keyring, got %#v", got)
+	}
+
+	source := map[string][]byte{
+		"   ":   []byte("skip"),
+		"kid-1": []byte("secret"),
+	}
+	cloned := cloneKeyring(source)
+	if len(cloned) != 1 {
+		t.Fatalf("expected one cloned key, got %#v", cloned)
+	}
+	if !bytes.Equal(cloned["kid-1"], []byte("secret")) {
+		t.Fatalf("unexpected cloned key value: %#v", cloned["kid-1"])
+	}
+	cloned["kid-1"][0] = 'S'
+	if bytes.Equal(source["kid-1"], cloned["kid-1"]) {
+		t.Fatalf("expected cloned key bytes to be independent from source")
 	}
 }

@@ -1,9 +1,12 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -240,7 +243,27 @@ func escalateWorkerApproval(toolName string, decision sandboxpkg.DecisionResult,
 		return NewToolExecError(ToolErrorPermissionDenied, formatBrokerDeniedMessage(toolName, decision), false, nil)
 	}
 	if execCtx.Approval == nil {
-		return approvalChannelUnavailableError("tool", toolName)
+		if execCtx.Stdin == nil {
+			return approvalChannelUnavailableError("tool", toolName)
+		}
+		if execCtx.Stdout != nil {
+			reason := strings.TrimSpace(decision.Message)
+			if reason != "" {
+				fmt.Fprintf(execCtx.Stdout, "Approve tool (%s) %q? [y/N]: ", reason, toolName)
+			} else {
+				fmt.Fprintf(execCtx.Stdout, "Approve tool %q? [y/N]: ", toolName)
+			}
+		}
+		reader := bufio.NewReader(execCtx.Stdin)
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return NewToolExecError(ToolErrorPermissionDenied, err.Error(), false, err)
+		}
+		answer := strings.ToLower(strings.TrimSpace(line))
+		if answer != "y" && answer != "yes" {
+			return NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q was not run because approval was denied", toolName), false, nil)
+		}
+		return nil
 	}
 	approved, err := execCtx.Approval(ApprovalRequest{
 		Command: toolName,

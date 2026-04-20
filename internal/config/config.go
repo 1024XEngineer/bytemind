@@ -683,19 +683,13 @@ func normalizeStringList(values []string) []string {
 		return []string{}
 	}
 	out := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
 		out = append(out, value)
 	}
-	sort.Strings(out)
 	return out
 }
 

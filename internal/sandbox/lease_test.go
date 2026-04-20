@@ -62,8 +62,8 @@ func TestSignLeaseCanonicalizationIsStable(t *testing.T) {
 			filepath.Join(base, "w-b"),
 		},
 		ExecAllowlist: []ExecRule{
-			{Command: "go test", ArgsPattern: []string{"./..."}},
-			{Command: "python", ArgsPattern: []string{"-m", "pytest"}},
+			{Command: "go test", ArgsPattern: []string{"./...", "./..."}},
+			{Command: "python", ArgsPattern: []string{"pytest", "-m"}},
 		},
 		NetworkAllowlist: []NetworkRule{
 			{Host: "api.openai.com", Port: 443, Scheme: "https"},
@@ -94,6 +94,47 @@ func TestSignLeaseCanonicalizationIsStable(t *testing.T) {
 
 	if err := VerifySignedLease(signedA, map[string][]byte{"k1": key}, issued.Add(1*time.Minute)); err != nil {
 		t.Fatalf("verify signed lease: %v", err)
+	}
+}
+
+func TestSignLeaseDistinguishesExecArgumentOrder(t *testing.T) {
+	base := t.TempDir()
+	issued := time.Date(2026, 4, 20, 13, 5, 0, 0, time.UTC)
+	expires := issued.Add(2 * time.Hour)
+	lease := Lease{
+		Version:      LeaseVersionV1,
+		LeaseID:      "lease-order",
+		RunID:        "run-order",
+		Scope:        LeaseScopeRun,
+		IssuedAt:     issued,
+		ExpiresAt:    expires,
+		KID:          "k1",
+		ApprovalMode: "interactive",
+		AwayPolicy:   "auto_deny_continue",
+		FSRead:       []string{filepath.Join(base, "r")},
+		FSWrite:      []string{filepath.Join(base, "w")},
+	}
+
+	leaseA := lease
+	leaseA.ExecAllowlist = []ExecRule{
+		{Command: "deploy", ArgsPattern: []string{"--to", "prod"}},
+	}
+	leaseB := lease
+	leaseB.ExecAllowlist = []ExecRule{
+		{Command: "deploy", ArgsPattern: []string{"prod", "--to"}},
+	}
+
+	key := []byte("lease-secret")
+	signedA, err := SignLease(leaseA, key)
+	if err != nil {
+		t.Fatalf("sign lease A: %v", err)
+	}
+	signedB, err := SignLease(leaseB, key)
+	if err != nil {
+		t.Fatalf("sign lease B: %v", err)
+	}
+	if signedA.Signature == signedB.Signature {
+		t.Fatalf("expected different signatures when exec args order differs")
 	}
 }
 
@@ -182,6 +223,42 @@ func TestLeaseSchemaV1JSONIsValidAndContainsRequiredFields(t *testing.T) {
 		if !slices.Contains(required, field) {
 			t.Fatalf("schema.required missing %q: %#v", field, required)
 		}
+	}
+}
+
+func TestLeaseErrorMethods(t *testing.T) {
+	var nilErr *LeaseError
+	if got := nilErr.Error(); got != "" {
+		t.Fatalf("expected nil lease error string to be empty, got %q", got)
+	}
+	if got := nilErr.Unwrap(); got != nil {
+		t.Fatalf("expected nil lease error unwrap to be nil, got %v", got)
+	}
+
+	cause := errors.New("boom")
+	err := &LeaseError{Cause: cause}
+	if got := err.Error(); got != "boom" {
+		t.Fatalf("expected cause-backed lease error string, got %q", got)
+	}
+	if got := err.Unwrap(); !errors.Is(got, cause) {
+		t.Fatalf("expected unwrap to return original cause, got %v", got)
+	}
+}
+
+func TestNormalizeNetworkRulesSortsByPortWithinSameHost(t *testing.T) {
+	rules, err := normalizeNetworkRules([]NetworkRule{
+		{Host: "example.com", Port: 8443, Scheme: "https"},
+		{Host: "example.com", Port: 443, Scheme: "https"},
+		{Host: "example.com", Port: 9443, Scheme: "https"},
+	})
+	if err != nil {
+		t.Fatalf("normalize network rules: %v", err)
+	}
+	if len(rules) != 3 {
+		t.Fatalf("expected three normalized rules, got %#v", rules)
+	}
+	if rules[0].Port != 443 || rules[1].Port != 8443 || rules[2].Port != 9443 {
+		t.Fatalf("expected port-sort order 443/8443/9443, got %#v", rules)
 	}
 }
 

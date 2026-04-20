@@ -800,20 +800,26 @@ func TestLoadNormalizesSandboxAllowlistsFromConfig(t *testing.T) {
 	if !cfg.SandboxEnabled {
 		t.Fatal("expected sandbox_enabled=true from config")
 	}
-	if len(cfg.ExecAllowlist) != 2 {
-		t.Fatalf("expected deduplicated exec_allowlist, got %#v", cfg.ExecAllowlist)
+	if len(cfg.ExecAllowlist) != 3 {
+		t.Fatalf("expected normalized exec_allowlist with order-preserved args, got %#v", cfg.ExecAllowlist)
 	}
 	if cfg.ExecAllowlist[0].Command != "go" {
 		t.Fatalf("expected first exec rule command to be normalized as go, got %#v", cfg.ExecAllowlist)
 	}
-	if got := strings.Join(cfg.ExecAllowlist[0].ArgsPattern, ","); got != "./...,test" {
-		t.Fatalf("expected normalized go args pattern, got %q", got)
+	if got := strings.Join(cfg.ExecAllowlist[0].ArgsPattern, ","); got != "test,./..." {
+		t.Fatalf("expected first go args pattern to preserve order, got %q", got)
 	}
-	if cfg.ExecAllowlist[1].Command != "python" {
-		t.Fatalf("expected second exec rule command python, got %#v", cfg.ExecAllowlist)
+	if cfg.ExecAllowlist[1].Command != "go" {
+		t.Fatalf("expected second exec rule command go, got %#v", cfg.ExecAllowlist)
 	}
-	if got := strings.Join(cfg.ExecAllowlist[1].ArgsPattern, ","); got != "-m,pytest" {
-		t.Fatalf("expected sorted python args pattern, got %q", got)
+	if got := strings.Join(cfg.ExecAllowlist[1].ArgsPattern, ","); got != "test,./...,./..." {
+		t.Fatalf("expected second go args pattern to preserve duplicates, got %q", got)
+	}
+	if cfg.ExecAllowlist[2].Command != "python" {
+		t.Fatalf("expected third exec rule command python, got %#v", cfg.ExecAllowlist)
+	}
+	if got := strings.Join(cfg.ExecAllowlist[2].ArgsPattern, ","); got != "pytest,-m" {
+		t.Fatalf("expected python args order to be preserved, got %q", got)
 	}
 
 	if len(cfg.NetworkAllowlist) != 2 {
@@ -864,6 +870,46 @@ func TestLoadRejectsInvalidNetworkAllowlistRule(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "network_allowlist.port must be between 1 and 65535") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadParsesSandboxEnabledFromEnv(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	t.Setenv("BYTEMIND_API_KEY", "env-key")
+	t.Setenv("BYTEMIND_SANDBOX_ENABLED", "true")
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.SandboxEnabled {
+		t.Fatalf("expected sandbox_enabled=true from env override")
+	}
+}
+
+func TestLoadSortsNetworkAllowlistByPortWhenHostMatches(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+		"network_allowlist": []any{
+			map[string]any{"host": "example.com", "port": 8443, "scheme": "https"},
+			map[string]any{"host": "example.com", "port": 443, "scheme": "https"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.NetworkAllowlist) != 2 {
+		t.Fatalf("expected two network rules, got %#v", cfg.NetworkAllowlist)
+	}
+	if cfg.NetworkAllowlist[0].Port != 443 || cfg.NetworkAllowlist[1].Port != 8443 {
+		t.Fatalf("expected network allowlist sorted by port for same host, got %#v", cfg.NetworkAllowlist)
 	}
 }
 
