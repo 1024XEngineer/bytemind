@@ -133,7 +133,7 @@ func TestRegisterBridgedToolWithOptionsAllowsBuiltinOriginalNameShadow(t *testin
 	}
 }
 
-func TestRegisterBridgedToolRejectsExtensionOriginalNameConflict(t *testing.T) {
+func TestRegisterBridgedToolAllowsCrossExtensionOriginalNameReuse(t *testing.T) {
 	registry := &toolspkg.Registry{}
 	_, err := RegisterBridgedTool(registry, ExtensionTool{
 		Source:      ExtensionSkill,
@@ -148,18 +148,12 @@ func TestRegisterBridgedToolRejectsExtensionOriginalNameConflict(t *testing.T) {
 		ExtensionID: "skill.second",
 		Tool:        bridgeTestTool{name: "open_doc"},
 	})
-	if err == nil {
-		t.Fatal("expected duplicate name error")
+	if err != nil {
+		t.Fatalf("expected cross-extension reuse to succeed, got %v", err)
 	}
-	var regErr *toolspkg.RegistryError
-	if !errors.As(err, &regErr) {
-		t.Fatalf("expected RegistryError, got %T", err)
-	}
-	if regErr.Code != toolspkg.RegistryErrorDuplicateName {
-		t.Fatalf("unexpected code: %s", regErr.Code)
-	}
-	if regErr.ConflictWith.ExtensionID != "skill.first" {
-		t.Fatalf("unexpected conflict extension id: %q", regErr.ConflictWith.ExtensionID)
+	metas := registry.FindByOriginalName("open_doc")
+	if len(metas) != 2 {
+		t.Fatalf("expected two extension records for open_doc, got %#v", metas)
 	}
 }
 

@@ -311,13 +311,9 @@ func TestPrepareRunPromptConcurrentSessionsIsolation(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		allowed := "open_doc"
-		if name == "plan" {
-			allowed = "plan_doc"
-		}
 		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(`---
 name: `+name+`
-allowed-tools: "`+allowed+`"
+allowed-tools: "open_doc"
 ---
 # /`+name+`
 `), 0o644); err != nil {
@@ -331,11 +327,6 @@ allowed-tools: "`+allowed+`"
 		Source: tools.RegistrationSourceBuiltin,
 	}); err != nil {
 		t.Fatalf("register open_doc failed: %v", err)
-	}
-	if err := registry.Register(runtimeBridgeTool{name: "plan_doc"}, tools.RegisterOptions{
-		Source: tools.RegistrationSourceBuiltin,
-	}); err != nil {
-		t.Fatalf("register plan_doc failed: %v", err)
 	}
 	runner := NewRunner(Options{
 		Workspace:    workspace,
@@ -383,5 +374,11 @@ allowed-tools: "`+allowed+`"
 	}
 	if len(registry.FindByExtensionID("skill.plan")) == 0 {
 		t.Fatalf("expected plan bridge metadata after concurrent sync")
+	}
+	if _, ok := registry.Get("skill:skill_review:open_doc"); !ok {
+		t.Fatalf("expected review bridge tool to be registered")
+	}
+	if _, ok := registry.Get("skill:skill_plan:open_doc"); !ok {
+		t.Fatalf("expected plan bridge tool to be registered")
 	}
 }

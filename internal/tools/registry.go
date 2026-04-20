@@ -132,28 +132,14 @@ func (r *Registry) Register(tool Tool, opts RegisterOptions) error {
 		}
 	}
 	if conflicts := r.findConflictsByOriginalNameLocked(meta.OriginalToolName, meta.ToolKey); len(conflicts) > 0 {
-		if opts.AllowOriginalNameShadowBuiltin && meta.Source == RegistrationSourceExtension {
-			allBuiltin := true
-			for _, conflict := range conflicts {
-				if conflict.Source == RegistrationSourceBuiltin {
-					continue
-				}
-				allBuiltin = false
-				return &RegistryError{
-					Code:             RegistryErrorDuplicateName,
-					Message:          fmt.Sprintf("tool original name %q already registered", meta.OriginalToolName),
-					ToolKey:          meta.ToolKey,
-					OriginalToolName: meta.OriginalToolName,
-					Source:           meta.Source,
-					ExtensionID:      meta.ExtensionID,
-					ConflictWith:     conflict,
-				}
-			}
-			if allBuiltin {
-				r.tools[meta.ToolKey] = resolved
-				r.meta[meta.ToolKey] = meta
-				return nil
-			}
+		blocking := conflicts
+		if meta.Source == RegistrationSourceExtension {
+			blocking = filterBlockingOriginalNameConflicts(meta, conflicts, opts.AllowOriginalNameShadowBuiltin)
+		}
+		if len(blocking) == 0 {
+			r.tools[meta.ToolKey] = resolved
+			r.meta[meta.ToolKey] = meta
+			return nil
 		}
 		return &RegistryError{
 			Code:             RegistryErrorDuplicateName,
@@ -162,7 +148,7 @@ func (r *Registry) Register(tool Tool, opts RegisterOptions) error {
 			OriginalToolName: meta.OriginalToolName,
 			Source:           meta.Source,
 			ExtensionID:      meta.ExtensionID,
-			ConflictWith:     conflicts[0],
+			ConflictWith:     blocking[0],
 		}
 	}
 	r.tools[meta.ToolKey] = resolved
@@ -345,6 +331,29 @@ func (r *Registry) findConflictsByOriginalNameLocked(originalName, toolKey strin
 		return conflicts[i].ToolKey < conflicts[j].ToolKey
 	})
 	return conflicts
+}
+
+func filterBlockingOriginalNameConflicts(meta RegistrationMeta, conflicts []RegistrationMeta, allowShadowBuiltin bool) []RegistrationMeta {
+	if len(conflicts) == 0 {
+		return nil
+	}
+	blocking := make([]RegistrationMeta, 0, len(conflicts))
+	for _, conflict := range conflicts {
+		switch conflict.Source {
+		case RegistrationSourceBuiltin:
+			if allowShadowBuiltin {
+				continue
+			}
+		case RegistrationSourceExtension:
+			// Session-isolated bridges may share original tool names across extensions.
+			// Keep same-extension conflicts rejected to avoid ambiguous aliases.
+			if meta.ExtensionID != "" && conflict.ExtensionID != "" && conflict.ExtensionID != meta.ExtensionID {
+				continue
+			}
+		}
+		blocking = append(blocking, conflict)
+	}
+	return blocking
 }
 
 func sortedResolvedTools(snapshot map[string]ResolvedTool, allowlist, denylist []string, include func(ResolvedTool) bool) []ResolvedTool {
