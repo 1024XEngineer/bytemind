@@ -2,7 +2,6 @@ package extensions
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	skillspkg "bytemind/internal/skills"
 )
 
 type extensionManager struct {
@@ -19,6 +20,9 @@ type extensionManager struct {
 	builtinDir string
 	userDir    string
 	projectDir string
+
+	skills  *skillspkg.Manager
+	adapter *skillAdapter
 
 	state        *stateStore
 	manual       map[string]struct{}
@@ -45,6 +49,8 @@ func NewManagerWithDirs(workspace, builtinDir, userDir, projectDir string) Manag
 		builtinDir:   builtinDir,
 		userDir:      userDir,
 		projectDir:   projectDir,
+		skills:       skillspkg.NewManagerWithDirs(workspace, builtinDir, userDir, projectDir),
+		adapter:      newSkillAdapter(),
 		state:        newStateStore(),
 		manual:       map[string]struct{}{},
 		disabled:     map[string]struct{}{},
@@ -172,23 +178,35 @@ func (m *extensionManager) List(_ context.Context) ([]ExtensionInfo, error) {
 }
 
 func (m *extensionManager) reload() error {
-	type scopeDir struct {
-		scope ExtensionScope
-		dir   string
-	}
 	loaded := map[string]ExtensionInfo{}
 	discoverErrs := map[string]error{}
-	for _, item := range []scopeDir{{ExtensionScopeBuiltin, m.builtinDir}, {ExtensionScopeUser, m.userDir}, {ExtensionScopeProject, m.projectDir}} {
-		entries, errs, err := discoverScope(item.scope, item.dir)
-		if err != nil {
-			return err
+	catalog := m.skills.Reload()
+	for _, entry := range m.adapter.Sync(catalog) {
+		if strings.TrimSpace(entry.Source.Ref) != "" {
+			entry.Status = extensionStatusForPath(entry.Source.Ref)
+			entry.Health.Status = entry.Status
+			if entry.Status == ExtensionStatusDegraded {
+				entry.Health.Message = "manifest discovered without SKILL.md"
+			} else {
+				entry.Health.Message = "extension loaded"
+			}
+			entry.Health.CheckedAtUTC = time.Now().UTC().Format(time.RFC3339)
+			entry.Manifest.Source.Ref = filepath.Join(entry.Source.Ref, "skill.json")
 		}
-		for _, entry := range entries {
-			loaded[entry.ID] = entry
+		loaded[entry.ID] = entry
+	}
+	for _, diag := range catalog.Diagnostics {
+		id := extensionIDForDir(diag.Skill)
+		if id == "" {
+			id = extensionIDForDir(filepath.Base(diag.Path))
 		}
-		for id, discoverErr := range errs {
-			discoverErrs[id] = discoverErr
+		if id == "" {
+			id = strings.TrimSpace(diag.Path)
 		}
+		if id == "" {
+			continue
+		}
+		discoverErrs[id] = wrapError(ErrCodeLoadFailed, diag.Message, nil)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -299,155 +317,22 @@ func (m *extensionManager) discoverOne(source string) (ExtensionInfo, error) {
 	if !ok {
 		scope = ExtensionScopeRemote
 	}
-	item, ok, err := discoverExtension(scope, resolved, filepath.Base(resolved))
-	if err != nil {
-		return ExtensionInfo{}, err
-	}
+	matched, ok, diags := skillspkg.LoadFromDir(skillsScopeForExtension(scope), resolved)
 	if !ok {
+		if len(diags) > 0 {
+			return ExtensionInfo{}, wrapError(ErrCodeInvalidManifest, diags[0].Message, nil)
+		}
 		return ExtensionInfo{}, wrapError(ErrCodeInvalidSource, "extension source does not contain a supported extension", nil)
 	}
+	item := m.adapter.FromSkill(matched)
+	item.Source.Scope = scope
+	item.Source.Ref = resolved
+	item.Manifest.Source.Scope = scope
+	item.Manifest.Source.Ref = filepath.Join(resolved, "skill.json")
+	if !item.Valid() {
+		return ExtensionInfo{}, wrapError(ErrCodeInvalidExtension, "extension info is invalid", nil)
+	}
 	return item, nil
-}
-
-func discoverScope(scope ExtensionScope, root string) ([]ExtensionInfo, map[string]error, error) {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return nil, nil, nil
-	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil, nil
-		}
-		id := extensionIDForDir(filepath.Base(root))
-		if id == "" {
-			id = root
-		}
-		return nil, map[string]error{id: wrapError(ErrCodeLoadFailed, fmt.Sprintf("discover extensions from %s", root), err)}, nil
-	}
-	items := make([]ExtensionInfo, 0, len(entries))
-	discoverErrs := make(map[string]error)
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		dir := filepath.Join(root, entry.Name())
-		item, ok, err := discoverExtension(scope, dir, entry.Name())
-		if err != nil {
-			discoverErrs[extensionIDForDir(entry.Name())] = err
-			continue
-		}
-		if ok {
-			items = append(items, item)
-		}
-	}
-	return items, discoverErrs, nil
-}
-
-func discoverExtension(scope ExtensionScope, dir, dirName string) (ExtensionInfo, bool, error) {
-	manifestPath := filepath.Join(dir, "skill.json")
-	skillPath := filepath.Join(dir, "SKILL.md")
-	if !fileExists(manifestPath) && !fileExists(skillPath) {
-		return ExtensionInfo{}, false, nil
-	}
-	manifest, err := readManifest(manifestPath, dirName)
-	if err != nil {
-		return ExtensionInfo{}, false, err
-	}
-	info := buildExtensionInfo(scope, dir, dirName, manifest, fileExists(skillPath))
-	if !info.Valid() {
-		return ExtensionInfo{}, false, wrapError(ErrCodeInvalidExtension, "extension info is invalid", nil)
-	}
-	return info, true, nil
-}
-
-func readManifest(path, dirName string) (Manifest, error) {
-	manifest := Manifest{}
-	if !fileExists(path) {
-		manifest.Name = dirName
-		manifest.Title = dirName
-		manifest.Kind = ExtensionSkill
-		manifest.Source = ExtensionSource{Ref: path}
-		return manifest, nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return Manifest{}, wrapError(ErrCodeInvalidManifest, "failed to read manifest", err)
-	}
-	var raw struct {
-		Name        string     `json:"name"`
-		Version     string     `json:"version"`
-		Title       string     `json:"title"`
-		Description string     `json:"description"`
-		Prompts     []struct{} `json:"prompts"`
-		Resources   []struct{} `json:"resources"`
-		Tools       struct {
-			Items []string `json:"items"`
-		} `json:"tools"`
-		Args []struct{} `json:"args"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return Manifest{}, wrapError(ErrCodeInvalidManifest, "invalid manifest", err)
-	}
-	manifest.Name = strings.TrimSpace(raw.Name)
-	if manifest.Name == "" {
-		manifest.Name = dirName
-	}
-	manifest.Version = strings.TrimSpace(raw.Version)
-	manifest.Title = strings.TrimSpace(raw.Title)
-	if manifest.Title == "" {
-		manifest.Title = manifest.Name
-	}
-	manifest.Description = strings.TrimSpace(raw.Description)
-	manifest.Kind = ExtensionSkill
-	manifest.Source = ExtensionSource{Ref: path}
-	manifest.Capabilities = CapabilitySet{
-		Prompts:   len(raw.Prompts),
-		Resources: len(raw.Resources),
-		Tools:     len(raw.Tools.Items),
-		Commands:  len(raw.Args),
-	}
-	return manifest, nil
-}
-
-func buildExtensionInfo(scope ExtensionScope, dir, dirName string, manifest Manifest, hasSkill bool) ExtensionInfo {
-	name := strings.TrimSpace(manifest.Name)
-	if name == "" {
-		name = dirName
-	}
-	ref := dir
-	status := ExtensionStatusLoaded
-	message := "extension loaded"
-	if !hasSkill {
-		status = ExtensionStatusDegraded
-		message = "manifest discovered without SKILL.md"
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	return ExtensionInfo{
-		ID:           "skill." + name,
-		Name:         name,
-		Kind:         ExtensionSkill,
-		Version:      strings.TrimSpace(manifest.Version),
-		Title:        strings.TrimSpace(manifest.Title),
-		Description:  strings.TrimSpace(manifest.Description),
-		Source:       ExtensionSource{Scope: scope, Ref: ref},
-		Status:       status,
-		Capabilities: manifest.Capabilities,
-		Manifest: Manifest{
-			Name:         name,
-			Version:      strings.TrimSpace(manifest.Version),
-			Title:        strings.TrimSpace(manifest.Title),
-			Description:  strings.TrimSpace(manifest.Description),
-			Kind:         ExtensionSkill,
-			Source:       ExtensionSource{Scope: scope, Ref: filepath.Join(dir, "skill.json")},
-			Capabilities: manifest.Capabilities,
-		},
-		Health: HealthSnapshot{
-			Status:       status,
-			Message:      message,
-			CheckedAtUTC: now,
-		},
-	}
 }
 
 func discoveryError(discoverErrs map[string]error) error {
@@ -491,6 +376,17 @@ func scopeForPath(path string, m *extensionManager) (ExtensionScope, bool) {
 		}
 	}
 	return "", false
+}
+
+func skillsScopeForExtension(scope ExtensionScope) skillspkg.Scope {
+	switch scope {
+	case ExtensionScopeBuiltin:
+		return skillspkg.ScopeBuiltin
+	case ExtensionScopeUser:
+		return skillspkg.ScopeUser
+	default:
+		return skillspkg.ScopeProject
+	}
 }
 
 func extensionIDForDir(dirName string) string {

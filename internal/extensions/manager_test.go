@@ -546,24 +546,59 @@ func TestDiscoverOneRejectsMissingDirectory(t *testing.T) {
 	}
 }
 
-func TestDiscoverScopeCollectsManifestErrors(t *testing.T) {
+func TestManagerLoadHandlesDuplicateSkillNamesInSameParentBySourceDir(t *testing.T) {
 	root := t.TempDir()
-	bad := filepath.Join(root, "bad")
+	project := filepath.Join(root, ".bytemind", "skills")
+	first := filepath.Join(project, "alpha")
+	second := filepath.Join(project, "beta")
+	for _, dir := range []string{first, second} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(first, "skill.json"), []byte(`{"name":"review","description":"alpha"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(second, "skill.json"), []byte(`{"name":"review","description":"beta"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(first, "SKILL.md"), []byte("# /review"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(second, "SKILL.md"), []byte("# /review"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(root)
+	item, err := mgr.(*extensionManager).discoverOne(first)
+	if err != nil {
+		t.Fatalf("discoverOne failed: %v", err)
+	}
+	if item.Source.Ref != first {
+		t.Fatalf("expected source %q, got %q", first, item.Source.Ref)
+	}
+	if item.Description != "alpha" {
+		t.Fatalf("expected extension from alpha, got description %q", item.Description)
+	}
+}
+
+func TestReloadCollectsSkillDiagnosticsAsDiscoveryErrors(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	bad := filepath.Join(project, "bad")
 	if err := os.MkdirAll(bad, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(bad, "skill.json"), []byte(`{"name":`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	items, errs, err := discoverScope(ExtensionScopeProject, root)
-	if err != nil {
-		t.Fatalf("discoverScope failed: %v", err)
+	mgr := NewManagerWithDirs(root, filepath.Join(root, "builtin"), filepath.Join(root, "user"), project)
+	items, err := mgr.List(context.Background())
+	if err == nil {
+		t.Fatal("expected discovery error")
 	}
 	if len(items) != 0 {
 		t.Fatalf("expected no discovered items, got %d", len(items))
-	}
-	if len(errs) != 1 {
-		t.Fatalf("expected one discovery error, got %d", len(errs))
 	}
 }
 
