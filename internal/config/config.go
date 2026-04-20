@@ -591,11 +591,17 @@ func normalizeSandboxPolicy(cfg *Config) error {
 	normalizedExec := make([]ExecAllowRule, 0, len(cfg.ExecAllowlist))
 	seenExec := make(map[string]struct{}, len(cfg.ExecAllowlist))
 	for _, rule := range cfg.ExecAllowlist {
-		command := strings.TrimSpace(rule.Command)
-		if command == "" {
+		commandTokens := strings.Fields(strings.TrimSpace(rule.Command))
+		if len(commandTokens) == 0 {
 			return errors.New("exec_allowlist.command cannot be empty")
 		}
-		patterns := normalizeStringList(rule.ArgsPattern)
+		command := commandTokens[0]
+		patternInputs := make([]string, 0, len(commandTokens)-1+len(rule.ArgsPattern))
+		if len(commandTokens) > 1 {
+			patternInputs = append(patternInputs, commandTokens[1:]...)
+		}
+		patternInputs = append(patternInputs, rule.ArgsPattern...)
+		patterns := normalizeStringList(patternInputs)
 		key := strings.ToLower(command) + "\x00" + strings.Join(patterns, "\x00")
 		if _, exists := seenExec[key]; exists {
 			continue

@@ -3,7 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
+
+	sandboxpkg "bytemind/internal/sandbox"
 )
 
 type workerTestDouble struct {
@@ -86,5 +89,118 @@ func TestExecutorKeepsNonSandboxToolsOnMainPath(t *testing.T) {
 	}
 	if out != `{"ok":true,"main":true}` {
 		t.Fatalf("unexpected main output: %q", out)
+	}
+}
+
+func TestInProcessWorkerAllowsRunShellWhenCommandInLeaseAllowlist(t *testing.T) {
+	registry := &Registry{}
+	called := false
+	registerBuiltinExecutorTool(t, registry, executorTestTool{
+		name: "run_shell",
+		run: func(_ context.Context, _ json.RawMessage, _ *ExecutionContext) (string, error) {
+			called = true
+			return `{"ok":true}`, nil
+		},
+	})
+	resolved, ok := registry.Get("run_shell")
+	if !ok {
+		t.Fatal("expected run_shell tool in registry")
+	}
+	worker := inProcessWorker{}
+	out, err := worker.Run(context.Background(), workerRunRequest{
+		Resolved: resolved,
+		RawArgs:  json.RawMessage(`{"command":"go test ./..."}`),
+		Execution: &ExecutionContext{
+			SandboxEnabled: true,
+			Workspace:      t.TempDir(),
+			ExecAllowlist: []sandboxpkg.ExecRule{
+				{Command: "go test", ArgsPattern: []string{"./..."}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("worker run: %v", err)
+	}
+	if !called {
+		t.Fatal("expected underlying tool run when command is allowed")
+	}
+	if out != `{"ok":true}` {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestInProcessWorkerDeniesRunShellWhenCommandNotInAllowlist(t *testing.T) {
+	registry := &Registry{}
+	registerBuiltinExecutorTool(t, registry, executorTestTool{
+		name: "run_shell",
+		run: func(_ context.Context, _ json.RawMessage, _ *ExecutionContext) (string, error) {
+			t.Fatal("tool should not run when command is blocked")
+			return "", nil
+		},
+	})
+	resolved, ok := registry.Get("run_shell")
+	if !ok {
+		t.Fatal("expected run_shell tool in registry")
+	}
+	worker := inProcessWorker{}
+	_, err := worker.Run(context.Background(), workerRunRequest{
+		Resolved: resolved,
+		RawArgs:  json.RawMessage(`{"command":"go test ./..."}`),
+		Execution: &ExecutionContext{
+			SandboxEnabled: true,
+			Workspace:      t.TempDir(),
+			ExecAllowlist: []sandboxpkg.ExecRule{
+				{Command: "go run", ArgsPattern: []string{"./cmd/app"}},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected command denial error")
+	}
+	execErr, ok := AsToolExecError(err)
+	if !ok || execErr.Code != ToolErrorPermissionDenied {
+		t.Fatalf("expected permission denied tool error, got %#v", err)
+	}
+}
+
+func TestInProcessWorkerDeniesWriteFileOutsideLeaseScope(t *testing.T) {
+	registry := &Registry{}
+	registerBuiltinExecutorTool(t, registry, executorTestTool{
+		name: "write_file",
+		run: func(_ context.Context, _ json.RawMessage, _ *ExecutionContext) (string, error) {
+			t.Fatal("tool should not run when path is outside lease scope")
+			return "", nil
+		},
+	})
+	resolved, ok := registry.Get("write_file")
+	if !ok {
+		t.Fatal("expected write_file tool in registry")
+	}
+	workspace := t.TempDir()
+	allowed := t.TempDir()
+	outside := t.TempDir()
+	payload, err := json.Marshal(map[string]any{
+		"path":    filepath.Join(outside, "out.txt"),
+		"content": "hello",
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	worker := inProcessWorker{}
+	_, err = worker.Run(context.Background(), workerRunRequest{
+		Resolved: resolved,
+		RawArgs:  json.RawMessage(payload),
+		Execution: &ExecutionContext{
+			SandboxEnabled: true,
+			Workspace:      workspace,
+			FSWrite:        []string{allowed},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected fs_out_of_scope denial")
+	}
+	execErr, ok := AsToolExecError(err)
+	if !ok || execErr.Code != ToolErrorPermissionDenied {
+		t.Fatalf("expected permission denied tool error, got %#v", err)
 	}
 }

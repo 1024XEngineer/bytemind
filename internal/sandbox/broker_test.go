@@ -24,8 +24,8 @@ func TestPolicyBrokerAllowsOperationWithinLease(t *testing.T) {
 			ToolName:   "write_file",
 			FilePath:   filepath.Join(roots.Write, "note.txt"),
 			FileAccess: FileAccessWrite,
-			Command:    "go test",
-			Args:       []string{"./..."},
+			Command:    "go",
+			Args:       []string{"test", "./..."},
 			Network:    NetworkRule{Host: "api.openai.com", Port: 443, Scheme: "https"},
 		},
 	})
@@ -248,7 +248,7 @@ func mustSignedLease(t *testing.T, issuedAt time.Time, roots testSandboxRoots) (
 		FSRead:       []string{roots.Read},
 		FSWrite:      []string{roots.Write},
 		ExecAllowlist: []ExecRule{
-			{Command: "go test", ArgsPattern: []string{"./..."}},
+			{Command: "go", ArgsPattern: []string{"test", "./..."}},
 		},
 		NetworkAllowlist: []NetworkRule{
 			{Host: "api.openai.com", Port: 443, Scheme: "https"},

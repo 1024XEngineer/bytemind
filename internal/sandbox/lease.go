@@ -359,11 +359,17 @@ func normalizeExecRules(rules []ExecRule) ([]ExecRule, error) {
 	out := make([]ExecRule, 0, len(rules))
 	seen := make(map[string]struct{}, len(rules))
 	for _, rule := range rules {
-		command := strings.TrimSpace(rule.Command)
-		if command == "" {
+		commandTokens := strings.Fields(strings.TrimSpace(rule.Command))
+		if len(commandTokens) == 0 {
 			return nil, &LeaseError{Code: ReasonLeaseInvalid, Message: "exec_allowlist.command cannot be empty"}
 		}
-		patterns := normalizeStringList(rule.ArgsPattern)
+		command := commandTokens[0]
+		patternInputs := make([]string, 0, len(commandTokens)-1+len(rule.ArgsPattern))
+		if len(commandTokens) > 1 {
+			patternInputs = append(patternInputs, commandTokens[1:]...)
+		}
+		patternInputs = append(patternInputs, rule.ArgsPattern...)
+		patterns := normalizeStringList(patternInputs)
 		key := strings.ToLower(command) + "\x00" + strings.Join(patterns, "\x00")
 		if _, exists := seen[key]; exists {
 			continue

@@ -104,6 +104,7 @@ func (e *defaultEngine) executeToolCall(
 			"tool_name": call.Function.Name,
 		},
 		Execute: func(execCtx context.Context) ([]byte, error) {
+			sandboxRoots := buildSandboxRoots(runner.workspace, runner.config.WritableRoots)
 			output, err := runner.executor.ExecuteForMode(execCtx, runMode, call.Function.Name, call.Function.Arguments, &tools.ExecutionContext{
 				Workspace:        runner.workspace,
 				WritableRoots:    runner.config.WritableRoots,
@@ -111,6 +112,10 @@ func (e *defaultEngine) executeToolCall(
 				ApprovalMode:     runner.config.ApprovalMode,
 				AwayPolicy:       runner.config.AwayPolicy,
 				SandboxEnabled:   runner.config.SandboxEnabled,
+				LeaseID:          fmt.Sprintf("session-%s", sess.ID),
+				RunID:            fmt.Sprintf("trace-%s", traceID),
+				FSRead:           append([]string(nil), sandboxRoots...),
+				FSWrite:          append([]string(nil), sandboxRoots...),
 				ExecAllowlist:    toSandboxExecRules(runner.config.ExecAllowlist),
 				NetworkAllowlist: toSandboxNetworkRules(runner.config.NetworkAllowlist),
 				Approval:         approval,
@@ -381,6 +386,27 @@ func toSandboxExecRules(rules []configpkg.ExecAllowRule) []sandboxpkg.ExecRule {
 			Command:     rule.Command,
 			ArgsPattern: append([]string(nil), rule.ArgsPattern...),
 		})
+	}
+	return out
+}
+
+func buildSandboxRoots(workspace string, writableRoots []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(writableRoots)+1)
+	appendRoot := func(root string) {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			return
+		}
+		if _, exists := seen[root]; exists {
+			return
+		}
+		seen[root] = struct{}{}
+		out = append(out, root)
+	}
+	appendRoot(workspace)
+	for _, root := range writableRoots {
+		appendRoot(root)
 	}
 	return out
 }

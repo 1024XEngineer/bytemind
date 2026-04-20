@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -55,10 +56,10 @@ func TestTaskReportJSONAndEmpty(t *testing.T) {
 
 func TestTaskReportHumanSummaryIncludesPendingApproval(t *testing.T) {
 	report := TaskReport{
-		Executed:               []string{"read_file"},
-		Denied:                 []string{"write_file"},
-		PendingApproval:        []string{"write_file"},
-		SkippedDueToDependency: []string{"update_plan"},
+		Executed:                     []string{"read_file"},
+		Denied:                       []string{"write_file"},
+		PendingApproval:              []string{"write_file"},
+		SkippedDueToDeniedDependency: []string{"update_plan"},
 	}
 	text := report.HumanSummary()
 	for _, want := range []string{
@@ -73,5 +74,32 @@ func TestTaskReportHumanSummaryIncludesPendingApproval(t *testing.T) {
 	}
 	if !report.HasNonSuccessOutcomes() {
 		t.Fatal("expected report with denied/pending/skipped entries to mark non-success outcomes")
+	}
+}
+
+func TestTaskReportJSONIncludesBothSkippedFieldsForCompatibility(t *testing.T) {
+	var report TaskReport
+	report.RecordSkippedDueToDeniedDependency("read_file")
+	got := report.JSON()
+	for _, want := range []string{
+		`"skipped_due_to_denied_dependency":["read_file"]`,
+		`"skipped_due_to_dependency":["read_file"]`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in JSON payload, got %q", want, got)
+		}
+	}
+}
+
+func TestTaskReportUnmarshalLegacySkippedFieldIntoNewField(t *testing.T) {
+	var report TaskReport
+	if err := json.Unmarshal([]byte(`{"skipped_due_to_dependency":["update_plan"]}`), &report); err != nil {
+		t.Fatalf("unmarshal legacy report: %v", err)
+	}
+	if got, want := strings.Join(report.SkippedDueToDeniedDependency, ","), "update_plan"; got != want {
+		t.Fatalf("expected legacy skipped field to map into new field, got=%q want=%q", got, want)
+	}
+	if got, want := strings.Join(report.SkippedDueToDependency, ","), "update_plan"; got != want {
+		t.Fatalf("expected legacy skipped field to be preserved, got=%q want=%q", got, want)
 	}
 }

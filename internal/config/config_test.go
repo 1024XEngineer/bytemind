@@ -769,11 +769,11 @@ func TestLoadNormalizesSandboxAllowlistsFromConfig(t *testing.T) {
 	if len(cfg.ExecAllowlist) != 2 {
 		t.Fatalf("expected deduplicated exec_allowlist, got %#v", cfg.ExecAllowlist)
 	}
-	if cfg.ExecAllowlist[0].Command != "go test" {
-		t.Fatalf("expected first exec rule command to be sorted as go test, got %#v", cfg.ExecAllowlist)
+	if cfg.ExecAllowlist[0].Command != "go" {
+		t.Fatalf("expected first exec rule command to be normalized as go, got %#v", cfg.ExecAllowlist)
 	}
-	if got := strings.Join(cfg.ExecAllowlist[0].ArgsPattern, ","); got != "./..." {
-		t.Fatalf("expected normalized go test args pattern, got %q", got)
+	if got := strings.Join(cfg.ExecAllowlist[0].ArgsPattern, ","); got != "./...,test" {
+		t.Fatalf("expected normalized go args pattern, got %q", got)
 	}
 	if cfg.ExecAllowlist[1].Command != "python" {
 		t.Fatalf("expected second exec rule command python, got %#v", cfg.ExecAllowlist)

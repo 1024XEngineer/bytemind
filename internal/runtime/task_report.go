@@ -7,10 +7,11 @@ import (
 )
 
 type TaskReport struct {
-	Executed               []string `json:"executed,omitempty"`
-	Denied                 []string `json:"denied,omitempty"`
-	PendingApproval        []string `json:"pending_approval,omitempty"`
-	SkippedDueToDependency []string `json:"skipped_due_to_dependency,omitempty"`
+	Executed                     []string `json:"executed,omitempty"`
+	Denied                       []string `json:"denied,omitempty"`
+	PendingApproval              []string `json:"pending_approval,omitempty"`
+	SkippedDueToDeniedDependency []string `json:"skipped_due_to_denied_dependency,omitempty"`
+	SkippedDueToDependency       []string `json:"skipped_due_to_dependency,omitempty"`
 }
 
 func (r *TaskReport) RecordExecuted(name string) {
@@ -26,6 +27,12 @@ func (r *TaskReport) RecordPendingApproval(name string) {
 }
 
 func (r *TaskReport) RecordSkippedDueToDependency(name string) {
+	r.RecordSkippedDueToDeniedDependency(name)
+}
+
+func (r *TaskReport) RecordSkippedDueToDeniedDependency(name string) {
+	r.appendUnique(&r.SkippedDueToDeniedDependency, name)
+	// Compatibility: keep legacy field mirrored for one release cycle.
 	r.appendUnique(&r.SkippedDueToDependency, name)
 }
 
@@ -33,13 +40,13 @@ func (r TaskReport) IsEmpty() bool {
 	return len(r.Executed) == 0 &&
 		len(r.Denied) == 0 &&
 		len(r.PendingApproval) == 0 &&
-		len(r.SkippedDueToDependency) == 0
+		len(r.skipped()) == 0
 }
 
 func (r TaskReport) HasNonSuccessOutcomes() bool {
 	return len(r.Denied) > 0 ||
 		len(r.PendingApproval) > 0 ||
-		len(r.SkippedDueToDependency) > 0
+		len(r.skipped()) > 0
 }
 
 func (r TaskReport) JSON() string {
@@ -69,8 +76,39 @@ func (r TaskReport) HumanSummaryLines() []string {
 	appendLine("Executed", r.Executed)
 	appendLine("Denied", r.Denied)
 	appendLine("Pending approval", r.PendingApproval)
-	appendLine("Skipped due to denied dependency", r.SkippedDueToDependency)
+	appendLine("Skipped due to denied dependency", r.skipped())
 	return lines
+}
+
+func (r *TaskReport) UnmarshalJSON(data []byte) error {
+	type rawTaskReport struct {
+		Executed                     []string `json:"executed,omitempty"`
+		Denied                       []string `json:"denied,omitempty"`
+		PendingApproval              []string `json:"pending_approval,omitempty"`
+		SkippedDueToDeniedDependency []string `json:"skipped_due_to_denied_dependency,omitempty"`
+		SkippedDueToDependency       []string `json:"skipped_due_to_dependency,omitempty"`
+	}
+	var raw rawTaskReport
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	r.Executed = append([]string(nil), raw.Executed...)
+	r.Denied = append([]string(nil), raw.Denied...)
+	r.PendingApproval = append([]string(nil), raw.PendingApproval...)
+	skipped := raw.SkippedDueToDeniedDependency
+	if len(skipped) == 0 {
+		skipped = raw.SkippedDueToDependency
+	}
+	r.SkippedDueToDeniedDependency = append([]string(nil), skipped...)
+	r.SkippedDueToDependency = append([]string(nil), skipped...)
+	return nil
+}
+
+func (r TaskReport) skipped() []string {
+	if len(r.SkippedDueToDeniedDependency) > 0 {
+		return r.SkippedDueToDeniedDependency
+	}
+	return r.SkippedDueToDependency
 }
 
 func (r *TaskReport) appendUnique(target *[]string, name string) {
