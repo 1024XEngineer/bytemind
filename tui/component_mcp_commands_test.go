@@ -81,7 +81,7 @@ func TestRunMCPCommandAddRequiresCommand(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing command error")
 	}
-	if !strings.Contains(err.Error(), "usage: /mcp add") {
+	if !strings.Contains(err.Error(), "usage: /mcp-add") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

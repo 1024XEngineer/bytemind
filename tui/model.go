@@ -239,7 +239,7 @@ var commandItems = []commandItem{
 	{Name: "/session", Usage: "/session", Description: "Open the recent session list.", Kind: "command"},
 	{Name: "/skills-select", Usage: "/skills-select", Description: "Open the loaded skills picker.", Kind: "command"},
 	{Name: "/mcp list", Usage: "/mcp list", Description: "List configured MCP servers and current status.", Kind: "command"},
-	{Name: "/mcp-add", Usage: "/mcp-add <id> --cmd <command> [--args a,b] [--env K=V]", Description: "Add a stdio MCP server (alias of /mcp add).", Kind: "command"},
+	{Name: "/mcp-add", Usage: "/mcp-add <id> --cmd <command> [--args a,b] [--env K=V]", Description: "Add a stdio MCP server.", Kind: "command"},
 	{Name: "/mcp reload", Usage: "/mcp reload", Description: "Reload MCP runtime and refresh tools.", Kind: "command"},
 	{Name: "/new", Usage: "/new", Description: "Start a fresh session in this workspace.", Kind: "command"},
 	{Name: "/compact", Usage: "/compact", Description: "Compress long session history into a continuation summary.", Kind: "command"},

@@ -10,6 +10,10 @@ import (
 	"bytemind/internal/mcpctl"
 )
 
+const (
+	mcpAddUsage = "usage: /mcp-add <id> --cmd <command> [--args a,b] [--env K=V]"
+)
+
 func (m *model) runMCPCommand(input string, fields []string) error {
 	if m.mcpService == nil {
 		return fmt.Errorf("mcp service is unavailable")
@@ -111,7 +115,7 @@ func (m *model) runMCPCommand(input string, fields []string) error {
 
 func parseMCPAddFields(fields []string) (mcpctl.AddRequest, error) {
 	if len(fields) < 4 {
-		return mcpctl.AddRequest{}, fmt.Errorf("usage: /mcp add <id> --cmd <command> [--args a,b] [--env K=V]")
+		return mcpctl.AddRequest{}, fmt.Errorf(mcpAddUsage)
 	}
 	request := mcpctl.AddRequest{
 		ID: strings.TrimSpace(fields[2]),
@@ -123,31 +127,31 @@ func parseMCPAddFields(fields []string) (mcpctl.AddRequest, error) {
 		case "--cmd":
 			index++
 			if index >= len(fields) {
-				return mcpctl.AddRequest{}, fmt.Errorf("usage: /mcp add <id> --cmd <command> [--args a,b] [--env K=V]")
+				return mcpctl.AddRequest{}, fmt.Errorf(mcpAddUsage)
 			}
 			request.Command = strings.TrimSpace(fields[index])
 		case "--name":
 			index++
 			if index >= len(fields) {
-				return mcpctl.AddRequest{}, fmt.Errorf("usage: /mcp add <id> --name <display_name>")
+				return mcpctl.AddRequest{}, fmt.Errorf("usage: /mcp-add <id> --name <display_name>")
 			}
 			request.Name = strings.TrimSpace(fields[index])
 		case "--args":
 			index++
 			if index >= len(fields) {
-				return mcpctl.AddRequest{}, fmt.Errorf("usage: /mcp add <id> --args a,b,c")
+				return mcpctl.AddRequest{}, fmt.Errorf("usage: /mcp-add <id> --args a,b,c")
 			}
 			request.Args = splitCSVFields(fields[index])
 		case "--cwd":
 			index++
 			if index >= len(fields) {
-				return mcpctl.AddRequest{}, fmt.Errorf("usage: /mcp add <id> --cwd <path>")
+				return mcpctl.AddRequest{}, fmt.Errorf("usage: /mcp-add <id> --cwd <path>")
 			}
 			request.CWD = strings.TrimSpace(fields[index])
 		case "--env":
 			index++
 			if index >= len(fields) {
-				return mcpctl.AddRequest{}, fmt.Errorf("usage: /mcp add <id> --env KEY=VALUE")
+				return mcpctl.AddRequest{}, fmt.Errorf("usage: /mcp-add <id> --env KEY=VALUE")
 			}
 			key, value, ok := parseEnvPair(fields[index])
 			if !ok {
@@ -160,7 +164,7 @@ func parseMCPAddFields(fields []string) (mcpctl.AddRequest, error) {
 		case "--auto-start":
 			index++
 			if index >= len(fields) {
-				return mcpctl.AddRequest{}, fmt.Errorf("usage: /mcp add <id> --auto-start <true|false>")
+				return mcpctl.AddRequest{}, fmt.Errorf("usage: /mcp-add <id> --auto-start <true|false>")
 			}
 			value, err := strconv.ParseBool(strings.TrimSpace(fields[index]))
 			if err != nil {
@@ -168,12 +172,12 @@ func parseMCPAddFields(fields []string) (mcpctl.AddRequest, error) {
 			}
 			request.AutoStart = &value
 		default:
-			return mcpctl.AddRequest{}, fmt.Errorf("unsupported /mcp add flag %q", fields[index])
+			return mcpctl.AddRequest{}, fmt.Errorf("unsupported /mcp-add flag %q", fields[index])
 		}
 	}
 
 	if strings.TrimSpace(request.Command) == "" {
-		return mcpctl.AddRequest{}, fmt.Errorf("usage: /mcp add <id> --cmd <command> [--args a,b] [--env K=V]")
+		return mcpctl.AddRequest{}, fmt.Errorf(mcpAddUsage)
 	}
 	return request, nil
 }
