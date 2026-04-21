@@ -1050,7 +1050,7 @@ func TestTabTogglesBetweenBuildAndPlanModes(t *testing.T) {
 	}
 }
 
-func TestCtrlFOpensPromptSearchAndFiltersEntries(t *testing.T) {
+func TestOpenPromptSearchAndFiltersEntries(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	m := model{
@@ -1063,16 +1063,16 @@ func TestCtrlFOpensPromptSearchAndFiltersEntries(t *testing.T) {
 		},
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	opened := m
 	if !opened.promptSearchOpen {
-		t.Fatalf("expected ctrl+f to open prompt search")
+		t.Fatalf("expected prompt search to open")
 	}
 	if len(opened.promptSearchMatches) != 3 {
 		t.Fatalf("expected 3 prompt matches, got %d", len(opened.promptSearchMatches))
 	}
 
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("test")})
+	got, _ := opened.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("test")})
 	filtered := got.(model)
 	if filtered.promptSearchQuery != "test" {
 		t.Fatalf("expected query to become test, got %q", filtered.promptSearchQuery)
@@ -1085,7 +1085,7 @@ func TestCtrlFOpensPromptSearchAndFiltersEntries(t *testing.T) {
 	}
 }
 
-func TestCtrlFWhilePromptSearchOpenMovesSelection(t *testing.T) {
+func TestDownWhilePromptSearchOpenMovesSelection(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	m := model{
@@ -1098,16 +1098,76 @@ func TestCtrlFWhilePromptSearchOpenMovesSelection(t *testing.T) {
 		},
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	opened := m
 	if opened.promptSearchCursor != 0 {
 		t.Fatalf("expected initial cursor 0, got %d", opened.promptSearchCursor)
 	}
 
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
+	got, _ := opened.handleKey(tea.KeyMsg{Type: tea.KeyDown})
 	moved := got.(model)
 	if moved.promptSearchCursor != 1 {
-		t.Fatalf("expected ctrl+f to move cursor to 1, got %d", moved.promptSearchCursor)
+		t.Fatalf("expected down to move cursor to 1, got %d", moved.promptSearchCursor)
+	}
+}
+
+func TestCtrlATogglesAwayModeAndSyncsRunner(t *testing.T) {
+	runner := agent.NewRunner(agent.Options{
+		Workspace: t.TempDir(),
+		Config: config.Config{
+			ApprovalMode: "interactive",
+			AwayPolicy:   "auto_deny_continue",
+		},
+	})
+
+	m := model{
+		runner: wrapTestRunner(runner),
+		cfg: config.Config{
+			ApprovalMode: "interactive",
+			AwayPolicy:   "auto_deny_continue",
+		},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlA})
+	updated := got.(model)
+	if !updated.awayEnabled() {
+		t.Fatalf("expected ctrl+a to enable away mode")
+	}
+	if updated.statusNote != "Away mode enabled." {
+		t.Fatalf("expected away-on status note, got %q", updated.statusNote)
+	}
+	if runner.GetConfig().ApprovalMode != "away" {
+		t.Fatalf("expected runner approval mode to sync to away, got %q", runner.GetConfig().ApprovalMode)
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyCtrlA})
+	updated = got.(model)
+	if updated.awayEnabled() {
+		t.Fatalf("expected second ctrl+a to disable away mode")
+	}
+	if updated.statusNote != "Away mode disabled." {
+		t.Fatalf("expected away-off status note, got %q", updated.statusNote)
+	}
+	if runner.GetConfig().ApprovalMode != "interactive" {
+		t.Fatalf("expected runner approval mode to sync to interactive, got %q", runner.GetConfig().ApprovalMode)
+	}
+}
+
+func TestCtrlAWhileBusyKeepsCurrentAwayMode(t *testing.T) {
+	m := model{
+		busy: true,
+		cfg: config.Config{
+			ApprovalMode: "interactive",
+		},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlA})
+	updated := got.(model)
+	if updated.awayEnabled() {
+		t.Fatalf("expected busy ctrl+a not to toggle away mode")
+	}
+	if updated.statusNote != "Cannot toggle away mode while a run is in progress." {
+		t.Fatalf("expected busy guard status note, got %q", updated.statusNote)
 	}
 }
 
@@ -1124,9 +1184,9 @@ func TestPromptSearchEnterRestoresSelectedPrompt(t *testing.T) {
 		},
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	opened := m
+	got, _ := opened.handleKey(tea.KeyMsg{Type: tea.KeyDown})
 	down := got.(model)
 
 	got, _ = down.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1151,9 +1211,9 @@ func TestPromptSearchEscRestoresOriginalInput(t *testing.T) {
 		},
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("old")})
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	opened := m
+	got, _ := opened.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("old")})
 	filtered := got.(model)
 	got, _ = filtered.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	closed := got.(model)
@@ -1198,9 +1258,9 @@ func TestPromptSearchQuerySupportsWorkspaceAndSessionFilters(t *testing.T) {
 		},
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("fix ws:repo-a sid:alpha")})
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	opened := m
+	got, _ := opened.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("fix ws:repo-a sid:alpha")})
 	filtered := got.(model)
 
 	if len(filtered.promptSearchMatches) != 1 {
@@ -1225,13 +1285,13 @@ func TestPromptSearchPanelSupportsPageNavigation(t *testing.T) {
 		promptHistoryEntries: entries,
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	opened := m
 	if opened.promptSearchCursor != 0 {
 		t.Fatalf("expected cursor at 0, got %d", opened.promptSearchCursor)
 	}
 
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyPgDown})
+	got, _ := opened.handleKey(tea.KeyMsg{Type: tea.KeyPgDown})
 	paged := got.(model)
 	if paged.promptSearchCursor != promptSearchPageSize {
 		t.Fatalf("expected pgdown to move cursor to %d, got %d", promptSearchPageSize, paged.promptSearchCursor)
@@ -1244,17 +1304,17 @@ func TestPromptSearchPanelSupportsPageNavigation(t *testing.T) {
 	}
 }
 
-func TestCtrlFOpensPromptSearchStartsAsyncHistoryLoad(t *testing.T) {
+func TestOpenPromptSearchStartsAsyncHistoryLoad(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	m := model{
 		input: input,
 	}
 
-	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
+	cmd := m.openPromptSearch(promptSearchModeQuick)
+	opened := m
 	if !opened.promptSearchOpen {
-		t.Fatalf("expected ctrl+f to open prompt search")
+		t.Fatalf("expected prompt search to open")
 	}
 	if !opened.promptHistoryLoading {
 		t.Fatalf("expected prompt history async loading state")
@@ -1764,10 +1824,12 @@ func TestChatViewOmitsRedundantChrome(t *testing.T) {
 	for _, wanted := range []string{
 		"tab agents",
 		"/ commands",
+		"Ctrl+A away",
 		"Ctrl+L sessions",
 		"Ctrl+C copy/quit",
 		"Build",
 		"Plan",
+		"Away:OFF",
 	} {
 		if !strings.Contains(view, wanted) {
 			t.Fatalf("expected chat view to contain %q", wanted)
@@ -3298,8 +3360,10 @@ func TestRenderFooterOnlyShowsInputRegion(t *testing.T) {
 	for _, wanted := range []string{
 		"tab agents",
 		"/ commands",
+		"Ctrl+A away",
 		"Ctrl+L sessions",
 		"Ctrl+C copy/quit",
+		"Away:OFF",
 	} {
 		if !strings.Contains(footer, wanted) {
 			t.Fatalf("footer should advertise %q", wanted)
@@ -3332,7 +3396,7 @@ func TestRenderFooterInfoLineCombinesModeAndHints(t *testing.T) {
 	if infoLine == "" {
 		t.Fatalf("expected footer to contain a quick-hint info line")
 	}
-	for _, want := range []string{"Build", "Plan", "deepseek-chat", "tab agents"} {
+	for _, want := range []string{"Build", "Plan", "Away:OFF", "deepseek-chat", "tab agents"} {
 		if !strings.Contains(infoLine, want) {
 			t.Fatalf("expected combined info line to contain %q, got %q", want, infoLine)
 		}

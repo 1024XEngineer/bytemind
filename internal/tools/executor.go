@@ -56,7 +56,7 @@ func NewExecutor(registry *Registry) *Executor {
 		permissionEngine: defaultPermissionEngine{},
 		argumentDecoder:  strictJSONArgumentDecoder{},
 		outputNormalizer: normalizer,
-		worker:           inProcessWorker{registry: registry, normalizer: normalizer},
+		worker:           newDefaultExecutorWorker(registry, normalizer),
 	}
 }
 

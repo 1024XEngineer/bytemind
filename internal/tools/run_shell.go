@@ -113,6 +113,9 @@ func (RunShellTool) Run(ctx context.Context, raw json.RawMessage, execCtx *Execu
 }
 
 func requireApproval(command string, execCtx *ExecutionContext) error {
+	if execCtx != nil && execCtx.SkipShellApproval {
+		return nil
+	}
 	mode := planpkg.ModeBuild
 	approvalPolicy := ""
 	if execCtx != nil {

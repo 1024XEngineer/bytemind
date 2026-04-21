@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,8 +36,26 @@ func TestShouldRouteToWorker(t *testing.T) {
 	if !shouldRouteToWorker("write_file", &ExecutionContext{SandboxEnabled: true}) {
 		t.Fatal("expected write_file to route to worker in sandbox mode")
 	}
-	if shouldRouteToWorker("search_text", &ExecutionContext{SandboxEnabled: true}) {
-		t.Fatal("expected search_text to stay in main executor path")
+	if !shouldRouteToWorker("list_files", &ExecutionContext{SandboxEnabled: true}) {
+		t.Fatal("expected list_files to route to worker in sandbox mode")
+	}
+	if !shouldRouteToWorker("search_text", &ExecutionContext{SandboxEnabled: true}) {
+		t.Fatal("expected search_text to route to worker in sandbox mode")
+	}
+	if !shouldRouteToWorker("replace_in_file", &ExecutionContext{SandboxEnabled: true}) {
+		t.Fatal("expected replace_in_file to route to worker in sandbox mode")
+	}
+	if !shouldRouteToWorker("apply_patch", &ExecutionContext{SandboxEnabled: true}) {
+		t.Fatal("expected apply_patch to route to worker in sandbox mode")
+	}
+	if !shouldRouteToWorker("web_fetch", &ExecutionContext{SandboxEnabled: true}) {
+		t.Fatal("expected web_fetch to route to worker in sandbox mode")
+	}
+	if !shouldRouteToWorker("web_search", &ExecutionContext{SandboxEnabled: true}) {
+		t.Fatal("expected web_search to route to worker in sandbox mode")
+	}
+	if shouldRouteToWorker("update_plan", &ExecutionContext{SandboxEnabled: true}) {
+		t.Fatal("expected update_plan to stay in main executor path")
 	}
 }
 
@@ -69,7 +88,7 @@ func TestExecutorKeepsNonSandboxToolsOnMainPath(t *testing.T) {
 	registry := &Registry{}
 	mainCalled := false
 	registerBuiltinExecutorTool(t, registry, executorTestTool{
-		name: "search_text",
+		name: "update_plan",
 		run: func(_ context.Context, _ json.RawMessage, _ *ExecutionContext) (string, error) {
 			mainCalled = true
 			return `{"ok":true,"main":true}`, nil
@@ -79,7 +98,7 @@ func TestExecutorKeepsNonSandboxToolsOnMainPath(t *testing.T) {
 	worker := &workerTestDouble{output: `{"ok":true,"worker":true}`}
 	executor.worker = worker
 
-	out, err := executor.Execute(context.Background(), "search_text", `{}`, &ExecutionContext{SandboxEnabled: true})
+	out, err := executor.Execute(context.Background(), "update_plan", `{}`, &ExecutionContext{SandboxEnabled: true})
 	if err != nil {
 		t.Fatalf("executor execute: %v", err)
 	}
@@ -197,6 +216,40 @@ func TestInProcessWorkerEscalatesRunShellWhenCommandNotInAllowlist(t *testing.T)
 	}
 	if !called {
 		t.Fatal("expected underlying tool to run after approval")
+	}
+}
+
+func TestInProcessWorkerAllowsPreApprovedEscalationWithoutPrompt(t *testing.T) {
+	registry := &Registry{}
+	called := false
+	registerBuiltinExecutorTool(t, registry, executorTestTool{
+		name: "run_shell",
+		run: func(_ context.Context, _ json.RawMessage, _ *ExecutionContext) (string, error) {
+			called = true
+			return `{"ok":true}`, nil
+		},
+	})
+	worker := inProcessWorker{registry: registry}
+	_, err := worker.Run(context.Background(), workerRunRequest{
+		ToolName: "run_shell",
+		RawArgs:  json.RawMessage(`{"command":"go test ./..."}`),
+		Execution: &ExecutionContext{
+			SandboxEnabled: true,
+			Workspace:      t.TempDir(),
+			ExecAllowlist: []sandboxpkg.ExecRule{
+				{Command: "go run", ArgsPattern: []string{"./cmd/app"}},
+			},
+			ApprovalPolicy:            "on-request",
+			ApprovalMode:              "interactive",
+			SandboxEscalationApproved: true,
+			SkipShellApproval:         true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected pre-approved escalation to allow run, got %v", err)
+	}
+	if !called {
+		t.Fatal("expected underlying tool to run after pre-approved escalation")
 	}
 }
 
@@ -426,16 +479,48 @@ func TestNormalizeWorkerRootsDropsEmptyWritableEntries(t *testing.T) {
 }
 
 func TestRuntimeRequestForReadFileValidationBranches(t *testing.T) {
-	if _, err := runtimeRequestForTool("read_file", json.RawMessage(`{`)); err == nil {
+	if _, err := runtimeRequestForTool("read_file", json.RawMessage(`{`), nil); err == nil {
 		t.Fatal("expected read_file invalid json error")
 	}
-	if _, err := runtimeRequestForTool("read_file", json.RawMessage(`{"path":"  "}`)); err == nil {
+	if _, err := runtimeRequestForTool("read_file", json.RawMessage(`{"path":"  "}`), nil); err == nil {
 		t.Fatal("expected read_file empty path error")
 	}
 }
 
+func TestRuntimeRequestForListFilesDefaultsToWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	req, err := runtimeRequestForTool("list_files", json.RawMessage(`{}`), &ExecutionContext{
+		Workspace: workspace,
+	})
+	if err != nil {
+		t.Fatalf("runtime request: %v", err)
+	}
+	if req.FileAccess != sandboxpkg.FileAccessRead {
+		t.Fatalf("expected read access, got %q", req.FileAccess)
+	}
+	if !filepath.IsAbs(req.FilePath) {
+		t.Fatalf("expected absolute file path, got %q", req.FilePath)
+	}
+}
+
+func TestRuntimeRequestForSearchTextDefaultsToWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	req, err := runtimeRequestForTool("search_text", json.RawMessage(`{"query":"todo"}`), &ExecutionContext{
+		Workspace: workspace,
+	})
+	if err != nil {
+		t.Fatalf("runtime request: %v", err)
+	}
+	if req.FileAccess != sandboxpkg.FileAccessRead {
+		t.Fatalf("expected read access, got %q", req.FileAccess)
+	}
+	if !filepath.IsAbs(req.FilePath) {
+		t.Fatalf("expected absolute file path, got %q", req.FilePath)
+	}
+}
+
 func TestRuntimeRequestForRunShellKeepsQuotedArgumentsInOrder(t *testing.T) {
-	req, err := runtimeRequestForTool("run_shell", json.RawMessage(`{"command":"deploy --to \"prod env\" --region cn"}`))
+	req, err := runtimeRequestForTool("run_shell", json.RawMessage(`{"command":"deploy --to \"prod env\" --region cn"}`), nil)
 	if err != nil {
 		t.Fatalf("runtime request: %v", err)
 	}
@@ -454,13 +539,13 @@ func TestRuntimeRequestForRunShellKeepsQuotedArgumentsInOrder(t *testing.T) {
 }
 
 func TestRuntimeRequestForRunShellRejectsEmptyCommand(t *testing.T) {
-	if _, err := runtimeRequestForTool("run_shell", json.RawMessage(`{"command":"   "}`)); err == nil {
+	if _, err := runtimeRequestForTool("run_shell", json.RawMessage(`{"command":"   "}`), nil); err == nil {
 		t.Fatal("expected run_shell empty command error")
 	}
 }
 
 func TestRuntimeRequestForRunShellExtractsCurlNetworkTarget(t *testing.T) {
-	req, err := runtimeRequestForTool("run_shell", json.RawMessage(`{"command":"curl https://api.openai.com/v1/models"}`))
+	req, err := runtimeRequestForTool("run_shell", json.RawMessage(`{"command":"curl https://api.openai.com/v1/models"}`), nil)
 	if err != nil {
 		t.Fatalf("runtime request: %v", err)
 	}
@@ -469,8 +554,28 @@ func TestRuntimeRequestForRunShellExtractsCurlNetworkTarget(t *testing.T) {
 	}
 }
 
+func TestRuntimeRequestForWebFetchExtractsNetworkTarget(t *testing.T) {
+	req, err := runtimeRequestForTool("web_fetch", json.RawMessage(`{"url":"api.openai.com/v1/models"}`), nil)
+	if err != nil {
+		t.Fatalf("runtime request: %v", err)
+	}
+	if req.Network.Host != "api.openai.com" || req.Network.Scheme != "https" || req.Network.Port != 443 {
+		t.Fatalf("expected https api.openai.com:443 network target, got %#v", req.Network)
+	}
+}
+
+func TestRuntimeRequestForWebSearchUsesDefaultSearchEndpointTarget(t *testing.T) {
+	req, err := runtimeRequestForTool("web_search", json.RawMessage(`{"query":"golang"}`), nil)
+	if err != nil {
+		t.Fatalf("runtime request: %v", err)
+	}
+	if req.Network.Host == "" || req.Network.Scheme != "https" || req.Network.Port != 443 {
+		t.Fatalf("expected https network target for web_search, got %#v", req.Network)
+	}
+}
+
 func TestRuntimeRequestForRunShellExtractsPowerShellUriTarget(t *testing.T) {
-	req, err := runtimeRequestForTool("run_shell", json.RawMessage(`{"command":"iwr -UseBasicParsing -Uri http://example.org:80/path"}`))
+	req, err := runtimeRequestForTool("run_shell", json.RawMessage(`{"command":"iwr -UseBasicParsing -Uri http://example.org:80/path"}`), nil)
 	if err != nil {
 		t.Fatalf("runtime request: %v", err)
 	}
@@ -480,7 +585,7 @@ func TestRuntimeRequestForRunShellExtractsPowerShellUriTarget(t *testing.T) {
 }
 
 func TestRuntimeRequestForRunShellExtractsNestedShellTarget(t *testing.T) {
-	req, err := runtimeRequestForTool("run_shell", json.RawMessage(`{"command":"sh -lc \"curl https://api.openai.com/v1/models\""}`))
+	req, err := runtimeRequestForTool("run_shell", json.RawMessage(`{"command":"sh -lc \"curl https://api.openai.com/v1/models\""}`), nil)
 	if err != nil {
 		t.Fatalf("runtime request: %v", err)
 	}
@@ -490,7 +595,7 @@ func TestRuntimeRequestForRunShellExtractsNestedShellTarget(t *testing.T) {
 }
 
 func TestRuntimeRequestForRunShellExtractsNestedPowerShellTarget(t *testing.T) {
-	req, err := runtimeRequestForTool("run_shell", json.RawMessage(`{"command":"powershell -NoProfile -Command \"iwr -Uri https://example.org/api\""}`))
+	req, err := runtimeRequestForTool("run_shell", json.RawMessage(`{"command":"powershell -NoProfile -Command \"iwr -Uri https://example.org/api\""}`), nil)
 	if err != nil {
 		t.Fatalf("runtime request: %v", err)
 	}
@@ -500,12 +605,146 @@ func TestRuntimeRequestForRunShellExtractsNestedPowerShellTarget(t *testing.T) {
 }
 
 func TestRuntimeRequestForRunShellIgnoresNonNetworkCommand(t *testing.T) {
-	req, err := runtimeRequestForTool("run_shell", json.RawMessage(`{"command":"go test ./..."}`))
+	req, err := runtimeRequestForTool("run_shell", json.RawMessage(`{"command":"go test ./..."}`), nil)
 	if err != nil {
 		t.Fatalf("runtime request: %v", err)
 	}
 	if req.Network.Host != "" || req.Network.Scheme != "" || req.Network.Port != 0 {
 		t.Fatalf("expected empty network target for local command, got %#v", req.Network)
+	}
+}
+
+func TestRuntimeRequestForWriteFileResolvesRelativePathAgainstWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	req, err := runtimeRequestForTool("write_file", json.RawMessage(`{"path":"notes/out.txt","content":"ok"}`), &ExecutionContext{
+		Workspace: workspace,
+	})
+	if err != nil {
+		t.Fatalf("runtime request: %v", err)
+	}
+	if !filepath.IsAbs(req.FilePath) {
+		t.Fatalf("expected absolute file path, got %q", req.FilePath)
+	}
+	if !strings.HasPrefix(strings.ToLower(req.FilePath), strings.ToLower(workspace)) {
+		t.Fatalf("expected resolved path under workspace %q, got %q", workspace, req.FilePath)
+	}
+}
+
+func TestRuntimeRequestForReplaceInFileRequiresPath(t *testing.T) {
+	if _, err := runtimeRequestForTool("replace_in_file", json.RawMessage(`{"path":"  ","old":"a","new":"b"}`), nil); err == nil {
+		t.Fatal("expected replace_in_file empty path error")
+	}
+}
+
+func TestRuntimeRequestForApplyPatchRejectsEmptyPatch(t *testing.T) {
+	if _, err := runtimeRequestForTool("apply_patch", json.RawMessage(`{"patch":"  "}`), nil); err == nil {
+		t.Fatal("expected apply_patch empty patch error")
+	}
+}
+
+func TestRuntimeRequestForApplyPatchReturnsOffendingPathForLeaseBoundary(t *testing.T) {
+	workspace := t.TempDir()
+	allowed := filepath.Join(workspace, "allowed")
+	if err := os.MkdirAll(allowed, 0o755); err != nil {
+		t.Fatalf("mkdir allowed: %v", err)
+	}
+	patch := strings.Join([]string{
+		"*** Begin Patch",
+		"*** Add File: blocked/out.txt",
+		"+hello",
+		"*** End Patch",
+	}, "\n")
+	payload, err := json.Marshal(map[string]any{"patch": patch})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	req, err := runtimeRequestForTool("apply_patch", json.RawMessage(payload), &ExecutionContext{
+		Workspace:      workspace,
+		SandboxEnabled: true,
+		FSWrite:        []string{allowed},
+	})
+	if err != nil {
+		t.Fatalf("runtime request: %v", err)
+	}
+	if req.FileAccess != sandboxpkg.FileAccessWrite {
+		t.Fatalf("expected write access, got %q", req.FileAccess)
+	}
+	expected := filepath.Join(workspace, "blocked", "out.txt")
+	if filepath.Clean(req.FilePath) != filepath.Clean(expected) {
+		t.Fatalf("expected offending path %q, got %q", expected, req.FilePath)
+	}
+}
+
+func TestRuntimeRequestForApplyPatchUsesFirstResolvedPathWhenAllowed(t *testing.T) {
+	workspace := t.TempDir()
+	patch := strings.Join([]string{
+		"*** Begin Patch",
+		"*** Add File: allowed/one.txt",
+		"+hello",
+		"*** Update File: allowed/two.txt",
+		"@@",
+		"*** End Patch",
+	}, "\n")
+	payload, err := json.Marshal(map[string]any{"patch": patch})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	req, err := runtimeRequestForTool("apply_patch", json.RawMessage(payload), &ExecutionContext{
+		Workspace:      workspace,
+		SandboxEnabled: true,
+		FSWrite:        []string{workspace},
+	})
+	if err != nil {
+		t.Fatalf("runtime request: %v", err)
+	}
+	expected := filepath.Join(workspace, "allowed", "one.txt")
+	if filepath.Clean(req.FilePath) != filepath.Clean(expected) {
+		t.Fatalf("expected first path %q, got %q", expected, req.FilePath)
+	}
+}
+
+func TestInProcessWorkerDeniesWebFetchNetworkOutsideLeaseAllowlist(t *testing.T) {
+	registry := &Registry{}
+	registerBuiltinExecutorTool(t, registry, executorTestTool{
+		name: "web_fetch",
+		run: func(_ context.Context, _ json.RawMessage, _ *ExecutionContext) (string, error) {
+			t.Fatal("tool should not run when web_fetch target is outside lease allowlist")
+			return "", nil
+		},
+	})
+	worker := inProcessWorker{registry: registry}
+	_, err := worker.Run(context.Background(), workerRunRequest{
+		ToolName: "web_fetch",
+		RawArgs:  json.RawMessage(`{"url":"https://example.org/docs"}`),
+		Execution: &ExecutionContext{
+			SandboxEnabled: true,
+			Workspace:      t.TempDir(),
+			ApprovalPolicy: "never",
+			NetworkAllowlist: []sandboxpkg.NetworkRule{
+				{Host: "api.openai.com", Port: 443, Scheme: "https"},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected web_fetch network allowlist denial")
+	}
+	execErr, ok := AsToolExecError(err)
+	if !ok || execErr.Code != ToolErrorPermissionDenied {
+		t.Fatalf("expected permission denied tool error, got %#v", err)
+	}
+	if !strings.Contains(execErr.Message, "network_not_allowed") {
+		t.Fatalf("expected network_not_allowed reason, got %q", execErr.Message)
+	}
+}
+
+func TestRuntimeRequestForWriteFileRejectsPathOutsideWorkspaceRoots(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	_, err := runtimeRequestForTool("write_file", json.RawMessage(`{"path":"`+filepath.ToSlash(filepath.Join(outside, "x.txt"))+`","content":"ok"}`), &ExecutionContext{
+		Workspace: workspace,
+	})
+	if err == nil {
+		t.Fatal("expected out-of-scope write path to be rejected")
 	}
 }
 

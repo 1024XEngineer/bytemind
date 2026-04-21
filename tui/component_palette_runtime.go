@@ -65,10 +65,10 @@ func (m model) handlePromptSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.closePromptSearch(true)
 		m.statusNote = "No prompt selected."
 		return m, nil
-	case "ctrl+f", "down", "j":
+	case "down", "j":
 		m.stepPromptSearch(1)
 		return m, nil
-	case "ctrl+s", "up", "k":
+	case "up", "k":
 		m.stepPromptSearch(-1)
 		return m, nil
 	case "home":

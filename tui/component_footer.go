@@ -88,14 +88,19 @@ func (m model) runIndicatorText() string {
 func (m model) renderModeTabs() string {
 	buildStyle := modeTabStyle.Copy().Foreground(colorMuted)
 	planStyle := modeTabStyle.Copy().Foreground(colorMuted)
+	awayStyle := modeTabStyle.Copy().Foreground(colorMuted)
 	if m.mode == modeBuild {
 		buildStyle = buildStyle.Copy().Foreground(colorAccent).Bold(true)
 	} else {
 		planStyle = planStyle.Copy().Foreground(colorThinking).Bold(true)
 	}
+	if m.awayEnabled() {
+		awayStyle = awayStyle.Copy().Foreground(colorWarningBright).Bold(true)
+	}
 	parts := []string{
 		buildStyle.Render("Build"),
 		planStyle.Render("Plan"),
+		awayStyle.Render(m.awayStatusLabel()),
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Left, parts...)
 }

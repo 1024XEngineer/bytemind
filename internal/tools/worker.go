@@ -72,14 +72,42 @@ func (w inProcessWorker) enforcePolicy(ctx context.Context, toolName string, raw
 	if execCtx == nil || !execCtx.SandboxEnabled {
 		return nil
 	}
-	lease, keyring, err := resolvePolicyLease(execCtx)
+	decision, err := workerSandboxDecision(ctx, toolName, raw, execCtx)
 	if err != nil {
-		return NewToolExecError(ToolErrorPermissionDenied, err.Error(), false, err)
+		return err
 	}
 
-	runtimeReq, err := runtimeRequestForTool(toolName, raw)
+	switch decision.Decision {
+	case sandboxpkg.DecisionAllow:
+		return nil
+	case sandboxpkg.DecisionDeny:
+		return NewToolExecError(ToolErrorPermissionDenied, formatBrokerDeniedMessage(toolName, decision), false, nil)
+	case sandboxpkg.DecisionEscalate:
+		if execCtx.SandboxEscalationApproved {
+			return nil
+		}
+		return escalateWorkerApproval(toolName, decision, execCtx)
+	default:
+		return NewToolExecError(ToolErrorPermissionDenied, "sandbox policy returned unknown decision", false, nil)
+	}
+}
+
+func workerSandboxDecision(ctx context.Context, toolName string, raw json.RawMessage, execCtx *ExecutionContext) (sandboxpkg.DecisionResult, error) {
+	if execCtx == nil || !execCtx.SandboxEnabled {
+		return sandboxpkg.DecisionResult{Decision: sandboxpkg.DecisionAllow}, nil
+	}
+	lease, keyring, err := resolvePolicyLease(execCtx)
 	if err != nil {
-		return NewToolExecError(ToolErrorInvalidArgs, err.Error(), false, err)
+		return sandboxpkg.DecisionResult{}, NewToolExecError(ToolErrorPermissionDenied, err.Error(), false, err)
+	}
+
+	runtimeReq, err := runtimeRequestForTool(toolName, raw, execCtx)
+	if err != nil {
+		code := ToolErrorInvalidArgs
+		if isRuntimeRequestPermissionError(err) {
+			code = ToolErrorPermissionDenied
+		}
+		return sandboxpkg.DecisionResult{}, NewToolExecError(code, err.Error(), false, err)
 	}
 
 	broker := sandboxpkg.NewPolicyBroker()
@@ -93,24 +121,22 @@ func (w inProcessWorker) enforcePolicy(ctx context.Context, toolName string, raw
 		Mode: sandboxpkg.ModeContext{
 			ApprovalMode:             execCtx.approvalMode(),
 			AwayPolicy:               execCtx.awayPolicy(),
-			ApprovalChannelAvailable: execCtx.Approval != nil || execCtx.Stdin != nil,
+			ApprovalChannelAvailable: execCtx.Approval != nil || execCtx.Stdin != nil || execCtx.SandboxEscalationApproved,
 		},
 		Request: runtimeReq,
 	})
 	if err != nil {
-		return NewToolExecError(ToolErrorPermissionDenied, err.Error(), false, err)
+		return sandboxpkg.DecisionResult{}, NewToolExecError(ToolErrorPermissionDenied, err.Error(), false, err)
 	}
+	return decision, nil
+}
 
-	switch decision.Decision {
-	case sandboxpkg.DecisionAllow:
-		return nil
-	case sandboxpkg.DecisionDeny:
-		return NewToolExecError(ToolErrorPermissionDenied, formatBrokerDeniedMessage(toolName, decision), false, nil)
-	case sandboxpkg.DecisionEscalate:
-		return escalateWorkerApproval(toolName, decision, execCtx)
-	default:
-		return NewToolExecError(ToolErrorPermissionDenied, "sandbox policy returned unknown decision", false, nil)
+func isRuntimeRequestPermissionError(err error) bool {
+	if err == nil {
+		return false
 	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "permission denied")
 }
 
 func resolvePolicyLease(execCtx *ExecutionContext) (sandboxpkg.Lease, map[string][]byte, error) {
@@ -187,7 +213,7 @@ func normalizeWorkerRoots(preferred []string, workspace string, writable []strin
 	return roots
 }
 
-func runtimeRequestForTool(toolName string, raw json.RawMessage) (sandboxpkg.RuntimeRequest, error) {
+func runtimeRequestForTool(toolName string, raw json.RawMessage, execCtx *ExecutionContext) (sandboxpkg.RuntimeRequest, error) {
 	switch strings.TrimSpace(toolName) {
 	case "run_shell":
 		var args struct {
@@ -210,6 +236,63 @@ func runtimeRequestForTool(toolName string, raw json.RawMessage) (sandboxpkg.Run
 			Args:     append([]string(nil), parts[1:]...),
 			Network:  extractRunShellNetworkTarget(parts),
 		}, nil
+	case "web_fetch":
+		var args struct {
+			URL string `json:"url"`
+		}
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return sandboxpkg.RuntimeRequest{}, err
+		}
+		target, err := normalizeWebURL(args.URL)
+		if err != nil {
+			return sandboxpkg.RuntimeRequest{}, err
+		}
+		return sandboxpkg.RuntimeRequest{
+			ToolName: "web_fetch",
+			Network:  networkRuleFromURL(target),
+		}, nil
+	case "web_search":
+		baseURL := strings.TrimSpace(defaultWebSearchBaseURL)
+		network := networkRuleFromURL(baseURL)
+		if network.Host == "" {
+			return sandboxpkg.RuntimeRequest{}, fmt.Errorf("web_search base url is invalid")
+		}
+		return sandboxpkg.RuntimeRequest{
+			ToolName: "web_search",
+			Network:  network,
+		}, nil
+	case "list_files":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return sandboxpkg.RuntimeRequest{}, err
+		}
+		path, err := resolveSandboxPathForAccess(execCtx, args.Path, sandboxpkg.FileAccessRead)
+		if err != nil {
+			return sandboxpkg.RuntimeRequest{}, err
+		}
+		return sandboxpkg.RuntimeRequest{
+			ToolName:   "list_files",
+			FilePath:   path,
+			FileAccess: sandboxpkg.FileAccessRead,
+		}, nil
+	case "search_text":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return sandboxpkg.RuntimeRequest{}, err
+		}
+		path, err := resolveSandboxPathForAccess(execCtx, args.Path, sandboxpkg.FileAccessRead)
+		if err != nil {
+			return sandboxpkg.RuntimeRequest{}, err
+		}
+		return sandboxpkg.RuntimeRequest{
+			ToolName:   "search_text",
+			FilePath:   path,
+			FileAccess: sandboxpkg.FileAccessRead,
+		}, nil
 	case "read_file":
 		var args struct {
 			Path string `json:"path"`
@@ -220,10 +303,70 @@ func runtimeRequestForTool(toolName string, raw json.RawMessage) (sandboxpkg.Run
 		if strings.TrimSpace(args.Path) == "" {
 			return sandboxpkg.RuntimeRequest{}, fmt.Errorf("path cannot be empty")
 		}
+		path, err := resolveSandboxPathForAccess(execCtx, args.Path, sandboxpkg.FileAccessRead)
+		if err != nil {
+			return sandboxpkg.RuntimeRequest{}, err
+		}
 		return sandboxpkg.RuntimeRequest{
 			ToolName:   "read_file",
-			FilePath:   args.Path,
+			FilePath:   path,
 			FileAccess: sandboxpkg.FileAccessRead,
+		}, nil
+	case "replace_in_file":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return sandboxpkg.RuntimeRequest{}, err
+		}
+		if strings.TrimSpace(args.Path) == "" {
+			return sandboxpkg.RuntimeRequest{}, fmt.Errorf("path cannot be empty")
+		}
+		path, err := resolveSandboxPathForAccess(execCtx, args.Path, sandboxpkg.FileAccessWrite)
+		if err != nil {
+			return sandboxpkg.RuntimeRequest{}, err
+		}
+		return sandboxpkg.RuntimeRequest{
+			ToolName:   "replace_in_file",
+			FilePath:   path,
+			FileAccess: sandboxpkg.FileAccessWrite,
+		}, nil
+	case "apply_patch":
+		var args struct {
+			Patch string `json:"patch"`
+		}
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return sandboxpkg.RuntimeRequest{}, err
+		}
+		if strings.TrimSpace(args.Patch) == "" {
+			return sandboxpkg.RuntimeRequest{}, fmt.Errorf("patch cannot be empty")
+		}
+		targets := collectApplyPatchPaths(args.Patch)
+		if len(targets) == 0 {
+			return sandboxpkg.RuntimeRequest{}, fmt.Errorf("patch has no file operations")
+		}
+		roots := sandboxRootsForAccess(execCtx, sandboxpkg.FileAccessWrite)
+		firstPath := ""
+		for _, target := range targets {
+			path, err := resolveSandboxPathForAccess(execCtx, target, sandboxpkg.FileAccessWrite)
+			if err != nil {
+				return sandboxpkg.RuntimeRequest{}, err
+			}
+			if firstPath == "" {
+				firstPath = path
+			}
+			if !pathWithinSandboxRoots(path, roots) {
+				return sandboxpkg.RuntimeRequest{
+					ToolName:   "apply_patch",
+					FilePath:   path,
+					FileAccess: sandboxpkg.FileAccessWrite,
+				}, nil
+			}
+		}
+		return sandboxpkg.RuntimeRequest{
+			ToolName:   "apply_patch",
+			FilePath:   firstPath,
+			FileAccess: sandboxpkg.FileAccessWrite,
 		}, nil
 	case "write_file":
 		var args struct {
@@ -235,9 +378,13 @@ func runtimeRequestForTool(toolName string, raw json.RawMessage) (sandboxpkg.Run
 		if strings.TrimSpace(args.Path) == "" {
 			return sandboxpkg.RuntimeRequest{}, fmt.Errorf("path cannot be empty")
 		}
+		path, err := resolveSandboxPathForAccess(execCtx, args.Path, sandboxpkg.FileAccessWrite)
+		if err != nil {
+			return sandboxpkg.RuntimeRequest{}, err
+		}
 		return sandboxpkg.RuntimeRequest{
 			ToolName:   "write_file",
-			FilePath:   args.Path,
+			FilePath:   path,
 			FileAccess: sandboxpkg.FileAccessWrite,
 		}, nil
 	default:
@@ -245,6 +392,106 @@ func runtimeRequestForTool(toolName string, raw json.RawMessage) (sandboxpkg.Run
 			ToolName: strings.TrimSpace(toolName),
 		}, nil
 	}
+}
+
+func resolveSandboxPathForAccess(execCtx *ExecutionContext, input string, access sandboxpkg.FileAccess) (string, error) {
+	path := strings.TrimSpace(input)
+	if execCtx == nil {
+		if path == "" {
+			return ".", nil
+		}
+		return path, nil
+	}
+	roots := sandboxRootsForAccess(execCtx, access)
+	resolved, err := resolvePath(execCtx.Workspace, path, roots...)
+	if err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
+func sandboxRootsForAccess(execCtx *ExecutionContext, access sandboxpkg.FileAccess) []string {
+	if execCtx == nil {
+		return nil
+	}
+	if !execCtx.SandboxEnabled {
+		return writableRootsFromExecContext(execCtx)
+	}
+	switch access {
+	case sandboxpkg.FileAccessRead:
+		return normalizeWorkerRoots(execCtx.FSRead, execCtx.Workspace, writableRootsFromExecContext(execCtx))
+	case sandboxpkg.FileAccessWrite:
+		return normalizeWorkerRoots(execCtx.FSWrite, execCtx.Workspace, writableRootsFromExecContext(execCtx))
+	default:
+		return writableRootsFromExecContext(execCtx)
+	}
+}
+
+func pathWithinSandboxRoots(path string, roots []string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	if len(roots) == 0 {
+		return true
+	}
+	canonicalPath, err := canonicalPathForAccess(path)
+	if err != nil {
+		return false
+	}
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		canonicalRoot, err := canonicalPathForAccess(root)
+		if err != nil {
+			continue
+		}
+		if isPathWithinRoot(canonicalRoot, canonicalPath) {
+			return true
+		}
+	}
+	return false
+}
+
+func collectApplyPatchPaths(patch string) []string {
+	patch = normalizePatchText(patch)
+	if patch == "" {
+		return nil
+	}
+	lines := strings.Split(patch, "\n")
+	paths := make([]string, 0, 8)
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		switch {
+		case strings.HasPrefix(line, "*** Add File: "):
+			path := strings.TrimSpace(strings.TrimPrefix(line, "*** Add File: "))
+			if path != "" {
+				paths = append(paths, path)
+			}
+		case strings.HasPrefix(line, "*** Delete File: "):
+			path := strings.TrimSpace(strings.TrimPrefix(line, "*** Delete File: "))
+			if path != "" {
+				paths = append(paths, path)
+			}
+		case strings.HasPrefix(line, "*** Update File: "):
+			path := strings.TrimSpace(strings.TrimPrefix(line, "*** Update File: "))
+			if path != "" {
+				paths = append(paths, path)
+			}
+			if i+1 < len(lines) {
+				next := strings.TrimSpace(lines[i+1])
+				if strings.HasPrefix(next, "*** Move to: ") {
+					movePath := strings.TrimSpace(strings.TrimPrefix(next, "*** Move to: "))
+					if movePath != "" {
+						paths = append(paths, movePath)
+					}
+				}
+			}
+		}
+	}
+	return paths
 }
 
 func extractRunShellNetworkTarget(parts []string) sandboxpkg.NetworkRule {
@@ -539,7 +786,7 @@ func cloneKeyring(source map[string][]byte) map[string][]byte {
 func shouldRouteToWorker(toolName string, execCtx *ExecutionContext) bool {
 	_ = execCtx
 	switch toolName {
-	case "run_shell", "read_file", "write_file":
+	case "run_shell", "web_fetch", "web_search", "list_files", "search_text", "read_file", "replace_in_file", "apply_patch", "write_file":
 		return true
 	default:
 		return false

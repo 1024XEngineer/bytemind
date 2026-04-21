@@ -29,14 +29,14 @@ func (m model) helpText() string {
 		"- `Tab` toggles between Build and Plan modes.",
 		"- Plan mode keeps the plan panel visible and focused on structured steps.",
 		"- `Ctrl+G` opens or closes the help panel.",
-		"- `Ctrl+F` searches prompt history and restores previous input.",
+		"- `Ctrl+A` toggles away mode (`Away:ON/OFF`) for approval handling.",
 		"- Drag across the conversation with the left mouse button, then press `Ctrl+C` to copy.",
 		"- If provider setup is required, paste an API key in the input and press Enter.",
 		"- Long pasted code/text is compressed to `[Paste #N ~X lines]`.",
 		"- Use `[Paste]`, `[Paste #N]`, `[Paste line3]`, or `[Paste #N line3~line7]` to expand references.",
 		"- After restoring a session with a saved plan, type `continue execution` to resume it.",
 		"- Approval requests appear above the input area when a shell command needs confirmation.",
-		"- Footer shortcuts: `tab` agents, `/` commands, drag select, `Ctrl+C` copy/quit, `Ctrl+F` history, `Ctrl+L` sessions.",
+		"- Footer shortcuts: `tab` agents, `/` commands, drag select, `Ctrl+A` away, `Ctrl+C` copy/quit, `Ctrl+L` sessions.",
 	}, "\n")
 }
 

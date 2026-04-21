@@ -46,7 +46,7 @@ const (
 	thinkingLabel              = "thinking"
 	chatTitleLabel             = "Bytemind Chat"
 	tuiTitleLabel              = "Bytemind TUI"
-	footerHintText             = "tab agents | / commands | drag select | Ctrl+C copy/quit | Ctrl+F history | Ctrl+L sessions"
+	footerHintText             = "tab agents | / commands | drag select | Ctrl+A away | Ctrl+C copy/quit | Ctrl+L sessions"
 	conversationViewportZoneID = "bytemind:conversation:viewport"
 	inputEditorZoneID          = "bytemind:input:editor"
 	thinkingSpinnerFPS         = 80 * time.Millisecond
@@ -60,7 +60,7 @@ type footerShortcutHint struct {
 var footerShortcutHints = []footerShortcutHint{
 	{Key: "tab", Label: "agents"},
 	{Key: "/", Label: "commands"},
-	{Key: "Ctrl+F", Label: "history"},
+	{Key: "Ctrl+A", Label: "away"},
 	{Key: "Ctrl+L", Label: "sessions"},
 	{Key: "Ctrl+C", Label: "copy/quit"},
 }
@@ -72,8 +72,8 @@ var promptSearchFilterHints = []footerShortcutHint{
 
 var promptSearchActionHints = []footerShortcutHint{
 	{Key: "PgUp/PgDn", Label: "page"},
-	{Key: "Ctrl+F", Label: "next"},
-	{Key: "Ctrl+S", Label: "prev"},
+	{Key: "Down/J", Label: "next"},
+	{Key: "Up/K", Label: "prev"},
 	{Key: "Enter", Label: "apply"},
 	{Key: "Esc", Label: "close"},
 }
@@ -167,6 +167,10 @@ type approvalPrompt struct {
 type approvalDecision struct {
 	Approved bool
 	Err      error
+}
+
+type approvalModeUpdater interface {
+	UpdateApprovalMode(mode string)
 }
 
 type agentEventMsg struct {
@@ -897,11 +901,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.helpOpen = !m.helpOpen
 		}
 		return m, nil
-	case "ctrl+f":
-		if m.approval != nil || m.helpOpen || m.sessionsOpen || m.skillsOpen || m.commandOpen || m.mentionOpen {
+	case "ctrl+a":
+		if m.approval != nil || m.helpOpen || m.sessionsOpen || m.skillsOpen || m.commandOpen || m.mentionOpen || m.promptSearchOpen {
 			return m, nil
 		}
-		return m, m.openPromptSearch(promptSearchModeQuick)
+		if m.busy {
+			m.statusNote = "Cannot toggle away mode while a run is in progress."
+			return m, nil
+		}
+		m.toggleAwayMode()
+		return m, nil
 	case "ctrl+k":
 		if m.approval != nil || m.helpOpen || m.sessionsOpen || m.commandOpen || m.mentionOpen || m.busy {
 			return m, nil
@@ -1825,6 +1834,43 @@ func (m model) currentModelLabel() string {
 		return model
 	}
 	return "-"
+}
+
+func normalizeApprovalMode(mode string) string {
+	if strings.EqualFold(strings.TrimSpace(mode), "away") {
+		return "away"
+	}
+	return "interactive"
+}
+
+func (m model) awayEnabled() bool {
+	return normalizeApprovalMode(m.cfg.ApprovalMode) == "away"
+}
+
+func (m model) awayStatusLabel() string {
+	if m.awayEnabled() {
+		return "Away:ON"
+	}
+	return "Away:OFF"
+}
+
+func (m *model) toggleAwayMode() {
+	if m == nil {
+		return
+	}
+	nextMode := "away"
+	if m.awayEnabled() {
+		nextMode = "interactive"
+	}
+	m.cfg.ApprovalMode = nextMode
+	if updater, ok := m.runner.(approvalModeUpdater); ok && updater != nil {
+		updater.UpdateApprovalMode(nextMode)
+	}
+	if nextMode == "away" {
+		m.statusNote = "Away mode enabled."
+		return
+	}
+	m.statusNote = "Away mode disabled."
 }
 
 func (m model) currentSkillLabel() string {

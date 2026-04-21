@@ -70,6 +70,13 @@ func (a *tuiRunnerAdapter) UpdateProvider(providerCfg config.ProviderConfig, cli
 	a.runner.UpdateProvider(providerCfg, client)
 }
 
+func (a *tuiRunnerAdapter) UpdateApprovalMode(mode string) {
+	if a == nil || a.runner == nil {
+		return
+	}
+	a.runner.UpdateApprovalMode(mode)
+}
+
 func (a *tuiRunnerAdapter) ListSkills() ([]skills.Skill, []skills.Diagnostic) {
 	if a == nil || a.runner == nil {
 		return nil, nil

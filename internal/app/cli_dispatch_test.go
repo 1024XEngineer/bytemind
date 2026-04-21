@@ -30,6 +30,10 @@ func TestDispatchCLIRoutesSubcommands(t *testing.T) {
 			calls = append(calls, call{name: "run", args: append([]string(nil), args...)})
 			return nil
 		},
+		RunWorker: func(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+			calls = append(calls, call{name: "worker", args: append([]string(nil), args...)})
+			return nil
+		},
 		RunInstall: func(args []string, stdout, stderr io.Writer) error {
 			calls = append(calls, call{name: "install", args: append([]string(nil), args...)})
 			return nil
@@ -48,6 +52,7 @@ func TestDispatchCLIRoutesSubcommands(t *testing.T) {
 		{name: "chat -> tui args[1:]", args: []string{"chat", "-model", "x"}, wantCall: call{name: "tui", args: []string{"-model", "x"}}},
 		{name: "tui -> tui args[1:]", args: []string{"tui", "-stream", "true"}, wantCall: call{name: "tui", args: []string{"-stream", "true"}}},
 		{name: "run -> oneshot", args: []string{"run", "-prompt", "hello"}, wantCall: call{name: "run", args: []string{"-prompt", "hello"}}},
+		{name: "worker -> sandbox worker", args: []string{"worker", "--sandbox-stdio"}, wantCall: call{name: "worker", args: []string{"--sandbox-stdio"}}},
 		{name: "install -> installer", args: []string{"install", "-to", "bin"}, wantCall: call{name: "install", args: []string{"-to", "bin"}}},
 		{name: "help -> render usage", args: []string{"help"}, wantCall: call{name: "help"}},
 		{name: "unknown -> tui passthrough", args: []string{"custom", "arg"}, wantCall: call{name: "tui", args: []string{"custom", "arg"}}},
@@ -77,6 +82,7 @@ func TestDispatchCLIPropagatesHandlerError(t *testing.T) {
 			return expected
 		},
 		RunOneShot:  func(args []string, stdin io.Reader, stdout, stderr io.Writer) error { return nil },
+		RunWorker:   func(args []string, stdin io.Reader, stdout, stderr io.Writer) error { return nil },
 		RunInstall:  func(args []string, stdout, stderr io.Writer) error { return nil },
 		RenderUsage: func(w io.Writer) {},
 	}
