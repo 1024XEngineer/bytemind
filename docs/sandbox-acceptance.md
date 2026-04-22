@@ -35,6 +35,9 @@ This document defines the minimum acceptance checks for the current sandbox impl
 | Subprocess worker unavailable while sandbox enabled | Fail closed with internal sandbox worker error. |
 | `system_sandbox_mode=required` + OS backend unavailable | Fail closed before worker execution. |
 | `system_sandbox_mode=best_effort` + OS backend unavailable | Fallback to normal worker launch with explicit fallback reason in startup status/log. |
+| `system_sandbox_mode=required` + runtime backend unavailable at agent startup | Run fails closed before first model/tool turn is executed. |
+| Any run with `sandbox_enabled=true` and `system_sandbox_mode!=off` | Run output includes a startup status line with mode/backend/state. |
+| Any run with sandbox context | Audit stream includes `system_sandbox_startup` event plus sandbox metadata on permission/start/result/task_state audit events. |
 | Linux + `system_sandbox_mode=required` + shell command writes outside writable roots | Write fails from read-only filesystem enforcement. |
 | macOS + `system_sandbox_mode=best_effort` + `sandbox-exec` available | Uses `sandbox-exec` profile-based launch with writable roots and explicit fallback reason when probe fails. |
 | Windows + `system_sandbox_mode=best_effort` | Uses Job Object process isolation backend (no startup fallback). |
@@ -69,6 +72,14 @@ Both scripts run focused suites first, then run `go test ./...`.
   - shell approval policy behavior
   - away-mode denial behavior
   - skip-shell-approval branch for parent-approved subprocess path
+- `internal/agent/runner_test.go`
+  - required system sandbox fail-closed at startup before first model call
+  - startup fallback visibility in run output and task report summary
+- `internal/agent/tool_execution_audit_test.go`
+  - startup audit event (`system_sandbox_startup`) with mode/backend/fallback metadata
+  - sandbox metadata propagation across `tool_execute_start`, `tool_execute_result`, `task_state_changed`
+- `internal/agent/runner_policy_test.go`
+  - sandbox metadata on `permission_decision` and denied/ask execution audit paths
 
 ## Manual Smoke Checks
 
@@ -82,3 +93,9 @@ Both scripts run focused suites first, then run `go test ./...`.
    - Expect success when lease allows workspace root.
 4. `write_file` to path outside workspace/writable roots:
    - Expect immediate denial.
+5. `sandbox_enabled=true` + `system_sandbox_mode=best_effort` + backend unavailable:
+   - Expect startup line `system sandbox startup ... state=fallback`.
+   - Expect task report summary includes `System sandbox fallback: startup (...)`.
+6. `sandbox_enabled=true` + `system_sandbox_mode=required` + backend unavailable:
+   - Expect run fails before first tool/model turn.
+   - Expect no `tool_execute_start` event in audit for that run.
