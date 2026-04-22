@@ -460,6 +460,42 @@ func TestRunShellToolResultIncludesSandboxMetadata(t *testing.T) {
 	}
 }
 
+func TestRunShellToolRequiredModeBackendUnavailableReturnsPermissionDenied(t *testing.T) {
+	originalLookPath := runShellLookPath
+	runShellLookPath = func(string) (string, error) {
+		return "", errors.New("backend unavailable")
+	}
+	defer func() {
+		runShellLookPath = originalLookPath
+	}()
+
+	tool := RunShellTool{}
+	command := "echo ok"
+	if runtime.GOOS == "windows" {
+		command = "Write-Output ok"
+	}
+	_, err := tool.Run(context.Background(), []byte(`{"command":"`+command+`"}`), &ExecutionContext{
+		Workspace:         t.TempDir(),
+		ApprovalPolicy:    "never",
+		SystemSandboxMode: "required",
+		Stdin:             strings.NewReader(""),
+		Stdout:            &bytes.Buffer{},
+	})
+	if err == nil {
+		t.Fatal("expected required mode to fail when sandbox backend is unavailable")
+	}
+	execErr, ok := AsToolExecError(err)
+	if !ok {
+		t.Fatalf("expected ToolExecError, got %T (%v)", err, err)
+	}
+	if execErr.Code != ToolErrorPermissionDenied {
+		t.Fatalf("expected permission_denied code, got %s (%v)", execErr.Code, err)
+	}
+	if !strings.Contains(strings.ToLower(execErr.Message), "required") {
+		t.Fatalf("expected required-mode message, got %q", execErr.Message)
+	}
+}
+
 func metadataString(v any) string {
 	if value, ok := v.(string); ok {
 		return value

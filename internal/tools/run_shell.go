@@ -92,6 +92,9 @@ func (RunShellTool) Run(ctx context.Context, raw json.RawMessage, execCtx *Execu
 
 	cmd, sandboxBackend, sandboxMode, err := shellCommand(runCtx, args.Command, execCtx)
 	if err != nil {
+		if sandboxMode == systemSandboxModeRequired {
+			return "", NewToolExecError(ToolErrorPermissionDenied, strings.TrimSpace(err.Error()), false, err)
+		}
 		return "", err
 	}
 	cmd.Dir = execCtx.Workspace
