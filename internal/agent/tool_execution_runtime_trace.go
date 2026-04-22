@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,14 +25,22 @@ func (r *Runner) appendTaskStateAudit(
 	sessionID corepkg.SessionID,
 	traceID corepkg.TraceID,
 	toolName string,
+	sandboxEnabled bool,
+	sandboxMode string,
 	task runtimepkg.Task,
 ) {
 	if task.ID == "" {
 		return
 	}
+	sandboxMode = strings.TrimSpace(sandboxMode)
+	if sandboxMode == "" {
+		sandboxMode = "off"
+	}
 	metadata := map[string]string{
-		"tool_name": toolName,
-		"status":    string(task.Status),
+		"tool_name":       toolName,
+		"status":          string(task.Status),
+		"sandbox_enabled": strconv.FormatBool(sandboxEnabled),
+		"sandbox_mode":    sandboxMode,
 	}
 	if task.ErrorCode != "" {
 		metadata["error_code"] = task.ErrorCode

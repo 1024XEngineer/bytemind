@@ -111,6 +111,12 @@ func TestRunPromptRecordsTaskStateChangedAuditWithSessionTaskTrace(t *testing.T)
 		if event.TraceID != corepkg.TraceID("trace-tool-1") {
 			t.Fatalf("expected trace id %q, got %q", "trace-tool-1", event.TraceID)
 		}
+		if got := event.Metadata["sandbox_enabled"]; got != "true" {
+			t.Fatalf("expected task_state_changed sandbox_enabled=true, got %q", got)
+		}
+		if got := event.Metadata["sandbox_mode"]; got != "best_effort" {
+			t.Fatalf("expected task_state_changed sandbox_mode=best_effort, got %q", got)
+		}
 		if event.Result == string(corepkg.TaskCompleted) || event.Result == string(corepkg.TaskFailed) || event.Result == string(corepkg.TaskKilled) {
 			seenTerminal = true
 		}

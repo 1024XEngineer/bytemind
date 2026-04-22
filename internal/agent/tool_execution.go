@@ -147,7 +147,15 @@ func (e *defaultEngine) executeToolCall(
 			return []byte(output), err
 		},
 		OnTaskStateChanged: func(task runtimepkg.Task) {
-			runner.appendTaskStateAudit(ctx, sessionID, traceID, call.Function.Name, task)
+			runner.appendTaskStateAudit(
+				ctx,
+				sessionID,
+				traceID,
+				call.Function.Name,
+				runner.config.SandboxEnabled,
+				runner.config.SystemSandboxMode,
+				task,
+			)
 		},
 	})
 
