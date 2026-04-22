@@ -47,18 +47,10 @@ func isHelpMarkdownText(text string) bool {
 }
 
 func renderHelpMarkdown(text string, width int) string {
-	result := renderStructuredMarkdown(markdownSurfaceHelp, text, width)
-	if strings.TrimSpace(result.Display) != "" {
-		return result.Display
-	}
 	return renderHelpMarkdownLegacy(text, width)
 }
 
 func renderHelpMarkdownCopy(text string, width int) string {
-	result := renderStructuredMarkdown(markdownSurfaceHelp, text, width)
-	if strings.TrimSpace(result.Copy) != "" {
-		return result.Copy
-	}
 	return stripANSI(renderHelpMarkdownLegacy(text, width))
 }
 

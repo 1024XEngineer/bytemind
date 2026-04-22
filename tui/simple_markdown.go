@@ -172,8 +172,24 @@ func (r *SimpleMarkdownRenderer) renderNodeInternal(node gast.Node, source []byt
 // renderHeading 渲染标题
 func (r *SimpleMarkdownRenderer) renderHeading(node *gast.Heading, source []byte) string {
 	text := r.collectText(node, source)
+
+	// 根据级别添加不同的符号
+	var prefix string
+	switch node.Level {
+	case 1:
+		prefix = "◆ " // 使用Unicode符号
+	case 2:
+		prefix = "◇ "
+	case 3:
+		prefix = "• "
+	case 4:
+		prefix = "· "
+	default:
+		prefix = "• "
+	}
+
 	style := r.style.Heading(node.Level)
-	return fmt.Sprintf("%s\n", style.Render(text))
+	return fmt.Sprintf("%s%s\n", style.Render(prefix+text), prefix)
 }
 
 // renderParagraph 渲染段落
@@ -199,23 +215,44 @@ func (r *SimpleMarkdownRenderer) renderCodeBlock(node gast.Node, source []byte) 
 	// 添加语法高亮
 	highlightedCode := r.highlightCode(code, language)
 
-	// 构建代码块
-	border := strings.Repeat("─", r.width-4)
-	result := fmt.Sprintf("┌─ %s ─┐\n", language)
-
-	lines := strings.Split(highlightedCode, "\n")
-	for _, line := range lines {
-		result += fmt.Sprintf("│ %-*s │\n", r.width-6, line)
+	// 构建更美观的代码块
+	// 使用更丰富的边框样式
+	borderWidth := r.width - 4
+	if borderWidth < 20 {
+		borderWidth = 20
 	}
 
-	result += fmt.Sprintf("└─%s─┘\n", border)
+	// 顶部边框，包含语言信息
+	if language == "" {
+		language = "code"
+	}
+
+	result := fmt.Sprintf("┌─ %s ", language)
+	result += strings.Repeat("─", max(0, borderWidth-len(language)-8))
+	result += "┐\n"
+
+	// 代码内容，每行添加行号和边框
+	lines := strings.Split(highlightedCode, "\n")
+	lineNumWidth := len(fmt.Sprintf("%d", len(lines)))
+
+	for i, line := range lines {
+		lineNum := i + 1
+		lineNumStr := fmt.Sprintf("%*d", lineNumWidth, lineNum)
+		result += fmt.Sprintf("│ %s │ %-*s │\n", lineNumStr, borderWidth-lineNumWidth-6, line)
+	}
+
+	// 底部边框
+	result += "└"
+	result += strings.Repeat("─", max(0, borderWidth-2))
+	result += "┘\n"
 
 	return r.style.Code().Render(result) + "\n"
 }
 
 // highlightCode 代码语法高亮
 func (r *SimpleMarkdownRenderer) highlightCode(code, language string) string {
-	// 简化实现，不进行实际的语法高亮
+	// 简化实现，只添加语言标识，不进行复杂的语法高亮
+	// 这样保持了简洁性，同时提供了基本的代码标识
 	return code
 }
 
@@ -226,6 +263,13 @@ func (r *SimpleMarkdownRenderer) renderList(node *gast.List, source []byte) stri
 	isOrdered := node.IsOrdered()
 	start := node.Start
 	index := start
+
+	// 根据列表层级选择不同的符号
+	level := 0 // 可以根据节点层级来设置，这里简化处理
+	bulletGlyph := "• "
+	if level > 0 {
+		bulletGlyph = "◦ "
+	}
 
 	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
 		if item, ok := child.(*gast.ListItem); ok {
@@ -238,7 +282,7 @@ func (r *SimpleMarkdownRenderer) renderList(node *gast.List, source []byte) stri
 					if strings.HasPrefix(textStr, "[ ] ") {
 						text = "☐ " + textStr[3:] + "\n"
 					} else if strings.HasPrefix(textStr, "[x] ") {
-						text = "☑ " + textStr[3:] + "\n"
+						text = "✓ " + textStr[3:] + "\n"
 					}
 				}
 			}
@@ -247,7 +291,7 @@ func (r *SimpleMarkdownRenderer) renderList(node *gast.List, source []byte) stri
 				result.WriteString(fmt.Sprintf("%d. %s\n", index, text))
 				index++
 			} else {
-				result.WriteString(fmt.Sprintf("• %s\n", text))
+				result.WriteString(fmt.Sprintf("%s%s\n", bulletGlyph, text))
 			}
 		}
 	}
@@ -263,6 +307,7 @@ func (r *SimpleMarkdownRenderer) renderBlockquote(node *gast.Blockquote, source 
 	var result strings.Builder
 	for _, line := range lines {
 		if strings.TrimSpace(line) != "" {
+			// 使用更美观的引用符号
 			result.WriteString(fmt.Sprintf("▍ %s\n", line))
 		} else {
 			result.WriteString("▍\n")
@@ -274,14 +319,123 @@ func (r *SimpleMarkdownRenderer) renderBlockquote(node *gast.Blockquote, source 
 
 // renderTable 渲染表格
 func (r *SimpleMarkdownRenderer) renderTable(node gast.Node, source []byte) string {
-	// 简化的表格渲染
-	return r.collectText(node, source) + "\n"
+	// 简单的表格渲染实现
+	var result strings.Builder
+
+	// 这里需要解析表格结构，但由于goldmark的表格在extension中
+	// 我们使用一个简化的实现，只显示表格内容
+	text := r.collectText(node, source)
+	lines := strings.Split(text, "\n")
+
+	if len(lines) == 0 {
+		return ""
+	}
+
+	// 尝试解析表格行和列
+	var tableRows [][]string
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		// 简单的分割，假设使用|作为分隔符
+		if strings.Contains(line, "|") {
+			parts := strings.Split(line, "|")
+			// 移除首尾的空元素
+			if len(parts) > 2 {
+				parts = parts[1 : len(parts)-1]
+				// 清理每个单元格的内容
+				for i, part := range parts {
+					parts[i] = strings.TrimSpace(part)
+				}
+				tableRows = append(tableRows, parts)
+			}
+		}
+	}
+
+	if len(tableRows) == 0 {
+		// 如果解析失败，返回原始文本
+		return text + "\n"
+	}
+
+	// 计算每列的最大宽度
+	maxCols := 0
+	for _, row := range tableRows {
+		if len(row) > maxCols {
+			maxCols = len(row)
+		}
+	}
+
+	colWidths := make([]int, maxCols)
+	for i := 0; i < maxCols; i++ {
+		maxWidth := 10 // 最小宽度
+		for _, row := range tableRows {
+			if i < len(row) {
+				width := len(row[i])
+				if width > maxWidth {
+					maxWidth = width
+				}
+			}
+		}
+		colWidths[i] = maxWidth
+	}
+
+	// 渲染表格
+	// 顶部边框
+	result.WriteString("┌")
+	for i, width := range colWidths {
+		result.WriteString(strings.Repeat("─", width+2)) // +2 for padding
+		if i < len(colWidths)-1 {
+			result.WriteString("┬")
+		}
+	}
+	result.WriteString("┐\n")
+
+	// 渲染表格内容
+	for rowIndex, row := range tableRows {
+		result.WriteString("│")
+		for colIndex, width := range colWidths {
+			cellContent := ""
+			if colIndex < len(row) {
+				cellContent = row[colIndex]
+			}
+			// 添加空格填充
+			padding := width - len(cellContent) + 1
+			result.WriteString(" " + cellContent + strings.Repeat(" ", padding))
+			result.WriteString("│")
+		}
+		result.WriteString("\n")
+
+		// 在表头后添加分隔线
+		if rowIndex == 0 {
+			result.WriteString("├")
+			for i, width := range colWidths {
+				result.WriteString(strings.Repeat("─", width+2))
+				if i < len(colWidths)-1 {
+					result.WriteString("┼")
+				}
+			}
+			result.WriteString("┤\n")
+		}
+	}
+
+	// 底部边框
+	result.WriteString("└")
+	for i, width := range colWidths {
+		result.WriteString(strings.Repeat("─", width+2))
+		if i < len(colWidths)-1 {
+			result.WriteString("┴")
+		}
+	}
+	result.WriteString("┘\n")
+
+	return result.String()
 }
 
 // renderThematicBreak 渲染分隔线
 func (r *SimpleMarkdownRenderer) renderThematicBreak() string {
-	rule := strings.Repeat("─", r.width)
-	return fmt.Sprintf("%s\n\n", rule)
+	// 使用更美观的分隔线样式
+	rule := strings.Repeat("─", max(0, r.width))
+	return fmt.Sprintf("\n%s\n\n", rule)
 }
 
 // renderEmphasis 渲染强调

@@ -889,12 +889,23 @@ func (m model) pasteFragmentFromKey(msg tea.KeyMsg) (string, string, bool) {
 	if msg.Type != tea.KeyRunes || len(msg.Runes) == 0 {
 		return "", "", false
 	}
+	fragment := string(msg.Runes)
+	if looksLikeMarkdownPasteFragment(strings.TrimSpace(normalizeNewlines(fragment))) {
+		return fragment, "rune", true
+	}
 	return "", "", false
 }
 
 func (m model) hasImplicitPasteCandidateEvidence() bool {
 	if !m.pasteBurstCandidate.active {
-		return false
+		trimmed := strings.TrimSpace(m.input.Value())
+		if trimmed == "" {
+			return false
+		}
+		return !m.lastInputAt.IsZero() &&
+			time.Since(m.lastInputAt) <= 250*time.Millisecond &&
+			m.inputBurstSize >= 2 &&
+			looksLikeMarkdownPasteFragment(trimmed)
 	}
 	if m.pasteBurstCandidate.lastEventAt.IsZero() {
 		return false
@@ -1415,7 +1426,7 @@ func (m model) shouldSuppressEnterAfterPaste() bool {
 		return false
 	}
 	if strings.Contains(m.input.Value(), "[Paste #") || strings.Contains(m.input.Value(), "[Pasted #") {
-		return false
+		return true
 	}
 	if strings.Contains(m.input.Value(), "\n") {
 		return true

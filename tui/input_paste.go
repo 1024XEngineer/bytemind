@@ -590,7 +590,17 @@ func (m *model) ingestPasteFragment(fragment, source string) tea.Cmd {
 }
 
 func (m model) handlePastePayload(payload string) (tea.Model, tea.Cmd) {
-	return m, m.ingestPasteFragment(trimTrailingPasteTerminators(payload), "paste-payload")
+	cleaned := trimTrailingPasteTerminators(payload)
+	candidate := strings.ReplaceAll(normalizeNewlines(cleaned), ctrlVMarkerRune, "")
+	if strings.TrimSpace(candidate) == "" {
+		m.clearPasteTransaction()
+		if note := m.handleEmptyClipboardPaste(); strings.TrimSpace(note) != "" {
+			m.statusNote = note
+		}
+		m.syncInputOverlays()
+		return m, nil
+	}
+	return m, m.ingestPasteFragment(cleaned, "paste-payload")
 }
 
 func (m *model) armClipboardPasteCaptureSignal() {
@@ -915,11 +925,16 @@ func (m *model) isLongPastedText(input string) bool {
 		return false
 	}
 
-	lines := strings.Split(normalized, "\n")
-	lineCount := len(lines)
+	lineCount := strings.Count(normalized, "\n") + 1
 	newlineCount := strings.Count(normalized, "\n")
 
-	if lineCount > longPasteLineThreshold || len(normalized) > longPasteCharThreshold {
+	if lineCount >= opencodePasteSummaryMinLines {
+		return true
+	}
+	if newlineCount == 0 && len([]rune(trimmed)) > opencodePasteSummaryMinChars {
+		return true
+	}
+	if lineCount <= 2 && len(normalized) >= flattenedPasteCharThreshold {
 		return true
 	}
 
@@ -957,6 +972,9 @@ func (m *model) shouldCompressPastedText(input, source string) bool {
 		return false
 	}
 	if m.isLongPastedText(input) {
+		if isPasteLikeSource(source) && !strings.Contains(normalizeNewlines(input), "\n") {
+			return false
+		}
 		return true
 	}
 	if trimmed == "" {
@@ -973,12 +991,6 @@ func (m *model) shouldCompressPastedText(input, source string) bool {
 		return false
 	}
 	if isPasteLikeSource(source) {
-		return true
-	}
-	if !m.lastPasteAt.IsZero() && time.Since(m.lastPasteAt) <= 2*pasteSubmitGuard {
-		return true
-	}
-	if isSplitPasteContinuation(input, source, m.lastPasteAt) {
 		return true
 	}
 	if pasteContext && !m.lastInputAt.IsZero() && time.Since(m.lastInputAt) <= pasteBurstWindow && m.inputBurstSize >= pasteBurstCharThreshold {
@@ -1212,7 +1224,7 @@ func shouldMergeIntoLatestMarker(source string, lastCompressedAt time.Time) bool
 		return false
 	}
 	if isPasteLikeSource(source) {
-		return time.Since(lastCompressedAt) <= 300*time.Millisecond
+		return false
 	}
 	return time.Since(lastCompressedAt) <= 500*time.Millisecond
 }

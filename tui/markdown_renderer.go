@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"time"
 	"unicode"
 
 	"github.com/alecthomas/chroma/v2"
@@ -323,13 +322,16 @@ var (
 )
 
 func renderStructuredMarkdown(surface markdownSurface, text string, width int) MarkdownRenderResult {
-	// Use the simplified markdown renderer
+	result, err := renderStructuredMarkdownPrepared(surface, text, width)
+	if err == nil {
+		return result
+	}
 	renderer := NewSimpleMarkdownRenderer(width)
 	display := renderer.Render(text)
 
 	return MarkdownRenderResult{
 		Display: display,
-		Copy:    text, // For copy mode, return the original markdown text
+		Copy:    strings.TrimRight(stripANSI(display), "\n"),
 	}
 }
 
@@ -1517,29 +1519,13 @@ func trimMarkdownBlankLines(lines []markdownRenderLine) []markdownRenderLine {
 }
 
 func markdownHeadingStyle(level int) lipgloss.Style {
-	// Select style based on level and potentially add randomization for visual variety
 	switch level {
 	case 1:
-		// Randomly select between standard and alt style for H1
-		if time.Now().Unix()%2 == 0 {
-			return markdownHeading1Style
-		} else {
-			return markdownHeading1AltStyle
-		}
+		return markdownHeading1Style
 	case 2:
-		// Randomly select between standard and alt style for H2
-		if time.Now().Unix()%2 == 0 {
-			return markdownHeading2Style
-		} else {
-			return markdownHeading2AltStyle
-		}
+		return markdownHeading2Style
 	case 3:
-		// Randomly select between standard and alt style for H3
-		if time.Now().Unix()%2 == 0 {
-			return markdownHeading3Style
-		} else {
-			return markdownHeading3AltStyle
-		}
+		return markdownHeading3Style
 	default:
 		return markdownHeading4Style
 	}
@@ -1553,16 +1539,16 @@ func markdownHeadingPrefixes(level int) (markdownLinePrefix, markdownLinePrefix)
 	switch level {
 	case 1:
 		prefixChars = []string{"█ ", "▓ ", "▒ ", "░ ", "◆ ", "◇ "}
-		prefixText = prefixChars[int(time.Now().Unix())%len(prefixChars)]
+		prefixText = prefixChars[0]
 	case 2:
 		prefixChars = []string{"◆ ", "◇ ", "▸ ", "▹ ", "▪ ", "▫ "}
-		prefixText = prefixChars[int(time.Now().Unix())%len(prefixChars)]
+		prefixText = prefixChars[0]
 	case 3:
 		prefixChars = []string{"• ", "◦ ", "‣ ", "⁃ ", "∙ ", "○ "}
-		prefixText = prefixChars[int(time.Now().Unix())%len(prefixChars)]
+		prefixText = prefixChars[0]
 	default:
 		prefixChars = []string{"· ", "∙ ", "• ", "· "}
-		prefixText = prefixChars[int(time.Now().Unix())%len(prefixChars)]
+		prefixText = prefixChars[0]
 	}
 
 	styled := markdownHeadingStyle(level).Render(prefixText)
@@ -1756,18 +1742,7 @@ func selectBulletIcon(listIndex int, listDepth int) string {
 }
 
 func selectOrderedMarker(listIndex int, listDepth int, startIndex int) string {
-	// Different ordered list styles based on depth
-	markerStyles := []func(int, int) string{
-		func(idx, start int) string { return fmt.Sprintf("%d.", start+idx) }, // Decimal numbers
-		func(idx, start int) string { return fmt.Sprintf("%d)", start+idx) }, // Decimal with parenthesis
-		func(idx, start int) string { return markdownListRomanNumeral },      // Roman numerals
-		func(idx, start int) string { return markdownListLetterUpper },       // Uppercase letters
-		func(idx, start int) string { return markdownListLetterLower },       // Lowercase letters
-	}
-
-	// Select style based on depth
-	styleIndex := listDepth % len(markerStyles)
-	return markerStyles[styleIndex](listIndex, startIndex)
+	return fmt.Sprintf("%d. ", startIndex+listIndex)
 }
 
 func selectCodeIcon(language string) string {
