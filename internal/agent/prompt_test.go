@@ -17,16 +17,19 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	}
 
 	prompt := systemPrompt(PromptInput{
-		Workspace:      workspace,
-		ApprovalPolicy: "on-request",
-		ApprovalMode:   "away",
-		AwayPolicy:     "fail_fast",
-		SandboxEnabled: true,
-		SystemSandbox:  "best_effort",
-		Model:          "gpt-5.4-mini",
-		Mode:           "plan",
-		Platform:       "linux/amd64",
-		Now:            time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
+		Workspace:             workspace,
+		ApprovalPolicy:        "on-request",
+		ApprovalMode:          "away",
+		AwayPolicy:            "fail_fast",
+		SandboxEnabled:        true,
+		SystemSandbox:         "best_effort",
+		SystemSandboxBackend:  "linux_unshare",
+		SystemSandboxFallback: false,
+		SystemSandboxStatus:   `system sandbox backend "linux_unshare" is active`,
+		Model:                 "gpt-5.4-mini",
+		Mode:                  "plan",
+		Platform:              "linux/amd64",
+		Now:                   time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
 		Skills: []PromptSkill{
 			{Name: "review", Description: "Review code changes for regressions.", Enabled: true},
 		},
@@ -60,6 +63,9 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	assertContains(t, prompt, "away_policy: fail_fast")
 	assertContains(t, prompt, "sandbox_enabled: true")
 	assertContains(t, prompt, "system_sandbox_mode: best_effort")
+	assertContains(t, prompt, "system_sandbox_backend: linux_unshare")
+	assertContains(t, prompt, "system_sandbox_fallback: false")
+	assertContains(t, prompt, `system_sandbox_status: system sandbox backend "linux_unshare" is active`)
 	assertContains(t, prompt, "[Available Skills]")
 	assertContains(t, prompt, "Skills are reusable task profiles available in this session")
 	assertContains(t, prompt, "- review: Review code changes for regressions.")
@@ -99,6 +105,8 @@ func TestSystemPromptOmitsOptionalBlocksWhenEmpty(t *testing.T) {
 	assertContains(t, prompt, "away_policy: auto_deny_continue")
 	assertContains(t, prompt, "sandbox_enabled: false")
 	assertContains(t, prompt, "system_sandbox_mode: off")
+	assertContains(t, prompt, "system_sandbox_backend: none")
+	assertContains(t, prompt, "system_sandbox_fallback: false")
 	if strings.Contains(prompt, "[Instructions]") {
 		t.Fatalf("did not expect instruction block in prompt: %q", prompt)
 	}
