@@ -377,7 +377,7 @@ func TestRunShellToolReturnsTimeoutError(t *testing.T) {
 }
 
 func TestBuildSystemSandboxExecutionMetadataDefaults(t *testing.T) {
-	meta := buildSystemSandboxExecutionMetadata("", "")
+	meta := buildSystemSandboxExecutionMetadata("", systemSandboxRuntimeBackend{})
 	if got := meta["mode"]; got != systemSandboxModeOff {
 		t.Fatalf("expected default mode off, got %#v", meta)
 	}
@@ -390,15 +390,27 @@ func TestBuildSystemSandboxExecutionMetadataDefaults(t *testing.T) {
 	if got := meta["fallback"]; got != false {
 		t.Fatalf("expected fallback=false, got %#v", meta)
 	}
+	if got := meta["status"]; got != "inactive" {
+		t.Fatalf("expected status inactive, got %#v", meta)
+	}
 }
 
 func TestBuildSystemSandboxExecutionMetadataFallback(t *testing.T) {
-	meta := buildSystemSandboxExecutionMetadata(systemSandboxModeBestEffort, "")
+	meta := buildSystemSandboxExecutionMetadata(systemSandboxModeBestEffort, systemSandboxRuntimeBackend{
+		Name:              "darwin_sandbox_exec",
+		UnavailableReason: "darwin backend \"sandbox-exec\" is unavailable",
+	})
 	if got := meta["fallback"]; got != true {
 		t.Fatalf("expected fallback=true for best_effort without backend, got %#v", meta)
 	}
 	if got := meta["active"]; got != false {
 		t.Fatalf("expected active=false without backend, got %#v", meta)
+	}
+	if got := meta["status"]; got != "fallback" {
+		t.Fatalf("expected status fallback, got %#v", meta)
+	}
+	if got := metadataString(meta["fallback_reason"]); !strings.Contains(strings.ToLower(got), "sandbox-exec") {
+		t.Fatalf("expected fallback_reason to include sandbox-exec, got %#v", meta)
 	}
 }
 
@@ -443,6 +455,16 @@ func TestRunShellToolResultIncludesSandboxMetadata(t *testing.T) {
 	if got := metadata["fallback"]; got != false {
 		t.Fatalf("expected fallback=false, got %#v", metadata)
 	}
+	if got := metadata["status"]; got != "inactive" {
+		t.Fatalf("expected status inactive, got %#v", metadata)
+	}
+}
+
+func metadataString(v any) string {
+	if value, ok := v.(string); ok {
+		return value
+	}
+	return ""
 }
 
 type stubFileInfo struct{}
