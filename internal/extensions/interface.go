@@ -13,6 +13,15 @@ type Manager interface {
 	List(ctx context.Context) ([]ExtensionInfo, error)
 }
 
+// Extension models a loadable extension source (for example skill or mcp).
+// Implementations should keep failures local to the extension instance and
+// expose health degradation through Health rather than process-level errors.
+type Extension interface {
+	Info() ExtensionInfo
+	ResolveTools(ctx context.Context) ([]ExtensionTool, error)
+	Health(ctx context.Context) (HealthSnapshot, error)
+}
+
 type ToolUseContext struct {
 	SessionID corepkg.SessionID
 	TaskID    corepkg.TaskID
