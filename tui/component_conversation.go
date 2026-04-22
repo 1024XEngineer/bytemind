@@ -100,6 +100,12 @@ func renderChatCopySection(item chatEntry, width int) string {
 		if strings.TrimSpace(item.Meta) != "" {
 			title = strings.TrimSpace(item.Meta)
 		}
+	case "tool":
+		label, name := toolDisplayParts(title)
+		title = label
+		if strings.TrimSpace(name) != "" {
+			title += "  " + name
+		}
 	}
 
 	if title == "" {
@@ -166,7 +172,7 @@ func renderChatCard(item chatEntry, width int) string {
 
 func renderChatSection(item chatEntry, width int) string {
 	title := cardTitleStyle.Foreground(colorAccent)
-	bodyStyle := chatBodyStyle
+	bodyStyle := chatBodyBlockStyle
 	status := item.Status
 	displayTitle := item.Title
 	if status == "final" {
@@ -176,15 +182,19 @@ func renderChatSection(item chatEntry, width int) string {
 	case "user":
 		title = userMessageStyle
 	case "tool":
-		if strings.HasPrefix(displayTitle, "Tool Result | ") {
+		if strings.HasPrefix(strings.ToLower(displayTitle), "tool result | ") {
 			title = toolResultTitleStyle
 		} else {
 			title = toolCallTitleStyle
 		}
-		bodyStyle = toolBodyStyle
-		status = ""
+		if strings.EqualFold(status, "error") || strings.EqualFold(status, "warn") {
+			bodyStyle = toolErrorBodyStyle
+		} else {
+			bodyStyle = toolBodyStyle
+		}
 	case "system":
 		title = cardTitleStyle.Foreground(colorMuted)
+		bodyStyle = chatMutedBodyBlockStyle
 	default:
 		if item.Status == "thinking" || item.Status == "thinking_done" {
 			if item.Status == "thinking_done" {
@@ -213,18 +223,30 @@ func renderChatSection(item chatEntry, width int) string {
 		}
 	}
 	headContent := title.Render(displayTitle)
+	if item.Kind == "tool" {
+		label, name := toolDisplayParts(displayTitle)
+		headContent = renderPillBadge(label, "info")
+		if strings.TrimSpace(name) != "" {
+			headContent = lipgloss.JoinHorizontal(lipgloss.Left, headContent, " ", toolNameStyle.Render(name))
+		}
+	}
 	if item.Kind == "user" && strings.TrimSpace(item.Meta) != "" {
-		headContent = mutedStyle.Copy().Faint(true).Render(item.Meta)
+		headContent = chatHeaderMetaStyle.Render(item.Meta)
 	}
 	if status != "" {
-		headContent = lipgloss.JoinHorizontal(lipgloss.Left, headContent, mutedStyle.Render("  "+status))
+		headContent = lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			headContent,
+			"  ",
+			renderPillBadge(status, status),
+		)
 	}
 	if item.Kind == "assistant" {
 		if badge := renderAssistantPhaseBadge(item.Status); badge != "" {
 			headContent = lipgloss.JoinHorizontal(lipgloss.Left, headContent, "  ", badge)
 		}
 	}
-	head := lipgloss.NewStyle().
+	head := chatHeaderStyle.Copy().
 		Width(width).
 		Render(headContent)
 	if item.Kind == "tool" && strings.TrimSpace(item.Body) == "" {
@@ -256,10 +278,46 @@ func renderBytemindRunCard(items []chatEntry, width int) string {
 	outer := resolveRunCardStyle(items)
 	contentWidth := max(8, width-outer.GetHorizontalFrameSize())
 	sections := make([]string, 0, len(items))
-	for _, item := range items {
-		sections = append(sections, renderChatSection(item, contentWidth))
+	for i, item := range items {
+		if i > 0 {
+			sections = append(sections, renderRunSectionDivider(contentWidth))
+		}
+		sections = append(sections, renderRunSection(item, contentWidth))
 	}
 	return outer.Width(contentWidth).Render(strings.Join(sections, "\n"))
+}
+
+func renderRunSection(item chatEntry, width int) string {
+	if item.Kind == "tool" {
+		style := resolveToolRunSectionStyle(item.Status)
+		contentWidth := max(8, width-style.GetHorizontalFrameSize())
+		return style.Width(contentWidth).Render(renderChatSection(item, contentWidth))
+	}
+	if item.Kind == "assistant" && item.Status == "final" {
+		contentWidth := max(8, width-runAnswerSectionStyle.GetHorizontalFrameSize())
+		return runAnswerSectionStyle.Width(contentWidth).Render(renderChatSection(item, contentWidth))
+	}
+	return renderChatSection(item, width)
+}
+
+func renderRunSectionDivider(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return runSectionDividerStyle.Width(width).Render(strings.Repeat("─", width))
+}
+
+func resolveToolRunSectionStyle(status string) lipgloss.Style {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "done", "success":
+		return runToolSuccessSectionStyle
+	case "warn", "warning", "pending":
+		return runToolWarningSectionStyle
+	case "error", "failed":
+		return runToolErrorSectionStyle
+	default:
+		return runToolSectionStyle
+	}
 }
 
 func (m model) renderThinkingRow(item chatEntry, width int) string {
@@ -314,11 +372,11 @@ func (m model) renderThinkingHeadline(status string) string {
 func renderAssistantPhaseBadge(status string) string {
 	switch strings.TrimSpace(strings.ToLower(status)) {
 	case "streaming":
-		return statusGeneratingStyle.Render("Generating")
+		return renderPillBadge("Generating", "running")
 	case "settling":
-		return statusSettlingStyle.Render("Finalizing")
+		return renderPillBadge("Finalizing", "pending")
 	case "final":
-		return statusFinalStyle.Render("Answer")
+		return renderPillBadge("Answer", "neutral")
 	default:
 		return ""
 	}
@@ -331,12 +389,12 @@ func resolveRunCardStyle(items []chatEntry) lipgloss.Style {
 		}
 		switch strings.TrimSpace(strings.ToLower(item.Status)) {
 		case "streaming":
-			return chatStreamingStyle
+			return runCardStreamingStyle
 		case "settling":
-			return chatSettlingStyle
+			return runCardSettlingStyle
 		}
 	}
-	return chatAssistantStyle
+	return runCardStyle
 }
 
 func renderModal(width, height int, modal string) string {

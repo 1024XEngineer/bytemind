@@ -138,6 +138,16 @@ func TestRenderChatSectionShowsSimpleAssistantStateLabels(t *testing.T) {
 	if strings.Contains(final, "Generating") {
 		t.Fatalf("expected final assistant section not to look in-progress, got %q", final)
 	}
+
+	settling := renderChatSection(chatEntry{
+		Kind:   "assistant",
+		Title:  assistantLabel,
+		Body:   "Wrapping up",
+		Status: "settling",
+	}, 60)
+	if !strings.Contains(settling, "Finalizing") {
+		t.Fatalf("expected settling assistant section to show finalizing badge, got %q", settling)
+	}
 }
 
 func TestRenderConversationKeepsProgressBlueAndFinalNeutral(t *testing.T) {

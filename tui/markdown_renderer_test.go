@@ -145,3 +145,72 @@ func TestRenderStructuredMarkdownPreparedStylesProcessedLineWithoutPlaceholderLe
 		t.Fatalf("expected copy to preserve processed line text, got %q", result.Copy)
 	}
 }
+
+func TestRenderStructuredMarkdownPreparedRendersNestedListsAndHeadings(t *testing.T) {
+	input := strings.Join([]string{
+		"# Plan",
+		"",
+		"1. Ship renderer tokens",
+		"   - unify colors",
+		"   - add badges",
+		"2. Verify output",
+	}, "\n")
+
+	result, err := renderStructuredMarkdownPrepared(markdownSurfaceAssistant, input, 72)
+	if err != nil {
+		t.Fatalf("renderStructuredMarkdownPrepared: %v", err)
+	}
+
+	for _, want := range []string{"Plan", "1. Ship renderer tokens", "unify colors", "add badges", "2. Verify output"} {
+		if !strings.Contains(result.Copy, want) {
+			t.Fatalf("expected nested markdown copy to contain %q, got %q", want, result.Copy)
+		}
+	}
+	for _, want := range []string{"Plan", "1. Ship renderer tokens", "unify colors", "add badges"} {
+		if !strings.Contains(result.Display, want) {
+			t.Fatalf("expected styled heading/list display to contain %q, got %q", want, result.Display)
+		}
+	}
+}
+
+func TestRenderStructuredMarkdownPreparedStylesToolSurfaceAndCopy(t *testing.T) {
+	input := strings.Join([]string{
+		"## Summary",
+		"",
+		"- renderer tokenized",
+		"- copy stays plain",
+	}, "\n")
+
+	result, err := renderStructuredMarkdownPrepared(markdownSurfaceTool, input, 72)
+	if err != nil {
+		t.Fatalf("renderStructuredMarkdownPrepared: %v", err)
+	}
+
+	for _, want := range []string{"Summary", "renderer tokenized", "copy stays plain"} {
+		if !strings.Contains(result.Display, want) {
+			t.Fatalf("expected tool surface display to contain %q, got %q", want, result.Display)
+		}
+	}
+	for _, want := range []string{"Summary", "renderer tokenized", "copy stays plain"} {
+		if !strings.Contains(result.Copy, want) {
+			t.Fatalf("expected tool copy to contain %q, got %q", want, result.Copy)
+		}
+	}
+}
+
+func TestFormatChatCopyBodyUsesPlainToolMarkdownCopy(t *testing.T) {
+	item := chatEntry{
+		Kind: "tool",
+		Body: "## Summary\n\n- scanned renderer\n- kept copy plain",
+	}
+
+	got := formatChatCopyBody(item, 72)
+	if strings.Contains(got, "\x1b") {
+		t.Fatalf("expected tool copy body to omit ANSI escapes, got %q", got)
+	}
+	for _, want := range []string{"Summary", "scanned renderer", "kept copy plain"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected tool copy body to contain %q, got %q", want, got)
+		}
+	}
+}

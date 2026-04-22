@@ -401,6 +401,14 @@ func TestClassifyInputMutationDetectsCtrlVPasteEmpty(t *testing.T) {
 	}
 }
 
+func TestClassifyInputMutationTreatsPlainRuneChunkAsOrdinary(t *testing.T) {
+	inserted := "这是一次输入法上屏后的长文本片段"
+	class, _, _, _ := classifyInputMutation("", inserted, inserted)
+	if class != inputMutationOrdinary {
+		t.Fatalf("expected plain rune chunk classification, got %q", class)
+	}
+}
+
 func TestShouldTriggerClipboardImagePasteForCtrlVMarkerOnly(t *testing.T) {
 	if !shouldTriggerClipboardImagePaste("", ctrlVMarkerRune, "ctrl+v") {
 		t.Fatalf("expected ctrl+v control marker to trigger clipboard image read")

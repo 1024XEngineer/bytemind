@@ -69,8 +69,8 @@ func (m model) handleCommandPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.statusNote = "This command is unavailable while a run is in progress. Use /btw <message>."
 					return m, nil
 				}
-				m.statusNote = "Run is in progress. Use /btw <message> to interject, or Esc to interrupt."
-				return m, nil
+				m.closeCommandPalette()
+				return m.submitBTW(value)
 			}
 			m.closeCommandPalette()
 			m.input.Reset()

@@ -7,6 +7,7 @@ import (
 
 func (m *model) noteInputMutation(before, after, source string) {
 	now := time.Now()
+	previousInputAt := m.lastInputAt
 	gap := time.Duration(0)
 	if !m.lastInputAt.IsZero() {
 		gap = now.Sub(m.lastInputAt)
@@ -20,8 +21,13 @@ func (m *model) noteInputMutation(before, after, source string) {
 		m.inputBurstSize += max(1, delta)
 	} else {
 		m.inputBurstSize = max(1, delta)
+		m.inputBurstBaseValue = before
 	}
 	m.lastInputAt = now
+	if strings.TrimSpace(after) == "" {
+		m.inputBurstBaseValue = ""
+	}
+	m.updatePasteBurstCandidate(before, after, source, previousInputAt, now)
 
 	if shouldRecordPasteSignal(source) {
 		m.lastPasteAt = now

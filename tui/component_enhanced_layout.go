@@ -40,14 +40,5 @@ func RenderEnhancedHeader(text string) string {
 }
 
 func renderStatusBadge(text, badgeType string) string {
-	switch badgeType {
-	case "success":
-		return doneStyle.Render(text)
-	case "warning":
-		return warnStyle.Render(text)
-	case "error":
-		return errorStyle.Render(text)
-	default:
-		return accentStyle.Render(text)
-	}
+	return renderPillBadge(text, badgeType)
 }

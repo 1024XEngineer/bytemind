@@ -22,7 +22,6 @@ func (m *model) beginRun(prompt, mode, note string) tea.Cmd {
 }
 
 func (m *model) beginRunWithInput(promptInput RunPromptInput, mode, note string) tea.Cmd {
-	m.installApprovalBridge()
 	runCtx, cancel := context.WithCancel(context.Background())
 	m.runSeq++
 	runID := m.runSeq
@@ -164,7 +163,7 @@ func (m *model) handleAgentEvent(event Event) {
 		m.populateLatestThinkingToolStep(event.ToolName, "", "running")
 		m.appendChat(chatEntry{
 			Kind:   "tool",
-			Title:  "Tool Call | " + event.ToolName,
+			Title:  toolEntryTitle(event.ToolName),
 			Body:   "",
 			Status: "running",
 		})
@@ -201,9 +200,7 @@ func (m *model) handleAgentEvent(event Event) {
 	case EventUsageUpdated:
 		m.applyUsage(event.Usage)
 	case EventRunFinished:
-		if note, ok := m.latestPendingApprovalStatusNote(); ok {
-			m.statusNote = note
-		} else if strings.TrimSpace(event.Content) != "" {
+		if strings.TrimSpace(event.Content) != "" {
 			m.statusNote = "Run finished."
 		}
 		m.phase = "idle"

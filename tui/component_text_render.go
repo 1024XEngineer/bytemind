@@ -22,6 +22,9 @@ func formatChatBodyMode(item chatEntry, width int, copyMode bool) string {
 		return strings.TrimRight(wrapPlainText(text, width), "\n")
 	}
 	if item.Kind == "tool" {
+		if copyMode {
+			return strings.TrimRight(renderToolCopyBody(text, width), "\n")
+		}
 		return strings.TrimRight(renderToolBody(text, width), "\n")
 	}
 	if item.Kind != "assistant" {
@@ -44,18 +47,10 @@ func isHelpMarkdownText(text string) bool {
 }
 
 func renderHelpMarkdown(text string, width int) string {
-	result := renderStructuredMarkdown(markdownSurfaceHelp, text, width)
-	if strings.TrimSpace(result.Display) != "" {
-		return result.Display
-	}
 	return renderHelpMarkdownLegacy(text, width)
 }
 
 func renderHelpMarkdownCopy(text string, width int) string {
-	result := renderStructuredMarkdown(markdownSurfaceHelp, text, width)
-	if strings.TrimSpace(result.Copy) != "" {
-		return result.Copy
-	}
 	return stripANSI(renderHelpMarkdownLegacy(text, width))
 }
 
@@ -105,9 +100,30 @@ func renderHelpMarkdownLegacy(text string, width int) string {
 }
 
 func renderToolBody(text string, width int) string {
+	if toolTextLooksMarkdown(text) {
+		result := renderStructuredMarkdown(markdownSurfaceTool, text, width)
+		if strings.TrimSpace(result.Display) != "" {
+			return result.Display
+		}
+	}
+	return renderToolBodyLegacy(text, width)
+}
+
+func renderToolCopyBody(text string, width int) string {
+	if toolTextLooksMarkdown(text) {
+		result := renderStructuredMarkdown(markdownSurfaceTool, text, width)
+		if strings.TrimSpace(result.Copy) != "" {
+			return result.Copy
+		}
+	}
+	return stripANSI(renderToolBodyLegacy(text, width))
+}
+
+func renderToolBodyLegacy(text string, width int) string {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	out := make([]string, 0, len(lines))
 	prevBlank := true
+	visualLine := 0
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
@@ -117,22 +133,31 @@ func renderToolBody(text string, width int) string {
 			prevBlank = true
 			continue
 		}
-		out = append(out, renderToolLine(line, width))
+		out = append(out, renderToolLine(line, width, visualLine == 0))
+		visualLine++
 		prevBlank = false
 	}
 	return strings.Join(out, "\n")
 }
 
-func renderToolLine(line string, width int) string {
+func renderToolLine(line string, width int, first bool) string {
 	trimmed := strings.TrimSpace(line)
 	contentWidth := max(8, width)
 	switch {
+	case isToolErrorLine(trimmed) && first:
+		return renderStyledWrappedLine(trimmed, contentWidth, toolErrorSummaryStyle)
 	case isToolSearchSummaryLine(trimmed):
 		return renderStyledWrappedLine(trimmed, contentWidth, toolSearchSummaryStyle)
+	case first:
+		return renderStyledWrappedLine(trimmed, contentWidth, toolSummaryStyle)
+	case isToolErrorLine(trimmed):
+		return renderStyledWrappedLine(trimmed, contentWidth, toolErrorDetailStyle)
 	case isToolSearchMatchLine(trimmed):
 		return renderStyledWrappedLine(trimmed, contentWidth, toolSearchMatchStyle)
+	case isToolMetaLine(trimmed):
+		return renderStyledWrappedLine(trimmed, contentWidth, toolMetaStyle)
 	default:
-		return renderSemanticAssistantLine(line, width)
+		return renderStyledWrappedLine(trimmed, contentWidth, toolDetailStyle)
 	}
 }
 
@@ -165,6 +190,45 @@ func isToolSearchMatchLine(line string) bool {
 	}
 	path := location[:colon]
 	return strings.Contains(path, "/") || strings.Contains(path, "\\") || strings.Contains(path, ".")
+}
+
+func isToolErrorLine(line string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	return strings.HasPrefix(lower, "error") || strings.HasPrefix(lower, "stderr:")
+}
+
+func isToolMetaLine(line string) bool {
+	if isToolSearchMatchLine(line) {
+		return false
+	}
+	return strings.Contains(line, ": ")
+}
+
+func toolTextLooksMarkdown(text string) bool {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(trimmed, "```"):
+			return true
+		case strings.HasPrefix(trimmed, "> "):
+			return true
+		case isMarkdownHeading(trimmed):
+			return true
+		case isMarkdownListItem(trimmed):
+			return true
+		case strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|"):
+			return true
+		case strings.Contains(trimmed, "`"):
+			return true
+		case strings.Contains(trimmed, "[") && strings.Contains(trimmed, "]("):
+			return true
+		}
+	}
+	return false
 }
 
 func renderSemanticPlainBody(text string, width int) string {

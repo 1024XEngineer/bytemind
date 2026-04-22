@@ -10,13 +10,16 @@ func TestSummarizeToolForWebSearchAndWebFetch(t *testing.T) {
 	if status != "done" {
 		t.Fatalf("expected done status, got %q", status)
 	}
-	if !strings.Contains(summary, `Searched web for "go release notes"`) {
+	if !strings.Contains(summary, `Web search for "go release notes"`) {
 		t.Fatalf("unexpected search summary %q", summary)
 	}
-	if len(lines) != 2 {
+	if len(lines) != 3 {
 		t.Fatalf("expected two preview lines, got %+v", lines)
 	}
-	if !strings.Contains(lines[0], "Go 1.23 Release Notes") || !strings.Contains(lines[1], "https://example.com/fallback") {
+	if lines[0] != "results: 2" {
+		t.Fatalf("expected result count line, got %+v", lines)
+	}
+	if !strings.Contains(lines[1], "Go 1.23 Release Notes") || !strings.Contains(lines[2], "https://example.com/fallback") {
 		t.Fatalf("unexpected search lines %+v", lines)
 	}
 
@@ -24,14 +27,13 @@ func TestSummarizeToolForWebSearchAndWebFetch(t *testing.T) {
 	if status != "done" {
 		t.Fatalf("expected done status, got %q", status)
 	}
-	if !strings.Contains(summary, "Fetched https://go.dev/doc/devel/release (HTTP 200)") {
+	if !strings.Contains(summary, "Fetched https://go.dev/doc/devel/release") {
 		t.Fatalf("unexpected fetch summary %q", summary)
 	}
-	if len(lines) < 3 {
+	if len(lines) < 4 {
 		t.Fatalf("expected title/preview/truncated lines, got %+v", lines)
 	}
-	if !strings.Contains(lines[0], "title: Release Notes") || !strings.Contains(lines[1], "preview: A long body preview") || lines[2] != "content truncated" {
+	if !strings.Contains(lines[0], "status: HTTP 200") || !strings.Contains(lines[1], "title: Release Notes") || !strings.Contains(lines[2], "preview: A long body preview") || lines[3] != "content: truncated" {
 		t.Fatalf("unexpected fetch lines %+v", lines)
 	}
 }
-

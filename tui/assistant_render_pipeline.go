@@ -38,10 +38,6 @@ var (
 )
 
 func renderAssistantBody(text string, width int) string {
-	result := renderStructuredMarkdown(markdownSurfaceAssistant, text, width)
-	if strings.TrimSpace(result.Display) != "" {
-		return result.Display
-	}
 	return renderAssistantBodyLegacy(text, width)
 }
 

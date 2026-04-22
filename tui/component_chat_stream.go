@@ -181,7 +181,7 @@ func (m *model) populateLatestThinkingToolStep(toolName, summary, status string)
 }
 
 func (m *model) finishLatestToolCall(name, body, status string) {
-	title := "Tool Call | " + name
+	title := toolEntryTitle(name)
 	for i := len(m.chatItems) - 1; i >= 0; i-- {
 		if m.chatItems[i].Kind != "tool" {
 			continue
