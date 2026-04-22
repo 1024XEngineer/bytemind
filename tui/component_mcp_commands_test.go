@@ -16,6 +16,7 @@ type stubMCPService struct {
 	lastEnableID string
 	lastEnabled  bool
 	lastAdd      mcpctl.AddRequest
+	lastShowID   string
 }
 
 func (s *stubMCPService) List(context.Context) ([]mcpctl.ServerStatus, error) {
@@ -27,6 +28,29 @@ func (s *stubMCPService) List(context.Context) ([]mcpctl.ServerStatus, error) {
 func (s *stubMCPService) Add(_ context.Context, req mcpctl.AddRequest) (mcpctl.ServerStatus, error) {
 	s.lastAdd = req
 	return mcpctl.ServerStatus{ID: strings.TrimSpace(req.ID), Enabled: true, Status: "ready"}, nil
+}
+
+func (s *stubMCPService) Show(_ context.Context, serverID string) (mcpctl.ServerDetail, error) {
+	s.lastShowID = strings.TrimSpace(serverID)
+	return mcpctl.ServerDetail{
+		Status: mcpctl.ServerStatus{
+			ID:        s.lastShowID,
+			Name:      "demo",
+			Enabled:   true,
+			AutoStart: true,
+			Status:    "active",
+			Tools:     2,
+			Message:   "ok",
+		},
+		TransportType:    "stdio",
+		Command:          "npx",
+		Args:             []string{"-y", "server"},
+		EnvKeys:          []string{"TOKEN"},
+		StartupTimeoutS:  30,
+		CallTimeoutS:     60,
+		MaxConcurrency:   2,
+		ProtocolVersions: []string{"2025-03-26"},
+	}, nil
 }
 
 func (s *stubMCPService) Remove(context.Context, string) error {
@@ -74,6 +98,24 @@ func TestRunMCPCommandEnable(t *testing.T) {
 	}
 	if service.lastEnableID != "local" || !service.lastEnabled {
 		t.Fatalf("expected enable call for local=true, got id=%q enabled=%v", service.lastEnableID, service.lastEnabled)
+	}
+}
+
+func TestRunMCPCommandShow(t *testing.T) {
+	service := &stubMCPService{}
+	m := model{mcpService: service}
+	if err := m.runMCPCommand("/mcp show local", []string{"/mcp", "show", "local"}); err != nil {
+		t.Fatalf("runMCPCommand show failed: %v", err)
+	}
+	if service.lastShowID != "local" {
+		t.Fatalf("expected show call for local, got %q", service.lastShowID)
+	}
+	if len(m.chatItems) < 2 {
+		t.Fatalf("expected command exchange in chat, got %#v", m.chatItems)
+	}
+	got := m.chatItems[len(m.chatItems)-1].Body
+	if !strings.Contains(got, "id: local") || !strings.Contains(got, "command: npx") {
+		t.Fatalf("expected show output to include server detail, got %q", got)
 	}
 }
 

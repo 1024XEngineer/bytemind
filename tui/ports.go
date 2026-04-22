@@ -75,6 +75,7 @@ type SessionStore interface {
 
 type MCPService interface {
 	List(ctx context.Context) ([]mcpctl.ServerStatus, error)
+	Show(ctx context.Context, serverID string) (mcpctl.ServerDetail, error)
 	Add(ctx context.Context, req mcpctl.AddRequest) (mcpctl.ServerStatus, error)
 	Remove(ctx context.Context, serverID string) error
 	Enable(ctx context.Context, serverID string, enabled bool) (mcpctl.ServerStatus, error)

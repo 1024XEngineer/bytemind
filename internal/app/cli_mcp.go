@@ -24,6 +24,8 @@ func RunMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return nil
 	case "list":
 		return runMCPList(args[1:], stdout, stderr)
+	case "show":
+		return runMCPShow(args[1:], stdout, stderr)
 	case "add":
 		return runMCPAdd(args[1:], stdout, stderr)
 	case "remove":
@@ -54,6 +56,20 @@ func runMCPList(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	renderMCPStatuses(stdout, items)
+	return nil
+}
+
+func runMCPShow(args []string, stdout, stderr io.Writer) error {
+	workspace, configPath, serverID, err := parseMCPActionTarget("mcp show", args, stderr)
+	if err != nil {
+		return err
+	}
+	service := mcpctl.NewService(workspace, configPath, nil)
+	detail, err := service.Show(context.Background(), serverID)
+	if err != nil {
+		return err
+	}
+	renderMCPDetail(stdout, detail)
 	return nil
 }
 
@@ -236,6 +252,7 @@ func parseMCPCommonFlags(name string, args []string, stderr io.Writer) (workspac
 func renderMCPUsage(w io.Writer) {
 	lines := []string{
 		"bytemind mcp list [--workspace path] [--config path]",
+		"bytemind mcp show <id> [--workspace path] [--config path]",
 		"bytemind mcp add <id> --cmd <command> [--args a,b] [--env K=V] [--cwd path]",
 		"bytemind mcp remove <id> [--workspace path] [--config path]",
 		"bytemind mcp enable <id> [--workspace path] [--config path]",
@@ -247,6 +264,29 @@ func renderMCPUsage(w io.Writer) {
 	for _, line := range lines {
 		fmt.Fprintln(w, line)
 	}
+}
+
+func renderMCPDetail(w io.Writer, detail mcpctl.ServerDetail) {
+	status := detail.Status
+	fmt.Fprintf(w, "id: %s\n", status.ID)
+	fmt.Fprintf(w, "name: %s\n", firstNonEmptyValue(strings.TrimSpace(status.Name), status.ID))
+	fmt.Fprintf(w, "extension_id: %s\n", firstNonEmptyValue(strings.TrimSpace(status.ExtensionID), "-"))
+	fmt.Fprintf(w, "enabled: %t\n", status.Enabled)
+	fmt.Fprintf(w, "auto_start: %t\n", status.AutoStart)
+	fmt.Fprintf(w, "status: %s\n", status.Status)
+	fmt.Fprintf(w, "tools: %d\n", status.Tools)
+	fmt.Fprintf(w, "message: %s\n", firstNonEmptyValue(strings.TrimSpace(status.Message), "-"))
+	fmt.Fprintf(w, "checked_at: %s\n", firstNonEmptyValue(strings.TrimSpace(status.CheckedAt), "-"))
+	fmt.Fprintf(w, "last_error: %s\n", firstNonEmptyValue(strings.TrimSpace(string(status.LastError)), "-"))
+	fmt.Fprintf(w, "transport: %s\n", firstNonEmptyValue(strings.TrimSpace(detail.TransportType), "-"))
+	fmt.Fprintf(w, "command: %s\n", firstNonEmptyValue(strings.TrimSpace(detail.Command), "-"))
+	fmt.Fprintf(w, "args: %s\n", firstNonEmptyValue(strings.Join(detail.Args, " "), "-"))
+	fmt.Fprintf(w, "cwd: %s\n", firstNonEmptyValue(strings.TrimSpace(detail.CWD), "-"))
+	fmt.Fprintf(w, "env_keys: %s\n", firstNonEmptyValue(strings.Join(detail.EnvKeys, ","), "-"))
+	fmt.Fprintf(w, "startup_timeout_s: %d\n", detail.StartupTimeoutS)
+	fmt.Fprintf(w, "call_timeout_s: %d\n", detail.CallTimeoutS)
+	fmt.Fprintf(w, "max_concurrency: %d\n", detail.MaxConcurrency)
+	fmt.Fprintf(w, "protocol_versions: %s\n", firstNonEmptyValue(strings.Join(detail.ProtocolVersions, ","), "-"))
 }
 
 func renderMCPStatuses(w io.Writer, statuses []mcpctl.ServerStatus) {

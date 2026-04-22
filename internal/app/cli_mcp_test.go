@@ -50,6 +50,16 @@ func TestRunMCPAddAndList(t *testing.T) {
 	if !strings.Contains(listOutput, "ID") || !strings.Contains(listOutput, "local") {
 		t.Fatalf("expected list output to include local server, got %q", listOutput)
 	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := RunMCP([]string{"show", "local", "--workspace", workspace}, strings.NewReader(""), &stdout, &stderr); err != nil {
+		t.Fatalf("RunMCP show failed: %v", err)
+	}
+	showOutput := stdout.String()
+	if !strings.Contains(showOutput, "id: local") || !strings.Contains(showOutput, "command: cmd") {
+		t.Fatalf("expected show output to include local id and command, got %q", showOutput)
+	}
 }
 
 func TestRunMCPAuthRendersGuidance(t *testing.T) {

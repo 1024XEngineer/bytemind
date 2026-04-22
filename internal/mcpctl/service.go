@@ -25,6 +25,19 @@ type ServerStatus struct {
 	ExtensionID string
 }
 
+type ServerDetail struct {
+	Status           ServerStatus
+	TransportType    string
+	Command          string
+	Args             []string
+	CWD              string
+	EnvKeys          []string
+	StartupTimeoutS  int
+	CallTimeoutS     int
+	MaxConcurrency   int
+	ProtocolVersions []string
+}
+
 type AddRequest struct {
 	ID               string
 	Name             string
@@ -215,6 +228,59 @@ func (s *Service) Enable(ctx context.Context, serverID string, enabled bool) (Se
 
 func (s *Service) Reload(ctx context.Context) error {
 	return s.reloadRuntime(ctx)
+}
+
+func (s *Service) Show(ctx context.Context, serverID string) (ServerDetail, error) {
+	serverID = normalizeServerID(serverID)
+	if serverID == "" {
+		return ServerDetail{}, fmt.Errorf("server id is required")
+	}
+	cfg, err := configpkg.Load(s.workspace, s.configPath)
+	if err != nil {
+		return ServerDetail{}, err
+	}
+	var server *configpkg.MCPServerConfig
+	for index := range cfg.MCP.Servers {
+		if strings.EqualFold(strings.TrimSpace(cfg.MCP.Servers[index].ID), serverID) {
+			server = &cfg.MCP.Servers[index]
+			break
+		}
+	}
+	if server == nil {
+		return ServerDetail{}, fmt.Errorf("mcp server %q not found", serverID)
+	}
+
+	status, err := s.getStatus(ctx, serverID)
+	if err != nil {
+		return ServerDetail{}, err
+	}
+	envKeys := make([]string, 0, len(server.Transport.Env))
+	for key := range server.Transport.Env {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		envKeys = append(envKeys, key)
+	}
+	sort.Strings(envKeys)
+
+	protocolVersions := append([]string(nil), server.ProtocolVersions...)
+	if len(protocolVersions) == 0 && strings.TrimSpace(server.ProtocolVersion) != "" {
+		protocolVersions = append(protocolVersions, strings.TrimSpace(server.ProtocolVersion))
+	}
+
+	return ServerDetail{
+		Status:           status,
+		TransportType:    strings.TrimSpace(server.Transport.Type),
+		Command:          strings.TrimSpace(server.Transport.Command),
+		Args:             append([]string(nil), server.Transport.Args...),
+		CWD:              strings.TrimSpace(server.Transport.CWD),
+		EnvKeys:          envKeys,
+		StartupTimeoutS:  server.StartupTimeoutSeconds,
+		CallTimeoutS:     server.CallTimeoutSeconds,
+		MaxConcurrency:   server.MaxConcurrency,
+		ProtocolVersions: protocolVersions,
+	}, nil
 }
 
 func (s *Service) Test(ctx context.Context, serverID string) (ServerStatus, error) {

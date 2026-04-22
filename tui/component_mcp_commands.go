@@ -12,6 +12,7 @@ import (
 
 const (
 	mcpAddUsage = "usage: /mcp-add <id> --cmd <command> [options]"
+	mcpUsage    = "usage: /mcp <list|show|remove|enable|disable|test|reload|auth|help> ... or " + mcpAddUsage
 )
 
 func (m *model) runMCPCommand(input string, fields []string) error {
@@ -71,17 +72,28 @@ func executeMCPServiceCommand(service MCPService, fields []string) (response str
 		return "", "", fmt.Errorf("mcp service is unavailable")
 	}
 	if len(fields) < 2 {
-		return "", "", fmt.Errorf("usage: /mcp <list|remove|enable|disable|test|reload|auth> ... or %s", mcpAddUsage)
+		return "", "", fmt.Errorf(mcpUsage)
 	}
 	sub := strings.ToLower(strings.TrimSpace(fields[1]))
 
 	switch sub {
+	case "help":
+		return mcpUsage, "MCP help shown.", nil
 	case "list":
 		items, listErr := service.List(context.Background())
 		if listErr != nil {
 			return "", "", listErr
 		}
 		return formatMCPStatusText(items), fmt.Sprintf("Listed %d MCP server(s).", len(items)), nil
+	case "show":
+		if len(fields) < 3 {
+			return "", "", fmt.Errorf("usage: /mcp show <id>")
+		}
+		detail, showErr := service.Show(context.Background(), fields[2])
+		if showErr != nil {
+			return "", "", showErr
+		}
+		return formatMCPDetailText(detail), "MCP server details shown.", nil
 	case "reload":
 		if reloadErr := service.Reload(context.Background()); reloadErr != nil {
 			return "", "", reloadErr
@@ -145,7 +157,7 @@ func executeMCPServiceCommand(service MCPService, fields []string) (response str
 			"- Run `/mcp test " + serverID + "` after updating credentials.",
 		}, "\n"), "MCP auth guidance shown.", nil
 	default:
-		return "", "", fmt.Errorf("usage: /mcp <list|remove|enable|disable|test|reload|auth> ... or %s", mcpAddUsage)
+		return "", "", fmt.Errorf(mcpUsage)
 	}
 }
 
@@ -307,6 +319,29 @@ func formatMCPStatusText(items []mcpctl.ServerStatus) string {
 				firstNonEmptyStatus(item.Message, "-"),
 			),
 		)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatMCPDetailText(detail mcpctl.ServerDetail) string {
+	status := detail.Status
+	lines := []string{
+		fmt.Sprintf("id: %s", status.ID),
+		fmt.Sprintf("name: %s", firstNonEmptyStatus(status.Name, status.ID)),
+		fmt.Sprintf("enabled: %t", status.Enabled),
+		fmt.Sprintf("auto_start: %t", status.AutoStart),
+		fmt.Sprintf("status: %s", status.Status),
+		fmt.Sprintf("tools: %d", status.Tools),
+		fmt.Sprintf("message: %s", firstNonEmptyStatus(status.Message, "-")),
+		fmt.Sprintf("transport: %s", firstNonEmptyStatus(detail.TransportType, "-")),
+		fmt.Sprintf("command: %s", firstNonEmptyStatus(detail.Command, "-")),
+		fmt.Sprintf("args: %s", firstNonEmptyStatus(strings.Join(detail.Args, " "), "-")),
+		fmt.Sprintf("cwd: %s", firstNonEmptyStatus(detail.CWD, "-")),
+		fmt.Sprintf("env_keys: %s", firstNonEmptyStatus(strings.Join(detail.EnvKeys, ","), "-")),
+		fmt.Sprintf("startup_timeout_s: %d", detail.StartupTimeoutS),
+		fmt.Sprintf("call_timeout_s: %d", detail.CallTimeoutS),
+		fmt.Sprintf("max_concurrency: %d", detail.MaxConcurrency),
+		fmt.Sprintf("protocol_versions: %s", firstNonEmptyStatus(strings.Join(detail.ProtocolVersions, ","), "-")),
 	}
 	return strings.Join(lines, "\n")
 }

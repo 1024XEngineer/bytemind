@@ -238,6 +238,60 @@ func TestServiceListReturnsStatusesAlongsideManagerListError(t *testing.T) {
 	}
 }
 
+func TestServiceShowReturnsConfigAndRuntimeStatus(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	seedMCPConfig(t, workspace, true, []configpkg.MCPServerConfig{
+		{
+			ID:        "demo",
+			Name:      "Demo MCP",
+			Enabled:   boolPtr(true),
+			AutoStart: boolPtr(false),
+			Transport: configpkg.MCPTransportConfig{
+				Type:    "stdio",
+				Command: "npx",
+				Args:    []string{"-y", "@modelcontextprotocol/server-demo"},
+				Env: map[string]string{
+					"DEMO_TOKEN": "secret",
+					"ANOTHER":    "value",
+				},
+				CWD: "C:/tmp/demo",
+			},
+			StartupTimeoutSeconds: 22,
+			CallTimeoutSeconds:    66,
+			MaxConcurrency:        3,
+			ProtocolVersions:      []string{"2025-03-26", "2024-11-05"},
+		},
+	})
+
+	service := NewService(workspace, "", nil)
+	detail, err := service.Show(context.Background(), "demo")
+	if err != nil {
+		t.Fatalf("Show failed: %v", err)
+	}
+	if detail.Status.ID != "demo" {
+		t.Fatalf("expected demo id, got %#v", detail.Status)
+	}
+	if detail.TransportType != "stdio" {
+		t.Fatalf("expected stdio transport, got %q", detail.TransportType)
+	}
+	if detail.Command != "npx" {
+		t.Fatalf("expected command npx, got %q", detail.Command)
+	}
+	if len(detail.Args) != 2 {
+		t.Fatalf("expected args to be preserved, got %#v", detail.Args)
+	}
+	if len(detail.EnvKeys) != 2 || detail.EnvKeys[0] != "ANOTHER" || detail.EnvKeys[1] != "DEMO_TOKEN" {
+		t.Fatalf("expected sorted env keys, got %#v", detail.EnvKeys)
+	}
+	if detail.StartupTimeoutS != 22 || detail.CallTimeoutS != 66 || detail.MaxConcurrency != 3 {
+		t.Fatalf("unexpected timeout/concurrency details: %#v", detail)
+	}
+	if len(detail.ProtocolVersions) != 2 || detail.ProtocolVersions[0] != "2025-03-26" {
+		t.Fatalf("unexpected protocol versions: %#v", detail.ProtocolVersions)
+	}
+}
+
 func TestNormalizeAddRequestAndHelpers(t *testing.T) {
 	normalized := normalizeAddRequest(AddRequest{
 		ID:      " My/Server ",
