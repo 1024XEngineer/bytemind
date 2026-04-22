@@ -53,6 +53,9 @@ func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptI
 	systemSandboxFallback := false
 	systemSandboxStatus := ""
 	if runtimeStatus, statusErr := resolveAgentSystemSandboxRuntimeStatus(runner.config.SandboxEnabled, runner.config.SystemSandboxMode); statusErr != nil {
+		if runner.config.SandboxEnabled && strings.EqualFold(strings.TrimSpace(runner.config.SystemSandboxMode), "required") {
+			return runPromptSetup{}, fmt.Errorf("system sandbox mode %q is unavailable: %w", "required", statusErr)
+		}
 		systemSandboxStatus = strings.TrimSpace(statusErr.Error())
 	} else {
 		if backend := strings.TrimSpace(runtimeStatus.BackendName); backend != "" {

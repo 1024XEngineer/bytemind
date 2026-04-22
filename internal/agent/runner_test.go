@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -1047,6 +1048,60 @@ func TestRunPromptAwayFailFastStopsAfterPermissionDenied(t *testing.T) {
 	}
 	if !strings.Contains(sess.Messages[2].Content, `"status":"denied"`) || !strings.Contains(sess.Messages[2].Content, `"reason_code":"permission_denied"`) {
 		t.Fatalf("expected denied status and reason code in fail_fast payload, got %q", sess.Messages[2].Content)
+	}
+}
+
+func TestRunPromptRequiredSystemSandboxFailsClosedWhenBackendUnavailable(t *testing.T) {
+	original := resolveAgentSystemSandboxRuntimeStatus
+	resolveAgentSystemSandboxRuntimeStatus = func(enabled bool, mode string) (tools.SystemSandboxRuntimeStatus, error) {
+		if !enabled {
+			return tools.SystemSandboxRuntimeStatus{}, nil
+		}
+		return tools.SystemSandboxRuntimeStatus{}, errors.New("required backend unavailable in test")
+	}
+	t.Cleanup(func() {
+		resolveAgentSystemSandboxRuntimeStatus = original
+	})
+
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &fakeClient{replies: []llm.Message{{
+		Role:    "assistant",
+		Content: "should not run",
+	}}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:          config.ProviderConfig{Model: "test-model"},
+			MaxIterations:     2,
+			Stream:            false,
+			SandboxEnabled:    true,
+			SystemSandboxMode: "required",
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "hello", "build", io.Discard)
+	if err == nil {
+		t.Fatal("expected required system sandbox to fail closed when backend is unavailable")
+	}
+	if strings.TrimSpace(answer) != "" {
+		t.Fatalf("expected empty answer on required sandbox startup failure, got %q", answer)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "required") || !strings.Contains(strings.ToLower(err.Error()), "unavailable") {
+		t.Fatalf("expected required unavailable error, got %v", err)
+	}
+	if len(client.requests) != 0 {
+		t.Fatalf("expected no llm request when required sandbox fails closed at startup, got %d", len(client.requests))
 	}
 }
 
