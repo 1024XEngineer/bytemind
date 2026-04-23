@@ -3,6 +3,7 @@ package mcpctl
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	configpkg "bytemind/internal/config"
@@ -238,6 +239,97 @@ func TestServiceListReturnsStatusesAlongsideManagerListError(t *testing.T) {
 	}
 }
 
+func TestServiceGetStatusReturnsItemWhenListIsDegraded(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	seedMCPConfig(t, workspace, true, []configpkg.MCPServerConfig{
+		{
+			ID:        "demo",
+			Enabled:   boolPtr(true),
+			AutoStart: boolPtr(true),
+			Transport: configpkg.MCPTransportConfig{
+				Type:    "stdio",
+				Command: "cmd",
+				Args:    []string{"/c", "echo", "ok"},
+			},
+		},
+	})
+
+	manager := &fakeManager{
+		listItems: []extensionspkg.ExtensionInfo{
+			{
+				ID:     "mcp.demo",
+				Kind:   extensionspkg.ExtensionMCP,
+				Status: extensionspkg.ExtensionStatusActive,
+			},
+		},
+		listErr: errors.New("degraded list"),
+	}
+	service := NewService(workspace, "", manager)
+	status, err := service.getStatus(context.Background(), "demo")
+	if err != nil {
+		t.Fatalf("expected getStatus success with item+err degraded list, got %v", err)
+	}
+	if status.ID != "demo" || status.Status != extensionspkg.ExtensionStatusActive {
+		t.Fatalf("unexpected status payload: %#v", status)
+	}
+}
+
+func TestServiceAddReturnsErrorWhenReloadFails(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	reloadErr := errors.New("reload failed")
+	service := NewService(workspace, "", &fakeManager{reloadErr: reloadErr})
+
+	status, err := service.Add(context.Background(), AddRequest{
+		ID:      "docs",
+		Command: "cmd",
+		Args:    []string{"/c", "echo", "ok"},
+	})
+	if err == nil {
+		t.Fatal("expected add to return reload error")
+	}
+	if !errors.Is(err, reloadErr) {
+		t.Fatalf("expected add error to wrap reload error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "runtime reload failed after config persisted") {
+		t.Fatalf("expected add error message to include runtime reload context, got %v", err)
+	}
+	if status.ID != "docs" {
+		t.Fatalf("expected status for added server even on reload error, got %#v", status)
+	}
+}
+
+func TestServiceEnableReturnsErrorWhenReloadFails(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	seedMCPConfig(t, workspace, true, []configpkg.MCPServerConfig{
+		{
+			ID:        "demo",
+			Enabled:   boolPtr(false),
+			AutoStart: boolPtr(false),
+			Transport: configpkg.MCPTransportConfig{
+				Type:    "stdio",
+				Command: "cmd",
+				Args:    []string{"/c", "echo", "ok"},
+			},
+		},
+	})
+	reloadErr := errors.New("reload failed")
+	service := NewService(workspace, "", &fakeManager{reloadErr: reloadErr})
+
+	status, err := service.Enable(context.Background(), "demo", true)
+	if err == nil {
+		t.Fatal("expected enable to return reload error")
+	}
+	if !errors.Is(err, reloadErr) {
+		t.Fatalf("expected enable error to wrap reload error, got %v", err)
+	}
+	if status.ID != "demo" {
+		t.Fatalf("expected status for target server even on reload error, got %#v", status)
+	}
+}
+
 func TestServiceShowReturnsConfigAndRuntimeStatus(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
@@ -350,6 +442,7 @@ func seedMCPConfig(t *testing.T, workspace string, enabled bool, servers []confi
 type fakeManager struct {
 	listItems      []extensionspkg.ExtensionInfo
 	listErr        error
+	reloadErr      error
 	reloadCalls    int
 	invalidateArgs []string
 	testHealth     extensionspkg.HealthSnapshot
@@ -376,7 +469,7 @@ func (f *fakeManager) List(context.Context) ([]extensionspkg.ExtensionInfo, erro
 
 func (f *fakeManager) Reload(context.Context) error {
 	f.reloadCalls++
-	return nil
+	return f.reloadErr
 }
 
 func (f *fakeManager) Test(_ context.Context, extensionID string) (extensionspkg.HealthSnapshot, error) {

@@ -26,10 +26,13 @@ func (r *Runner) syncExtensionTools(ctx context.Context, force bool) error {
 
 	now := time.Now()
 	r.extensionSyncMu.Lock()
-	defer r.extensionSyncMu.Unlock()
 	if !force && !r.extensionSyncDirty && !r.extensionSyncAt.IsZero() && now.Sub(r.extensionSyncAt) < r.extensionSyncTTL {
+		r.extensionSyncMu.Unlock()
 		return nil
 	}
+	currentKeys := cloneExtensionToolKeys(r.extensionToolKeys)
+	startSyncGen := r.extensionSyncGen
+	r.extensionSyncMu.Unlock()
 
 	resolvedTools, resolveErr := resolver.ResolveAllTools(ctx)
 	if resolveErr != nil && (errors.Is(resolveErr, context.Canceled) || errors.Is(resolveErr, context.DeadlineExceeded)) {
@@ -45,7 +48,7 @@ func (r *Runner) syncExtensionTools(ctx context.Context, force bool) error {
 		extensionID := strings.TrimSpace(extensionTool.ExtensionID)
 		toolName := strings.TrimSpace(extensionTool.Tool.Definition().Function.Name)
 		if stable, err := extensionspkg.StableToolKey(extensionTool.Source, extensionID, toolName); err == nil && stable != "" {
-			if current := r.extensionToolKeys[extensionID]; current != nil {
+			if current := currentKeys[extensionID]; current != nil {
 				if _, already := current[stable]; already {
 					if _, ok := registry.Get(stable); ok {
 						if _, ok := nextKeys[extensionID]; !ok {
@@ -77,6 +80,9 @@ func (r *Runner) syncExtensionTools(ctx context.Context, force bool) error {
 		nextKeys[extensionID][binding.StableKey] = struct{}{}
 	}
 
+	r.extensionSyncMu.Lock()
+	defer r.extensionSyncMu.Unlock()
+
 	for extensionID, current := range r.extensionToolKeys {
 		next := nextKeys[extensionID]
 		for stable := range current {
@@ -107,13 +113,32 @@ func (r *Runner) syncExtensionTools(ctx context.Context, force bool) error {
 	}
 
 	r.extensionToolKeys = nextKeys
-	r.extensionSyncAt = now
-	r.extensionSyncDirty = false
+	r.extensionSyncAt = time.Now()
+	r.extensionSyncDirty = r.extensionSyncGen != startSyncGen
 
 	if firstErr != nil {
 		return firstErr
 	}
 	return resolveErr
+}
+
+func cloneExtensionToolKeys(input map[string]map[string]struct{}) map[string]map[string]struct{} {
+	if input == nil {
+		return nil
+	}
+	out := make(map[string]map[string]struct{}, len(input))
+	for extensionID, stableSet := range input {
+		if stableSet == nil {
+			out[extensionID] = nil
+			continue
+		}
+		copied := make(map[string]struct{}, len(stableSet))
+		for stable := range stableSet {
+			copied[stable] = struct{}{}
+		}
+		out[extensionID] = copied
+	}
+	return out
 }
 
 func unregisterStableToolKey(registry *toolspkg.Registry, stable string) error {
@@ -141,4 +166,5 @@ func (r *Runner) invalidateExtensionTools(extensionID string) {
 	r.extensionSyncMu.Lock()
 	defer r.extensionSyncMu.Unlock()
 	r.extensionSyncDirty = true
+	r.extensionSyncGen++
 }

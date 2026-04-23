@@ -97,6 +97,7 @@ type Runner struct {
 	extensionSyncTTL   time.Duration
 	extensionSyncAt    time.Time
 	extensionSyncDirty bool
+	extensionSyncGen   uint64
 	extensionToolKeys  map[string]map[string]struct{}
 }
 

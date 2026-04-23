@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,9 @@ type runtimeSyncStubManager struct {
 	items           []extensionspkg.ExtensionTool
 	resolveCount    int
 	invalidateCount int
+	resolveStarted  chan struct{}
+	resolveRelease  chan struct{}
+	resolveOnce     sync.Once
 }
 
 func (m *runtimeSyncStubManager) Load(context.Context, string) (extensionspkg.ExtensionInfo, error) {
@@ -35,6 +39,14 @@ func (m *runtimeSyncStubManager) List(context.Context) ([]extensionspkg.Extensio
 
 func (m *runtimeSyncStubManager) ResolveAllTools(context.Context) ([]extensionspkg.ExtensionTool, error) {
 	m.resolveCount++
+	if m.resolveStarted != nil {
+		m.resolveOnce.Do(func() {
+			close(m.resolveStarted)
+		})
+	}
+	if m.resolveRelease != nil {
+		<-m.resolveRelease
+	}
 	out := make([]extensionspkg.ExtensionTool, len(m.items))
 	copy(out, m.items)
 	return out, nil
@@ -138,5 +150,50 @@ func TestSyncExtensionToolsHonorsTTLAndInvalidate(t *testing.T) {
 	}
 	if manager.resolveCount != 2 {
 		t.Fatalf("expected invalidate to force sync, resolveCount=%d", manager.resolveCount)
+	}
+}
+
+func TestSyncExtensionToolsDoesNotHoldLockDuringResolve(t *testing.T) {
+	registry := toolspkg.DefaultRegistry()
+	resolveStarted := make(chan struct{})
+	resolveRelease := make(chan struct{})
+	manager := &runtimeSyncStubManager{
+		resolveStarted: resolveStarted,
+		resolveRelease: resolveRelease,
+	}
+	runner := &Runner{
+		registry:           registry,
+		extensions:         manager,
+		extensionSyncTTL:   time.Minute,
+		extensionSyncDirty: true,
+		extensionToolKeys:  map[string]map[string]struct{}{},
+	}
+
+	syncErr := make(chan error, 1)
+	go func() {
+		syncErr <- runner.syncExtensionTools(context.Background(), true)
+	}()
+
+	select {
+	case <-resolveStarted:
+	case <-time.After(time.Second):
+		t.Fatal("sync did not reach resolve stage")
+	}
+
+	invalidateDone := make(chan struct{})
+	go func() {
+		runner.invalidateExtensionTools("mcp.docs")
+		close(invalidateDone)
+	}()
+
+	select {
+	case <-invalidateDone:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("invalidate blocked while resolve was in progress")
+	}
+
+	close(resolveRelease)
+	if err := <-syncErr; err != nil {
+		t.Fatalf("sync failed: %v", err)
 	}
 }

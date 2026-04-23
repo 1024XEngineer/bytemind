@@ -2,6 +2,7 @@ package mcpctl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -169,8 +170,19 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (ServerStatus, error)
 		return ServerStatus{}, err
 	}
 	_ = cfg
-	_ = s.reloadRuntime(ctx)
-	return s.getStatus(ctx, req.ID)
+	reloadErr := s.reloadRuntime(ctx)
+	status, statusErr := s.getStatus(ctx, req.ID)
+	if reloadErr != nil {
+		wrapped := fmt.Errorf("runtime reload failed after config persisted: %w", reloadErr)
+		if statusErr == nil {
+			return status, wrapped
+		}
+		return ServerStatus{}, errors.Join(wrapped, statusErr)
+	}
+	if statusErr != nil {
+		return ServerStatus{}, statusErr
+	}
+	return status, nil
 }
 
 func (s *Service) Remove(ctx context.Context, serverID string) error {
@@ -222,8 +234,19 @@ func (s *Service) Enable(ctx context.Context, serverID string, enabled bool) (Se
 	if err != nil {
 		return ServerStatus{}, err
 	}
-	_ = s.reloadRuntime(ctx)
-	return s.getStatus(ctx, serverID)
+	reloadErr := s.reloadRuntime(ctx)
+	status, statusErr := s.getStatus(ctx, serverID)
+	if reloadErr != nil {
+		wrapped := fmt.Errorf("runtime reload failed after config persisted: %w", reloadErr)
+		if statusErr == nil {
+			return status, wrapped
+		}
+		return ServerStatus{}, errors.Join(wrapped, statusErr)
+	}
+	if statusErr != nil {
+		return ServerStatus{}, statusErr
+	}
+	return status, nil
 }
 
 func (s *Service) Reload(ctx context.Context) error {
@@ -316,13 +339,13 @@ func (s *Service) getStatus(ctx context.Context, serverID string) (ServerStatus,
 		return ServerStatus{}, fmt.Errorf("server id is required")
 	}
 	items, err := s.List(ctx)
-	if err != nil {
-		return ServerStatus{}, err
-	}
 	for _, item := range items {
 		if strings.EqualFold(item.ID, serverID) {
 			return item, nil
 		}
+	}
+	if err != nil {
+		return ServerStatus{}, err
 	}
 	return ServerStatus{}, fmt.Errorf("mcp server %q not found", serverID)
 }

@@ -578,6 +578,13 @@ func TestFramedJSONAndMarshalErrorBranches(t *testing.T) {
 	if _, err := readFramedJSON(bufio.NewReader(strings.NewReader("X-Test: 1\r\n\r\n{}"))); err == nil {
 		t.Fatal("expected missing content-length error")
 	}
+	overLimit := defaultMaxFrameBytes + 1
+	overLimitFrame := fmt.Sprintf("Content-Length: %d\r\n\r\n", overLimit)
+	if _, err := readFramedJSON(bufio.NewReader(strings.NewReader(overLimitFrame))); err == nil {
+		t.Fatal("expected oversize frame rejection")
+	} else if !strings.Contains(err.Error(), fmt.Sprintf("%d", overLimit)) || !strings.Contains(err.Error(), fmt.Sprintf("%d", defaultMaxFrameBytes)) {
+		t.Fatalf("expected oversize error to include length and limit, got %v", err)
+	}
 
 	frame := []byte("{")
 	raw := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(frame), frame)

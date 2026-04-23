@@ -18,6 +18,7 @@ import (
 const (
 	defaultStartupTimeout = 5 * time.Second
 	defaultCallTimeout    = 30 * time.Second
+	defaultMaxFrameBytes  = 8 << 20
 )
 
 var defaultProtocolVersions = []string{
@@ -697,6 +698,9 @@ func readFramedJSON(reader *bufio.Reader) ([]byte, error) {
 	}
 	if contentLength < 0 {
 		return nil, errors.New("missing content-length header")
+	}
+	if contentLength > defaultMaxFrameBytes {
+		return nil, fmt.Errorf("content-length %d exceeds max frame bytes %d", contentLength, defaultMaxFrameBytes)
 	}
 	payload := make([]byte, contentLength)
 	if _, err := io.ReadFull(reader, payload); err != nil {
