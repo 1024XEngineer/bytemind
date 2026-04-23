@@ -208,8 +208,9 @@ func recordSystemSandboxStartupFallback(taskReport *TaskReport, setup runPromptS
 	if backend == "" {
 		backend = "none"
 	}
+	requiredCapable := strconv.FormatBool(setup.SystemSandboxRequiredCapable)
 	reason := strings.TrimSpace(setup.SystemSandboxStatus)
-	note := fmt.Sprintf("startup (mode=%s, backend=%s", mode, backend)
+	note := fmt.Sprintf("startup (mode=%s, backend=%s, required_capable=%s", mode, backend, requiredCapable)
 	if reason != "" {
 		note += fmt.Sprintf(", reason=%s", reason)
 	}

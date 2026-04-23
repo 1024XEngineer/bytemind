@@ -229,10 +229,11 @@ type toolResultEnvelope struct {
 	Status        string `json:"status"`
 	ReasonCode    string `json:"reason_code"`
 	SystemSandbox struct {
-		Mode           string `json:"mode"`
-		Backend        string `json:"backend"`
-		Fallback       bool   `json:"fallback"`
-		FallbackReason string `json:"fallback_reason"`
+		Mode            string `json:"mode"`
+		Backend         string `json:"backend"`
+		RequiredCapable bool   `json:"required_capable"`
+		Fallback        bool   `json:"fallback"`
+		FallbackReason  string `json:"fallback_reason"`
 	} `json:"system_sandbox"`
 }
 
@@ -295,6 +296,7 @@ func systemSandboxFallbackReportEntry(toolName string, envelope toolResultEnvelo
 	if backend != "" {
 		parts = append(parts, "backend="+backend)
 	}
+	parts = append(parts, fmt.Sprintf("required_capable=%t", envelope.SystemSandbox.RequiredCapable))
 	if reason != "" {
 		parts = append(parts, "reason="+reason)
 	}
