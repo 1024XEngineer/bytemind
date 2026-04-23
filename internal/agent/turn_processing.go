@@ -30,6 +30,7 @@ type turnProcessParams struct {
 	AdaptiveState    *adaptiveTurnState
 	ExecutedTools    *[]string
 	Approval         tools.ApprovalHandler
+	SandboxAudit     sandboxAuditContext
 	TaskReport       *TaskReport
 	Out              io.Writer
 }
@@ -165,7 +166,7 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 				"tool_call_id":   call.ID,
 			},
 		})
-		if err := e.executeToolCall(ctx, p.Session, p.RunMode, call, p.Out, p.AllowedTools, p.DeniedTools, p.Approval); err != nil {
+		if err := e.executeToolCall(ctx, p.Session, p.RunMode, call, p.Out, p.AllowedTools, p.DeniedTools, p.Approval, p.SandboxAudit); err != nil {
 			return "", false, err
 		}
 		envelope, ok := latestToolResultEnvelope(p.Session)

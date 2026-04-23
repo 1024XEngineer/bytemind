@@ -135,6 +135,9 @@ func TestRunPromptPolicyGatewayDeniesToolBeforeExecutor(t *testing.T) {
 			if got := event.Metadata["sandbox_mode"]; got != "best_effort" {
 				t.Fatalf("expected deny permission_decision sandbox_mode=best_effort, got %q", got)
 			}
+			if got := event.Metadata["sandbox_required_capable"]; got != "true" && got != "false" {
+				t.Fatalf("expected deny permission_decision sandbox_required_capable boolean text, got %q", got)
+			}
 		}
 		if event.Action == "tool_execute_start" && event.Metadata["tool_name"] == "blocked_tool" {
 			foundExecuteStart = true
@@ -146,6 +149,9 @@ func TestRunPromptPolicyGatewayDeniesToolBeforeExecutor(t *testing.T) {
 			}
 			if got := event.Metadata["sandbox_mode"]; got != "best_effort" {
 				t.Fatalf("expected denied tool_execute_result sandbox_mode=best_effort, got %q", got)
+			}
+			if got := event.Metadata["sandbox_required_capable"]; got != "true" && got != "false" {
+				t.Fatalf("expected denied tool_execute_result sandbox_required_capable boolean text, got %q", got)
 			}
 		}
 	}
@@ -277,6 +283,9 @@ func TestRunPromptPolicyGatewayAskRequestsApprovalAndExecutesTool(t *testing.T) 
 			if got := event.Metadata["sandbox_mode"]; got != "best_effort" {
 				t.Fatalf("expected ask permission_decision sandbox_mode=best_effort, got %q", got)
 			}
+			if got := event.Metadata["sandbox_required_capable"]; got != "true" && got != "false" {
+				t.Fatalf("expected ask permission_decision sandbox_required_capable boolean text, got %q", got)
+			}
 		}
 		if event.Action == "tool_execute_start" && event.Metadata["tool_name"] == "ask_tool" {
 			foundExecuteStart = true
@@ -286,6 +295,9 @@ func TestRunPromptPolicyGatewayAskRequestsApprovalAndExecutesTool(t *testing.T) 
 			if got := event.Metadata["sandbox_mode"]; got != "best_effort" {
 				t.Fatalf("expected ask tool_execute_start sandbox_mode=best_effort, got %q", got)
 			}
+			if got := event.Metadata["sandbox_required_capable"]; got != "true" && got != "false" {
+				t.Fatalf("expected ask tool_execute_start sandbox_required_capable boolean text, got %q", got)
+			}
 		}
 		if event.Action == "tool_execute_result" && event.Metadata["tool_name"] == "ask_tool" && event.Result == "ok" {
 			foundExecuteResult = true
@@ -294,6 +306,9 @@ func TestRunPromptPolicyGatewayAskRequestsApprovalAndExecutesTool(t *testing.T) 
 			}
 			if got := event.Metadata["sandbox_mode"]; got != "best_effort" {
 				t.Fatalf("expected ask tool_execute_result sandbox_mode=best_effort, got %q", got)
+			}
+			if got := event.Metadata["sandbox_required_capable"]; got != "true" && got != "false" {
+				t.Fatalf("expected ask tool_execute_result sandbox_required_capable boolean text, got %q", got)
 			}
 		}
 	}

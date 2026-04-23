@@ -28,6 +28,7 @@ func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Sessio
 	appendSystemSandboxStartupAudit(ctx, runner, sess, setup, runner.config.SandboxEnabled, runner.config.SystemSandboxMode)
 	recordSystemSandboxStartupFallback(taskReport, setup, runner.config.SystemSandboxMode)
 	approvalHandler := runner.prepareRunApprovalHandler(setup, out)
+	sandboxAudit := sandboxAuditFromSetup(setup, runner.config.SandboxEnabled, runner.config.SystemSandboxMode)
 
 	for step := 0; step < runner.config.MaxIterations; step++ {
 		messages, err := e.messagesForStep(ctx, sess, setup, step, out)
@@ -54,6 +55,7 @@ func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Sessio
 			AdaptiveState:    adaptiveState,
 			ExecutedTools:    &executedToolNames,
 			Approval:         approvalHandler,
+			SandboxAudit:     sandboxAudit,
 			TaskReport:       taskReport,
 			Out:              out,
 		})

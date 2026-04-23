@@ -117,6 +117,12 @@ func TestRunPromptRecordsTaskStateChangedAuditWithSessionTaskTrace(t *testing.T)
 		if got := event.Metadata["sandbox_mode"]; got != "best_effort" {
 			t.Fatalf("expected task_state_changed sandbox_mode=best_effort, got %q", got)
 		}
+		if got := event.Metadata["sandbox_required_capable"]; got != "true" && got != "false" {
+			t.Fatalf("expected task_state_changed sandbox_required_capable to be boolean text, got %q", got)
+		}
+		if got := event.Metadata["sandbox_fallback"]; got != "true" && got != "false" {
+			t.Fatalf("expected task_state_changed sandbox_fallback to be boolean text, got %q", got)
+		}
 		if event.Result == string(corepkg.TaskCompleted) || event.Result == string(corepkg.TaskFailed) || event.Result == string(corepkg.TaskKilled) {
 			seenTerminal = true
 		}
@@ -223,6 +229,9 @@ func TestRunPromptExecutesToolThroughRuntimeGatewayBoundary(t *testing.T) {
 	if got := call.Metadata["sandbox_mode"]; got != "best_effort" {
 		t.Fatalf("expected runtime metadata sandbox_mode=best_effort, got %q", got)
 	}
+	if got := call.Metadata["sandbox_required_capable"]; got != "true" && got != "false" {
+		t.Fatalf("expected runtime metadata sandbox_required_capable boolean text, got %q", got)
+	}
 
 	if len(sess.Messages) < 3 {
 		t.Fatalf("expected tool result message to be persisted, got %#v", sess.Messages)
@@ -312,6 +321,9 @@ func TestRunPromptRecordsSystemSandboxMetadataInToolExecuteAudit(t *testing.T) {
 	}
 	if got := startEvent.Metadata["sandbox_mode"]; got != "best_effort" {
 		t.Fatalf("expected start event sandbox_mode=best_effort, got %q", got)
+	}
+	if got := startEvent.Metadata["sandbox_required_capable"]; got != "true" && got != "false" {
+		t.Fatalf("expected start event sandbox_required_capable boolean text, got %q", got)
 	}
 	if resultEvent == nil {
 		t.Fatalf("expected tool_execute_result audit event, got %+v", events)
