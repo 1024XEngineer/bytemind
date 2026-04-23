@@ -544,6 +544,117 @@ func TestRunPromptRepairsClarifyQuestionWithoutActiveChoice(t *testing.T) {
 	}
 }
 
+func TestRunPromptRepairsPlanRevisionAndReturnsRevisedPlanDocument(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModePlan
+	sess.Plan = planpkg.State{
+		Goal:                "Implement the first paper RAG demo",
+		Summary:             "The plan is converged and ready to execute.",
+		ImplementationBrief: "Objective: deliver the first local paper RAG demo.\nDeliverables: upload, retrieval, answer generation, and a minimal HTML page.",
+		Phase:               planpkg.PhaseConvergeReady,
+		DecisionLog: []planpkg.Decision{
+			{Decision: "Use FastAPI + Jinja2 HTML for the first UI path", Reason: "Keeps the HTML GUI simple and local."},
+		},
+		Steps: []planpkg.Step{
+			{Title: "Freeze the MVP scope", Status: planpkg.StepPending},
+			{Title: "Implement the minimal UI flow", Status: planpkg.StepPending},
+		},
+		Verification:        []string{"Start the local app and validate one upload + one answer flow."},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+		NextAction:          "Ask whether to start execution or keep adjusting the plan.",
+	}
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "非常好，这一步很关键。建议先把 HTML GUI 收敛成页面功能、页面布局和交互细节三块，这样后面实现会更稳。",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name: "update_plan",
+					Arguments: `{
+						"summary":"The plan stays converged and now includes a more detailed HTML GUI specification.",
+						"implementation_brief":"Objective: deliver the first local paper RAG demo in demos/.\nUI Specification: refine the HTML GUI into explicit page regions and interactions.\nLayout: top bar with title and current model tag; left column for paper management and system status; right upper panel for QA; right lower panel for synthesis and retrieval results.\nInteraction Flow: upload triggers indexing with progress states; answer and synthesis are split into separate tabs; each answer lists its cited source papers.\nDeliverables: runnable FastAPI app, HTML templates, upload/index/qa/synthesis flows, and verification notes.",
+						"phase":"converge_ready",
+						"decision_log":[
+							{"decision":"Use FastAPI + Jinja2 HTML for the first UI path","reason":"Keeps the HTML GUI simple and local."},
+							{"decision":"Expand the HTML GUI spec into concrete layout and interaction sections","reason":"User asked for a more detailed UI design before execution."}
+						],
+						"decision_gaps":[],
+						"scope_defined":true,
+						"risk_and_rollback_defined":true,
+						"verification_defined":true,
+						"verification":[
+							"Start the local app and validate one upload + one answer flow.",
+							"Confirm the HTML page shows the top bar, paper panel, QA tab, and synthesis tab."
+						],
+						"next_action":"Ask whether to start execution or keep adjusting the plan.",
+						"plan":[
+							{"step":"Freeze the MVP scope", "status":"pending", "description":"Lock the minimal local paper-RAG scope and the refined HTML GUI boundaries."},
+							{"step":"Implement the HTML GUI flow", "status":"pending", "description":"Build the top bar, paper management area, QA tab, and synthesis tab with clear state feedback."}
+						]
+					}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>非常好，这一步很关键。现在我已经把 UI 细化进计划里了，下面是页面功能、页面布局和交互细节的整理版本。",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 6,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "我觉得 html 的界面设计还可以再细化一下，比如明确页面分区和交互。", "plan", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected three requests (repair + update_plan + finalize), got %d", len(client.requests))
+	}
+	secondTurnMessages := client.requests[1].Messages
+	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "plan-refinement feedback without updating the structured plan first") {
+		t.Fatalf("expected plan-revision repair note to be appended as user message, got %#v", secondTurnMessages)
+	}
+	if !strings.Contains(sess.Plan.ImplementationBrief, "UI Specification") {
+		t.Fatalf("expected revised plan to absorb the UI detail, got %#v", sess.Plan)
+	}
+	if !strings.Contains(answer, "已按你的反馈更新计划") {
+		t.Fatalf("expected final answer to be condensed into a short revision acknowledgement, got %q", answer)
+	}
+	if strings.Contains(answer, "非常好，这一步很关键") {
+		t.Fatalf("expected standalone revision prose to be removed from the final answer, got %q", answer)
+	}
+	for _, want := range []string{"<proposed_plan>", "UI Specification", "top bar with title", "right upper panel for QA"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected revised plan answer to include %q, got %q", want, answer)
+		}
+	}
+}
+
 func TestRunPromptRepairsBuildHandoffWithoutRestartingPlanConfirmation(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n"), 0o644); err != nil {

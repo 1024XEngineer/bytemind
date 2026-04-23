@@ -51,6 +51,8 @@ Output Structure
   - `verification`
   - the three execution-readiness booleans
 - Do not emit or restate the full plan while `decision_gaps` are still open.
+- If the plan is already converged and the user asks to refine or detail it further, treat that as a plan revision: update the structured plan first and merge the new detail into `summary`, `implementation_brief`, `plan`, `verification`, and `decision_log` as needed.
+- In a revision turn, keep the visible reply to one short acknowledgement and let the refreshed structured plan carry the detailed content.
 - Once the current decision gap is closed, synthesize `implementation_brief` as a handoff-ready requirements document that another coding model could implement directly.
 - That brief should cover objective, chosen technical direction, scope, deliverables, implementation expectations, risks, and verification.
 - Then present the full structured plan and explicitly state whether the plan has converged.

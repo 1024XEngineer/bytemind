@@ -1746,7 +1746,7 @@ func TestPlanActionOptionStartExecutionSwitchesBuildAndPreservesDisplay(t *testi
 	}
 }
 
-func TestPlanActionOptionAdjustPlanKeepsPlanModeAndPreservesDisplay(t *testing.T) {
+func TestPlanActionOptionAdjustPlanWaitsForManualInput(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	input.SetWidth(40)
@@ -1788,8 +1788,20 @@ func TestPlanActionOptionAdjustPlanKeepsPlanModeAndPreservesDisplay(t *testing.T
 	if updated.plan.Phase != planpkg.PhaseReady {
 		t.Fatalf("expected plan phase to remain converge-ready, got %q", updated.plan.Phase)
 	}
-	if len(updated.chatItems) < 1 || updated.chatItems[0].Body != "2" {
-		t.Fatalf("expected original option input to stay visible, got %#v", updated.chatItems)
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected adjust-plan selection to stay silent, got %#v", updated.chatItems)
+	}
+	if updated.planActionOpen {
+		t.Fatalf("expected adjust-plan selection to close the picker")
+	}
+	if updated.busy {
+		t.Fatalf("expected adjust-plan selection not to start a new run")
+	}
+	if strings.TrimSpace(updated.input.Value()) != "" {
+		t.Fatalf("expected input to reset after adjust-plan selection, got %q", updated.input.Value())
+	}
+	if updated.statusNote != "Plan mode kept. Describe what to refine next." {
+		t.Fatalf("expected refine guidance note, got %q", updated.statusNote)
 	}
 }
 
@@ -1935,6 +1947,54 @@ func TestPlanActionPickerHandlesShortcutSelectionWithoutTextInput(t *testing.T) 
 	}
 	if len(updated.chatItems) == 0 || updated.chatItems[0].Body != "A. 切到 Build 模式，开始执行" {
 		t.Fatalf("expected picker action to append labeled choice, got %#v", updated.chatItems)
+	}
+}
+
+func TestPlanActionPickerAdjustPlanWaitsForManualInput(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("should clear")
+	m := model{
+		screen:    screenChat,
+		width:     100,
+		height:    24,
+		input:     input,
+		viewport:  viewport.New(0, 0),
+		planView:  viewport.New(0, 0),
+		mode:      modePlan,
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:                "Finish plan mode",
+			Phase:               planpkg.PhaseReady,
+			NextAction:          "Adjust the rollout detail",
+			Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+			ScopeDefined:        true,
+			RiskRollbackDefined: true,
+			VerificationDefined: true,
+		},
+	}
+	m.syncPlanActionPicker()
+
+	got, _ := m.handlePlanActionKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	updated := got.(model)
+	if updated.mode != modePlan {
+		t.Fatalf("expected adjust-plan picker shortcut to stay in plan mode, got %q", updated.mode)
+	}
+	if updated.planActionOpen {
+		t.Fatalf("expected adjust-plan picker shortcut to close the picker")
+	}
+	if updated.busy {
+		t.Fatalf("expected adjust-plan picker shortcut not to start a run")
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected adjust-plan picker shortcut to avoid appending a user message, got %#v", updated.chatItems)
+	}
+	if strings.TrimSpace(updated.input.Value()) != "" {
+		t.Fatalf("expected input to reset after picker shortcut, got %q", updated.input.Value())
+	}
+	if updated.statusNote != "Plan mode kept. Describe what to refine next." {
+		t.Fatalf("expected refine guidance note, got %q", updated.statusNote)
 	}
 }
 

@@ -11,6 +11,60 @@ import (
 
 var clarifyChoiceShortcutPattern = regexp.MustCompile(`(?i)(^|[\s/|,，;；:：\-])([a-d]|1|2|3|4)([.)：:\s]|$)`)
 
+func shouldRepairPlanRevisionTurn(runMode planpkg.AgentMode, state planpkg.State, latestUser string, reply llm.Message) bool {
+	if runMode != planpkg.ModePlan || len(reply.ToolCalls) > 0 {
+		return false
+	}
+
+	state = planpkg.NormalizeState(state)
+	if !planpkg.CanStartExecution(state) {
+		return false
+	}
+
+	latestUser = strings.TrimSpace(latestUser)
+	if latestUser == "" || !looksLikePlanRevisionInput(latestUser) {
+		return false
+	}
+
+	return strings.TrimSpace(reply.Content) != ""
+}
+
+func buildPlanRevisionRepairInstruction(state planpkg.State, latestUser string, reply llm.Message, attempt, maxAttempts int) string {
+	state = planpkg.NormalizeState(state)
+	preview := strings.TrimSpace(reply.Content)
+	if preview == "" {
+		preview = "(empty assistant text)"
+	}
+	preview = truncateRunes(preview, 240)
+
+	latestUser = strings.TrimSpace(latestUser)
+	if latestUser == "" {
+		latestUser = "(empty user text)"
+	}
+
+	return strings.TrimSpace(fmt.Sprintf(
+		`The previous assistant turn responded to plan-refinement feedback without updating the structured plan first.
+Attempt %d/%d.
+
+Latest user refinement input:
+%s
+
+Reply text preview:
+%s
+
+For this next turn:
+1) Call update_plan before finalizing.
+2) Merge the new details into the structured plan state, especially summary, implementation_brief, steps, verification, and decision_log when relevant.
+3) If the refinement introduces a new unresolved decision, record it in decision_gaps, populate active_choice, and ask only that next question.
+4) If the plan remains converged after the update, keep the visible assistant reply to one short acknowledgement only and let the refreshed structured plan carry the detailed content.
+5) Do not answer with a standalone design memo or suggestion block outside the updated plan document.`,
+		attempt,
+		maxAttempts,
+		latestUser,
+		preview,
+	))
+}
+
 func shouldRepairPlanClarifyTurn(runMode planpkg.AgentMode, state planpkg.State, intent assistantTurnIntent, reply llm.Message) bool {
 	if runMode != planpkg.ModePlan || len(reply.ToolCalls) > 0 {
 		return false
@@ -194,6 +248,47 @@ func looksLikeInlineClarifyChoicePrompt(text string) bool {
 		"选路线",
 		"选方案",
 	)
+}
+
+func looksLikePlanRevisionInput(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" {
+		return false
+	}
+	if looksLikeExecutionHandoffInput(normalized) || looksLikePlanAdjustmentOnlyInput(normalized) || looksLikeRawPlanChoiceSelection(normalized) {
+		return false
+	}
+	return true
+}
+
+func looksLikePlanAdjustmentOnlyInput(text string) bool {
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "adjust",
+		"adjust plan",
+		"continue adjusting plan",
+		"continue plan",
+		"option 2",
+		"option b",
+		"2",
+		"2.",
+		"b",
+		"b.",
+		"继续微调计划",
+		"微调计划",
+		"继续调整计划",
+		"调整计划":
+		return true
+	default:
+		return false
+	}
+}
+
+func looksLikeRawPlanChoiceSelection(text string) bool {
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "a", "a.", "1", "1.", "c", "c.", "3", "3.", "other":
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(text)), "selected_choice:")
 }
 
 func countChoiceShortcuts(text string) int {

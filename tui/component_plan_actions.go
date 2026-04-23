@@ -384,10 +384,14 @@ func (m model) submitPlanActionSelection(action string, item planActionItem, dis
 			DisplayText: displayText,
 		}, displayText)
 	case action == planActionAdjustPlan:
-		return m.submitPreparedPrompt(RunPromptInput{
-			UserMessage: llm.NewUserTextMessage(action),
-			DisplayText: displayText,
-		}, displayText)
+		m.input.Reset()
+		m.clearPasteTransaction()
+		m.clearVirtualPasteParts()
+		m.screen = screenChat
+		m.statusNote = "Plan mode kept. Describe what to refine next."
+		m.phase = "idle"
+		m.chatAutoFollow = true
+		return m, nil
 	default:
 		if item.Freeform {
 			m.statusNote = "请在输入框补充你的自定义方案，然后按 Enter。"
