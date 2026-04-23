@@ -1,6 +1,6 @@
-# 安装
+# Installation
 
-## 一键安装
+## One-line Install
 
 ### macOS / Linux
 
@@ -8,13 +8,13 @@
 curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
 ```
 
-### Windows（PowerShell）
+### Windows (PowerShell)
 
 ```powershell
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
-## 安装指定版本
+## Install a Specific Version
 
 ### macOS / Linux
 
@@ -22,14 +22,14 @@ iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/
 curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=v0.3.0 bash
 ```
 
-### Windows（PowerShell）
+### Windows (PowerShell)
 
 ```powershell
 $env:BYTEMIND_VERSION='v0.3.0'
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
-## 从源码运行
+## Build from Source
 
 ```bash
 git clone https://github.com/1024XEngineer/bytemind.git
@@ -37,7 +37,7 @@ cd bytemind
 go run ./cmd/bytemind chat
 ```
 
-## 验证安装
+## Verify Installation
 
 ```bash
 bytemind --version
