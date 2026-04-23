@@ -8,6 +8,9 @@ import (
 )
 
 func TestBuildRequiredLinuxShellCommandIncludesIsolationSteps(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("linux shell isolation command assertion is not stable on windows path aliasing")
+	}
 	workspace := t.TempDir()
 	writable := filepath.Join(workspace, "out")
 	command, err := buildRequiredLinuxShellCommand("go test ./...", &ExecutionContext{
