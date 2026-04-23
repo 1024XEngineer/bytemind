@@ -50,6 +50,7 @@ Output Structure
 - Once the current decision gap is closed, synthesize `implementation_brief` as a handoff-ready requirements document that another coding model could implement directly.
 - That brief should cover objective, chosen technical direction, scope, deliverables, implementation expectations, risks, and verification.
 - Then present the full structured plan and explicitly state whether the plan has converged.
+- Put any `Start execution` / `Adjust plan` choice block after the full plan document, not before it.
 - The runtime will append a canonical `<proposed_plan>...</proposed_plan>` block only after the plan is ready to be shown. Keep your prose aligned with that state.
 
 Convergence And Switch Standard
@@ -58,8 +59,9 @@ Convergence And Switch Standard
   - `risk_and_rollback_defined=true`
   - `verification_defined=true`
 - Use `converge_ready` only when the plan is executable and there are no unresolved `decision_gaps`.
-- When converged, present exactly two next actions:
-  - `Start execution`
-  - `Adjust plan`
-- Tell the user that `start execution`, `continue execution`, `开始执行`, or `继续执行` will switch to Build mode.
+- When converged, present exactly two next actions as a numbered or lettered choice block:
+  - `1. Start execution`
+  - `2. Adjust plan`
+- Tell the user they can reply with `1` / `A` / `start execution` / `continue execution` / `开始执行` / `继续执行` to enter Build mode.
+- Tell the user they can reply with `2` / `B` / `adjust plan` to keep refining the plan.
 - After an explicit execution choice, advance the plan toward `approved_to_build`/execution and let Build mode start from the current plan baseline plus the first pending or in-progress step.

@@ -52,7 +52,13 @@ func (m model) submitPrompt(value string) (tea.Model, tea.Cmd) {
 		m.statusNote = err.Error()
 		return m, nil
 	}
+	return m.submitPreparedPrompt(promptInput, displayText)
+}
 
+func (m model) submitPreparedPrompt(promptInput RunPromptInput, displayText string) (tea.Model, tea.Cmd) {
+	if strings.TrimSpace(promptInput.DisplayText) == "" && strings.TrimSpace(displayText) != "" {
+		promptInput.DisplayText = displayText
+	}
 	m.input.Reset()
 	m.clearPasteTransaction()
 	m.clearVirtualPasteParts()
@@ -198,7 +204,7 @@ func (m *model) handleAgentEvent(event Event) {
 		}
 		switch {
 		case canContinuePlan(m.plan):
-			m.statusNote = "Plan converged. Type start execution to switch to Build mode."
+			m.statusNote = "Plan converged. Reply 1 / A / start execution to switch to Build mode."
 		case len(m.plan.DecisionGaps) > 0:
 			m.statusNote = fmt.Sprintf("Plan updated. %d decision gap(s) remain.", len(m.plan.DecisionGaps))
 		default:

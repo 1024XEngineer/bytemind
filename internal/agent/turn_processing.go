@@ -107,6 +107,41 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 			}
 			return "", false, nil
 		}
+		if shouldRepairBuildHandoffTurn(p.RunMode, p.Session.Plan, intent, reply, p.Session.Messages) {
+			attempt := 0
+			maxAttempts := 0
+			latestUser := latestUserMessageText(p.Session.Messages)
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("build_handoff_not_started")
+				p.TaskReport.RecordStrategyAdjustment("assistant treated an already-switched build handoff as if plan confirmation were still pending; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("build-handoff repair retries exceeded while waiting for execution to start")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept treating an already-approved build handoff as if plan confirmation were still pending (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildBuildHandoffRepairInstruction(p.Session.Plan, reply, latestUser, attempt, maxAttempts))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant treated an already-switched build handoff as pending plan confirmation; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
 		switch intent {
 		case turnIntentContinueWork:
 			attempt := 0

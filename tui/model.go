@@ -1330,24 +1330,30 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m.submitBTW(value)
 		}
-		if isContinueExecutionInput(value) && planpkg.HasStructuredPlan(m.plan) {
-			state, err := preparePlanForContinuation(m.plan)
-			if err != nil {
-				m.statusNote = err.Error()
-				return m, nil
-			}
-			m.plan = state
-			m.mode = modeBuild
-			if m.sess != nil {
-				m.sess.Mode = planpkg.ModeBuild
-				m.sess.Plan = copyPlanState(state)
-				if m.store != nil {
-					if err := m.store.Save(m.sess); err != nil {
-						m.statusNote = err.Error()
-						return m, nil
+		if action, ok := resolvePlanActionSelection(value, m.plan, m.sess); ok {
+			if action == "start execution" {
+				state, err := preparePlanForContinuation(m.plan)
+				if err != nil {
+					m.statusNote = err.Error()
+					return m, nil
+				}
+				m.plan = state
+				m.mode = modeBuild
+				if m.sess != nil {
+					m.sess.Mode = planpkg.ModeBuild
+					m.sess.Plan = copyPlanState(state)
+					if m.store != nil {
+						if err := m.store.Save(m.sess); err != nil {
+							m.statusNote = err.Error()
+							return m, nil
+						}
 					}
 				}
 			}
+			return m.submitPreparedPrompt(RunPromptInput{
+				UserMessage: llm.NewUserTextMessage(action),
+				DisplayText: strings.TrimSpace(value),
+			}, strings.TrimSpace(value))
 		}
 		if strings.HasPrefix(value, "/") {
 			m.input.Reset()
@@ -2281,6 +2287,64 @@ func isContinueExecutionInput(input string) bool {
 	default:
 		return false
 	}
+}
+
+func resolvePlanActionSelection(input string, state planpkg.State, sess *session.Session) (string, bool) {
+	state = planpkg.NormalizeState(state)
+	if !planpkg.HasStructuredPlan(state) {
+		return "", false
+	}
+	if isContinueExecutionInput(input) {
+		return "start execution", true
+	}
+	if !planpkg.CanStartExecution(state) || !latestAssistantHasPlanActionChoices(sess) {
+		return "", false
+	}
+
+	switch normalizePlanActionInput(input) {
+	case "1", "1.", "a", "a.", "option 1", "option a":
+		return "start execution", true
+	case "2", "2.", "b", "b.", "adjust", "adjust plan", "option 2", "option b",
+		"\u8c03\u6574", "\u8c03\u6574\u8ba1\u5212":
+		return "adjust plan", true
+	default:
+		return "", false
+	}
+}
+
+func normalizePlanActionInput(input string) string {
+	return strings.ToLower(strings.TrimSpace(input))
+}
+
+func latestAssistantHasPlanActionChoices(sess *session.Session) bool {
+	return hasPlanActionChoices(latestAssistantMessageText(sess))
+}
+
+func latestAssistantMessageText(sess *session.Session) string {
+	if sess == nil {
+		return ""
+	}
+	for i := len(sess.Messages) - 1; i >= 0; i-- {
+		msg := sess.Messages[i]
+		if msg.Role != llm.RoleAssistant {
+			continue
+		}
+		text := strings.TrimSpace(msg.Text())
+		if text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func hasPlanActionChoices(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" {
+		return false
+	}
+	hasStart := strings.Contains(normalized, "start execution")
+	hasAdjust := strings.Contains(normalized, "adjust plan")
+	return hasStart && hasAdjust
 }
 
 func (m model) currentPhaseLabel() string {

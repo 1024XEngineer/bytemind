@@ -34,7 +34,7 @@ func (m model) helpText() string {
 		"- If provider setup is required, paste an API key in the input and press Enter.",
 		"- Long pasted code/text is compressed to `[Paste #N ~X lines]`.",
 		"- Use `[Paste]`, `[Paste #N]`, `[Paste line3]`, or `[Paste #N line3~line7]` to expand references.",
-		"- After converging a saved plan, type `start execution` or `continue execution` to switch into Build mode.",
+		"- After converging a saved plan, reply `1` / `A` / `start execution` to switch into Build mode, or `2` / `B` / `adjust plan` to keep planning.",
 		"- Approval requests appear above the input area when a shell command needs confirmation.",
 		"- Footer shortcuts: `tab` agents, `/` commands, drag select, `Ctrl+A` away, `Ctrl+C` copy/quit, `Ctrl+L` sessions.",
 	}, "\n")

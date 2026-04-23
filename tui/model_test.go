@@ -1652,6 +1652,147 @@ func TestContinueExecutionInputPreparesPlanAndSubmitsPrompt(t *testing.T) {
 	}
 }
 
+func TestResolvePlanActionSelectionSupportsOptionChoices(t *testing.T) {
+	sess := session.New("E:\\bytemind")
+	sess.Messages = append(sess.Messages, llm.NewAssistantTextMessage(strings.Join([]string{
+		"Choose next step:",
+		"1. Start execution",
+		"2. Adjust plan",
+	}, "\n")))
+	state := planpkg.State{
+		Goal:                "Finish plan mode",
+		Phase:               planpkg.PhaseReady,
+		Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+	}
+
+	if got, ok := resolvePlanActionSelection("1", state, sess); !ok || got != "start execution" {
+		t.Fatalf("expected option 1 to resolve to start execution, got %q ok=%v", got, ok)
+	}
+	if got, ok := resolvePlanActionSelection("b", state, sess); !ok || got != "adjust plan" {
+		t.Fatalf("expected option b to resolve to adjust plan, got %q ok=%v", got, ok)
+	}
+}
+
+func TestResolvePlanActionSelectionDoesNotHijackClarifyAnswers(t *testing.T) {
+	sess := session.New("E:\\bytemind")
+	sess.Messages = append(sess.Messages, llm.NewAssistantTextMessage(strings.Join([]string{
+		"Question: Which stack should we use?",
+		"A. Flask",
+		"B. Streamlit",
+		"Other: custom",
+	}, "\n")))
+	state := planpkg.State{
+		Goal:         "Finish plan mode",
+		Phase:        planpkg.PhaseClarify,
+		DecisionGaps: []string{"Choose the first stack."},
+		Steps:        []planpkg.Step{{Title: "Freeze the stack", Status: planpkg.StepPending}},
+	}
+
+	if got, ok := resolvePlanActionSelection("b", state, sess); ok || got != "" {
+		t.Fatalf("expected clarify answer to stay untouched, got %q ok=%v", got, ok)
+	}
+}
+
+func TestPlanActionOptionStartExecutionSwitchesBuildAndPreservesDisplay(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetWidth(40)
+	input.SetHeight(3)
+	input.SetValue("1")
+	input.CursorEnd()
+	sess := session.New("E:\\bytemind")
+	sess.Messages = append(sess.Messages, llm.NewAssistantTextMessage(strings.Join([]string{
+		"Choose next step:",
+		"1. Start execution",
+		"2. Adjust plan",
+	}, "\n")))
+	m := model{
+		screen:    screenChat,
+		width:     100,
+		height:    24,
+		input:     input,
+		viewport:  viewport.New(0, 0),
+		planView:  viewport.New(0, 0),
+		mode:      modePlan,
+		sess:      sess,
+		workspace: "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:                "Finish plan mode",
+			Phase:               planpkg.PhaseReady,
+			NextAction:          "Start: Implement continuation",
+			Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+			ScopeDefined:        true,
+			RiskRollbackDefined: true,
+			VerificationDefined: true,
+		},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	if updated.mode != modeBuild {
+		t.Fatalf("expected option 1 to switch to build mode, got %q", updated.mode)
+	}
+	if updated.sess.Mode != planpkg.ModeBuild {
+		t.Fatalf("expected session mode to switch to build, got %q", updated.sess.Mode)
+	}
+	if updated.plan.Phase != planpkg.PhaseExecuting {
+		t.Fatalf("expected plan phase to become executing, got %q", updated.plan.Phase)
+	}
+	if len(updated.chatItems) < 1 || updated.chatItems[0].Body != "1" {
+		t.Fatalf("expected original option input to stay visible, got %#v", updated.chatItems)
+	}
+}
+
+func TestPlanActionOptionAdjustPlanKeepsPlanModeAndPreservesDisplay(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetWidth(40)
+	input.SetHeight(3)
+	input.SetValue("2")
+	input.CursorEnd()
+	sess := session.New("E:\\bytemind")
+	sess.Messages = append(sess.Messages, llm.NewAssistantTextMessage(strings.Join([]string{
+		"Choose next step:",
+		"1. Start execution",
+		"2. Adjust plan",
+	}, "\n")))
+	m := model{
+		screen:    screenChat,
+		width:     100,
+		height:    24,
+		input:     input,
+		viewport:  viewport.New(0, 0),
+		planView:  viewport.New(0, 0),
+		mode:      modePlan,
+		sess:      sess,
+		workspace: "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:                "Finish plan mode",
+			Phase:               planpkg.PhaseReady,
+			NextAction:          "Adjust the rollout detail",
+			Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+			ScopeDefined:        true,
+			RiskRollbackDefined: true,
+			VerificationDefined: true,
+		},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	if updated.mode != modePlan {
+		t.Fatalf("expected option 2 to stay in plan mode, got %q", updated.mode)
+	}
+	if updated.plan.Phase != planpkg.PhaseReady {
+		t.Fatalf("expected plan phase to remain converge-ready, got %q", updated.plan.Phase)
+	}
+	if len(updated.chatItems) < 1 || updated.chatItems[0].Body != "2" {
+		t.Fatalf("expected original option input to stay visible, got %#v", updated.chatItems)
+	}
+}
+
 func TestIsContinueExecutionInputSupportsPlanAlias(t *testing.T) {
 	for _, input := range []string{"continue plan", "start execution", "\u7ee7\u7eed", "\u5f00\u59cb\u6267\u884c"} {
 		if !isContinueExecutionInput(input) {
