@@ -283,7 +283,7 @@ var commandItems = []commandItem{
 	{Name: "/mcp list", Usage: "/mcp list", Description: "List configured MCP servers and current status.", Kind: "command"},
 	{Name: "/mcp help", Usage: "/mcp help", Description: "Show MCP command help.", Kind: "command"},
 	{Name: "/mcp show", Usage: "/mcp show <id>", Description: "Show one MCP server config and runtime state.", Kind: "command"},
-	{Name: "/mcp setup github", Usage: "/mcp setup <id>", Description: "Start guided setup for any MCP server id (`github` uses preset).", Kind: "command"},
+	{Name: "/mcp setup github", Usage: "/mcp setup <id>", Description: "Run MCP setup in one command (`github` uses preset).", Kind: "command"},
 	{Name: "/new", Usage: "/new", Description: "Start a fresh session in this workspace.", Kind: "command"},
 	{Name: "/compact", Usage: "/compact", Description: "Compress long session history into a continuation summary.", Kind: "command"},
 	{Name: "/btw", Usage: "/btw <message>", Description: "Interject while a run is in progress.", Kind: "command"},

@@ -236,24 +236,69 @@ func TestHandleSlashCommandMCPListAsync(t *testing.T) {
 	}
 }
 
-func TestHandleSlashCommandMCPSetupGithubStartsWizard(t *testing.T) {
+func TestHandleSlashCommandMCPSetupGithubAppliesDirectly(t *testing.T) {
 	service := &stubMCPService{}
 	m := newMCPSetupTestModel(service)
 	if err := m.handleSlashCommand("/mcp setup github"); err != nil {
-		t.Fatalf("expected /mcp setup github to start wizard, got %v", err)
+		t.Fatalf("expected /mcp setup github to run directly, got %v", err)
 	}
-	if m.mcpSetup == nil {
-		t.Fatal("expected mcp setup session to be active")
+	if m.mcpSetup != nil {
+		t.Fatalf("expected slash setup not to open wizard, got %#v", m.mcpSetup)
 	}
-	if m.mcpSetup.step != mcpSetupStepGithubToken {
-		t.Fatalf("expected setup step github_token, got %q", m.mcpSetup.step)
+	if service.addCalls != 1 || service.testCalls != 1 || service.enableCalls != 1 || service.reloadCalls != 1 {
+		t.Fatalf("expected add/test/enable/reload to run once, got add=%d test=%d enable=%d reload=%d", service.addCalls, service.testCalls, service.enableCalls, service.reloadCalls)
+	}
+	if strings.TrimSpace(service.addReq.ID) != "github" {
+		t.Fatalf("expected github id, got %#v", service.addReq.ID)
+	}
+	if strings.TrimSpace(service.addReq.Command) != "npx" {
+		t.Fatalf("expected github preset command npx, got %#v", service.addReq.Command)
 	}
 	if len(m.chatItems) < 2 {
-		t.Fatalf("expected setup intro exchange in chat, got %#v", m.chatItems)
+		t.Fatalf("expected setup output in chat, got %#v", m.chatItems)
 	}
 	last := m.chatItems[len(m.chatItems)-1].Body
-	if !strings.Contains(last, "Preset auto-detected: github") || !strings.Contains(last, "Step 1/2") {
-		t.Fatalf("expected setup intro to include github preset and step, got %q", last)
+	if !strings.Contains(last, "MCP setup completed for `github`.") {
+		t.Fatalf("expected setup completion in output, got %q", last)
+	}
+}
+
+func TestHandleSlashCommandMCPSetupAnyIDRequiresCommand(t *testing.T) {
+	service := &stubMCPService{}
+	m := newMCPSetupTestModel(service)
+	err := m.handleSlashCommand("/mcp setup docs")
+	if err == nil {
+		t.Fatal("expected setup without --cmd for non-preset id to fail")
+	}
+	if !strings.Contains(err.Error(), "usage: /mcp setup <id>") {
+		t.Fatalf("expected setup usage error, got %v", err)
+	}
+}
+
+func TestHandleSlashCommandMCPSetupWithCommandArgsEnv(t *testing.T) {
+	service := &stubMCPService{}
+	m := newMCPSetupTestModel(service)
+	err := m.handleSlashCommand("/mcp setup docs --cmd npx --args -y,@modelcontextprotocol/server-filesystem --env API_KEY=abc")
+	if err != nil {
+		t.Fatalf("expected one-line slash setup to succeed, got %v", err)
+	}
+	if m.mcpSetup != nil {
+		t.Fatalf("expected slash setup not to open wizard, got %#v", m.mcpSetup)
+	}
+	if service.addCalls != 1 || service.testCalls != 1 || service.enableCalls != 1 || service.reloadCalls != 1 {
+		t.Fatalf("expected add/test/enable/reload to run once, got add=%d test=%d enable=%d reload=%d", service.addCalls, service.testCalls, service.enableCalls, service.reloadCalls)
+	}
+	if strings.TrimSpace(service.addReq.ID) != "docs" {
+		t.Fatalf("expected docs id, got %#v", service.addReq.ID)
+	}
+	if strings.TrimSpace(service.addReq.Command) != "npx" {
+		t.Fatalf("expected command npx, got %#v", service.addReq.Command)
+	}
+	if len(service.addReq.Args) != 2 || service.addReq.Args[1] != "@modelcontextprotocol/server-filesystem" {
+		t.Fatalf("expected parsed args, got %#v", service.addReq.Args)
+	}
+	if service.addReq.Env["API_KEY"] != "abc" {
+		t.Fatalf("expected parsed env, got %#v", service.addReq.Env)
 	}
 }
 
@@ -309,23 +354,23 @@ func TestNaturalLanguageMCPSetupMissingIDShowsHint(t *testing.T) {
 func TestMCPSetupAllowsTypingAfterWizardStarts(t *testing.T) {
 	service := &stubMCPService{}
 	m := newMCPSetupTestModel(service)
-	if err := m.handleSlashCommand("/mcp setup github"); err != nil {
-		t.Fatalf("expected /mcp setup github to start wizard, got %v", err)
-	}
+	m.setInputValue("please configure github mcp")
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
 
-	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
+	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
 	updated := next.(model)
 	if strings.TrimSpace(updated.input.Value()) != "g" {
 		t.Fatalf("expected input to accept typing during setup, got %q", updated.input.Value())
 	}
 }
 
-func TestMCPSetupGithubFlowAppliesConfigSynchronously(t *testing.T) {
+func TestNaturalLanguageMCPSetupGithubFlowAppliesConfigSynchronously(t *testing.T) {
 	service := &stubMCPService{}
 	m := newMCPSetupTestModel(service)
-	if err := m.handleSlashCommand("/mcp setup github"); err != nil {
-		t.Fatalf("start setup failed: %v", err)
-	}
+	m.setInputValue("configure github mcp")
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
 	if m.mcpSetup == nil || m.mcpSetup.step != mcpSetupStepGithubToken {
 		t.Fatalf("expected setup to move to github token step, got %#v", m.mcpSetup)
 	}
@@ -366,12 +411,12 @@ func TestMCPSetupGithubFlowAppliesConfigSynchronously(t *testing.T) {
 	}
 }
 
-func TestMCPSetupAnyIDUsesGenericWizard(t *testing.T) {
+func TestNaturalLanguageMCPSetupAnyIDUsesGenericWizard(t *testing.T) {
 	service := &stubMCPService{}
 	m := newMCPSetupTestModel(service)
-	if err := m.handleSlashCommand("/mcp setup docs"); err != nil {
-		t.Fatalf("start setup failed: %v", err)
-	}
+	m.setInputValue("configure docs mcp")
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
 	if m.mcpSetup == nil || m.mcpSetup.step != mcpSetupStepCommand {
 		t.Fatalf("expected generic setup command step, got %#v", m.mcpSetup)
 	}
@@ -422,13 +467,9 @@ func TestMCPSetupAsyncShowsApplyingStatus(t *testing.T) {
 	m := newMCPSetupTestModel(service)
 	m.async = make(chan tea.Msg, 2)
 
-	if err := m.handleSlashCommand("/mcp setup docs"); err != nil {
-		t.Fatalf("start setup failed: %v", err)
+	if err := m.handleSlashCommand("/mcp setup docs --cmd npx --args -y,@modelcontextprotocol/server-filesystem"); err != nil {
+		t.Fatalf("one-line setup failed: %v", err)
 	}
-	m = submitMCPSetupEnter(t, m, "npx")
-	m = submitMCPSetupEnter(t, m, "-y,@modelcontextprotocol/server-filesystem")
-	m = submitMCPSetupEnter(t, m, "skip")
-	m = submitMCPSetupEnter(t, m, "yes")
 
 	if !m.mcpCommandPending {
 		t.Fatal("expected setup apply to run asynchronously")
@@ -464,9 +505,9 @@ func TestMCPSetupAsyncShowsApplyingStatus(t *testing.T) {
 func TestMCPSetupCanBeCanceled(t *testing.T) {
 	service := &stubMCPService{}
 	m := newMCPSetupTestModel(service)
-	if err := m.handleSlashCommand("/mcp setup github"); err != nil {
-		t.Fatalf("start setup failed: %v", err)
-	}
+	m.setInputValue("configure github mcp")
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
 	m = submitMCPSetupEnter(t, m, "cancel")
 	if m.mcpSetup != nil {
 		t.Fatalf("expected setup to be canceled, got %#v", m.mcpSetup)
@@ -482,9 +523,9 @@ func TestMCPSetupCanBeCanceled(t *testing.T) {
 func TestMCPSetupBlocksOtherSlashCommandsUntilCanceled(t *testing.T) {
 	service := &stubMCPService{}
 	m := newMCPSetupTestModel(service)
-	if err := m.handleSlashCommand("/mcp setup github"); err != nil {
-		t.Fatalf("start setup failed: %v", err)
-	}
+	m.setInputValue("configure github mcp")
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
 
 	m = submitMCPSetupEnter(t, m, "/mcp list")
 	if m.mcpSetup == nil {

@@ -2,7 +2,7 @@
 
 本文档给出当前项目可用的两种 MCP 配置方式：`slash 命令` 和 `自然语言`。
 
-## 1. 在 TUI 里用 Slash（标准方式）
+## 1. 在 TUI 里用 Slash（单命令方式）
 
 1. 启动 TUI：
 
@@ -10,20 +10,20 @@
 go run ./cmd/bytemind chat
 ```
 
-2. 输入：
+2. 输入一条命令直接执行：
 
 ```text
-/mcp setup <id>
+/mcp setup <id> [--cmd <command>] [--args a,b] [--env K=V[,K2=V2]]
 ```
 
-3. 按向导逐步输入参数（或输入 `cancel` 取消）。
-4. 配置完成后会自动执行：`Add -> Test -> Enable -> Reload`。
+3. 命令会自动执行：`Add -> Test -> Enable -> Reload`。
 
 常见示例：
 
 ```text
 /mcp setup github
-/mcp setup filesystem
+/mcp setup filesystem --cmd npx --args -y,@modelcontextprotocol/server-filesystem
+/mcp setup github --env GITHUB_PERSONAL_ACCESS_TOKEN=ghp_xxx
 ```
 
 ## 2. 在 TUI 里用自然语言（快捷方式）

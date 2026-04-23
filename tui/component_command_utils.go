@@ -18,7 +18,7 @@ func (m model) helpText() string {
 		"- `/mcp list`: list configured MCP servers and runtime status.",
 		"- `/mcp help`: show MCP command help.",
 		"- `/mcp show <id>`: show one MCP server config and runtime status.",
-		"- `/mcp setup <id>`: start guided setup for one MCP server.",
+		"- `/mcp setup <id> [--cmd ...] [--args ...] [--env ...]`: apply MCP setup in one command.",
 		"- Natural-language setup also works, for example: `帮我配置 github mcp` or `configure github mcp`.",
 		"- `/<skill-name> [k=v...]`: activate a skill for this session.",
 		"- `/skill clear`: clear the active skill in this session.",

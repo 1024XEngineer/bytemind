@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"bytemind/internal/config"
@@ -18,6 +19,7 @@ const (
 	mcpSetupGithubTokenEnv   = "GITHUB_PERSONAL_ACCESS_TOKEN"
 	mcpSetupCommandInputHint = "Input `cancel` to abort setup."
 	mcpSetupUsage            = "usage: /mcp setup <id>"
+	mcpSetupSlashUsage       = "usage: /mcp setup <id> [--cmd <command>] [--args a,b] [--env K=V[,K2=V2]] [--cwd <path>] [--name <name>]"
 )
 
 type mcpSetupStep string
@@ -44,6 +46,159 @@ var (
 	mcpSetupTokenPattern    = regexp.MustCompile(`[a-z0-9][a-z0-9_-]*`)
 )
 
+func (m *model) runMCPSetupSlashCommand(input string, fields []string) error {
+	if m == nil {
+		return fmt.Errorf("model is unavailable")
+	}
+	req, err := parseMCPSetupRequestFromSlash(fields)
+	if err != nil {
+		return err
+	}
+	m.startMCPSetupApplyWithInput(req, strings.TrimSpace(input))
+	return nil
+}
+
+func parseMCPSetupRequestFromSlash(fields []string) (mcpctl.AddRequest, error) {
+	if len(fields) < 3 {
+		return mcpctl.AddRequest{}, fmt.Errorf(mcpSetupUsage)
+	}
+	serverID := strings.ToLower(strings.TrimSpace(fields[2]))
+	if serverID == "" {
+		return mcpctl.AddRequest{}, fmt.Errorf(mcpSetupUsage)
+	}
+
+	req := mcpctl.AddRequest{
+		ID:              serverID,
+		Name:            serverID,
+		AutoStart:       mcpSetupBoolPtr(true),
+		StartupTimeoutS: config.DefaultMCPStartupTimeoutSeconds,
+		CallTimeoutS:    config.DefaultMCPCallTimeoutSeconds,
+		MaxConcurrency:  config.DefaultMCPMaxConcurrency,
+	}
+	if serverID == mcpSetupPresetGithub {
+		req.Name = "GitHub MCP"
+		req.Command = "npx"
+		req.Args = []string{"-y", "@modelcontextprotocol/server-github"}
+	}
+
+	for index := 3; index < len(fields); index++ {
+		option := strings.ToLower(strings.TrimSpace(fields[index]))
+		if option == "" {
+			continue
+		}
+		nextValue := func() (string, error) {
+			index++
+			if index >= len(fields) {
+				return "", fmt.Errorf("%s (missing value for %s)", mcpSetupSlashUsage, option)
+			}
+			return strings.TrimSpace(fields[index]), nil
+		}
+
+		switch option {
+		case "--name":
+			value, valueErr := nextValue()
+			if valueErr != nil {
+				return mcpctl.AddRequest{}, valueErr
+			}
+			req.Name = value
+		case "--cmd":
+			value, valueErr := nextValue()
+			if valueErr != nil {
+				return mcpctl.AddRequest{}, valueErr
+			}
+			req.Command = value
+		case "--args":
+			value, valueErr := nextValue()
+			if valueErr != nil {
+				return mcpctl.AddRequest{}, valueErr
+			}
+			req.Args = splitMCPSetupCSV(value)
+		case "--env":
+			value, valueErr := nextValue()
+			if valueErr != nil {
+				return mcpctl.AddRequest{}, valueErr
+			}
+			env, parseErr := parseMCPSetupEnv(value)
+			if parseErr != nil {
+				return mcpctl.AddRequest{}, parseErr
+			}
+			if len(env) > 0 {
+				if req.Env == nil {
+					req.Env = map[string]string{}
+				}
+				for key, envValue := range env {
+					req.Env[key] = envValue
+				}
+			}
+		case "--cwd":
+			value, valueErr := nextValue()
+			if valueErr != nil {
+				return mcpctl.AddRequest{}, valueErr
+			}
+			req.CWD = value
+		case "--auto-start":
+			value, valueErr := nextValue()
+			if valueErr != nil {
+				return mcpctl.AddRequest{}, valueErr
+			}
+			autoStart, parseErr := strconv.ParseBool(strings.ToLower(value))
+			if parseErr != nil {
+				return mcpctl.AddRequest{}, fmt.Errorf("invalid --auto-start value %q (expected true/false)", value)
+			}
+			req.AutoStart = mcpSetupBoolPtr(autoStart)
+		case "--startup-timeout-s":
+			value, valueErr := nextValue()
+			if valueErr != nil {
+				return mcpctl.AddRequest{}, valueErr
+			}
+			timeout, parseErr := strconv.Atoi(value)
+			if parseErr != nil || timeout <= 0 {
+				return mcpctl.AddRequest{}, fmt.Errorf("invalid --startup-timeout-s value %q", value)
+			}
+			req.StartupTimeoutS = timeout
+		case "--call-timeout-s":
+			value, valueErr := nextValue()
+			if valueErr != nil {
+				return mcpctl.AddRequest{}, valueErr
+			}
+			timeout, parseErr := strconv.Atoi(value)
+			if parseErr != nil || timeout <= 0 {
+				return mcpctl.AddRequest{}, fmt.Errorf("invalid --call-timeout-s value %q", value)
+			}
+			req.CallTimeoutS = timeout
+		case "--max-concurrency":
+			value, valueErr := nextValue()
+			if valueErr != nil {
+				return mcpctl.AddRequest{}, valueErr
+			}
+			limit, parseErr := strconv.Atoi(value)
+			if parseErr != nil || limit <= 0 {
+				return mcpctl.AddRequest{}, fmt.Errorf("invalid --max-concurrency value %q", value)
+			}
+			req.MaxConcurrency = limit
+		case "--protocol-version":
+			value, valueErr := nextValue()
+			if valueErr != nil {
+				return mcpctl.AddRequest{}, valueErr
+			}
+			req.ProtocolVersion = value
+		case "--protocol-versions":
+			value, valueErr := nextValue()
+			if valueErr != nil {
+				return mcpctl.AddRequest{}, valueErr
+			}
+			req.ProtocolVersions = splitMCPSetupCSV(value)
+		default:
+			return mcpctl.AddRequest{}, fmt.Errorf("%s (unknown option %s)", mcpSetupSlashUsage, option)
+		}
+	}
+
+	if strings.TrimSpace(req.Command) == "" {
+		return mcpctl.AddRequest{}, fmt.Errorf("%s (`--cmd` is required for non-preset servers)", mcpSetupSlashUsage)
+	}
+	return req, nil
+}
+
 func (m *model) tryHandleNaturalMCPSetupIntent(input string) (handled bool, cmd tea.Cmd, err error) {
 	if m == nil {
 		return false, nil, nil
@@ -56,7 +211,7 @@ func (m *model) tryHandleNaturalMCPSetupIntent(input string) (handled bool, cmd 
 	if serverID == "" {
 		m.appendCommandExchange(value, strings.Join([]string{
 			"Detected MCP setup intent, but server id is missing.",
-			"Use `/mcp setup <id>` or natural text like `帮我配置 github mcp`.",
+			"Use `/mcp setup <id> --cmd <command>` or natural text like `帮我配置 github mcp`.",
 		}, "\n"))
 		m.statusNote = "MCP setup requires server id."
 		return true, nil, nil
@@ -315,6 +470,14 @@ func (m *model) handleMCPSetupSubmission(rawValue string) (handled bool, cmd tea
 }
 
 func (m *model) startMCPSetupApply(req mcpctl.AddRequest) tea.Cmd {
+	commandInput := "/mcp setup " + strings.TrimSpace(req.ID)
+	if commandInput == "/mcp setup " {
+		commandInput = "/mcp setup"
+	}
+	return m.startMCPSetupApplyWithInput(req, commandInput)
+}
+
+func (m *model) startMCPSetupApplyWithInput(req mcpctl.AddRequest, commandInput string) tea.Cmd {
 	if m == nil {
 		return nil
 	}
@@ -323,9 +486,12 @@ func (m *model) startMCPSetupApply(req mcpctl.AddRequest) tea.Cmd {
 		return nil
 	}
 	m.markMCPSetupApplying()
-	commandInput := "/mcp setup " + strings.TrimSpace(req.ID)
-	if commandInput == "/mcp setup " {
-		commandInput = "/mcp setup"
+	commandInput = strings.TrimSpace(commandInput)
+	if commandInput == "" {
+		commandInput = "/mcp setup " + strings.TrimSpace(req.ID)
+		if commandInput == "/mcp setup " {
+			commandInput = "/mcp setup"
+		}
 	}
 
 	if m.async == nil {

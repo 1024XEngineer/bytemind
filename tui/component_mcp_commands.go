@@ -28,7 +28,7 @@ func (m *model) runMCPCommandDispatch(input string, fields []string) error {
 		return fmt.Errorf("model is unavailable")
 	}
 	if len(fields) >= 2 && strings.EqualFold(strings.TrimSpace(fields[1]), "setup") {
-		return m.startMCPSetup(input, fields)
+		return m.runMCPSetupSlashCommand(input, fields)
 	}
 	if m.async == nil {
 		return m.runMCPCommand(input, fields)
@@ -105,9 +105,9 @@ func formatMCPHelpText() string {
 		mcpUsage,
 		"- /mcp list",
 		"- /mcp show <id>",
-		"- /mcp setup <id>",
-		"  `github` id will use a built-in preset; other ids use generic setup.",
-		"  Then follow prompts and type `cancel` to abort.",
+		"- /mcp setup <id> [--cmd <command>] [--args a,b] [--env K=V[,K2=V2]]",
+		"  runs Add -> Test -> Enable -> Reload in one command.",
+		"  `github` id uses built-in preset when --cmd is omitted.",
 		"- /mcp help",
 	}, "\n")
 }
