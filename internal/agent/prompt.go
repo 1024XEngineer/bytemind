@@ -45,23 +45,24 @@ type PromptActiveSkill struct {
 }
 
 type PromptInput struct {
-	Workspace             string
-	ApprovalPolicy        string
-	ApprovalMode          string
-	AwayPolicy            string
-	SandboxEnabled        bool
-	SystemSandbox         string
-	SystemSandboxBackend  string
-	SystemSandboxFallback bool
-	SystemSandboxStatus   string
-	Model                 string
-	Mode                  string
-	Platform              string
-	Now                   time.Time
-	Skills                []PromptSkill
-	Tools                 []string
-	ActiveSkill           *PromptActiveSkill
-	Instruction           string
+	Workspace                    string
+	ApprovalPolicy               string
+	ApprovalMode                 string
+	AwayPolicy                   string
+	SandboxEnabled               bool
+	SystemSandbox                string
+	SystemSandboxBackend         string
+	SystemSandboxRequiredCapable bool
+	SystemSandboxFallback        bool
+	SystemSandboxStatus          string
+	Model                        string
+	Mode                         string
+	Platform                     string
+	Now                          time.Time
+	Skills                       []PromptSkill
+	Tools                        []string
+	ActiveSkill                  *PromptActiveSkill
+	Instruction                  string
 }
 
 func systemPrompt(input PromptInput) string {
@@ -158,6 +159,10 @@ func renderSystemBlock(input PromptInput) string {
 	if input.SystemSandboxFallback {
 		systemSandboxFallback = "true"
 	}
+	systemSandboxRequiredCapable := "false"
+	if input.SystemSandboxRequiredCapable {
+		systemSandboxRequiredCapable = "true"
+	}
 	systemSandboxStatus := strings.TrimSpace(input.SystemSandboxStatus)
 	sandboxEnabled := "false"
 	if input.SandboxEnabled {
@@ -183,6 +188,7 @@ func renderSystemBlock(input PromptInput) string {
 		fmt.Sprintf("sandbox_enabled: %s", sandboxEnabled),
 		fmt.Sprintf("system_sandbox_mode: %s", systemSandbox),
 		fmt.Sprintf("system_sandbox_backend: %s", systemSandboxBackend),
+		fmt.Sprintf("system_sandbox_required_capable: %s", systemSandboxRequiredCapable),
 		fmt.Sprintf("system_sandbox_fallback: %s", systemSandboxFallback),
 		"",
 		"[Available Skills]",

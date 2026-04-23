@@ -188,7 +188,8 @@ func writeSystemSandboxStartupNotice(out io.Writer, setup runPromptSetup, sandbo
 	} else if backend == "none" {
 		sandboxState = "inactive"
 	}
-	line := fmt.Sprintf("%ssystem sandbox startup%s mode=%s backend=%s state=%s", ansiDim, ansiReset, mode, backend, sandboxState)
+	requiredCapable := strconv.FormatBool(setup.SystemSandboxRequiredCapable)
+	line := fmt.Sprintf("%ssystem sandbox startup%s mode=%s backend=%s state=%s required_capable=%s", ansiDim, ansiReset, mode, backend, sandboxState, requiredCapable)
 	if status != "" {
 		line += fmt.Sprintf(" (%s)", status)
 	}
@@ -246,11 +247,12 @@ func appendSystemSandboxStartupAudit(
 		state = "inactive"
 	}
 	metadata := map[string]string{
-		"sandbox_enabled":  strconv.FormatBool(sandboxEnabled),
-		"sandbox_mode":     mode,
-		"sandbox_backend":  backend,
-		"sandbox_status":   state,
-		"sandbox_fallback": strconv.FormatBool(setup.SystemSandboxFallback),
+		"sandbox_enabled":          strconv.FormatBool(sandboxEnabled),
+		"sandbox_mode":             mode,
+		"sandbox_backend":          backend,
+		"sandbox_required_capable": strconv.FormatBool(setup.SystemSandboxRequiredCapable),
+		"sandbox_status":           state,
+		"sandbox_fallback":         strconv.FormatBool(setup.SystemSandboxFallback),
 	}
 	if reason != "" {
 		metadata["sandbox_message"] = reason

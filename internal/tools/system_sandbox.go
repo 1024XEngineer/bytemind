@@ -9,14 +9,15 @@ import (
 // SystemSandboxRuntimeStatus describes system sandbox runtime state after
 // configuration and platform/backend probing are applied.
 type SystemSandboxRuntimeStatus struct {
-	SandboxEnabled bool
-	RequestedMode  string
-	Mode           string
-	GOOS           string
-	BackendEnabled bool
-	BackendName    string
-	Fallback       bool
-	Message        string
+	SandboxEnabled  bool
+	RequestedMode   string
+	Mode            string
+	GOOS            string
+	BackendEnabled  bool
+	BackendName     string
+	RequiredCapable bool
+	Fallback        bool
+	Message         string
 }
 
 // ValidateSystemSandboxRuntime verifies whether the configured system sandbox mode
@@ -72,6 +73,7 @@ func resolveSystemSandboxRuntimeStatusWith(
 	if backend.Enabled {
 		status.BackendEnabled = true
 		status.BackendName = strings.TrimSpace(backend.Name)
+		status.RequiredCapable = requiredSystemSandboxCapabilitiesSatisfied(backend)
 		status.Message = fmt.Sprintf("system sandbox backend %q is active", status.BackendName)
 		return status, nil
 	}

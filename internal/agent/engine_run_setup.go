@@ -50,6 +50,7 @@ func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptI
 	}
 
 	systemSandboxBackend := "none"
+	systemSandboxRequiredCapable := false
 	systemSandboxFallback := false
 	systemSandboxStatus := ""
 	if runtimeStatus, statusErr := resolveAgentSystemSandboxRuntimeStatus(runner.config.SandboxEnabled, runner.config.SystemSandboxMode); statusErr != nil {
@@ -61,28 +62,30 @@ func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptI
 		if backend := strings.TrimSpace(runtimeStatus.BackendName); backend != "" {
 			systemSandboxBackend = backend
 		}
+		systemSandboxRequiredCapable = runtimeStatus.RequiredCapable
 		systemSandboxFallback = runtimeStatus.Fallback
 		systemSandboxStatus = strings.TrimSpace(runtimeStatus.Message)
 	}
 
 	return runPromptSetup{
-		Input:                 input,
-		UserInput:             userInput,
-		RunMode:               runMode,
-		Mode:                  mode,
-		SystemSandboxBackend:  systemSandboxBackend,
-		SystemSandboxFallback: systemSandboxFallback,
-		SystemSandboxStatus:   systemSandboxStatus,
-		ActiveSkill:           activeSkill,
-		AllowedTools:          allowedTools,
-		DeniedTools:           deniedTools,
-		AllowedToolNames:      policypkg.SortedToolNames(allowedTools),
-		DeniedToolNames:       policypkg.SortedToolNames(deniedTools),
-		AvailableSkills:       runner.promptSkills(),
-		AvailableTools:        availableTools,
-		InstructionText:       loadAGENTSInstruction(runner.workspace),
-		WebLookupInstruction:  promptHint.Instruction,
-		PromptTokens:          contextpkg.EstimateRequestTokens([]llm.Message{input.UserMessage}),
+		Input:                        input,
+		UserInput:                    userInput,
+		RunMode:                      runMode,
+		Mode:                         mode,
+		SystemSandboxBackend:         systemSandboxBackend,
+		SystemSandboxRequiredCapable: systemSandboxRequiredCapable,
+		SystemSandboxFallback:        systemSandboxFallback,
+		SystemSandboxStatus:          systemSandboxStatus,
+		ActiveSkill:                  activeSkill,
+		AllowedTools:                 allowedTools,
+		DeniedTools:                  deniedTools,
+		AllowedToolNames:             policypkg.SortedToolNames(allowedTools),
+		DeniedToolNames:              policypkg.SortedToolNames(deniedTools),
+		AvailableSkills:              runner.promptSkills(),
+		AvailableTools:               availableTools,
+		InstructionText:              loadAGENTSInstruction(runner.workspace),
+		WebLookupInstruction:         promptHint.Instruction,
+		PromptTokens:                 contextpkg.EstimateRequestTokens([]llm.Message{input.UserMessage}),
 	}, nil
 }
 
@@ -118,21 +121,22 @@ func (e *defaultEngine) buildTurnMessages(sess *session.Session, setup runPrompt
 
 	return contextpkg.BuildTurnMessages(contextpkg.TurnMessagesRequest{
 		SystemPrompt: systemPrompt(PromptInput{
-			Workspace:             runner.workspace,
-			ApprovalPolicy:        runner.config.ApprovalPolicy,
-			ApprovalMode:          runner.config.ApprovalMode,
-			AwayPolicy:            runner.config.AwayPolicy,
-			SandboxEnabled:        runner.config.SandboxEnabled,
-			SystemSandbox:         runner.config.SystemSandboxMode,
-			SystemSandboxBackend:  setup.SystemSandboxBackend,
-			SystemSandboxFallback: setup.SystemSandboxFallback,
-			SystemSandboxStatus:   setup.SystemSandboxStatus,
-			Model:                 runner.config.Provider.Model,
-			Mode:                  setup.Mode,
-			Skills:                setup.AvailableSkills,
-			Tools:                 setup.AvailableTools,
-			ActiveSkill:           promptActiveSkill(setup.ActiveSkill),
-			Instruction:           setup.InstructionText,
+			Workspace:                    runner.workspace,
+			ApprovalPolicy:               runner.config.ApprovalPolicy,
+			ApprovalMode:                 runner.config.ApprovalMode,
+			AwayPolicy:                   runner.config.AwayPolicy,
+			SandboxEnabled:               runner.config.SandboxEnabled,
+			SystemSandbox:                runner.config.SystemSandboxMode,
+			SystemSandboxBackend:         setup.SystemSandboxBackend,
+			SystemSandboxRequiredCapable: setup.SystemSandboxRequiredCapable,
+			SystemSandboxFallback:        setup.SystemSandboxFallback,
+			SystemSandboxStatus:          setup.SystemSandboxStatus,
+			Model:                        runner.config.Provider.Model,
+			Mode:                         setup.Mode,
+			Skills:                       setup.AvailableSkills,
+			Tools:                        setup.AvailableTools,
+			ActiveSkill:                  promptActiveSkill(setup.ActiveSkill),
+			Instruction:                  setup.InstructionText,
 		}),
 		WebLookupInstruction: setup.WebLookupInstruction,
 		ConversationMessages: sess.Messages,
