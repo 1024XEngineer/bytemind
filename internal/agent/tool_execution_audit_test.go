@@ -442,3 +442,121 @@ func TestRunPromptRecordsSystemSandboxStartupAudit(t *testing.T) {
 		t.Fatalf("expected startup audit sandbox_message to be recorded, got %q", got)
 	}
 }
+
+func TestRunPromptPropagatesSandboxFallbackContextToPermissionAndStartAudit(t *testing.T) {
+	original := resolveAgentSystemSandboxRuntimeStatus
+	resolveAgentSystemSandboxRuntimeStatus = func(enabled bool, mode string) (tools.SystemSandboxRuntimeStatus, error) {
+		if !enabled {
+			return tools.SystemSandboxRuntimeStatus{}, nil
+		}
+		return tools.SystemSandboxRuntimeStatus{
+			Mode:            mode,
+			BackendEnabled:  false,
+			BackendName:     "none",
+			RequiredCapable: false,
+			Fallback:        true,
+			Message:         "system sandbox best_effort fallback: test backend unavailable",
+		}, nil
+	}
+	t.Cleanup(func() {
+		resolveAgentSystemSandboxRuntimeStatus = original
+	})
+
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	auditStore := &toolExecutionAuditStore{}
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "tool-fallback-audit",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{}`,
+				},
+			}},
+		},
+		{
+			Role:    llm.RoleAssistant,
+			Content: "done",
+		},
+	}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:          config.ProviderConfig{Model: "test-model"},
+			MaxIterations:     4,
+			Stream:            false,
+			SandboxEnabled:    true,
+			SystemSandboxMode: "best_effort",
+		},
+		Client:     client,
+		Store:      store,
+		Registry:   tools.DefaultRegistry(),
+		AuditStore: auditStore,
+		Stdin:      strings.NewReader(""),
+		Stdout:     io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "list files", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "done" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+
+	events := auditStore.snapshot()
+	var permissionEvent *storagepkg.AuditEvent
+	var startEvent *storagepkg.AuditEvent
+	for i := range events {
+		event := &events[i]
+		if event.Action == "permission_decision" && event.Metadata["tool_name"] == "list_files" {
+			permissionEvent = event
+		}
+		if event.Action == "tool_execute_start" && event.Metadata["tool_name"] == "list_files" {
+			startEvent = event
+		}
+	}
+	if permissionEvent == nil {
+		t.Fatalf("expected permission_decision event, got %+v", events)
+	}
+	if startEvent == nil {
+		t.Fatalf("expected tool_execute_start event, got %+v", events)
+	}
+
+	assertFallback := func(label string, metadata map[string]string) {
+		t.Helper()
+		if got := metadata["sandbox_enabled"]; got != "true" {
+			t.Fatalf("%s: expected sandbox_enabled=true, got %q", label, got)
+		}
+		if got := metadata["sandbox_mode"]; got != "best_effort" {
+			t.Fatalf("%s: expected sandbox_mode=best_effort, got %q", label, got)
+		}
+		if got := metadata["sandbox_backend"]; got != "none" {
+			t.Fatalf("%s: expected sandbox_backend=none, got %q", label, got)
+		}
+		if got := metadata["sandbox_required_capable"]; got != "false" {
+			t.Fatalf("%s: expected sandbox_required_capable=false, got %q", label, got)
+		}
+		if got := metadata["sandbox_fallback"]; got != "true" {
+			t.Fatalf("%s: expected sandbox_fallback=true, got %q", label, got)
+		}
+		if got := metadata["sandbox_status"]; got != "fallback" {
+			t.Fatalf("%s: expected sandbox_status=fallback, got %q", label, got)
+		}
+		if got := metadata["sandbox_fallback_reason"]; got != "system sandbox best_effort fallback: test backend unavailable" {
+			t.Fatalf("%s: expected sandbox_fallback_reason to be recorded, got %q", label, got)
+		}
+	}
+
+	assertFallback("permission_decision", permissionEvent.Metadata)
+	assertFallback("tool_execute_start", startEvent.Metadata)
+}

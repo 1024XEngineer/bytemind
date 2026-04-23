@@ -28,6 +28,7 @@ type sandboxAuditContext struct {
 	RequiredCapable bool
 	Fallback        bool
 	Status          string
+	FallbackReason  string
 }
 
 func (e *defaultEngine) executeToolCall(
@@ -508,7 +509,19 @@ func sandboxAuditFromSetup(setup runPromptSetup, sandboxEnabled bool, configured
 		Backend:         strings.TrimSpace(setup.SystemSandboxBackend),
 		RequiredCapable: setup.SystemSandboxRequiredCapable,
 		Fallback:        setup.SystemSandboxFallback,
-		Status:          strings.TrimSpace(setup.SystemSandboxStatus),
+		FallbackReason:  strings.TrimSpace(setup.SystemSandboxStatus),
+	}
+	if context.Fallback {
+		context.Status = "fallback"
+	} else if !context.Enabled || strings.EqualFold(context.Mode, "off") {
+		context.Status = "off"
+		context.FallbackReason = ""
+	} else if strings.EqualFold(context.Backend, "none") {
+		context.Status = "inactive"
+		context.FallbackReason = ""
+	} else {
+		context.Status = "active"
+		context.FallbackReason = ""
 	}
 	return normalizeSandboxAuditContext(context)
 }
@@ -523,6 +536,7 @@ func normalizeSandboxAuditContext(context sandboxAuditContext) sandboxAuditConte
 		context.Backend = "none"
 	}
 	context.Status = strings.TrimSpace(context.Status)
+	context.FallbackReason = strings.TrimSpace(context.FallbackReason)
 	return context
 }
 
@@ -538,5 +552,8 @@ func appendSandboxAuditContext(metadata map[string]string, context sandboxAuditC
 	metadata["sandbox_fallback"] = strconv.FormatBool(context.Fallback)
 	if context.Status != "" {
 		metadata["sandbox_status"] = context.Status
+	}
+	if context.FallbackReason != "" {
+		metadata["sandbox_fallback_reason"] = context.FallbackReason
 	}
 }
