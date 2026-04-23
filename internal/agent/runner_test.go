@@ -1157,7 +1157,7 @@ func TestRunPromptReportsSystemSandboxStartupFallbackOnSuccess(t *testing.T) {
 		t.Fatalf("unexpected answer: %q", answer)
 	}
 	for _, want := range []string{
-		"mode=best_effort backend=none state=fallback",
+		"mode=best_effort backend=none state=fallback required_capable=false",
 		"Task report summary:",
 		"- System sandbox fallback: startup (mode=best_effort, backend=none, reason=system sandbox best_effort fallback: test backend unavailable)",
 		"Task report (json):",
@@ -1166,6 +1166,71 @@ func TestRunPromptReportsSystemSandboxStartupFallbackOnSuccess(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("expected output to contain %q, got %q", want, out.String())
 		}
+	}
+}
+
+func TestRunPromptReportsSystemSandboxStartupActiveRequiredCapable(t *testing.T) {
+	original := resolveAgentSystemSandboxRuntimeStatus
+	resolveAgentSystemSandboxRuntimeStatus = func(enabled bool, mode string) (tools.SystemSandboxRuntimeStatus, error) {
+		if !enabled {
+			return tools.SystemSandboxRuntimeStatus{}, nil
+		}
+		return tools.SystemSandboxRuntimeStatus{
+			Mode:            mode,
+			BackendEnabled:  true,
+			BackendName:     "linux_unshare",
+			RequiredCapable: true,
+			Fallback:        false,
+			Message:         `system sandbox backend "linux_unshare" is active`,
+		}, nil
+	}
+	t.Cleanup(func() {
+		resolveAgentSystemSandboxRuntimeStatus = original
+	})
+
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:          config.ProviderConfig{Model: "test-model"},
+			MaxIterations:     2,
+			Stream:            false,
+			SandboxEnabled:    true,
+			SystemSandboxMode: "required",
+		},
+		Client: &fakeClient{replies: []llm.Message{{
+			Role:    "assistant",
+			Content: "done",
+		}}},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	var out bytes.Buffer
+	answer, err := runner.RunPrompt(context.Background(), sess, "hello", "build", &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "done" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	for _, want := range []string{
+		"mode=required backend=linux_unshare state=active required_capable=true",
+		`(system sandbox backend "linux_unshare" is active)`,
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("expected output to contain %q, got %q", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "Task report summary:") {
+		t.Fatalf("did not expect fallback task report summary on active required-capable startup, got %q", out.String())
 	}
 }
 
