@@ -19,11 +19,19 @@ func TestBuildRequiredLinuxShellCommandIncludesIsolationSteps(t *testing.T) {
 	if !strings.Contains(command, "mount -o remount,ro /") {
 		t.Fatalf("expected read-only remount step, got %q", command)
 	}
-	workspaceQuoted := shellSingleQuote(filepath.Clean(workspace))
+	workspaceCanonical, err := canonicalPathForAccess(filepath.Clean(workspace))
+	if err != nil {
+		t.Fatalf("resolve workspace canonical path: %v", err)
+	}
+	workspaceQuoted := shellSingleQuote(workspaceCanonical)
 	if !strings.Contains(command, "mount --bind "+workspaceQuoted+" "+workspaceQuoted) {
 		t.Fatalf("expected workspace bind step, got %q", command)
 	}
-	writableQuoted := shellSingleQuote(filepath.Clean(writable))
+	writableCanonical, err := canonicalPathForAccess(filepath.Clean(writable))
+	if err != nil {
+		t.Fatalf("resolve writable canonical path: %v", err)
+	}
+	writableQuoted := shellSingleQuote(writableCanonical)
 	if !strings.Contains(command, "mount --bind "+writableQuoted+" "+writableQuoted) {
 		t.Fatalf("expected writable root bind step, got %q", command)
 	}
