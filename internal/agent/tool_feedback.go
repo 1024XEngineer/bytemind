@@ -19,6 +19,8 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 			Active          bool   `json:"active"`
 			RequiredCapable bool   `json:"required_capable"`
 			CapabilityLevel string `json:"capability_level"`
+			ShellNetwork    bool   `json:"shell_network_isolation"`
+			WorkerNetwork   bool   `json:"worker_network_isolation"`
 			Fallback        bool   `json:"fallback"`
 			Reason          string `json:"fallback_reason"`
 		} `json:"system_sandbox"`
@@ -32,6 +34,8 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 			envelope.SystemSandbox.Active,
 			envelope.SystemSandbox.RequiredCapable,
 			envelope.SystemSandbox.CapabilityLevel,
+			envelope.SystemSandbox.ShellNetwork,
+			envelope.SystemSandbox.WorkerNetwork,
 			envelope.SystemSandbox.Fallback,
 		)
 		if reasonCode == "permission_denied" || (status == "denied" && reasonCode == "") {
@@ -224,6 +228,8 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 				Active          bool   `json:"active"`
 				RequiredCapable bool   `json:"required_capable"`
 				CapabilityLevel string `json:"capability_level"`
+				ShellNetwork    bool   `json:"shell_network_isolation"`
+				WorkerNetwork   bool   `json:"worker_network_isolation"`
 				Fallback        bool   `json:"fallback"`
 				Reason          string `json:"fallback_reason"`
 			} `json:"system_sandbox"`
@@ -240,6 +246,8 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 				result.SystemSandbox.Active,
 				result.SystemSandbox.RequiredCapable,
 				result.SystemSandbox.CapabilityLevel,
+				result.SystemSandbox.ShellNetwork,
+				result.SystemSandbox.WorkerNetwork,
 				result.SystemSandbox.Fallback,
 			); summary != "" {
 				fmt.Fprintf(out, "    sandbox: %s\n", summary)
@@ -347,7 +355,16 @@ func compactWhitespace(text string, limit int) string {
 	return string(runes[:limit-3]) + "..."
 }
 
-func formatSystemSandboxSummary(mode, backend string, active, requiredCapable bool, capabilityLevel string, fallback bool) string {
+func formatSystemSandboxSummary(
+	mode,
+	backend string,
+	active,
+	requiredCapable bool,
+	capabilityLevel string,
+	shellNetwork,
+	workerNetwork,
+	fallback bool,
+) string {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	backend = strings.TrimSpace(backend)
 	capabilityLevel = strings.ToLower(strings.TrimSpace(capabilityLevel))
@@ -370,7 +387,16 @@ func formatSystemSandboxSummary(mode, backend string, active, requiredCapable bo
 	} else if fallback {
 		state = "fallback"
 	}
-	return fmt.Sprintf("%s (mode=%s, backend=%s, required_capable=%t, capability_level=%s)", state, mode, backend, requiredCapable, capabilityLevel)
+	return fmt.Sprintf(
+		"%s (mode=%s, backend=%s, required_capable=%t, capability_level=%s, shell_network_isolation=%t, worker_network_isolation=%t)",
+		state,
+		mode,
+		backend,
+		requiredCapable,
+		capabilityLevel,
+		shellNetwork,
+		workerNetwork,
+	)
 }
 
 func normalizeApprovalErrorMessage(message, reasonCode string) string {
