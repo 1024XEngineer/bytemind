@@ -730,6 +730,80 @@ func TestRunPromptRepairsBuildHandoffWithoutRestartingPlanConfirmation(t *testin
 	}
 }
 
+func TestRunPromptRepairsBuildHandoffAcknowledgementWithoutToolCalls(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModeBuild
+	sess.Plan = planpkg.State{
+		Goal:                "Implement the first RAG demo",
+		Summary:             "Plan is converged and execution should begin from the repo baseline.",
+		Phase:               planpkg.PhaseExecuting,
+		NextAction:          "Inspect the workspace entrypoints before editing.",
+		Steps:               []planpkg.Step{{Title: "Inspect the workspace entrypoints", Status: planpkg.StepInProgress}},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+	}
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "Started execution.",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>Inspected the workspace entrypoints and continued implementation.",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 6,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "start execution", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected three requests (repair + tool + finalize), got %d requests", len(client.requests))
+	}
+	secondTurnMessages := client.requests[1].Messages
+	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "already switched to build mode") {
+		t.Fatalf("expected build-handoff repair note to be appended as user message, got %#v", secondTurnMessages)
+	}
+	if !strings.Contains(answer, "Inspected the workspace entrypoints") {
+		t.Fatalf("expected repaired build answer, got %q", answer)
+	}
+}
+
 func TestRunPromptDoesNotRepairBuildHandoffWhenAssistantRequestsRealBlockerInfo(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())

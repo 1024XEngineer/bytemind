@@ -74,19 +74,19 @@ func shouldRepairPlanClarifyTurn(runMode planpkg.AgentMode, state planpkg.State,
 	if !planpkg.HasStructuredPlan(state) || planpkg.HasActiveChoice(state) {
 		return false
 	}
-	if planpkg.CanStartExecution(state) {
-		return false
-	}
-
 	text := strings.TrimSpace(reply.Content)
 	if text == "" {
 		return false
 	}
+	inlineChoicePrompt := looksLikeInlineClarifyChoicePrompt(text)
+	if planpkg.CanStartExecution(state) {
+		return inlineChoicePrompt && !looksLikeExecutionActionChoicePrompt(text)
+	}
 
 	if intent == turnIntentAskUser {
-		return planpkg.HasDecisionGaps(state) || looksLikeInlineClarifyChoicePrompt(text)
+		return planpkg.HasDecisionGaps(state) || inlineChoicePrompt
 	}
-	return looksLikeInlineClarifyChoicePrompt(text)
+	return inlineChoicePrompt
 }
 
 func buildPlanClarifyRepairInstruction(state planpkg.State, reply llm.Message, attempt, maxAttempts int) string {
@@ -289,6 +289,34 @@ func looksLikePlanAdjustmentOnlyInput(text string) bool {
 	default:
 		return false
 	}
+}
+
+func looksLikeExecutionActionChoicePrompt(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" || countChoiceShortcuts(normalized) < 2 {
+		return false
+	}
+	if containsAnyToken(normalized,
+		"choose next step",
+		"choose next action",
+		"start execution",
+		"continue execution",
+		"switch to build",
+		"build mode",
+		"adjust plan",
+		"reply with 1",
+		"reply with 2",
+		"涓嬩竴姝?",
+		"寮€濮嬫墽琛?",
+		"缁х画鎵ц",
+		"鍒囧埌 build",
+		"鍒囨崲鍒?build",
+		"璋冩暣璁″垝",
+		"缁х画寰皟璁″垝",
+	) {
+		return true
+	}
+	return strings.Contains(normalized, "start execution") && strings.Contains(normalized, "adjust plan")
 }
 
 func looksLikeRawPlanChoiceSelection(text string) bool {

@@ -234,7 +234,12 @@ func (m *model) canShowPlanActionPicker() bool {
 	if m == nil || m.mode != modePlan || m.busy {
 		return false
 	}
-	return planpkg.HasActiveChoice(m.plan) || planpkg.CanStartExecution(m.plan)
+	return hasRenderablePlanAction(m.plan)
+}
+
+func hasRenderablePlanAction(state planpkg.State) bool {
+	state = planpkg.NormalizeState(state)
+	return planpkg.HasActiveChoice(state) || planpkg.CanStartExecution(state)
 }
 
 func (m *model) closePlanActionPicker() {
@@ -379,8 +384,9 @@ func (m model) submitPlanActionSelection(action string, item planActionItem, dis
 				}
 			}
 		}
+		prompt := buildExecutionStartPrompt(state)
 		return m.submitPreparedPrompt(RunPromptInput{
-			UserMessage: llm.NewUserTextMessage(action),
+			UserMessage: llm.NewUserTextMessage(prompt),
 			DisplayText: displayText,
 		}, displayText)
 	case action == planActionAdjustPlan:
@@ -409,6 +415,37 @@ func (m model) submitPlanActionSelection(action string, item planActionItem, dis
 			DisplayText: displayText,
 		}, displayText)
 	}
+}
+
+func buildExecutionStartPrompt(state planpkg.State) string {
+	state = planpkg.NormalizeState(state)
+	currentStep := ""
+	if step, ok := planpkg.CurrentStep(state); ok {
+		currentStep = strings.TrimSpace(step.Title)
+	}
+	nextAction := strings.TrimSpace(state.NextAction)
+	if nextAction == "" {
+		nextAction = planpkg.DefaultNextAction(state)
+	}
+
+	lines := []string{
+		"start execution",
+		"",
+		"Execution handoff is already approved.",
+		"The session has switched to build mode.",
+	}
+	if currentStep != "" {
+		lines = append(lines, "Current step: "+currentStep)
+	}
+	if nextAction != "" {
+		lines = append(lines, "Next action: "+nextAction)
+	}
+	lines = append(lines,
+		"Begin concrete execution from the current plan baseline in this turn.",
+		"Do not stop at a confirmation-only reply.",
+		"Emit structured tool calls immediately unless a real blocker requires user input.",
+	)
+	return strings.Join(lines, "\n")
 }
 
 func (m model) planActionDisplayText(action string, item planActionItem) string {

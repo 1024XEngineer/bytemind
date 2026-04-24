@@ -215,8 +215,10 @@ func (m *model) handleAgentEvent(event Event) {
 		default:
 			m.statusNote = fmt.Sprintf("Plan updated with %d step(s).", len(m.plan.Steps))
 		}
-		if !canContinuePlan(m.plan) {
+		if !hasRenderablePlanAction(m.plan) || m.busy {
 			m.closePlanActionPicker()
+		} else {
+			m.syncPlanActionPicker()
 		}
 	case EventUsageUpdated:
 		m.applyUsage(event.Usage)
@@ -225,9 +227,9 @@ func (m *model) handleAgentEvent(event Event) {
 			m.statusNote = "Run finished."
 		}
 		m.phase = "idle"
-		if m.mode == modePlan && canContinuePlan(m.plan) {
+		if m.mode == modePlan && hasRenderablePlanAction(m.plan) {
 			m.syncPlanActionPicker()
-			m.statusNote = "请选择下一步：开始执行，或继续微调计划。"
+			m.statusNote = planActionStatusNote(m.plan)
 		} else {
 			m.closePlanActionPicker()
 		}

@@ -1676,6 +1676,33 @@ func TestResolvePlanActionSelectionSupportsOptionChoices(t *testing.T) {
 	}
 }
 
+func TestResolvePlanActionSelectionSupportsFullLabeledChoices(t *testing.T) {
+	state := planpkg.State{
+		Goal:                "Finish plan mode",
+		Phase:               planpkg.PhaseReady,
+		Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+	}
+
+	startItem, ok := syntheticPlanActionItemForAction(state, planActionStartExecution)
+	if !ok {
+		t.Fatal("expected synthetic start-execution item")
+	}
+	if got, ok := resolvePlanActionSelection(startItem.Shortcut+". "+startItem.TitleText, state, nil); !ok || got != planActionStartExecution {
+		t.Fatalf("expected labeled start execution choice to resolve, got %q ok=%v", got, ok)
+	}
+
+	adjustItem, ok := syntheticPlanActionItemForAction(state, planActionAdjustPlan)
+	if !ok {
+		t.Fatal("expected synthetic adjust-plan item")
+	}
+	if got, ok := resolvePlanActionSelection(adjustItem.Shortcut+". "+adjustItem.TitleText, state, nil); !ok || got != planActionAdjustPlan {
+		t.Fatalf("expected labeled adjust-plan choice to resolve, got %q ok=%v", got, ok)
+	}
+}
+
 func TestResolvePlanActionSelectionDoesNotHijackClarifyAnswers(t *testing.T) {
 	sess := session.New("E:\\bytemind")
 	sess.Messages = append(sess.Messages, llm.NewAssistantTextMessage(strings.Join([]string{
@@ -1693,6 +1720,34 @@ func TestResolvePlanActionSelectionDoesNotHijackClarifyAnswers(t *testing.T) {
 
 	if got, ok := resolvePlanActionSelection("b", state, sess); ok || got != "" {
 		t.Fatalf("expected clarify answer to stay untouched, got %q ok=%v", got, ok)
+	}
+}
+
+func TestBuildExecutionStartPromptIncludesPlanContext(t *testing.T) {
+	state := planpkg.State{
+		Goal:       "Finish handoff",
+		Phase:      planpkg.PhaseExecuting,
+		NextAction: "Inspect the workspace entrypoints before editing.",
+		Steps: []planpkg.Step{
+			{Title: "Inspect the workspace entrypoints", Status: planpkg.StepInProgress},
+		},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+	}
+
+	got := buildExecutionStartPrompt(state)
+	for _, want := range []string{
+		"start execution",
+		"Execution handoff is already approved.",
+		"The session has switched to build mode.",
+		"Current step: Inspect the workspace entrypoints",
+		"Next action: Inspect the workspace entrypoints before editing.",
+		"Emit structured tool calls immediately unless a real blocker requires user input.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected execution handoff prompt to include %q, got %q", want, got)
+		}
 	}
 }
 
@@ -1836,6 +1891,45 @@ func TestRunFinishedOpensPlanActionPicker(t *testing.T) {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("expected footer to include %q, got %q", want, footer)
 		}
+	}
+}
+
+func TestRunFinishedOpensClarifyChoicePicker(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		screen:    screenChat,
+		width:     100,
+		height:    24,
+		input:     input,
+		viewport:  viewport.New(0, 0),
+		planView:  viewport.New(0, 0),
+		mode:      modePlan,
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:         "Finish clarify picker",
+			Phase:        planpkg.PhaseClarify,
+			DecisionGaps: []string{"Choose the frontend stack"},
+			Steps:        []planpkg.Step{{Title: "Choose frontend", Status: planpkg.StepPending}},
+			ActiveChoice: &planpkg.ActiveChoice{
+				ID:       "frontend_stack",
+				Kind:     "clarify",
+				Question: "鍓嶇甯屾湜璧板摢鏉¤矾绾匡紵",
+				Options: []planpkg.ChoiceOption{
+					{ID: "fastapi", Shortcut: "A", Title: "FastAPI + Jinja2 HTML", Recommended: true},
+					{ID: "flask", Shortcut: "B", Title: "Flask + Jinja2 HTML"},
+					{ID: "other", Shortcut: "C", Title: "Other", Freeform: true},
+				},
+			},
+		},
+	}
+
+	m.handleAgentEvent(Event{Type: EventRunFinished, Content: "done"})
+	if !m.planActionOpen {
+		t.Fatalf("expected clarify picker to open immediately when run already finished")
+	}
+	if m.statusNote != "Choose the current decision from the picker." {
+		t.Fatalf("expected clarify picker status note, got %q", m.statusNote)
 	}
 }
 

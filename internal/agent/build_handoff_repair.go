@@ -31,10 +31,7 @@ func shouldRepairBuildHandoffTurn(runMode planpkg.AgentMode, state planpkg.State
 	if text == "" || intent == turnIntentContinueWork {
 		return false
 	}
-	if looksLikeRedundantBuildHandoffBlocker(text) {
-		return true
-	}
-	return false
+	return looksLikeRedundantBuildHandoffBlocker(text) || looksLikeExecutionHandoffAcknowledgement(text)
 }
 
 func buildBuildHandoffRepairInstruction(state planpkg.State, reply llm.Message, latestUser string, attempt, maxAttempts int) string {
@@ -99,9 +96,9 @@ func looksLikeExecutionHandoffInput(text string) bool {
 		"start build",
 		"begin execution",
 		"resume execution",
-		"开始执行",
-		"继续执行",
-		"按计划执行",
+		"\u5f00\u59cb\u6267\u884c",
+		"\u7ee7\u7eed\u6267\u884c",
+		"\u6309\u8ba1\u5212\u6267\u884c",
 	)
 }
 
@@ -122,16 +119,78 @@ func looksLikeRedundantBuildHandoffBlocker(text string) bool {
 		"toggle the ui",
 		"send continue execution",
 		"send start execution",
-		"计划确认",
-		"仍停在计划",
-		"只读",
-		"切到 build",
-		"切换到 build",
-		"再发 continue execution",
-		"再发 start execution",
+		"\u8ba1\u5212\u786e\u8ba4",
+		"\u4ecd\u505c\u5728\u8ba1\u5212",
+		"\u53ea\u8bfb",
+		"\u5207\u5230 build",
+		"\u5207\u6362\u5230 build",
+		"\u518d\u53d1 continue execution",
+		"\u518d\u53d1 start execution",
 	) {
 		return true
 	}
 	return hasAskUserSignal(normalized) &&
-		containsAnyToken(normalized, "continue execution", "start execution", "switch to build", "build mode", "继续执行", "开始执行")
+		containsAnyToken(normalized,
+			"continue execution",
+			"start execution",
+			"switch to build",
+			"build mode",
+			"\u7ee7\u7eed\u6267\u884c",
+			"\u5f00\u59cb\u6267\u884c",
+		)
+}
+
+func looksLikeExecutionHandoffAcknowledgement(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" {
+		return false
+	}
+	if containsAnyToken(normalized,
+		"need you",
+		"need your",
+		"please confirm",
+		"confirm whether",
+		"confirm if",
+		"do you accept",
+		"accept me",
+		"reply with",
+		"回复",
+		"请确认",
+		"是否接受",
+		"是否同意",
+		"我需要你确认",
+		"请先确认",
+	) {
+		return true
+	}
+	if hasAskUserSignal(normalized) || containsAnyToken(normalized,
+		"missing ",
+		"need ",
+		"blocked",
+		"cannot",
+		"can't",
+		"unable",
+		"\u7f3a\u5c11",
+		"\u9700\u8981",
+		"\u963b\u585e",
+		"\u65e0\u6cd5",
+	) {
+		return false
+	}
+	if strings.Count(normalized, "\n") > 4 || len([]rune(normalized)) > 160 {
+		return false
+	}
+	return containsAnyToken(normalized,
+		"started execution",
+		"starting execution",
+		"start execution",
+		"beginning execution",
+		"begin execution",
+		"starting now",
+		"\u5df2\u5f00\u59cb\u6267\u884c",
+		"\u5f00\u59cb\u6267\u884c",
+		"\u51c6\u5907\u5f00\u5de5",
+		"\u9a6c\u4e0a\u5f00\u59cb",
+		"\u5f00\u59cb\u52a8\u624b",
+	)
 }

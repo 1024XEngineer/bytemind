@@ -2364,7 +2364,10 @@ func resolvePlanActionSelection(input string, state planpkg.State, sess *session
 		return action, true
 	}
 	if isContinueExecutionInput(input) {
-		return "start execution", true
+		return planActionStartExecution, true
+	}
+	if action, ok := resolveConvergedPlanActionSelection(input, state); ok {
+		return action, true
 	}
 	if !planpkg.CanStartExecution(state) || !latestAssistantHasPlanActionChoices(sess) {
 		return "", false
@@ -2372,10 +2375,10 @@ func resolvePlanActionSelection(input string, state planpkg.State, sess *session
 
 	switch normalizePlanActionInput(input) {
 	case "1", "1.", "a", "a.", "option 1", "option a":
-		return "start execution", true
+		return planActionStartExecution, true
 	case "2", "2.", "b", "b.", "adjust", "adjust plan", "option 2", "option b",
 		"\u8c03\u6574", "\u8c03\u6574\u8ba1\u5212":
-		return "adjust plan", true
+		return planActionAdjustPlan, true
 	default:
 		return "", false
 	}
@@ -2385,19 +2388,84 @@ func normalizePlanActionInput(input string) string {
 	return strings.ToLower(strings.TrimSpace(input))
 }
 
+func resolveConvergedPlanActionSelection(input string, state planpkg.State) (string, bool) {
+	if !planpkg.CanStartExecution(state) {
+		return "", false
+	}
+	for _, action := range []string{planActionStartExecution, planActionAdjustPlan} {
+		item, ok := syntheticPlanActionItemForAction(state, action)
+		if !ok {
+			continue
+		}
+		if planActionItemMatchesInput(input, item) {
+			return action, true
+		}
+	}
+	return "", false
+}
+
+func planActionItemMatchesInput(input string, item planActionItem) bool {
+	normalized := normalizePlanActionChoiceText(input)
+	if normalized == "" {
+		return false
+	}
+	title := normalizePlanActionChoiceText(item.TitleText)
+	return title != "" && normalized == title
+}
+
+func normalizePlanActionChoiceText(input string) string {
+	normalized := normalizePlanActionInput(input)
+	if normalized == "" {
+		return ""
+	}
+	normalized = strings.TrimSpace(strings.TrimLeft(normalized, "-*"))
+	for _, prefix := range []string{
+		"1.", "2.", "3.", "4.",
+		"1)", "2)", "3)", "4)",
+		"1:", "2:", "3:", "4:",
+		"a.", "b.", "c.", "d.",
+		"a)", "b)", "c)", "d)",
+		"a:", "b:", "c:", "d:",
+	} {
+		if !strings.HasPrefix(normalized, prefix) {
+			continue
+		}
+		trimmed := strings.TrimSpace(strings.TrimPrefix(normalized, prefix))
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	for _, prefix := range []string{
+		"option 1", "option 2", "option 3", "option 4",
+		"option a", "option b", "option c", "option d",
+	} {
+		if !strings.HasPrefix(normalized, prefix) {
+			continue
+		}
+		trimmed := strings.TrimSpace(strings.TrimPrefix(normalized, prefix))
+		trimmed = strings.TrimSpace(strings.TrimLeft(trimmed, ".):"))
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return normalized
+}
+
 func resolveActiveChoiceSelection(input string, state planpkg.State) (string, bool) {
 	state = planpkg.NormalizeState(state)
 	if state.ActiveChoice == nil || len(state.ActiveChoice.Options) == 0 {
 		return "", false
 	}
 	normalized := normalizePlanActionInput(input)
+	normalizedChoice := normalizePlanActionChoiceText(input)
 	if normalized == "" {
 		return "", false
 	}
 	for index, option := range state.ActiveChoice.Options {
 		number := fmt.Sprintf("%d", index+1)
 		shortcut := strings.ToLower(strings.TrimSpace(option.Shortcut))
-		title := strings.ToLower(strings.TrimSpace(option.Title))
+		title := normalizePlanActionInput(option.Title)
+		titleChoice := normalizePlanActionChoiceText(option.Title)
 		switch normalized {
 		case number, number + ".", shortcut, shortcut + ".", "option " + number, "option " + shortcut:
 			return formatActiveChoiceAction(state.ActiveChoice.ID, option.ID), true
@@ -2406,7 +2474,7 @@ func resolveActiveChoiceSelection(input string, state planpkg.State) (string, bo
 				return formatActiveChoiceAction(state.ActiveChoice.ID, option.ID), true
 			}
 		}
-		if title != "" && normalized == title {
+		if title != "" && (normalized == title || normalizedChoice == titleChoice) {
 			return formatActiveChoiceAction(state.ActiveChoice.ID, option.ID), true
 		}
 	}
