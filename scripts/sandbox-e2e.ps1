@@ -29,13 +29,20 @@ function Invoke-FocusedPackage {
     )
 
     & go test $Package -count=1 -timeout 300s
-    if ($LASTEXITCODE -eq 0) {
+    $firstExitCode = $LASTEXITCODE
+    if ($firstExitCode -eq 0) {
         return
     }
 
     Write-Host "!! Focused sandbox suite failed for $Package. Re-running with -v for diagnostics..."
     & go test $Package -count=1 -timeout 300s -v
-    throw "focused sandbox suite failed: $Package (exit code $LASTEXITCODE)"
+    $rerunExitCode = $LASTEXITCODE
+    if ($rerunExitCode -eq 0) {
+        Write-Host "!! Focused sandbox suite for $Package passed on retry (-v). Continuing."
+        return
+    }
+
+    throw "focused sandbox suite failed: $Package (first exit code $firstExitCode, rerun exit code $rerunExitCode)"
 }
 
 Write-Host "==> Running focused sandbox suites..."

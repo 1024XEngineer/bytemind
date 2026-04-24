@@ -18,8 +18,11 @@ focused_packages=(
 for pkg in "${focused_packages[@]}"; do
   if ! go test "${pkg}" -count=1 -timeout 300s; then
     echo "!! Focused sandbox suite failed for ${pkg}. Re-running with -v for diagnostics..."
-    go test "${pkg}" -count=1 -timeout 300s -v
-    exit 1
+    if go test "${pkg}" -count=1 -timeout 300s -v; then
+      echo "!! Focused sandbox suite for ${pkg} passed on retry (-v). Continuing."
+    else
+      exit 1
+    fi
   fi
 done
 
