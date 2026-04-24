@@ -10,15 +10,17 @@ import (
 
 	extensionspkg "bytemind/internal/extensions"
 	"bytemind/internal/llm"
+	planpkg "bytemind/internal/plan"
 	toolspkg "bytemind/internal/tools"
 )
 
 type Option func(*adapterOptions)
 
 type adapterOptions struct {
-	client     Client
-	now        func() time.Time
-	refreshTTL time.Duration
+	client        Client
+	now           func() time.Time
+	refreshTTL    time.Duration
+	eagerDiscover bool
 }
 
 func WithClient(client Client) Option {
@@ -39,6 +41,15 @@ func WithRefreshTTL(ttl time.Duration) Option {
 	}
 }
 
+func WithEagerDiscover(enabled bool) Option {
+	return func(opts *adapterOptions) {
+		if opts == nil {
+			return
+		}
+		opts.eagerDiscover = enabled
+	}
+}
+
 const defaultRefreshTTL = 30 * time.Second
 
 type Adapter struct {
@@ -49,6 +60,7 @@ type Adapter struct {
 	client     Client
 	now        func() time.Time
 	refreshTTL time.Duration
+	limiter    chan struct{}
 
 	info        extensionspkg.ExtensionInfo
 	tools       []ToolDescriptor
@@ -58,8 +70,9 @@ type Adapter struct {
 
 func FromMCPServer(cfg ServerConfig, opts ...Option) (extensionspkg.Extension, error) {
 	options := adapterOptions{
-		now:        time.Now,
-		refreshTTL: defaultRefreshTTL,
+		now:           time.Now,
+		refreshTTL:    defaultRefreshTTL,
+		eagerDiscover: true,
 	}
 	for _, opt := range opts {
 		if opt == nil {
@@ -95,10 +108,15 @@ func FromMCPServer(cfg ServerConfig, opts ...Option) (extensionspkg.Extension, e
 		lastRefresh: time.Time{},
 		dirty:       true,
 	}
+	if cfg.MaxConcurrency > 0 {
+		adapter.limiter = make(chan struct{}, cfg.MaxConcurrency)
+	}
 
-	startupCtx, cancel := withTimeoutIfMissing(context.Background(), cfg.StartupTimeout)
-	defer cancel()
-	_ = adapter.maybeRefresh(startupCtx, true)
+	if options.eagerDiscover {
+		startupCtx, cancel := withTimeoutIfMissing(context.Background(), cfg.StartupTimeout)
+		defer cancel()
+		_ = adapter.maybeRefresh(startupCtx, true)
+	}
 	return adapter, nil
 }
 
@@ -124,6 +142,7 @@ func (a *Adapter) ResolveTools(ctx context.Context) ([]extensionspkg.ExtensionTo
 	extensionID := a.info.ID
 	client := a.client
 	cfg := a.cfg
+	limiter := a.limiter
 	a.mu.RUnlock()
 
 	tools := make([]extensionspkg.ExtensionTool, 0, len(descriptors))
@@ -139,6 +158,8 @@ func (a *Adapter) ResolveTools(ctx context.Context) ([]extensionspkg.ExtensionTo
 				server:     cfg,
 				client:     client,
 				descriptor: descriptor,
+				override:   overrideForTool(cfg.ToolOverrides, name),
+				limiter:    limiter,
 			},
 		})
 	}
@@ -257,7 +278,13 @@ func (a *Adapter) markDegraded(err error, code extensionspkg.ErrorCode, now time
 	a.info.Status = extensionspkg.ExtensionStatusDegraded
 	a.info.Health.Status = extensionspkg.ExtensionStatusDegraded
 	a.info.Health.LastError = code
-	a.info.Health.Message = strings.TrimSpace(err.Error())
+	message := strings.TrimSpace(err.Error())
+	if len(a.tools) > 0 {
+		message = formatHealthMessage("reason_code=stale_snapshot_fallback", map[string]any{
+			"error": message,
+		})
+	}
+	a.info.Health.Message = message
 	a.info.Health.CheckedAtUTC = now.Format(time.RFC3339)
 	a.lastRefresh = now
 	a.dirty = false
@@ -301,6 +328,8 @@ type mcpTool struct {
 	server     ServerConfig
 	client     Client
 	descriptor ToolDescriptor
+	override   ToolOverride
+	limiter    chan struct{}
 }
 
 func (t mcpTool) Definition() llm.ToolDefinition {
@@ -325,16 +354,60 @@ func (t mcpTool) Definition() llm.ToolDefinition {
 
 func (t mcpTool) Spec() toolspkg.ToolSpec {
 	base := toolspkg.DefaultToolSpec(t.Definition())
-	return toolspkg.MergeToolSpec(base, toolspkg.ToolSpec{
+	patch := toolspkg.ToolSpec{
 		Name:        strings.TrimSpace(t.descriptor.Name),
 		SafetyClass: toolspkg.SafetyClassSensitive,
-	})
+	}
+	if t.override.SafetyClass != "" {
+		patch.SafetyClass = toolspkg.SafetyClass(t.override.SafetyClass)
+	}
+	if t.override.ReadOnly != nil && *t.override.ReadOnly {
+		patch.ReadOnly = true
+	}
+	if t.override.Destructive != nil && *t.override.Destructive {
+		patch.Destructive = true
+	}
+	if len(t.override.AllowedModes) > 0 {
+		allowedModes := make([]planpkg.AgentMode, 0, len(t.override.AllowedModes))
+		for _, mode := range t.override.AllowedModes {
+			normalized := planpkg.NormalizeMode(mode)
+			if normalized == "" {
+				continue
+			}
+			allowedModes = append(allowedModes, normalized)
+		}
+		if len(allowedModes) > 0 {
+			patch.AllowedModes = allowedModes
+		}
+	}
+	if t.override.DefaultTimeoutS > 0 {
+		patch.DefaultTimeoutS = t.override.DefaultTimeoutS
+	}
+	if t.override.MaxTimeoutS > 0 {
+		patch.MaxTimeoutS = t.override.MaxTimeoutS
+	}
+	if t.override.MaxResultChars > 0 {
+		patch.MaxResultChars = t.override.MaxResultChars
+	}
+	return toolspkg.MergeToolSpec(base, patch)
 }
 
 func (t mcpTool) Run(ctx context.Context, raw json.RawMessage, _ *toolspkg.ExecutionContext) (string, error) {
 	if t.client == nil {
 		return "", toolspkg.NewToolExecError(toolspkg.ToolErrorInternal, "mcp client is unavailable", true, nil)
 	}
+	release := func() {}
+	if t.limiter != nil {
+		select {
+		case t.limiter <- struct{}{}:
+			release = func() {
+				<-t.limiter
+			}
+		case <-ctx.Done():
+			return "", mapClientErrorToToolExecError(ctx.Err())
+		}
+	}
+	defer release()
 	callCtx := ctx
 	cancel := func() {}
 	if _, has := ctx.Deadline(); !has && t.server.CallTimeout > 0 {
@@ -347,4 +420,14 @@ func (t mcpTool) Run(ctx context.Context, raw json.RawMessage, _ *toolspkg.Execu
 		return "", mapClientErrorToToolExecError(err)
 	}
 	return output, nil
+}
+
+func overrideForTool(overrides map[string]ToolOverride, toolName string) ToolOverride {
+	if len(overrides) == 0 {
+		return ToolOverride{}
+	}
+	if override, ok := overrides[strings.ToLower(strings.TrimSpace(toolName))]; ok {
+		return override
+	}
+	return ToolOverride{}
 }

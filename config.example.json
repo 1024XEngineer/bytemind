@@ -27,5 +27,29 @@
     "retention_days": 30,
     "monitor_interval": "30s",
     "database_driver": "sqlite3"
+  },
+  "mcp": {
+    "enabled": false,
+    "sync_ttl_s": 30,
+    "servers": [
+      {
+        "id": "local-mcp",
+        "name": "Local MCP",
+        "enabled": true,
+        "transport": {
+          "type": "stdio",
+          "command": "node",
+          "args": [
+            "./mcp-server.js"
+          ],
+          "env": {},
+          "cwd": ""
+        },
+        "auto_start": true,
+        "startup_timeout_s": 20,
+        "call_timeout_s": 60,
+        "max_concurrency": 4
+      }
+    ]
   }
 }

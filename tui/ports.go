@@ -6,6 +6,7 @@ import (
 
 	"bytemind/internal/config"
 	"bytemind/internal/llm"
+	"bytemind/internal/mcpctl"
 	planpkg "bytemind/internal/plan"
 	"bytemind/internal/session"
 	"bytemind/internal/skills"
@@ -70,4 +71,14 @@ type SessionStore interface {
 	List(limit int) ([]session.Summary, []string, error)
 	DeleteInWorkspace(workspace, id string) error
 	CleanupZeroMessageSessions(workspace, activeSessionID string) (session.CleanupResult, error)
+}
+
+type MCPService interface {
+	List(ctx context.Context) ([]mcpctl.ServerStatus, error)
+	Show(ctx context.Context, serverID string) (mcpctl.ServerDetail, error)
+	Add(ctx context.Context, req mcpctl.AddRequest) (mcpctl.ServerStatus, error)
+	Remove(ctx context.Context, serverID string) error
+	Enable(ctx context.Context, serverID string, enabled bool) (mcpctl.ServerStatus, error)
+	Test(ctx context.Context, serverID string) (mcpctl.ServerStatus, error)
+	Reload(ctx context.Context) error
 }

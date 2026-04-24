@@ -224,21 +224,25 @@ func renderChatSection(item chatEntry, width int) string {
 	}
 	headContent := title.Render(displayTitle)
 	if item.Kind == "tool" {
-		label, name := toolDisplayParts(displayTitle)
-		headContent = renderPillBadge(label, "info")
-		if strings.TrimSpace(name) != "" {
-			headContent = lipgloss.JoinHorizontal(lipgloss.Left, headContent, " ", toolNameStyle.Render(name))
-		}
+		label, _ := toolDisplayParts(displayTitle)
+		headContent = renderToolTag(label, "info")
 	}
 	if item.Kind == "user" && strings.TrimSpace(item.Meta) != "" {
 		headContent = chatHeaderMetaStyle.Render(item.Meta)
 	}
 	if status != "" {
+		statusBadgeText := status
+		if item.Kind == "tool" {
+			switch strings.TrimSpace(strings.ToLower(status)) {
+			case "done", "success":
+				statusBadgeText = "✓"
+			}
+		}
 		headContent = lipgloss.JoinHorizontal(
 			lipgloss.Left,
 			headContent,
 			"  ",
-			renderPillBadge(status, status),
+			renderToolTag(statusBadgeText, status),
 		)
 	}
 	if item.Kind == "assistant" {
@@ -380,6 +384,27 @@ func renderAssistantPhaseBadge(status string) string {
 	default:
 		return ""
 	}
+}
+
+func renderToolTag(text, tagType string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	style := lipgloss.NewStyle().Bold(true)
+	switch strings.TrimSpace(strings.ToLower(tagType)) {
+	case "active", "running", "accent", "info":
+		style = style.Foreground(semanticColors.AccentSoft)
+	case "success", "done":
+		style = style.Foreground(semanticColors.Success)
+	case "warning", "pending", "warn":
+		style = style.Foreground(semanticColors.Warning)
+	case "error", "failed", "danger":
+		style = style.Foreground(semanticColors.Danger)
+	default:
+		style = style.Foreground(semanticColors.TextMuted)
+	}
+	return style.Render(text)
 }
 
 func resolveRunCardStyle(items []chatEntry) lipgloss.Style {

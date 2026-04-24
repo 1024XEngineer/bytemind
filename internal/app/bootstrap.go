@@ -11,6 +11,7 @@ import (
 	"bytemind/internal/agent"
 	"bytemind/internal/config"
 	extensionspkg "bytemind/internal/extensions"
+	extensionsruntime "bytemind/internal/extensionsruntime"
 	"bytemind/internal/provider"
 	runtimepkg "bytemind/internal/runtime"
 	"bytemind/internal/session"
@@ -148,7 +149,8 @@ func Bootstrap(req BootstrapRequest) (Runtime, error) {
 	taskManager := runtimepkg.NewInMemoryTaskManager(
 		runtimepkg.WithTaskEventStore(taskEventStore),
 	)
-	extensions := extensionspkg.NewManager(workspace)
+	baseExtensions := extensionspkg.NewManager(workspace)
+	extensions := extensionsruntime.NewManager(workspace, req.ConfigPath, baseExtensions, cfg)
 	runner := agent.NewRunner(agent.Options{
 		Workspace:   workspace,
 		Config:      cfg,

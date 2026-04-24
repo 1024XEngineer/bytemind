@@ -35,6 +35,8 @@ func (m *model) handleSlashCommand(input string) error {
 		return m.runSkillsListCommand(input)
 	case "/skill":
 		return m.runSkillCommand(input, fields)
+	case "/mcp":
+		return m.runMCPCommandDispatch(input, fields)
 	case "/new":
 		return m.newSession()
 	case "/compact":

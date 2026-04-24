@@ -7,7 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
+
+var configDocumentMu sync.Mutex
 
 func UpsertProviderAPIKey(configPath, apiKey string) (string, error) {
 	apiKey = strings.TrimSpace(apiKey)
@@ -36,6 +39,8 @@ func UpsertProviderField(configPath, field, value string) (string, error) {
 }
 
 func upsertProviderValues(configPath string, values map[string]string) (string, error) {
+	configDocumentMu.Lock()
+	defer configDocumentMu.Unlock()
 	path, err := resolveWritableConfigPath(configPath)
 	if err != nil {
 		return "", err
@@ -96,6 +101,50 @@ func upsertProviderValues(configPath string, values map[string]string) (string, 
 	return path, nil
 }
 
+func MutateMCPConfig(workspace, explicitPath string, mutator func(*MCPConfig) error) (Config, string, error) {
+	path, err := ResolveWritableConfigPathForWorkspace(workspace, explicitPath)
+	if err != nil {
+		return Config{}, "", err
+	}
+	configDocumentMu.Lock()
+	defer configDocumentMu.Unlock()
+
+	raw, err := loadConfigDocument(path)
+	if err != nil {
+		return Config{}, "", err
+	}
+	cfg := Default(workspace)
+	if len(raw) > 0 {
+		payload, marshalErr := json.Marshal(raw)
+		if marshalErr != nil {
+			return Config{}, "", marshalErr
+		}
+		if unmarshalErr := json.Unmarshal(payload, &cfg); unmarshalErr != nil {
+			return Config{}, "", unmarshalErr
+		}
+	}
+	if err := normalize(&cfg); err != nil {
+		return Config{}, "", err
+	}
+	if mutator != nil {
+		if err := mutator(&cfg.MCP); err != nil {
+			return Config{}, "", err
+		}
+	}
+	if err := normalize(&cfg); err != nil {
+		return Config{}, "", err
+	}
+	raw["mcp"] = cfg.MCP
+	if err := writeConfigDocument(path, raw); err != nil {
+		return Config{}, "", err
+	}
+	loaded, err := Load(workspace, path)
+	if err != nil {
+		return Config{}, "", err
+	}
+	return loaded, path, nil
+}
+
 func loadConfigDocument(path string) (map[string]any, error) {
 	raw := map[string]any{}
 	data, err := os.ReadFile(path)
@@ -120,10 +169,39 @@ func writeConfigDocument(path string, raw map[string]any) error {
 	}
 	encoded = append(encoded, '\n')
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, encoded, 0o644)
+	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	removeTmp := true
+	defer func() {
+		if removeTmp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(encoded); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	removeTmp = false
+	_ = os.Chmod(path, 0o644)
+	syncDirectory(dir)
+	return nil
 }
 
 func resolveWritableConfigPath(explicit string) (string, error) {
@@ -136,6 +214,26 @@ func resolveWritableConfigPath(explicit string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, "config.json"), nil
+}
+
+func ResolveWritableConfigPathForWorkspace(workspace, explicit string) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		return filepath.Abs(explicit)
+	}
+	workspace = strings.TrimSpace(workspace)
+	if workspace != "" {
+		return filepath.Join(workspace, ".bytemind", "config.json"), nil
+	}
+	return resolveWritableConfigPath("")
+}
+
+func syncDirectory(path string) {
+	dir, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer dir.Close()
+	_ = dir.Sync()
 }
 
 func asString(value any) string {

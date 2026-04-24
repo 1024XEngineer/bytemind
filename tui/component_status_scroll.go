@@ -25,6 +25,10 @@ func (m model) renderTokenBadge(width int) string {
 }
 
 func (m model) renderScrollbar(viewHeight, contentHeight, currentOffset int) string {
+	return m.scrollbarComponent().Render(m, viewHeight, contentHeight, currentOffset)
+}
+
+func renderScrollbarDefault(m model, viewHeight, contentHeight, currentOffset int) string {
 	thumbTop, thumbHeight, _, visible := m.scrollbarLayout(viewHeight, contentHeight, currentOffset)
 	if !visible {
 		return ""
@@ -122,10 +126,14 @@ func stripANSIText(value string) string {
 }
 
 func (m model) renderStatusBar() string {
-	return m.renderStatusBarWithWidth(max(24, m.chatPanelInnerWidth()))
+	return m.statusBarComponent().Render(m, max(24, m.chatPanelInnerWidth()))
 }
 
 func (m model) renderStatusBarWithWidth(width int) string {
+	return m.statusBarComponent().Render(m, width)
+}
+
+func renderStatusBarWithWidthDefault(m model, width int) string {
 	stepTitle := currentOrNextStepTitle(m.plan)
 	if stepTitle == "" {
 		stepTitle = "-"

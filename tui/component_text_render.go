@@ -22,6 +22,9 @@ func formatChatBodyMode(item chatEntry, width int, copyMode bool) string {
 		return strings.TrimRight(wrapPlainText(text, width), "\n")
 	}
 	if item.Kind == "tool" {
+		if !copyMode {
+			text = firstNonEmptyLine(text)
+		}
 		if copyMode {
 			return strings.TrimRight(renderToolCopyBody(text, width), "\n")
 		}
@@ -139,6 +142,16 @@ func renderToolBodyLegacy(text string, width int) string {
 		prevBlank = false
 	}
 	return strings.Join(out, "\n")
+}
+
+func firstNonEmptyLine(text string) string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func renderToolLine(line string, width int, first bool) string {

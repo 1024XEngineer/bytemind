@@ -423,6 +423,10 @@ func (m model) hasCopyableViewportSelection() bool {
 }
 
 func (m model) renderConversationViewport() string {
+	return m.conversationViewportComponent().Render(m)
+}
+
+func renderConversationViewportDefault(m model) string {
 	content := ""
 	if m.hasCopyableViewportSelection() {
 		if preview := m.renderActiveSelectionPreview(); strings.TrimSpace(preview) != "" {
@@ -436,6 +440,10 @@ func (m model) renderConversationViewport() string {
 }
 
 func (m model) renderInputEditorView() string {
+	return m.inputEditorViewComponent().Render(m)
+}
+
+func renderInputEditorViewDefault(m model) string {
 	raw := m.input.View()
 	if !m.hasCopyableInputSelection() {
 		return raw

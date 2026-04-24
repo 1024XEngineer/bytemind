@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	planpkg "bytemind/internal/plan"
 )
 
 const (
@@ -23,6 +25,10 @@ const (
 	DefaultContextBudgetWarningRatio     = 0.85
 	DefaultContextBudgetCriticalRatio    = 0.95
 	DefaultContextBudgetMaxReactiveRetry = 1
+	DefaultMCPSyncTTLSeconds             = 30
+	DefaultMCPStartupTimeoutSeconds      = 20
+	DefaultMCPCallTimeoutSeconds         = 60
+	DefaultMCPMaxConcurrency             = 4
 )
 
 type Config struct {
@@ -42,6 +48,7 @@ type Config struct {
 	TokenQuota        int                   `json:"token_quota"`
 	TokenUsage        TokenUsageConfig      `json:"token_usage"`
 	ContextBudget     ContextBudgetConfig   `json:"context_budget"`
+	MCP               MCPConfig             `json:"mcp"`
 }
 
 type UpdateCheckConfig struct {
@@ -91,6 +98,59 @@ type NetworkAllowRule struct {
 	Scheme string `json:"scheme"`
 }
 
+type MCPConfig struct {
+	Enabled        bool              `json:"enabled"`
+	SyncTTLSeconds int               `json:"sync_ttl_s"`
+	Servers        []MCPServerConfig `json:"servers"`
+}
+
+type MCPServerConfig struct {
+	ID                    string                  `json:"id"`
+	Name                  string                  `json:"name"`
+	Enabled               *bool                   `json:"enabled,omitempty"`
+	Transport             MCPTransportConfig      `json:"transport"`
+	AutoStart             *bool                   `json:"auto_start,omitempty"`
+	StartupTimeoutSeconds int                     `json:"startup_timeout_s"`
+	CallTimeoutSeconds    int                     `json:"call_timeout_s"`
+	MaxConcurrency        int                     `json:"max_concurrency"`
+	ToolOverrides         []MCPToolOverrideConfig `json:"tool_overrides"`
+	ProtocolVersion       string                  `json:"protocol_version"`
+	ProtocolVersions      []string                `json:"protocol_versions"`
+}
+
+type MCPTransportConfig struct {
+	Type    string            `json:"type"`
+	Command string            `json:"command"`
+	Args    []string          `json:"args"`
+	Env     map[string]string `json:"env"`
+	CWD     string            `json:"cwd"`
+}
+
+type MCPToolOverrideConfig struct {
+	ToolName        string   `json:"tool_name"`
+	SafetyClass     string   `json:"safety_class,omitempty"`
+	ReadOnly        *bool    `json:"read_only,omitempty"`
+	Destructive     *bool    `json:"destructive,omitempty"`
+	AllowedModes    []string `json:"allowed_modes,omitempty"`
+	DefaultTimeoutS int      `json:"default_timeout_s,omitempty"`
+	MaxTimeoutS     int      `json:"max_timeout_s,omitempty"`
+	MaxResultChars  int      `json:"max_result_chars,omitempty"`
+}
+
+func (s MCPServerConfig) EnabledValue() bool {
+	if s.Enabled == nil {
+		return true
+	}
+	return *s.Enabled
+}
+
+func (s MCPServerConfig) AutoStartValue() bool {
+	if s.AutoStart == nil {
+		return true
+	}
+	return *s.AutoStart
+}
+
 func Default(workspace string) Config {
 	return Config{
 		Provider: ProviderConfig{
@@ -128,6 +188,11 @@ func Default(workspace string) Config {
 			WarningRatio:     DefaultContextBudgetWarningRatio,
 			CriticalRatio:    DefaultContextBudgetCriticalRatio,
 			MaxReactiveRetry: DefaultContextBudgetMaxReactiveRetry,
+		},
+		MCP: MCPConfig{
+			Enabled:        false,
+			SyncTTLSeconds: DefaultMCPSyncTTLSeconds,
+			Servers:        nil,
 		},
 	}
 }
@@ -264,6 +329,11 @@ func ensureDefaultConfigFile(home string) error {
 			WarningRatio:     DefaultContextBudgetWarningRatio,
 			CriticalRatio:    DefaultContextBudgetCriticalRatio,
 			MaxReactiveRetry: DefaultContextBudgetMaxReactiveRetry,
+		},
+		MCP: MCPConfig{
+			Enabled:        false,
+			SyncTTLSeconds: DefaultMCPSyncTTLSeconds,
+			Servers:        nil,
 		},
 	}
 
@@ -574,6 +644,9 @@ func normalize(cfg *Config) error {
 	if cfg.ContextBudget.MaxReactiveRetry < 0 {
 		return errors.New("context_budget.max_reactive_retry must be >= 0")
 	}
+	if err := normalizeMCPConfig(&cfg.MCP); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -809,4 +882,179 @@ func defaultModel(providerType, baseURL string) string {
 	default:
 		return ""
 	}
+}
+
+func normalizeMCPConfig(cfg *MCPConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	if cfg.SyncTTLSeconds <= 0 {
+		cfg.SyncTTLSeconds = DefaultMCPSyncTTLSeconds
+	}
+	if len(cfg.Servers) == 0 {
+		cfg.Servers = nil
+		return nil
+	}
+	normalized := make([]MCPServerConfig, 0, len(cfg.Servers))
+	normalizedSources := make(map[string]string, len(cfg.Servers))
+	for _, server := range cfg.Servers {
+		originalID := strings.TrimSpace(server.ID)
+		server.ID = normalizeMCPServerID(server.ID)
+		if server.ID == "" {
+			return errors.New("mcp.servers contains an empty server id")
+		}
+		if existingSource, exists := normalizedSources[server.ID]; exists {
+			return fmt.Errorf("mcp.servers has duplicate server id after normalization: %q (from %q and %q)", server.ID, existingSource, originalID)
+		}
+		normalizedSources[server.ID] = originalID
+		server.Name = strings.TrimSpace(server.Name)
+		if server.Name == "" {
+			server.Name = server.ID
+		}
+		if server.Enabled == nil {
+			value := true
+			server.Enabled = &value
+		}
+		if server.AutoStart == nil {
+			value := true
+			server.AutoStart = &value
+		}
+		server.Transport.Type = strings.ToLower(strings.TrimSpace(server.Transport.Type))
+		if server.Transport.Type == "" {
+			server.Transport.Type = "stdio"
+		}
+		if server.Transport.Type != "stdio" {
+			return fmt.Errorf("mcp server %q uses unsupported transport.type %q (expected stdio)", server.ID, server.Transport.Type)
+		}
+		server.Transport.Command = strings.TrimSpace(server.Transport.Command)
+		server.Transport.CWD = strings.TrimSpace(server.Transport.CWD)
+		if server.EnabledValue() && server.Transport.Command == "" {
+			return fmt.Errorf("mcp server %q requires transport.command for stdio mode", server.ID)
+		}
+		if server.Transport.Args == nil {
+			server.Transport.Args = []string{}
+		}
+		for i, arg := range server.Transport.Args {
+			server.Transport.Args[i] = strings.TrimSpace(arg)
+		}
+		cleanEnv := map[string]string{}
+		for key, value := range server.Transport.Env {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			cleanEnv[key] = strings.TrimSpace(value)
+		}
+		server.Transport.Env = cleanEnv
+		if server.StartupTimeoutSeconds <= 0 {
+			server.StartupTimeoutSeconds = DefaultMCPStartupTimeoutSeconds
+		}
+		if server.CallTimeoutSeconds <= 0 {
+			server.CallTimeoutSeconds = DefaultMCPCallTimeoutSeconds
+		}
+		if server.MaxConcurrency < 1 {
+			server.MaxConcurrency = DefaultMCPMaxConcurrency
+		}
+		server.ProtocolVersion = strings.TrimSpace(server.ProtocolVersion)
+		server.ProtocolVersions = normalizeMCPProtocolVersions(server.ProtocolVersion, server.ProtocolVersions)
+		normalizedOverrides, err := normalizeMCPToolOverrides(server.ID, server.ToolOverrides)
+		if err != nil {
+			return err
+		}
+		server.ToolOverrides = normalizedOverrides
+		normalized = append(normalized, server)
+	}
+	cfg.Servers = normalized
+	return nil
+}
+
+func normalizeMCPServerID(raw string) string {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer(" ", "-", "/", "-", "\\", "-", ":", "-", ".", "-")
+	raw = replacer.Replace(raw)
+	raw = strings.Trim(raw, "-_")
+	return raw
+}
+
+func normalizeMCPProtocolVersions(primary string, extras []string) []string {
+	versions := make([]string, 0, 1+len(extras))
+	if strings.TrimSpace(primary) != "" {
+		versions = append(versions, strings.TrimSpace(primary))
+	}
+	versions = append(versions, extras...)
+	normalized := make([]string, 0, len(versions))
+	seen := map[string]struct{}{}
+	for _, version := range versions {
+		version = strings.TrimSpace(version)
+		if version == "" {
+			continue
+		}
+		if _, ok := seen[version]; ok {
+			continue
+		}
+		seen[version] = struct{}{}
+		normalized = append(normalized, version)
+	}
+	return normalized
+}
+
+func normalizeMCPToolOverrides(serverID string, overrides []MCPToolOverrideConfig) ([]MCPToolOverrideConfig, error) {
+	if len(overrides) == 0 {
+		return nil, nil
+	}
+	normalized := make([]MCPToolOverrideConfig, 0, len(overrides))
+	seen := map[string]struct{}{}
+	for _, override := range overrides {
+		override.ToolName = strings.TrimSpace(override.ToolName)
+		if override.ToolName == "" {
+			return nil, fmt.Errorf("mcp server %q has tool override with empty tool_name", serverID)
+		}
+		toolKey := strings.ToLower(override.ToolName)
+		if _, exists := seen[toolKey]; exists {
+			return nil, fmt.Errorf("mcp server %q has duplicate tool override for %q", serverID, override.ToolName)
+		}
+		seen[toolKey] = struct{}{}
+		override.SafetyClass = strings.ToLower(strings.TrimSpace(override.SafetyClass))
+		normalizedModes := make([]string, 0, len(override.AllowedModes))
+		modeSeen := map[planpkg.AgentMode]struct{}{}
+		for _, mode := range override.AllowedModes {
+			normalizedMode := planpkg.NormalizeMode(strings.TrimSpace(mode))
+			if normalizedMode == "" {
+				return nil, fmt.Errorf("mcp server %q has tool override %q with invalid allowed mode %q", serverID, override.ToolName, mode)
+			}
+			if _, exists := modeSeen[normalizedMode]; exists {
+				continue
+			}
+			modeSeen[normalizedMode] = struct{}{}
+			normalizedModes = append(normalizedModes, string(normalizedMode))
+		}
+		override.AllowedModes = normalizedModes
+		if override.DefaultTimeoutS < 0 || override.MaxTimeoutS < 0 || override.MaxResultChars < 0 {
+			return nil, fmt.Errorf("mcp server %q has tool override %q with negative timeout/result limits", serverID, override.ToolName)
+		}
+		if err := validateMCPToolOverride(override); err != nil {
+			return nil, fmt.Errorf("mcp server %q tool override %q is invalid: %w", serverID, override.ToolName, err)
+		}
+		normalized = append(normalized, override)
+	}
+	return normalized, nil
+}
+
+func validateMCPToolOverride(override MCPToolOverrideConfig) error {
+	switch override.SafetyClass {
+	case "", "safe", "moderate", "sensitive", "destructive":
+	default:
+		return fmt.Errorf("unsupported safety_class %q", override.SafetyClass)
+	}
+
+	if override.ReadOnly != nil && override.Destructive != nil && *override.ReadOnly && *override.Destructive {
+		return fmt.Errorf("read_only and destructive cannot both be true")
+	}
+	if override.DefaultTimeoutS > 0 && override.MaxTimeoutS > 0 && override.DefaultTimeoutS > override.MaxTimeoutS {
+		return fmt.Errorf("default_timeout_s must be <= max_timeout_s")
+	}
+	return nil
 }

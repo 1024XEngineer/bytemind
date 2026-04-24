@@ -93,7 +93,13 @@ func IsBroadWorkspacePath(dir string) bool {
 			return false
 		}
 	}
-	home, _ := os.UserHomeDir()
+	home := strings.TrimSpace(os.Getenv("HOME"))
+	if home == "" {
+		home = strings.TrimSpace(os.Getenv("USERPROFILE"))
+	}
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
 	return IsBroadWorkspacePathWithHome(dir, home)
 }
 

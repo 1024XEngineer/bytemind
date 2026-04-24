@@ -202,6 +202,42 @@ func TestAdapterResolveToolsUsesTTLCacheAndInvalidate(t *testing.T) {
 	}
 }
 
+func TestFromMCPServerWithEagerDiscoverDisabledDefersInitialDiscover(t *testing.T) {
+	client := &stubClient{
+		discoverSnapshot: ServerSnapshot{
+			ID:      "lazy",
+			Name:    "Lazy",
+			Version: "1.0.0",
+			Tools: []ToolDescriptor{
+				{Name: "echo"},
+			},
+		},
+	}
+	ext, err := FromMCPServer(
+		ServerConfig{
+			ID:      "lazy",
+			Name:    "Lazy",
+			Command: "stub",
+		},
+		WithClient(client),
+		WithEagerDiscover(false),
+	)
+	if err != nil {
+		t.Fatalf("FromMCPServer failed: %v", err)
+	}
+	if client.discoverCount != 0 {
+		t.Fatalf("expected no discover during construction, got %d", client.discoverCount)
+	}
+
+	_, err = ext.ResolveTools(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveTools failed: %v", err)
+	}
+	if client.discoverCount != 1 {
+		t.Fatalf("expected discover to happen on first tool resolve, got %d", client.discoverCount)
+	}
+}
+
 func TestMCPToolDefinitionSpecAndRunBranches(t *testing.T) {
 	tool := mcpTool{
 		descriptor: ToolDescriptor{},
@@ -267,5 +303,74 @@ func TestMCPToolDefinitionSpecAndRunBranches(t *testing.T) {
 	}
 	if output != "ok" {
 		t.Fatalf("unexpected output: %q", output)
+	}
+}
+
+func TestMCPToolSpecAppliesOverrideFields(t *testing.T) {
+	readonly := true
+	destructive := true
+	tool := mcpTool{
+		descriptor: ToolDescriptor{
+			Name:        "echo",
+			Description: "echo",
+		},
+		override: ToolOverride{
+			SafetyClass:     "destructive",
+			ReadOnly:        &readonly,
+			Destructive:     &destructive,
+			AllowedModes:    []string{"build", " plan ", "invalid"},
+			DefaultTimeoutS: 7,
+			MaxTimeoutS:     11,
+			MaxResultChars:  4096,
+		},
+	}
+	spec := tool.Spec()
+	if spec.SafetyClass != toolspkg.SafetyClassDestructive {
+		t.Fatalf("expected destructive safety class, got %q", spec.SafetyClass)
+	}
+	if !spec.ReadOnly {
+		t.Fatal("expected readonly override to be applied")
+	}
+	if spec.Destructive {
+		t.Fatal("expected readonly normalization to clear destructive flag")
+	}
+	if spec.DefaultTimeoutS != 7 || spec.MaxTimeoutS != 11 || spec.MaxResultChars != 4096 {
+		t.Fatalf("unexpected timeout/result overrides: %#v", spec)
+	}
+	if len(spec.AllowedModes) != 2 {
+		t.Fatalf("expected 2 normalized allowed modes, got %#v", spec.AllowedModes)
+	}
+}
+
+func TestMCPToolSpecSkipsInvalidAllowedModes(t *testing.T) {
+	tool := mcpTool{
+		descriptor: ToolDescriptor{
+			Name: "echo",
+		},
+		override: ToolOverride{
+			AllowedModes: []string{"invalid", ""},
+		},
+	}
+	spec := tool.Spec()
+	if len(spec.AllowedModes) != 1 || spec.AllowedModes[0] != "build" {
+		t.Fatalf("expected fallback default allowed mode, got %#v", spec.AllowedModes)
+	}
+}
+
+func TestOverrideForTool(t *testing.T) {
+	if got := overrideForTool(nil, "echo"); got.ReadOnly != nil || got.Destructive != nil || got.SafetyClass != "" || len(got.AllowedModes) != 0 {
+		t.Fatalf("expected empty override for nil map, got %#v", got)
+	}
+
+	readonly := true
+	overrides := map[string]ToolOverride{
+		"echo": {ReadOnly: &readonly},
+	}
+	got := overrideForTool(overrides, " Echo ")
+	if got.ReadOnly == nil || !*got.ReadOnly {
+		t.Fatalf("expected matched override for normalized key, got %#v", got)
+	}
+	if got := overrideForTool(overrides, "missing"); got.ReadOnly != nil || got.Destructive != nil || got.SafetyClass != "" || len(got.AllowedModes) != 0 {
+		t.Fatalf("expected empty override for missing key, got %#v", got)
 	}
 }

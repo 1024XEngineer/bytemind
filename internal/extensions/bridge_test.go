@@ -35,6 +35,16 @@ func TestStableToolKeyAppliesLengthLimit(t *testing.T) {
 	}
 }
 
+func TestStableToolKeyForMCPStripsExtensionPrefix(t *testing.T) {
+	key, err := StableToolKey(ExtensionMCP, "mcp.docs", "open_doc")
+	if err != nil {
+		t.Fatalf("StableToolKey failed: %v", err)
+	}
+	if key != "mcp:docs:open_doc" {
+		t.Fatalf("unexpected mcp stable key: %q", key)
+	}
+}
+
 func TestStableToolKeyTruncationKeepsValidUTF8(t *testing.T) {
 	extensionID := strings.Repeat("技能", 80)
 	toolName := strings.Repeat("工具", 80)

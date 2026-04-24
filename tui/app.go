@@ -15,6 +15,7 @@ import (
 type Options struct {
 	Runner       Runner
 	Store        SessionStore
+	MCPService   MCPService
 	Session      *session.Session
 	ImageStore   assets.ImageStore
 	Config       config.Config

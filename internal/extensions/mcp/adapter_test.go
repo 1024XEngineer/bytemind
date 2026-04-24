@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	extensionspkg "bytemind/internal/extensions"
@@ -137,6 +138,63 @@ func TestFromMCPServerHandshakeFailureMarksDegraded(t *testing.T) {
 	}
 	if health.Status != extensionspkg.ExtensionStatusDegraded {
 		t.Fatalf("expected degraded health snapshot, got %q", health.Status)
+	}
+}
+
+func TestAdapterRefreshFailureFallsBackToStaleSnapshot(t *testing.T) {
+	client := &stubClient{
+		discoverSnapshot: ServerSnapshot{
+			ID:      "docs",
+			Name:    "Docs MCP",
+			Version: "1.0.0",
+			Tools: []ToolDescriptor{
+				{
+					Name:        "search_docs",
+					Description: "Search docs",
+					InputSchema: map[string]any{"type": "object"},
+				},
+			},
+		},
+	}
+	ext, err := FromMCPServer(ServerConfig{
+		ID:      "docs",
+		Name:    "Docs MCP",
+		Command: "stub",
+	}, WithClient(client))
+	if err != nil {
+		t.Fatalf("FromMCPServer failed: %v", err)
+	}
+	initialTools, err := ext.ResolveTools(context.Background())
+	if err != nil {
+		t.Fatalf("initial ResolveTools failed: %v", err)
+	}
+	if len(initialTools) != 1 {
+		t.Fatalf("expected one initial tool, got %d", len(initialTools))
+	}
+
+	client.discoverErr = &ClientError{
+		Code:    ClientErrorListToolsFailed,
+		Message: "tools/list failed",
+	}
+	adapter := ext.(*Adapter)
+	adapter.Invalidate()
+
+	staleTools, err := ext.ResolveTools(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveTools should fallback to stale snapshot on non-context refresh error, got %v", err)
+	}
+	if len(staleTools) != 1 {
+		t.Fatalf("expected stale snapshot to retain one tool, got %d", len(staleTools))
+	}
+	info := ext.Info()
+	if info.Status != extensionspkg.ExtensionStatusDegraded {
+		t.Fatalf("expected degraded status after refresh failure, got %q", info.Status)
+	}
+	if info.Health.LastError != extensionspkg.ErrCodeLoadFailed {
+		t.Fatalf("expected load_failed error code, got %q", info.Health.LastError)
+	}
+	if got := info.Health.Message; got == "" || !strings.Contains(got, "stale_snapshot_fallback") {
+		t.Fatalf("expected stale snapshot reason code in health message, got %q", got)
 	}
 }
 

@@ -72,10 +72,9 @@ func (e *defaultEngine) executeToolCall(
 	if err != nil {
 		return err
 	}
-	permissionMetadata := map[string]string{
-		"tool_name": call.Function.Name,
-		"reason":    decision.Reason,
-	}
+	permissionMetadata := toolAuditMetadata(call.Function.Name, map[string]string{
+		"reason": decision.Reason,
+	})
 	appendSandboxAuditContext(permissionMetadata, sandboxAudit)
 	runner.appendAudit(ctx, storagepkg.AuditEvent{
 		SessionID:  sessionID,
@@ -100,11 +99,10 @@ func (e *defaultEngine) executeToolCall(
 	})
 	sandboxLeaseID := fmt.Sprintf("session-%s", sess.ID)
 	sandboxRunID := fmt.Sprintf("trace-%s", traceID)
-	startMetadata := map[string]string{
-		"tool_name":        call.Function.Name,
+	startMetadata := toolAuditMetadata(call.Function.Name, map[string]string{
 		"sandbox_lease_id": sandboxLeaseID,
 		"sandbox_run_id":   sandboxRunID,
-	}
+	})
 	appendSandboxAuditContext(startMetadata, sandboxAudit)
 	runner.appendAudit(ctx, storagepkg.AuditEvent{
 		SessionID: sessionID,
@@ -221,12 +219,11 @@ func (e *defaultEngine) executeToolCall(
 	if execErr != nil {
 		auditResult = "error"
 	}
-	metadata := map[string]string{
-		"tool_name":        call.Function.Name,
+	metadata := toolAuditMetadata(call.Function.Name, map[string]string{
 		"error":            errText,
 		"sandbox_lease_id": sandboxLeaseID,
 		"sandbox_run_id":   sandboxRunID,
-	}
+	})
 	appendSandboxAuditContext(metadata, sandboxAudit)
 	if execution.Result.ErrorCode != "" {
 		metadata["error_code"] = execution.Result.ErrorCode
@@ -330,11 +327,10 @@ func (e *defaultEngine) handleRejectedToolCall(
 		},
 	})
 
-	deniedMetadata := map[string]string{
-		"tool_name": call.Function.Name,
-		"error":     errorText,
-		"decision":  string(decision.Decision),
-	}
+	deniedMetadata := toolAuditMetadata(call.Function.Name, map[string]string{
+		"error":    errorText,
+		"decision": string(decision.Decision),
+	})
 	appendSandboxAuditContext(deniedMetadata, sandboxAudit)
 	runner.appendAudit(ctx, storagepkg.AuditEvent{
 		SessionID: corepkg.SessionID(sess.ID),

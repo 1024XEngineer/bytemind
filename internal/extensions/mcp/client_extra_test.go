@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -480,9 +481,20 @@ func TestNormalizeRPCResponseID(t *testing.T) {
 	}{
 		{name: "nil", id: nil, wantID: "", wantHas: false, wantErr: false},
 		{name: "int", id: 2, wantID: "2", wantHas: true, wantErr: false},
+		{name: "int8", id: int8(3), wantID: "3", wantHas: true, wantErr: false},
+		{name: "int16", id: int16(4), wantID: "4", wantHas: true, wantErr: false},
+		{name: "int32", id: int32(5), wantID: "5", wantHas: true, wantErr: false},
+		{name: "int64", id: int64(6), wantID: "6", wantHas: true, wantErr: false},
+		{name: "uint", id: uint(7), wantID: "7", wantHas: true, wantErr: false},
+		{name: "uint8", id: uint8(8), wantID: "8", wantHas: true, wantErr: false},
+		{name: "uint16", id: uint16(9), wantID: "9", wantHas: true, wantErr: false},
+		{name: "uint32", id: uint32(10), wantID: "10", wantHas: true, wantErr: false},
+		{name: "uint64", id: uint64(11), wantID: "11", wantHas: true, wantErr: false},
+		{name: "float integer", id: 12.0, wantID: "12", wantHas: true, wantErr: false},
 		{name: "string", id: " 3 ", wantID: "3", wantHas: true, wantErr: false},
 		{name: "json number", id: json.Number("4"), wantID: "4", wantHas: true, wantErr: false},
 		{name: "decimal number", id: json.Number("1.5"), wantID: "", wantHas: true, wantErr: true},
+		{name: "invalid json number", id: json.Number("not-a-number"), wantID: "", wantHas: true, wantErr: true},
 		{name: "unsupported", id: true, wantID: "", wantHas: true, wantErr: true},
 	}
 	for _, tc := range cases {
@@ -501,6 +513,101 @@ func TestNormalizeRPCResponseID(t *testing.T) {
 				t.Fatalf("unexpected id: got %q want %q", gotID, tc.wantID)
 			}
 		})
+	}
+}
+
+func TestCloneToolOverrideMapDeepCloneAndNormalize(t *testing.T) {
+	if cloneToolOverrideMap(nil) != nil {
+		t.Fatal("expected nil output for nil override map")
+	}
+
+	readonly := true
+	destructive := true
+	source := map[string]ToolOverride{
+		" Echo ": {
+			SafetyClass:     " Sensitive ",
+			ReadOnly:        &readonly,
+			Destructive:     &destructive,
+			AllowedModes:    []string{"Build", " plan "},
+			DefaultTimeoutS: 5,
+			MaxTimeoutS:     9,
+			MaxResultChars:  2000,
+		},
+	}
+	cloned := cloneToolOverrideMap(source)
+	if len(cloned) != 1 {
+		t.Fatalf("expected one cloned override, got %d", len(cloned))
+	}
+	override, ok := cloned["echo"]
+	if !ok {
+		t.Fatalf("expected normalized key 'echo', got %#v", cloned)
+	}
+	if override.SafetyClass != "sensitive" {
+		t.Fatalf("expected normalized safety class sensitive, got %q", override.SafetyClass)
+	}
+	if override.ReadOnly == nil || !*override.ReadOnly {
+		t.Fatalf("expected cloned readonly=true, got %#v", override.ReadOnly)
+	}
+	if override.Destructive == nil || !*override.Destructive {
+		t.Fatalf("expected cloned destructive=true, got %#v", override.Destructive)
+	}
+	if len(override.AllowedModes) != 2 {
+		t.Fatalf("expected cloned allowed modes, got %#v", override.AllowedModes)
+	}
+
+	override.AllowedModes[0] = "modified"
+	*override.ReadOnly = false
+	if source[" Echo "].AllowedModes[0] != "Build" {
+		t.Fatal("expected source allowed modes to remain unchanged")
+	}
+	if source[" Echo "].ReadOnly == nil || !*source[" Echo "].ReadOnly {
+		t.Fatal("expected source readonly pointer to remain unchanged")
+	}
+}
+
+func TestFramedJSONAndMarshalErrorBranches(t *testing.T) {
+	if _, err := readFramedJSON(bufio.NewReader(strings.NewReader("Broken-Header\r\n\r\n{}"))); err == nil {
+		t.Fatal("expected invalid frame header error")
+	}
+	if _, err := readFramedJSON(bufio.NewReader(strings.NewReader("Content-Length: bad\r\n\r\n{}"))); err == nil {
+		t.Fatal("expected invalid content-length parse error")
+	}
+	if _, err := readFramedJSON(bufio.NewReader(strings.NewReader("Content-Length: -1\r\n\r\n{}"))); err == nil {
+		t.Fatal("expected negative content-length error")
+	}
+	if _, err := readFramedJSON(bufio.NewReader(strings.NewReader("X-Test: 1\r\n\r\n{}"))); err == nil {
+		t.Fatal("expected missing content-length error")
+	}
+	overLimit := defaultMaxFrameBytes + 1
+	overLimitFrame := fmt.Sprintf("Content-Length: %d\r\n\r\n", overLimit)
+	if _, err := readFramedJSON(bufio.NewReader(strings.NewReader(overLimitFrame))); err == nil {
+		t.Fatal("expected oversize frame rejection")
+	} else if !strings.Contains(err.Error(), fmt.Sprintf("%d", overLimit)) || !strings.Contains(err.Error(), fmt.Sprintf("%d", defaultMaxFrameBytes)) {
+		t.Fatalf("expected oversize error to include length and limit, got %v", err)
+	}
+
+	frame := []byte("{")
+	raw := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(frame), frame)
+	if _, err := readRPCRequest(bufio.NewReader(strings.NewReader(raw))); err == nil {
+		t.Fatal("expected invalid json request decode error")
+	}
+
+	writer := bufio.NewWriterSize(&failAfterNWritesWriter{maxWrites: 1, err: io.ErrClosedPipe}, 1)
+	if err := writeFramedJSON(writer, []byte(`{"ok":true}`)); err == nil {
+		t.Fatal("expected payload write failure")
+	}
+
+	if err := writeRPCRequest(bufio.NewWriter(&strings.Builder{}), newRPCRequest(1, "tools/list", map[string]any{
+		"invalid": func() {},
+	})); err == nil {
+		t.Fatal("expected marshal failure for invalid request params")
+	}
+
+	if err := writeRPCResponse(bufio.NewWriter(&strings.Builder{}), rpcResponse{
+		JSONRPC: "2.0",
+		ID:      func() {},
+	}); err == nil {
+		t.Fatal("expected marshal failure for invalid response id")
 	}
 }
 
@@ -556,4 +663,18 @@ type alwaysFailReader struct {
 
 func (r alwaysFailReader) Read(_ []byte) (int, error) {
 	return 0, r.err
+}
+
+type failAfterNWritesWriter struct {
+	maxWrites int
+	writes    int
+	err       error
+}
+
+func (w *failAfterNWritesWriter) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes > w.maxWrites {
+		return 0, w.err
+	}
+	return len(p), nil
 }

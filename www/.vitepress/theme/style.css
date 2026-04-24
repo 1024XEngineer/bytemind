@@ -1,0 +1,99 @@
+/* Hide all scrollbars */
+* {
+  scrollbar-width: none;
+  /* Firefox */
+  -ms-overflow-style: none;
+  /* IE/Edge */
+}
+
+*::-webkit-scrollbar {
+  display: none;
+  /* Chrome/Safari/Opera */
+}
+
+/* Remove all borders */
+:root {
+  --vp-c-divider: transparent;
+  --vp-c-border: transparent;
+  --vp-c-border-hard: transparent;
+  --vp-c-gutter: transparent;
+}
+
+/* Sidebar */
+.VPSidebar,
+.VPSidebarItem .item,
+.VPSidebarItem .indicator,
+.VPDocAside,
+.aside-curtain {
+  border: none !important;
+}
+
+/* Nav */
+.VPNav,
+.VPNavBar,
+.VPNavBarMenu,
+.VPNavBarHamburger,
+.VPNavScreenMenu {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Content area */
+.VPDoc,
+.VPContent,
+.content-container,
+.vp-doc h1,
+.vp-doc h2,
+.vp-doc h3,
+.vp-doc h4,
+.vp-doc h5,
+.vp-doc h6 {
+  border: none !important;
+}
+
+/* Tables */
+.vp-doc table,
+.vp-doc th,
+.vp-doc td {
+  border: none !important;
+}
+
+/* Code blocks */
+.vp-doc div[class*='language-'],
+.vp-doc [class*='language-'] pre,
+.vp-doc [class*='language-'] code {
+  border: none !important;
+}
+
+/* Custom blocks (tip/warning/info) */
+.vp-doc .custom-block {
+  border: none !important;
+}
+
+/* Footer */
+.VPFooter {
+  border: none !important;
+}
+
+/* Local nav (on-page heading nav) */
+.VPLocalNav {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Last Updated */
+.VPLastUpdated {
+  border: none !important;
+}
+
+/* Doc pager prev/next */
+.VPDocFooter,
+.pager-link {
+  border: none !important;
+}
+
+/* Search */
+.VPLocalSearchBox,
+.search-result {
+  border: none !important;
+}
