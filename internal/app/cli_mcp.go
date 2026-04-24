@@ -83,7 +83,6 @@ func runMCPAdd(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	workspaceFlag := fs.String("workspace", "", "Workspace directory; defaults to current directory")
 	configPath := fs.String("config", "", "Path to config file")
-	idFlag := fs.String("id", "", "MCP server id")
 	name := fs.String("name", "", "Display name for this MCP server")
 	command := fs.String("cmd", "", "stdio command to launch MCP server")
 	argsCSV := fs.String("args", "", "Comma-separated command arguments")
@@ -98,9 +97,6 @@ func runMCPAdd(args []string, stdout, stderr io.Writer) error {
 	protocolVersionsCSV := fs.String("protocol-versions", "", "Comma-separated MCP protocol fallback versions")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	if serverID == "" {
-		serverID = strings.TrimSpace(*idFlag)
 	}
 	if serverID == "" && fs.NArg() < 1 {
 		return fmt.Errorf("usage: bytemind mcp add <id> --cmd <command> [--args a,b]")
@@ -217,7 +213,6 @@ func parseMCPActionTarget(name string, args []string, stderr io.Writer) (workspa
 	fs.SetOutput(stderr)
 	workspaceFlag := fs.String("workspace", "", "Workspace directory; defaults to current directory")
 	configFlag := fs.String("config", "", "Path to config file")
-	idFlag := fs.String("id", "", "MCP server id")
 	target = ""
 	if len(args) > 0 && !strings.HasPrefix(strings.TrimSpace(args[0]), "-") {
 		target = strings.TrimSpace(args[0])
@@ -228,9 +223,6 @@ func parseMCPActionTarget(name string, args []string, stderr io.Writer) (workspa
 	}
 	if target == "" && fs.NArg() > 0 {
 		target = strings.TrimSpace(fs.Arg(0))
-	}
-	if target == "" {
-		target = strings.TrimSpace(*idFlag)
 	}
 	if target == "" {
 		return "", "", "", fmt.Errorf("usage: bytemind %s <server-id>", name)

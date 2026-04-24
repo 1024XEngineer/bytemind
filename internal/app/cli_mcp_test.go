@@ -63,44 +63,6 @@ func TestRunMCPAddAndList(t *testing.T) {
 	}
 }
 
-func TestRunMCPSupportsIDFlag(t *testing.T) {
-	workspace := t.TempDir()
-	t.Setenv("BYTEMIND_HOME", t.TempDir())
-	writeMCPCLITestConfig(t, workspace)
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-
-	if err := RunMCP([]string{
-		"add",
-		"--id", "local",
-		"--cmd", "cmd",
-		"--args", "/c,echo,ok",
-		"--auto-start=false",
-		"--workspace", workspace,
-	}, strings.NewReader(""), &stdout, &stderr); err != nil {
-		t.Fatalf("RunMCP add with --id failed: %v", err)
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	if err := RunMCP([]string{"test", "--id", "local", "--workspace", workspace}, strings.NewReader(""), &stdout, &stderr); err != nil {
-		t.Fatalf("RunMCP test with --id failed: %v", err)
-	}
-	if !strings.Contains(stdout.String(), "local") {
-		t.Fatalf("expected test output to include local server, got %q", stdout.String())
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	if err := RunMCP([]string{"enable", "--id", "local", "--workspace", workspace}, strings.NewReader(""), &stdout, &stderr); err != nil {
-		t.Fatalf("RunMCP enable with --id failed: %v", err)
-	}
-	if !strings.Contains(stdout.String(), "active") && !strings.Contains(stdout.String(), "ready") {
-		t.Fatalf("expected enable output to include updated status, got %q", stdout.String())
-	}
-}
-
 func TestRunMCPAuthRendersGuidance(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

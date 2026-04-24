@@ -21,7 +21,6 @@ type Manager struct {
 	workspace  string
 	configPath string
 	base       extensionspkg.Manager
-	health     *extensionspkg.HealthManager
 
 	disabledMCP map[string]struct{}
 	entries     map[string]*mcpEntry
@@ -44,7 +43,6 @@ func NewManager(workspace, configPath string, base extensionspkg.Manager, cfg co
 		workspace:   strings.TrimSpace(workspace),
 		configPath:  strings.TrimSpace(configPath),
 		base:        base,
-		health:      newRuntimeHealthManager(cfg.Extensions),
 		disabledMCP: map[string]struct{}{},
 		entries:     map[string]*mcpEntry{},
 	}
@@ -75,46 +73,23 @@ func (m *Manager) Load(ctx context.Context, source string) (extensionspkg.Extens
 		}
 	}
 
-	if m.health != nil && !m.health.AllowProbe(extensionID) {
-		now := time.Now().UTC()
-		snapshot := m.health.Snapshot(extensionID)
-		entry.lastErr = circuitOpenError(extensionID, snapshot)
-		entry.info = applyIsolationSnapshot(infoForEntry(entry, now), snapshot, entry.lastErr, now)
-		entry.lastRefresh = now
-		m.entries[extensionID] = entry
-		return cloneInfo(entry.info), entry.lastErr
-	}
-
-	if entry.extension != nil {
-		if reloader, ok := entry.extension.(interface{ Reload(context.Context) error }); ok {
-			if err := reloader.Reload(ctx); err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return extensionspkg.ExtensionInfo{}, err
-				}
-				snapshot := extensionspkg.IsolationSnapshot{}
-				if m.health != nil {
-					snapshot = m.health.RecordFailure(extensionID)
-				}
-				now := time.Now().UTC()
-				entry.info = applyIsolationSnapshot(normalizeMCPInfo(entry.extension.Info(), entry.server, now), snapshot, err, now)
-				entry.lastRefresh = now
-				entry.lastErr = err
-				m.entries[extensionID] = entry
-				return cloneInfo(entry.info), err
-			}
-			snapshot := extensionspkg.IsolationSnapshot{}
-			if m.health != nil {
-				snapshot = m.health.RecordSuccess(extensionID)
+	if reloader, ok := entry.extension.(interface{ Reload(context.Context) error }); ok {
+		if err := reloader.Reload(ctx); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return extensionspkg.ExtensionInfo{}, err
 			}
 			now := time.Now().UTC()
-			entry.info = applyIsolationSnapshot(normalizeMCPInfo(entry.extension.Info(), entry.server, now), snapshot, nil, now)
+			entry.info = normalizeMCPInfo(entry.extension.Info(), entry.server, now)
 			entry.lastRefresh = now
-			entry.lastErr = nil
+			entry.lastErr = err
 			m.entries[extensionID] = entry
+			return cloneInfo(entry.info), err
 		}
-	}
-	if entry.lastErr != nil {
-		return cloneInfo(entry.info), entry.lastErr
+		now := time.Now().UTC()
+		entry.info = normalizeMCPInfo(entry.extension.Info(), entry.server, now)
+		entry.lastRefresh = now
+		entry.lastErr = nil
+		m.entries[extensionID] = entry
 	}
 	return cloneInfo(entry.info), nil
 }
@@ -204,25 +179,16 @@ func (m *Manager) ResolveAllTools(ctx context.Context) ([]extensionspkg.Extensio
 		entryIDs = append(entryIDs, extensionID)
 	}
 	sort.Strings(entryIDs)
-	type resolveTarget struct {
-		id    string
-		entry *mcpEntry
-	}
-	entries := make([]resolveTarget, 0, len(entryIDs))
+	entries := make([]*mcpEntry, 0, len(entryIDs))
 	for _, extensionID := range entryIDs {
-		entries = append(entries, resolveTarget{id: extensionID, entry: m.entries[extensionID]})
+		entries = append(entries, m.entries[extensionID])
 	}
 	m.mu.RUnlock()
 
 	var firstErr error
 	tools := make([]extensionspkg.ExtensionTool, 0, 16)
-	for _, target := range entries {
-		entry := target.entry
-		extensionID := strings.TrimSpace(target.id)
+	for _, entry := range entries {
 		if entry == nil || entry.extension == nil {
-			continue
-		}
-		if m.health != nil && !m.health.AllowProbe(extensionID) {
 			continue
 		}
 		resolved, err := entry.extension.ResolveTools(ctx)
@@ -230,16 +196,10 @@ func (m *Manager) ResolveAllTools(ctx context.Context) ([]extensionspkg.Extensio
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, err
 			}
-			if m.health != nil {
-				m.health.RecordFailure(extensionID)
-			}
 			if firstErr == nil {
 				firstErr = err
 			}
 			continue
-		}
-		if m.health != nil {
-			m.health.RecordSuccess(extensionID)
 		}
 		for _, item := range resolved {
 			if item.Source != extensionspkg.ExtensionMCP {
@@ -273,46 +233,11 @@ func (m *Manager) Test(ctx context.Context, extensionID string) (extensionspkg.H
 		}
 	}
 
-	if m.health != nil && !m.health.AllowProbe(normalizedID) {
-		snapshot := m.health.Snapshot(normalizedID)
-		now := time.Now().UTC()
-		err := circuitOpenError(normalizedID, snapshot)
-		info := applyIsolationSnapshot(entry.info, snapshot, err, now)
-		return info.Health, err
-	}
-
 	if entry.extension != nil {
 		if reloader, ok := entry.extension.(interface{ Reload(context.Context) error }); ok {
-			if err := reloader.Reload(ctx); err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return extensionspkg.HealthSnapshot{}, err
-				}
-				snapshot := extensionspkg.IsolationSnapshot{}
-				if m.health != nil {
-					snapshot = m.health.RecordFailure(normalizedID)
-				}
-				now := time.Now().UTC()
-				info := applyIsolationSnapshot(entry.extension.Info(), snapshot, err, now)
-				return info.Health, err
-			}
+			_ = reloader.Reload(ctx)
 		}
-		health, err := entry.extension.Health(ctx)
-		if err != nil {
-			snapshot := extensionspkg.IsolationSnapshot{}
-			if m.health != nil {
-				snapshot = m.health.RecordFailure(normalizedID)
-			}
-			now := time.Now().UTC()
-			info := applyIsolationSnapshot(extensionspkg.ExtensionInfo{Health: health, Status: health.Status}, snapshot, err, now)
-			return info.Health, err
-		}
-		snapshot := extensionspkg.IsolationSnapshot{}
-		if m.health != nil {
-			snapshot = m.health.RecordSuccess(normalizedID)
-		}
-		now := time.Now().UTC()
-		info := applyIsolationSnapshot(extensionspkg.ExtensionInfo{Health: health, Status: health.Status}, snapshot, nil, now)
-		return info.Health, nil
+		return entry.extension.Health(ctx)
 	}
 
 	if entry.clientCfg.ID == "" {
@@ -368,7 +293,6 @@ func (m *Manager) refresh(ctx context.Context, force bool) error {
 	if err != nil {
 		return err
 	}
-	m.updateHealthPolicy(cfg.Extensions)
 	m.applyConfig(cfg.MCP)
 
 	m.mu.Lock()
@@ -380,73 +304,27 @@ func (m *Manager) refresh(ctx context.Context, force bool) error {
 		if entry == nil || entry.extension == nil {
 			continue
 		}
-		if m.health != nil && !m.health.AllowProbe(extensionID) {
-			snapshot := m.health.Snapshot(extensionID)
-			entry.lastErr = circuitOpenError(extensionID, snapshot)
-			entry.info = applyIsolationSnapshot(normalizeMCPInfo(entry.extension.Info(), entry.server, now), snapshot, entry.lastErr, now)
-			entry.lastRefresh = now
-			m.entries[extensionID] = entry
-			continue
-		}
-
-		snapshot := extensionspkg.IsolationSnapshot{}
 		if force {
 			if reloader, ok := entry.extension.(interface{ Reload(context.Context) error }); ok {
-				if err := reloader.Reload(ctx); err != nil {
-					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-						return err
-					}
-					if m.health != nil {
-						snapshot = m.health.RecordFailure(extensionID)
-					}
-					if firstErr == nil {
-						firstErr = err
-					}
-					entry.lastErr = err
-					entry.info = applyIsolationSnapshot(normalizeMCPInfo(entry.extension.Info(), entry.server, now), snapshot, err, now)
-					entry.lastRefresh = now
-					m.entries[extensionID] = entry
-					continue
+				if err := reloader.Reload(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && firstErr == nil {
+					firstErr = err
 				}
 			}
 		}
-		if m.health != nil {
-			if force {
-				snapshot = m.health.RecordSuccess(extensionID)
-			} else {
-				snapshot = m.health.Snapshot(extensionID)
-			}
-		}
 		info := entry.extension.Info()
-		entry.info = applyIsolationSnapshot(normalizeMCPInfo(info, entry.server, now), snapshot, nil, now)
+		entry.info = normalizeMCPInfo(info, entry.server, now)
 		entry.lastRefresh = now
-		entry.lastErr = nil
 		m.entries[extensionID] = entry
 	}
 	return firstErr
 }
 
-func (m *Manager) updateHealthPolicy(cfg configpkg.ExtensionsConfig) {
-	if m.health == nil {
-		m.health = newRuntimeHealthManager(cfg)
-		return
-	}
-	m.health.UpdatePolicy(extensionspkg.IsolationPolicy{
-		FailureThreshold: cfg.FailureThreshold,
-		RecoveryCooldown: time.Duration(cfg.RecoveryCooldownSec) * time.Second,
-	})
-}
 func (m *Manager) applyConfig(cfg configpkg.MCPConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	now := time.Now().UTC()
 	if !cfg.Enabled {
-		if m.health != nil {
-			for extensionID := range m.entries {
-				m.health.Forget(extensionID)
-			}
-		}
 		m.entries = map[string]*mcpEntry{}
 		return
 	}
@@ -490,9 +368,6 @@ func (m *Manager) applyConfig(cfg configpkg.MCPConfig) {
 			mcppkg.WithEagerDiscover(false),
 		)
 		if err != nil {
-			if m.health != nil {
-				m.health.RecordFailure(extensionID)
-			}
 			nextEntries[extensionID] = &mcpEntry{
 				server:      server,
 				clientCfg:   clientCfg,
@@ -511,14 +386,6 @@ func (m *Manager) applyConfig(cfg configpkg.MCPConfig) {
 			extension:   ext,
 			info:        info,
 			lastRefresh: now,
-		}
-	}
-	if m.health != nil {
-		for extensionID := range m.entries {
-			if _, ok := nextEntries[extensionID]; ok {
-				continue
-			}
-			m.health.Forget(extensionID)
 		}
 	}
 	m.entries = nextEntries
@@ -690,71 +557,6 @@ func cloneInfo(info extensionspkg.ExtensionInfo) extensionspkg.ExtensionInfo {
 		Manifest:     info.Manifest,
 		Health:       info.Health,
 	}
-}
-
-func newRuntimeHealthManager(cfg configpkg.ExtensionsConfig) *extensionspkg.HealthManager {
-	return extensionspkg.NewHealthManager(extensionspkg.IsolationPolicy{
-		FailureThreshold: cfg.FailureThreshold,
-		RecoveryCooldown: time.Duration(cfg.RecoveryCooldownSec) * time.Second,
-	})
-}
-
-func infoForEntry(entry *mcpEntry, now time.Time) extensionspkg.ExtensionInfo {
-	if entry == nil {
-		return extensionspkg.ExtensionInfo{}
-	}
-	if entry.extension != nil {
-		return normalizeMCPInfo(entry.extension.Info(), entry.server, now)
-	}
-	info := cloneInfo(entry.info)
-	if strings.TrimSpace(info.ID) == "" {
-		return readyMCPInfo(entry.server, now)
-	}
-	return normalizeMCPInfo(info, entry.server, now)
-}
-
-func applyIsolationSnapshot(info extensionspkg.ExtensionInfo, snapshot extensionspkg.IsolationSnapshot, lastErr error, now time.Time) extensionspkg.ExtensionInfo {
-	next := cloneInfo(info)
-	next.Health.CheckedAtUTC = now.Format(time.RFC3339)
-
-	switch snapshot.CircuitState {
-	case extensionspkg.CircuitOpen:
-		next.Status = extensionspkg.ExtensionStatusDegraded
-		next.Health.Status = extensionspkg.ExtensionStatusDegraded
-		next.Health.LastError = extensionspkg.ErrCodeLoadFailed
-		if snapshot.NextRetryAtUTC != "" {
-			next.Health.Message = fmt.Sprintf("mcp circuit open (next retry at %s)", snapshot.NextRetryAtUTC)
-		} else {
-			next.Health.Message = "mcp circuit open"
-		}
-		return next
-	case extensionspkg.CircuitHalfOpen:
-		next.Status = extensionspkg.ExtensionStatusDegraded
-		next.Health.Status = extensionspkg.ExtensionStatusDegraded
-		next.Health.LastError = extensionspkg.ErrCodeLoadFailed
-		next.Health.Message = "mcp circuit half-open"
-		return next
-	}
-
-	if lastErr != nil {
-		next.Status = extensionspkg.ExtensionStatusDegraded
-		next.Health.Status = extensionspkg.ExtensionStatusDegraded
-		next.Health.LastError = extensionspkg.ErrCodeLoadFailed
-		next.Health.Message = strings.TrimSpace(lastErr.Error())
-		return next
-	}
-
-	if next.Health.Status == extensionspkg.ExtensionStatusDegraded {
-		next.Status = extensionspkg.ExtensionStatusDegraded
-	}
-	return next
-}
-
-func circuitOpenError(extensionID string, snapshot extensionspkg.IsolationSnapshot) error {
-	if strings.TrimSpace(snapshot.NextRetryAtUTC) != "" {
-		return fmt.Errorf("mcp extension %q circuit open until %s", extensionID, snapshot.NextRetryAtUTC)
-	}
-	return fmt.Errorf("mcp extension %q circuit open", extensionID)
 }
 
 func mergeErrors(left, right error) error {

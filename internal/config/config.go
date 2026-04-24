@@ -29,11 +29,6 @@ const (
 	DefaultMCPStartupTimeoutSeconds      = 20
 	DefaultMCPCallTimeoutSeconds         = 60
 	DefaultMCPMaxConcurrency             = 4
-	DefaultExtensionsHealthCheckInterval = 30
-	DefaultExtensionsFailureThreshold    = 3
-	DefaultExtensionsRecoveryCooldownSec = 30
-	DefaultExtensionsMaxConcurrency      = 4
-	DefaultExtensionsConflictPolicy      = "reject"
 )
 
 type Config struct {
@@ -53,7 +48,6 @@ type Config struct {
 	TokenQuota        int                   `json:"token_quota"`
 	TokenUsage        TokenUsageConfig      `json:"token_usage"`
 	ContextBudget     ContextBudgetConfig   `json:"context_budget"`
-	Extensions        ExtensionsConfig      `json:"extensions"`
 	MCP               MCPConfig             `json:"mcp"`
 }
 
@@ -91,16 +85,6 @@ type ContextBudgetConfig struct {
 	WarningRatio     float64 `json:"warning_ratio"`
 	CriticalRatio    float64 `json:"critical_ratio"`
 	MaxReactiveRetry int     `json:"max_reactive_retry"`
-}
-
-type ExtensionsConfig struct {
-	Sources                    []string `json:"sources"`
-	AutoLoad                   *bool    `json:"auto_load,omitempty"`
-	HealthCheckIntervalSec     int      `json:"health_check_interval_sec"`
-	FailureThreshold           int      `json:"failure_threshold"`
-	RecoveryCooldownSec        int      `json:"recovery_cooldown_sec"`
-	MaxConcurrencyPerExtension int      `json:"max_concurrency_per_extension"`
-	ConflictPolicy             string   `json:"conflict_policy"`
 }
 
 type ExecAllowRule struct {
@@ -167,13 +151,6 @@ func (s MCPServerConfig) AutoStartValue() bool {
 	return *s.AutoStart
 }
 
-func (cfg ExtensionsConfig) AutoLoadValue() bool {
-	if cfg.AutoLoad == nil {
-		return true
-	}
-	return *cfg.AutoLoad
-}
-
 func Default(workspace string) Config {
 	return Config{
 		Provider: ProviderConfig{
@@ -211,15 +188,6 @@ func Default(workspace string) Config {
 			WarningRatio:     DefaultContextBudgetWarningRatio,
 			CriticalRatio:    DefaultContextBudgetCriticalRatio,
 			MaxReactiveRetry: DefaultContextBudgetMaxReactiveRetry,
-		},
-		Extensions: ExtensionsConfig{
-			Sources:                    []string{"skills", "mcp"},
-			AutoLoad:                   boolPtr(true),
-			HealthCheckIntervalSec:     DefaultExtensionsHealthCheckInterval,
-			FailureThreshold:           DefaultExtensionsFailureThreshold,
-			RecoveryCooldownSec:        DefaultExtensionsRecoveryCooldownSec,
-			MaxConcurrencyPerExtension: DefaultExtensionsMaxConcurrency,
-			ConflictPolicy:             DefaultExtensionsConflictPolicy,
 		},
 		MCP: MCPConfig{
 			Enabled:        false,
@@ -361,15 +329,6 @@ func ensureDefaultConfigFile(home string) error {
 			WarningRatio:     DefaultContextBudgetWarningRatio,
 			CriticalRatio:    DefaultContextBudgetCriticalRatio,
 			MaxReactiveRetry: DefaultContextBudgetMaxReactiveRetry,
-		},
-		Extensions: ExtensionsConfig{
-			Sources:                    []string{"skills", "mcp"},
-			AutoLoad:                   boolPtr(true),
-			HealthCheckIntervalSec:     DefaultExtensionsHealthCheckInterval,
-			FailureThreshold:           DefaultExtensionsFailureThreshold,
-			RecoveryCooldownSec:        DefaultExtensionsRecoveryCooldownSec,
-			MaxConcurrencyPerExtension: DefaultExtensionsMaxConcurrency,
-			ConflictPolicy:             DefaultExtensionsConflictPolicy,
 		},
 		MCP: MCPConfig{
 			Enabled:        false,
@@ -685,67 +644,9 @@ func normalize(cfg *Config) error {
 	if cfg.ContextBudget.MaxReactiveRetry < 0 {
 		return errors.New("context_budget.max_reactive_retry must be >= 0")
 	}
-	if err := normalizeExtensionsConfig(&cfg.Extensions); err != nil {
-		return err
-	}
 	if err := normalizeMCPConfig(&cfg.MCP); err != nil {
 		return err
 	}
-	return nil
-}
-
-func normalizeExtensionsConfig(cfg *ExtensionsConfig) error {
-	if cfg == nil {
-		return nil
-	}
-	if cfg.AutoLoad == nil {
-		cfg.AutoLoad = boolPtr(true)
-	}
-	if cfg.HealthCheckIntervalSec <= 0 {
-		cfg.HealthCheckIntervalSec = DefaultExtensionsHealthCheckInterval
-	}
-	if cfg.FailureThreshold < 1 {
-		cfg.FailureThreshold = DefaultExtensionsFailureThreshold
-	}
-	if cfg.RecoveryCooldownSec < 1 {
-		cfg.RecoveryCooldownSec = DefaultExtensionsRecoveryCooldownSec
-	}
-	if cfg.MaxConcurrencyPerExtension < 1 {
-		cfg.MaxConcurrencyPerExtension = DefaultExtensionsMaxConcurrency
-	}
-	cfg.ConflictPolicy = strings.ToLower(strings.TrimSpace(cfg.ConflictPolicy))
-	if cfg.ConflictPolicy == "" {
-		cfg.ConflictPolicy = DefaultExtensionsConflictPolicy
-	}
-	switch cfg.ConflictPolicy {
-	case "reject", "first_wins", "last_wins":
-	default:
-		return fmt.Errorf("extensions.conflict_policy must be one of reject|first_wins|last_wins")
-	}
-
-	if len(cfg.Sources) == 0 {
-		cfg.Sources = []string{"skills", "mcp"}
-		return nil
-	}
-	normalized := make([]string, 0, len(cfg.Sources))
-	seen := map[string]struct{}{}
-	for _, source := range cfg.Sources {
-		source = strings.ToLower(strings.TrimSpace(source))
-		switch source {
-		case "skills", "mcp":
-		default:
-			return fmt.Errorf("extensions.sources contains unsupported value %q", source)
-		}
-		if _, ok := seen[source]; ok {
-			continue
-		}
-		seen[source] = struct{}{}
-		normalized = append(normalized, source)
-	}
-	if len(normalized) == 0 {
-		return errors.New("extensions.sources cannot be empty")
-	}
-	cfg.Sources = normalized
 	return nil
 }
 
@@ -1156,9 +1057,4 @@ func validateMCPToolOverride(override MCPToolOverrideConfig) error {
 		return fmt.Errorf("default_timeout_s must be <= max_timeout_s")
 	}
 	return nil
-}
-
-func boolPtr(value bool) *bool {
-	out := value
-	return &out
 }

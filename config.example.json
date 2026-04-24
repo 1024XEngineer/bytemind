@@ -17,18 +17,6 @@
     "critical_ratio": 0.95,
     "max_reactive_retry": 1
   },
-  "extensions": {
-    "sources": [
-      "skills",
-      "mcp"
-    ],
-    "auto_load": true,
-    "health_check_interval_sec": 30,
-    "failure_threshold": 3,
-    "recovery_cooldown_sec": 30,
-    "max_concurrency_per_extension": 4,
-    "conflict_policy": "reject"
-  },
   "token_usage": {
     "storage_type": "file",
     "storage_path": "./.bytemind/token_usage.json",

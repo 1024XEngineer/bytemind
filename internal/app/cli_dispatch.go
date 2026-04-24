@@ -10,13 +10,12 @@ type DispatchHandlers struct {
 	RunOneShot  func(args []string, stdin io.Reader, stdout, stderr io.Writer) error
 	RunWorker   func(args []string, stdin io.Reader, stdout, stderr io.Writer) error
 	RunInstall  func(args []string, stdout, stderr io.Writer) error
-	RunExt      func(args []string, stdin io.Reader, stdout, stderr io.Writer) error
 	RunMCP      func(args []string, stdin io.Reader, stdout, stderr io.Writer) error
 	RenderUsage func(w io.Writer)
 }
 
 func DispatchCLI(args []string, stdin io.Reader, stdout, stderr io.Writer, handlers DispatchHandlers) error {
-	if handlers.RunTUI == nil || handlers.RunOneShot == nil || handlers.RunWorker == nil || handlers.RunInstall == nil || handlers.RunExt == nil || handlers.RunMCP == nil || handlers.RenderUsage == nil {
+	if handlers.RunTUI == nil || handlers.RunOneShot == nil || handlers.RunWorker == nil || handlers.RunInstall == nil || handlers.RunMCP == nil || handlers.RenderUsage == nil {
 		return fmt.Errorf("cli dispatch handlers are incomplete")
 	}
 	if len(args) == 0 {
@@ -34,8 +33,6 @@ func DispatchCLI(args []string, stdin io.Reader, stdout, stderr io.Writer, handl
 		return handlers.RunWorker(args[1:], stdin, stdout, stderr)
 	case "install":
 		return handlers.RunInstall(args[1:], stdout, stderr)
-	case "ext":
-		return handlers.RunExt(args[1:], stdin, stdout, stderr)
 	case "mcp":
 		return handlers.RunMCP(args[1:], stdin, stdout, stderr)
 	case "help", "-h", "--help":

@@ -11,7 +11,6 @@ func DefaultUsageLines() []string {
 		"bytemind tui [-config path] [-model name] [-session id] [-stream true|false] [-sandbox-enabled true|false] [-system-sandbox-mode off|best_effort|required] [-approval-mode interactive|away] [-away-policy auto_deny_continue|fail_fast] [-workspace path] [-max-iterations n]",
 		`bytemind run -prompt "task" [-config path] [-model name] [-session id] [-stream true|false] [-sandbox-enabled true|false] [-system-sandbox-mode off|best_effort|required] [-approval-mode interactive|away] [-away-policy auto_deny_continue|fail_fast] [-max-iterations n]`,
 		"bytemind install [-to dir] [-name binary-name]",
-		"bytemind ext <list|load|unload|status> [options]",
 		"bytemind mcp <list|add|remove|enable|disable|test|reload> [options]",
 		"tip: install without Go (macOS/Linux): curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash",
 		"tip: install without Go (Windows): iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex",
