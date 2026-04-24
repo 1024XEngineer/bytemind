@@ -34,7 +34,7 @@ func shouldRepairBuildHandoffTurn(runMode planpkg.AgentMode, state planpkg.State
 	if looksLikeRedundantBuildHandoffBlocker(text) {
 		return true
 	}
-	return intent == turnIntentAskUser || intent == turnIntentFinalize
+	return false
 }
 
 func buildBuildHandoffRepairInstruction(state planpkg.State, reply llm.Message, latestUser string, attempt, maxAttempts int) string {

@@ -730,6 +730,60 @@ func TestRunPromptRepairsBuildHandoffWithoutRestartingPlanConfirmation(t *testin
 	}
 }
 
+func TestRunPromptDoesNotRepairBuildHandoffWhenAssistantRequestsRealBlockerInfo(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModeBuild
+	sess.Plan = planpkg.State{
+		Goal:                "Implement the first RAG demo",
+		Summary:             "Plan is converged and execution should continue from the repo baseline.",
+		Phase:               planpkg.PhaseExecuting,
+		NextAction:          "Run the first execution step.",
+		Steps:               []planpkg.Step{{Title: "Run the first execution step", Status: planpkg.StepInProgress}},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+	}
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>ask_user</turn_intent>Before I proceed, I need the missing API token for the target service.",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 4,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "start execution", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("expected direct ask_user response without build-handoff repair retry, got %d requests", len(client.requests))
+	}
+	if !strings.Contains(strings.ToLower(answer), "missing api token") {
+		t.Fatalf("expected answer to preserve the genuine blocker clarification, got %q", answer)
+	}
+	if len(sess.Messages) != 2 {
+		t.Fatalf("expected user + assistant messages only, got %#v", sess.Messages)
+	}
+}
+
 func TestRunPromptStopsWhenContinueWorkWithoutToolCallsKeepsRepeating(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
