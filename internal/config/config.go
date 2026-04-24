@@ -37,23 +37,24 @@ const (
 )
 
 type Config struct {
-	Provider         ProviderConfig        `json:"provider"`
-	ProviderRuntime  ProviderRuntimeConfig `json:"provider_runtime"`
-	ApprovalPolicy   string                `json:"approval_policy"`
-	ApprovalMode     string                `json:"approval_mode"`
-	AwayPolicy       string                `json:"away_policy"`
-	SandboxEnabled   bool                  `json:"sandbox_enabled"`
-	WritableRoots    []string              `json:"writable_roots"`
-	ExecAllowlist    []ExecAllowRule       `json:"exec_allowlist"`
-	NetworkAllowlist []NetworkAllowRule    `json:"network_allowlist"`
-	MaxIterations    int                   `json:"max_iterations"`
-	Stream           bool                  `json:"stream"`
-	UpdateCheck      UpdateCheckConfig     `json:"update_check"`
-	TokenQuota       int                   `json:"token_quota"`
-	TokenUsage       TokenUsageConfig      `json:"token_usage"`
-	ContextBudget    ContextBudgetConfig   `json:"context_budget"`
-	Extensions       ExtensionsConfig      `json:"extensions"`
-	MCP              MCPConfig             `json:"mcp"`
+	Provider          ProviderConfig        `json:"provider"`
+	ProviderRuntime   ProviderRuntimeConfig `json:"provider_runtime"`
+	ApprovalPolicy    string                `json:"approval_policy"`
+	ApprovalMode      string                `json:"approval_mode"`
+	AwayPolicy        string                `json:"away_policy"`
+	SandboxEnabled    bool                  `json:"sandbox_enabled"`
+	SystemSandboxMode string                `json:"system_sandbox_mode"`
+	WritableRoots     []string              `json:"writable_roots"`
+	ExecAllowlist     []ExecAllowRule       `json:"exec_allowlist"`
+	NetworkAllowlist  []NetworkAllowRule    `json:"network_allowlist"`
+	MaxIterations     int                   `json:"max_iterations"`
+	Stream            bool                  `json:"stream"`
+	UpdateCheck       UpdateCheckConfig     `json:"update_check"`
+	TokenQuota        int                   `json:"token_quota"`
+	TokenUsage        TokenUsageConfig      `json:"token_usage"`
+	ContextBudget     ContextBudgetConfig   `json:"context_budget"`
+	Extensions        ExtensionsConfig      `json:"extensions"`
+	MCP               MCPConfig             `json:"mcp"`
 }
 
 type UpdateCheckConfig struct {
@@ -181,15 +182,16 @@ func Default(workspace string) Config {
 			Model:     defaultModelID,
 			APIKeyEnv: "BYTEMIND_API_KEY",
 		},
-		ApprovalPolicy:   "on-request",
-		ApprovalMode:     "interactive",
-		AwayPolicy:       "auto_deny_continue",
-		SandboxEnabled:   false,
-		WritableRoots:    []string{},
-		ExecAllowlist:    []ExecAllowRule{},
-		NetworkAllowlist: []NetworkAllowRule{},
-		MaxIterations:    32,
-		Stream:           true,
+		ApprovalPolicy:    "on-request",
+		ApprovalMode:      "interactive",
+		AwayPolicy:        "auto_deny_continue",
+		SandboxEnabled:    false,
+		SystemSandboxMode: "off",
+		WritableRoots:     []string{},
+		ExecAllowlist:     []ExecAllowRule{},
+		NetworkAllowlist:  []NetworkAllowRule{},
+		MaxIterations:     32,
+		Stream:            true,
 		UpdateCheck: UpdateCheckConfig{
 			Enabled: true,
 		},
@@ -330,15 +332,16 @@ func ensureDefaultConfigFile(home string) error {
 			APIKeyEnv:        "BYTEMIND_API_KEY",
 			AnthropicVersion: "2023-06-01",
 		},
-		ApprovalPolicy:   "on-request",
-		ApprovalMode:     "interactive",
-		AwayPolicy:       "auto_deny_continue",
-		SandboxEnabled:   false,
-		WritableRoots:    []string{},
-		ExecAllowlist:    []ExecAllowRule{},
-		NetworkAllowlist: []NetworkAllowRule{},
-		MaxIterations:    32,
-		Stream:           true,
+		ApprovalPolicy:    "on-request",
+		ApprovalMode:      "interactive",
+		AwayPolicy:        "auto_deny_continue",
+		SandboxEnabled:    false,
+		SystemSandboxMode: "off",
+		WritableRoots:     []string{},
+		ExecAllowlist:     []ExecAllowRule{},
+		NetworkAllowlist:  []NetworkAllowRule{},
+		MaxIterations:     32,
+		Stream:            true,
 		UpdateCheck: UpdateCheckConfig{
 			Enabled: true,
 		},
@@ -466,6 +469,9 @@ func applyEnv(cfg *Config) {
 		if parsed, err := strconv.ParseBool(value); err == nil {
 			cfg.SandboxEnabled = parsed
 		}
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_SYSTEM_SANDBOX_MODE")); value != "" {
+		cfg.SystemSandboxMode = value
 	}
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_WRITABLE_ROOTS")); value != "" {
 		cfg.WritableRoots = splitPathList(value)
@@ -623,6 +629,19 @@ func normalize(cfg *Config) error {
 	case "fail_fast":
 	default:
 		return errors.New("away_policy must be one of auto_deny_continue, fail_fast")
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.SystemSandboxMode)) {
+	case "", "off":
+		cfg.SystemSandboxMode = "off"
+	case "best_effort":
+		cfg.SystemSandboxMode = "best_effort"
+	case "required":
+		cfg.SystemSandboxMode = "required"
+	default:
+		return errors.New("system_sandbox_mode must be one of off, best_effort, required")
+	}
+	if cfg.SystemSandboxMode != "off" && !cfg.SandboxEnabled {
+		return errors.New("system_sandbox_mode requires sandbox_enabled=true")
 	}
 	if err := normalizeSandboxPolicy(cfg); err != nil {
 		return err

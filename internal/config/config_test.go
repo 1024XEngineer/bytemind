@@ -765,6 +765,9 @@ func TestDefaultIncludesSandboxPolicyFields(t *testing.T) {
 	if cfg.SandboxEnabled {
 		t.Fatal("expected sandbox_enabled to default to false")
 	}
+	if cfg.SystemSandboxMode != "off" {
+		t.Fatalf("expected system_sandbox_mode to default to off, got %q", cfg.SystemSandboxMode)
+	}
 	if cfg.ExecAllowlist == nil || len(cfg.ExecAllowlist) != 0 {
 		t.Fatalf("expected empty exec_allowlist default, got %#v", cfg.ExecAllowlist)
 	}
@@ -885,6 +888,61 @@ func TestLoadParsesSandboxEnabledFromEnv(t *testing.T) {
 	}
 	if !cfg.SandboxEnabled {
 		t.Fatalf("expected sandbox_enabled=true from env override")
+	}
+}
+
+func TestLoadParsesSystemSandboxModeFromEnv(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	t.Setenv("BYTEMIND_API_KEY", "env-key")
+	t.Setenv("BYTEMIND_SANDBOX_ENABLED", "true")
+	t.Setenv("BYTEMIND_SYSTEM_SANDBOX_MODE", "required")
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SystemSandboxMode != "required" {
+		t.Fatalf("expected system_sandbox_mode=required from env override, got %q", cfg.SystemSandboxMode)
+	}
+}
+
+func TestLoadRejectsSystemSandboxModeWithoutSandboxEnabled(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider":            minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+		"sandbox_enabled":     false,
+		"system_sandbox_mode": "required",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected sandbox_enabled requirement error")
+	}
+	if !strings.Contains(err.Error(), "system_sandbox_mode requires sandbox_enabled=true") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidSystemSandboxMode(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider":            minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+		"system_sandbox_mode": "strictest",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected invalid system_sandbox_mode error")
+	}
+	if !strings.Contains(err.Error(), "system_sandbox_mode must be one of off, best_effort, required") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
