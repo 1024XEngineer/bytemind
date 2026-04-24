@@ -1081,6 +1081,92 @@ func TestLoadReadsProjectMCPFile(t *testing.T) {
 	}
 }
 
+func TestLoadReadsUserMCPFile(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "env-key")
+
+	mcpPath := filepath.Join(home, "mcp.json")
+	if err := writeConfig(mcpPath, map[string]any{
+		"enabled": true,
+		"servers": []map[string]any{
+			{
+				"id": "Global Docs",
+				"transport": map[string]any{
+					"type":    "stdio",
+					"command": "npx",
+					"args":    []string{"-y", "@modelcontextprotocol/server-filesystem"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MCP.Enabled {
+		t.Fatal("expected mcp.enabled=true from ~/.bytemind/mcp.json")
+	}
+	if len(cfg.MCP.Servers) != 1 {
+		t.Fatalf("expected one server from ~/.bytemind/mcp.json, got %#v", cfg.MCP.Servers)
+	}
+	if cfg.MCP.Servers[0].ID != "global-docs" {
+		t.Fatalf("expected normalized server id global-docs, got %q", cfg.MCP.Servers[0].ID)
+	}
+}
+
+func TestLoadProjectMCPFileOverridesUserMCPFile(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "env-key")
+
+	userMCPPath := filepath.Join(home, "mcp.json")
+	if err := writeConfig(userMCPPath, map[string]any{
+		"enabled": true,
+		"servers": []map[string]any{
+			{
+				"id": "user-server",
+				"transport": map[string]any{
+					"command": "node",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	projectMCPPath := filepath.Join(workspace, ".bytemind", "mcp.json")
+	if err := writeConfig(projectMCPPath, map[string]any{
+		"enabled": true,
+		"servers": []map[string]any{
+			{
+				"id": "project-server",
+				"transport": map[string]any{
+					"command": "node",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.MCP.Servers) != 1 {
+		t.Fatalf("expected one project server, got %#v", cfg.MCP.Servers)
+	}
+	if cfg.MCP.Servers[0].ID != "project-server" {
+		t.Fatalf("expected project mcp server precedence, got %q", cfg.MCP.Servers[0].ID)
+	}
+}
+
 func TestLoadRejectsDuplicateNormalizedMCPServerID(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())

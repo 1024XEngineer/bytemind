@@ -216,6 +216,13 @@ func Load(workspace, configPath string) (Config, error) {
 				return cfg, err
 			}
 		}
+		if userMCPConfig, err := resolveUserMCPConfigPath(); err != nil {
+			return cfg, err
+		} else if userMCPConfig != "" {
+			if err := mergeMCPConfigFromFile(userMCPConfig, &cfg.MCP); err != nil {
+				return cfg, err
+			}
+		}
 
 		if projectConfig := resolveProjectConfigPath(workspace); projectConfig != "" {
 			if err := mergeConfigFromFile(projectConfig, &cfg); err != nil {
@@ -394,6 +401,18 @@ func resolveUserConfigPath() (string, error) {
 		return "", err
 	}
 	candidate := filepath.Join(home, "config.json")
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate, nil
+	}
+	return "", nil
+}
+
+func resolveUserMCPConfigPath() (string, error) {
+	home, err := ResolveHomeDir()
+	if err != nil {
+		return "", err
+	}
+	candidate := filepath.Join(home, "mcp.json")
 	if _, err := os.Stat(candidate); err == nil {
 		return candidate, nil
 	}
