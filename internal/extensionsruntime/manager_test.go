@@ -524,6 +524,56 @@ func TestManagerTestReloadContextErrorReturnsImmediately(t *testing.T) {
 	}
 }
 
+func TestManagerTestReturnsContextErrorFromHealth(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	writeRuntimeConfig(t, workspace, map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.openai.com/v1",
+			"model":    "gpt-5.4-mini",
+			"api_key":  "test-key",
+		},
+		"mcp": map[string]any{
+			"enabled": true,
+			"servers": []map[string]any{
+				{
+					"id": "local",
+					"transport": map[string]any{
+						"type":    "stdio",
+						"command": "cmd",
+						"args":    []string{"/c", "echo", "ok"},
+					},
+				},
+			},
+		},
+	})
+
+	manager := NewManager(workspace, "", extensionspkg.NopManager{}, loadRuntimeConfig(t, workspace))
+	entry := manager.entries["mcp.local"]
+	if entry == nil {
+		t.Fatal("expected local entry")
+	}
+	localExt := &fakeMCPRuntimeExtension{
+		info: extensionspkg.ExtensionInfo{
+			ID:     "mcp.local",
+			Kind:   extensionspkg.ExtensionMCP,
+			Status: extensionspkg.ExtensionStatusActive,
+		},
+		health: extensionspkg.HealthSnapshot{
+			Status:  extensionspkg.ExtensionStatusFailed,
+			Message: "deadline",
+		},
+		healthErr: context.DeadlineExceeded,
+	}
+	entry.extension = localExt
+
+	_, err := manager.Test(context.Background(), "mcp.local")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded from extension health, got %v", err)
+	}
+}
+
 func TestManagerLoadCircuitOpenWithNilExtensionDoesNotPanic(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
@@ -978,6 +1028,45 @@ func TestManagerHelperFunctionsAndTransformers(t *testing.T) {
 	}
 	if firstNonEmpty("", " ", "ok") != "ok" {
 		t.Fatal("expected first non-empty value to be ok")
+	}
+
+	baseInfo := extensionspkg.ExtensionInfo{
+		ID:     "mcp.demo",
+		Status: extensionspkg.ExtensionStatusReady,
+		Health: extensionspkg.HealthSnapshot{Status: extensionspkg.ExtensionStatusReady},
+	}
+	openNoRetry := applyIsolationSnapshot(baseInfo, extensionspkg.IsolationSnapshot{
+		CircuitState: extensionspkg.CircuitOpen,
+	}, nil, now)
+	if !strings.Contains(openNoRetry.Health.Message, "mcp circuit open") {
+		t.Fatalf("expected open message without retry, got %#v", openNoRetry)
+	}
+	halfOpen := applyIsolationSnapshot(baseInfo, extensionspkg.IsolationSnapshot{
+		CircuitState: extensionspkg.CircuitHalfOpen,
+	}, nil, now)
+	if !strings.Contains(halfOpen.Health.Message, "half-open") {
+		t.Fatalf("expected half-open message, got %#v", halfOpen)
+	}
+	degraded := applyIsolationSnapshot(extensionspkg.ExtensionInfo{
+		Status: extensionspkg.ExtensionStatusReady,
+		Health: extensionspkg.HealthSnapshot{Status: extensionspkg.ExtensionStatusDegraded},
+	}, extensionspkg.IsolationSnapshot{}, nil, now)
+	if degraded.Status != extensionspkg.ExtensionStatusDegraded {
+		t.Fatalf("expected degraded status to persist, got %#v", degraded)
+	}
+
+	if got := infoForEntry(nil, now); got.ID != "" {
+		t.Fatalf("expected zero info for nil entry, got %#v", got)
+	}
+	withoutID := infoForEntry(&mcpEntry{server: server}, now)
+	if withoutID.ID != "mcp.demo" {
+		t.Fatalf("expected ready info fallback for empty entry info, got %#v", withoutID)
+	}
+
+	cfg := configpkg.ExtensionsConfig{FailureThreshold: 0, RecoveryCooldownSec: 0}
+	healthMgr := newRuntimeHealthManager(cfg)
+	if healthMgr == nil || !healthMgr.AllowProbe("mcp.any") {
+		t.Fatal("expected runtime health manager with default fallback policy")
 	}
 }
 

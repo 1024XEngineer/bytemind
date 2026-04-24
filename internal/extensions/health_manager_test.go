@@ -121,3 +121,38 @@ func TestHealthManagerUpdatePolicyAppliesToThresholdAndCooldown(t *testing.T) {
 		t.Fatalf("expected updated cooldown retry at %s, got %s", expected.Format(time.RFC3339), nextRetryAt.Format(time.RFC3339))
 	}
 }
+
+func TestHealthManagerMaintenanceHelpersAndPolicyEdgeCases(t *testing.T) {
+	var nilManager *HealthManager
+	nilManager.SetClockForTesting(nil)
+	nilManager.UpdatePolicy(IsolationPolicy{FailureThreshold: 1, RecoveryCooldown: time.Second})
+
+	now := time.Date(2026, 4, 23, 10, 0, 0, 0, time.UTC)
+	manager := NewHealthManager(IsolationPolicy{}, nil, WithHealthManagerClock(func() time.Time {
+		return now
+	}))
+	WithHealthManagerClock(func() time.Time { return now.Add(time.Second) })(nil)
+	WithHealthManagerClock(nil)(manager)
+	manager.SetClockForTesting(nil)
+
+	if snap := manager.RecordFailure(""); snap.CircuitState != "" {
+		t.Fatalf("expected empty-id failure record to return zero snapshot, got %#v", snap)
+	}
+	manager.RecordFailure("mcp.docs")
+	manager.Forget("mcp.docs")
+	manager.Forget(" ")
+	if snap := manager.Snapshot("mcp.docs"); snap.CircuitState != CircuitClosed || snap.FailureCount != 0 {
+		t.Fatalf("expected forgotten state to return closed/zero snapshot, got %#v", snap)
+	}
+
+	manager.states["mcp.open-zero"] = healthState{
+		Circuit:      CircuitOpen,
+		FailureCount: 1,
+		Cooldown:     time.Second,
+	}
+	manager.UpdatePolicy(IsolationPolicy{FailureThreshold: 2, RecoveryCooldown: 5 * time.Second})
+	updated := manager.Snapshot("mcp.open-zero")
+	if updated.NextRetryAtUTC == "" {
+		t.Fatalf("expected open circuit without timestamps to receive retry time after UpdatePolicy, got %#v", updated)
+	}
+}

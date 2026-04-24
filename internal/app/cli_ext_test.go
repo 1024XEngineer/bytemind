@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	extensionspkg "bytemind/internal/extensions"
 )
 
 func TestRunExtHelpRendersUsage(t *testing.T) {
@@ -17,6 +19,25 @@ func TestRunExtHelpRendersUsage(t *testing.T) {
 	output := stdout.String()
 	if !strings.Contains(output, "bytemind ext list") || !strings.Contains(output, "bytemind ext status") {
 		t.Fatalf("unexpected help output: %q", output)
+	}
+}
+
+func TestRunExtNoArgsAndUnknownSubcommand(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	if err := RunExt(nil, strings.NewReader(""), &stdout, &stderr); err != nil {
+		t.Fatalf("RunExt with no args failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "bytemind ext list") {
+		t.Fatalf("expected usage output for no-arg run, got %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	err := RunExt([]string{"unknown"}, strings.NewReader(""), &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "unknown ext subcommand") {
+		t.Fatalf("expected unknown subcommand error, got %v", err)
 	}
 }
 
@@ -71,6 +92,59 @@ func TestRunExtLoadExternalSource(t *testing.T) {
 	output := stdout.String()
 	if !strings.Contains(output, "id: skill.docs") || !strings.Contains(output, "status: active") {
 		t.Fatalf("expected load output to include skill.docs active, got %q", output)
+	}
+}
+
+func TestRunExtParsersAndRenderStatuses(t *testing.T) {
+	var stderr bytes.Buffer
+	workspace, configPath, target, err := parseExtActionTarget(
+		"ext status",
+		[]string{"--workspace", ".", "--config", "custom.json", "skill.demo"},
+		&stderr,
+	)
+	if err != nil {
+		t.Fatalf("parseExtActionTarget failed: %v", err)
+	}
+	if workspace == "" || configPath != "custom.json" || target != "skill.demo" {
+		t.Fatalf("unexpected parseExtActionTarget result: workspace=%q config=%q target=%q", workspace, configPath, target)
+	}
+
+	_, _, _, err = parseExtActionTarget("ext status", []string{"--workspace", "."}, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "usage: bytemind ext status") {
+		t.Fatalf("expected usage error for missing target, got %v", err)
+	}
+
+	_, _, err = parseExtCommonFlags("ext list", []string{"--bad-flag"}, &stderr)
+	if err == nil {
+		t.Fatal("expected parseExtCommonFlags to fail on invalid flag")
+	}
+
+	var out bytes.Buffer
+	renderExtStatuses(&out, nil)
+	if !strings.Contains(out.String(), "no extensions discovered") {
+		t.Fatalf("expected empty list render output, got %q", out.String())
+	}
+
+	out.Reset()
+	renderExtStatuses(&out, []extensionspkg.ExtensionInfo{
+		{
+			ID:     "skill.b",
+			Kind:   extensionspkg.ExtensionSkill,
+			Status: extensionspkg.ExtensionStatusActive,
+		},
+		{
+			ID:     "skill.a",
+			Kind:   extensionspkg.ExtensionSkill,
+			Status: extensionspkg.ExtensionStatusActive,
+			Health: extensionspkg.HealthSnapshot{Message: "ok"},
+		},
+	})
+	rendered := out.String()
+	if !strings.Contains(rendered, "ID") || !strings.Contains(rendered, "skill.a") || !strings.Contains(rendered, "skill.b") {
+		t.Fatalf("expected tabular render output, got %q", rendered)
+	}
+	if strings.Index(rendered, "skill.a") > strings.Index(rendered, "skill.b") {
+		t.Fatalf("expected sorted output by extension id, got %q", rendered)
 	}
 }
 
