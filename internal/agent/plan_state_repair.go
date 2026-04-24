@@ -71,7 +71,10 @@ func shouldRepairPlanClarifyTurn(runMode planpkg.AgentMode, state planpkg.State,
 	}
 
 	state = planpkg.NormalizeState(state)
-	if !planpkg.HasStructuredPlan(state) || !planpkg.HasDecisionGaps(state) || planpkg.HasActiveChoice(state) {
+	if !planpkg.HasStructuredPlan(state) || planpkg.HasActiveChoice(state) {
+		return false
+	}
+	if planpkg.CanStartExecution(state) {
 		return false
 	}
 
@@ -81,7 +84,7 @@ func shouldRepairPlanClarifyTurn(runMode planpkg.AgentMode, state planpkg.State,
 	}
 
 	if intent == turnIntentAskUser {
-		return true
+		return planpkg.HasDecisionGaps(state) || looksLikeInlineClarifyChoicePrompt(text)
 	}
 	return looksLikeInlineClarifyChoicePrompt(text)
 }
@@ -239,6 +242,11 @@ func looksLikeInlineClarifyChoicePrompt(text string) bool {
 		"please choose",
 		"please pick",
 		"please select",
+		"\u8bf7\u76f4\u63a5\u9009",
+		"\u76f4\u63a5\u9009",
+		"\u9009\u4e00\u4e2a",
+		"\u9009\u4e00\u4e2a\u65b9\u6848",
+		"\u9009\u4e2a\u65b9\u6848",
 		"请选择",
 		"请先选",
 		"先选",
