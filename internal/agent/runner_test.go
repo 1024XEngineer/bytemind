@@ -510,6 +510,100 @@ func TestRunPromptRepairsPlanDecisionAcknowledgementWithoutUpdatePlan(t *testing
 	}
 }
 
+func TestRunPromptRepairsInitialPlanTurnBeforeStructuredPlanExists(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModePlan
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    llm.RoleAssistant,
+			Content: "我先快速扫一眼仓库里 demos，现状后给出可执行计划。",
+		},
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{"path":"demos"}`,
+				},
+			}},
+		},
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-2",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name: "update_plan",
+					Arguments: `{
+						"goal":"Review the demos area and produce an executable plan.",
+						"summary":"Inspected the demos directory and created the first plan skeleton.",
+						"phase":"draft",
+						"decision_gaps":[],
+						"risks":["The existing demos layout may constrain where the new work should land."],
+						"verification":["Inspect the target demo path and confirm the first runnable slice before switching to Build."],
+						"plan":[
+							{"step":"Inspect the demos directory and relevant entrypoints","status":"pending"},
+							{"step":"Choose the target demo slice and define scope","status":"pending"},
+							{"step":"Draft the implementation and verification path","status":"pending"}
+						]
+					}`,
+				},
+			}},
+		},
+		{
+			Role:    llm.RoleAssistant,
+			Content: "<turn_intent>finalize</turn_intent>已建立初始计划。",
+		},
+	}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 8,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "先看下 demos 目录，然后帮我出一个可执行计划。", "plan", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 4 {
+		t.Fatalf("expected four requests (repair + investigate + update_plan + finalize), got %d", len(client.requests))
+	}
+	repairTurnMessages := client.requests[1].Messages
+	lastMsg := repairTurnMessages[len(repairTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "without creating the initial structured plan state") {
+		t.Fatalf("expected bootstrap repair note to be appended as user message, got %#v", repairTurnMessages)
+	}
+	if !planpkg.HasStructuredPlan(sess.Plan) {
+		t.Fatalf("expected session plan to be structured after repair, got %#v", sess.Plan)
+	}
+	if sess.Plan.Phase != planpkg.PhaseDraft {
+		t.Fatalf("expected repaired plan to reach draft phase, got %#v", sess.Plan.Phase)
+	}
+	if strings.Contains(answer, planpkg.StructuredPlanReminder) {
+		t.Fatalf("expected repaired answer not to fall back to structured plan reminder, got %q", answer)
+	}
+	if !strings.Contains(answer, "<proposed_plan>") {
+		t.Fatalf("expected repaired answer to include rendered structured plan, got %q", answer)
+	}
+}
+
 func TestRunPromptRepairsClarifyQuestionWithoutActiveChoice(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())

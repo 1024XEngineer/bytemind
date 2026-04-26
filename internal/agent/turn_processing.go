@@ -76,6 +76,40 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 			intent = inferAssistantTurnIntent(reply.Content)
 		}
 		latestUser := latestHumanUserMessageText(p.Session.Messages)
+		if shouldRepairPlanBootstrapTurn(p.RunMode, p.Session.Plan, reply) {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("plan_bootstrap_missing_update")
+				p.TaskReport.RecordStrategyAdjustment("assistant replied in plan mode before creating any structured plan state; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("plan bootstrap repair retries exceeded while waiting for initial investigation or update_plan")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept replying in plan mode without creating the initial structured plan state first (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildPlanBootstrapRepairInstruction(reply, latestUser, attempt, maxAttempts, p.Session.Messages, availableToolNames))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant replied in plan mode before creating structured plan state; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
 		if !hasToolActivitySinceLatestHumanUser(p.Session.Messages) && shouldRepairPlanRevisionTurn(p.RunMode, p.Session.Plan, latestUser, reply) {
 			attempt := 0
 			maxAttempts := 0
