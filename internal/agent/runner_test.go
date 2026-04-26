@@ -418,6 +418,185 @@ func TestRunPromptRepairsUnavailableRunShellClaimWithoutToolCall(t *testing.T) {
 	}
 }
 
+func TestRunPromptRepairsConcreteRepoClaimAfterWeakEvidence(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "demos"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("Documented command: python demos/backend/server.py\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "demos", "README.md"), []byte("Only documentation exists here.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				{
+					ID:   "call-1",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "list_files",
+						Arguments: `{}`,
+					},
+				},
+				{
+					ID:   "call-2",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "search_text",
+						Arguments: `{"query":"demos/backend/server.py"}`,
+					},
+				},
+			},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>仓库里已经有最小闭环实现了，可以直接运行 `python demos/backend/server.py`。",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				{
+					ID:   "call-3",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "list_files",
+						Arguments: `{"path":"demos","depth":2}`,
+					},
+				},
+				{
+					ID:   "call-4",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "read_file",
+						Arguments: `{"path":"demos/README.md"}`,
+					},
+				},
+			},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>我目前只确认到 `demos/README.md` 这类文档线索，还没有确认 `demos/backend/server.py` 或对应实现文件存在。",
+		},
+	}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 8,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "看看 demos 里是不是已经有现成可跑的最小 demo。", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(answer, "还没有确认") {
+		t.Fatalf("expected repaired answer to stay cautious, got %q", answer)
+	}
+	if len(client.requests) != 4 {
+		t.Fatalf("expected four requests (investigate + bad claim + repair + cautious finalize), got %d", len(client.requests))
+	}
+	repairTurnMessages := client.requests[2].Messages
+	lastMsg := repairTurnMessages[len(repairTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "referenced path or command target was not directly confirmed") {
+		t.Fatalf("expected local repo path-evidence repair note to be appended as user message, got %#v", repairTurnMessages)
+	}
+}
+
+func TestRunPromptRepairsImplementationClaimAfterPathListingOnly(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "demos", "backend"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "demos", "backend", "server.py"), []byte("print('demo')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{"path":"demos/backend","depth":2}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>已经有可直接运行的实现了，执行 `python demos/backend/server.py` 就行。",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-2",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "read_file",
+					Arguments: `{"path":"demos/backend/server.py"}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>我已确认 `demos/backend/server.py` 存在，并读取了实现文件内容。",
+		},
+	}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 8,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "确认 demos/backend/server.py 是不是已经实现好了。", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(answer, "读取了实现文件内容") {
+		t.Fatalf("expected repaired answer to be grounded in implementation inspection, got %q", answer)
+	}
+	if len(client.requests) != 4 {
+		t.Fatalf("expected four requests (list + bad claim + repair + inspected finalize), got %d", len(client.requests))
+	}
+	repairTurnMessages := client.requests[2].Messages
+	lastMsg := repairTurnMessages[len(repairTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "documentation or path-level hints") {
+		t.Fatalf("expected implementation-evidence repair note to be appended as user message, got %#v", repairTurnMessages)
+	}
+}
+
 func TestRunPromptRepairsPlanDecisionAcknowledgementWithoutUpdatePlan(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
