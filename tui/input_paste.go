@@ -650,6 +650,9 @@ func (m *model) shouldArmClipboardCaptureFromImplicitMutation(before, after, sou
 	if insertedRunes >= clipboardCaptureMinPrefixRunes {
 		return true
 	}
+	if allowsEarlyClipboardCapture(inserted) {
+		return true
+	}
 	return insertedRunes == 1 && gap <= clipboardCaptureRapidRuneGap
 }
 
@@ -691,8 +694,9 @@ func (m *model) tryStartClipboardPasteCapture(before, after, source string) (str
 	consumedRunes := 0
 	insertedRunes := len([]rune(normalizedInserted))
 	if normalizedInserted != "" &&
-		insertedRunes >= clipboardCaptureMinPrefixRunes &&
-		strings.HasPrefix(normalizedClipboard, normalizedInserted) {
+		strings.HasPrefix(normalizedClipboard, normalizedInserted) &&
+		(insertedRunes >= clipboardCaptureMinPrefixRunes ||
+			allowsEarlyClipboardCapture(normalizedInserted)) {
 		consumedRunes = insertedRunes
 		buildReplacement = func(marker string) string {
 			return after[:prefix] + marker + after[len(after)-suffix:]
@@ -702,7 +706,11 @@ func (m *model) tryStartClipboardPasteCapture(before, after, source string) (str
 		normalizedAfter := normalizeNewlines(strings.ReplaceAll(after, ctrlVMarkerRune, ""))
 		beforeMatched := longestClipboardPrefixSuffixLen(normalizedBefore, normalizedClipboard)
 		afterMatched := longestClipboardPrefixSuffixLen(normalizedAfter, normalizedClipboard)
-		if afterMatched < clipboardCaptureMinPrefixRunes || afterMatched <= beforeMatched {
+		matchedPrefix := clipboardPrefixRunes(normalizedClipboard, afterMatched)
+		if afterMatched <= beforeMatched {
+			return after, "", false
+		}
+		if afterMatched < clipboardCaptureMinPrefixRunes && !allowsEarlyClipboardCapture(matchedPrefix) {
 			return after, "", false
 		}
 		afterRunes := []rune(after)
@@ -727,6 +735,15 @@ func (m *model) tryStartClipboardPasteCapture(before, after, source string) (str
 	return updated, note, true
 }
 
+func allowsEarlyClipboardCapture(fragment string) bool {
+	fragment = strings.TrimSpace(fragment)
+	if fragment == "" {
+		return false
+	}
+	runes := len([]rune(fragment))
+	return runes >= 2 && runes < clipboardCaptureMinPrefixRunes && len(fragment) >= clipboardCaptureMinPrefixRunes
+}
+
 func longestClipboardPrefixSuffixLen(value, clipboard string) int {
 	valueRunes := []rune(value)
 	clipRunes := []rune(clipboard)
@@ -737,6 +754,17 @@ func longestClipboardPrefixSuffixLen(value, clipboard string) int {
 		}
 	}
 	return 0
+}
+
+func clipboardPrefixRunes(value string, count int) string {
+	if count <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if count >= len(runes) {
+		return value
+	}
+	return string(runes[:count])
 }
 
 func (m *model) upsertVirtualPastePart(pasteID, placeholder string) {

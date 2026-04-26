@@ -919,6 +919,33 @@ func TestTryStartClipboardPasteCapturePreservesExistingMarkerPrefixOnSuffixMatch
 	}
 }
 
+func TestHandleInputMutationCapturesTwoRuneMultibyteClipboardPrefixImmediately(t *testing.T) {
+	m := newImagePipelineModel(t)
+	secondRaw := strings.Join([]string{
+		"能、帮我看下这个仓库结构",
+		"给这段代码做 review",
+		"顺便看一下最近改动",
+		"补充下测试建议",
+		"最后总结风险点",
+	}, "\n")
+	m.clipboardRead = fakeClipboardTextReader{text: secondRaw}
+
+	firstChunk := "能、"
+	m.input.SetValue(firstChunk)
+	m.handleInputMutation("", firstChunk, "rune")
+
+	got := m.input.Value()
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(got) {
+		t.Fatalf("expected multibyte two-rune clipboard prefix to be captured immediately, got %q", got)
+	}
+	if strings.Contains(got, firstChunk) {
+		t.Fatalf("expected no visible multibyte prefix flicker, got %q", got)
+	}
+	if !m.pasteTransaction.Active || m.pasteTransaction.Consumed != len([]rune(firstChunk)) {
+		t.Fatalf("expected transaction to consume the first multibyte chunk, got active=%v consumed=%d", m.pasteTransaction.Active, m.pasteTransaction.Consumed)
+	}
+}
+
 func TestResolvePastedSelectionInvalidStartLine(t *testing.T) {
 	m := newImagePipelineModel(t)
 	_, stored, err := m.compressPastedText("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk")
