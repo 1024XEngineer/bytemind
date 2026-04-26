@@ -73,6 +73,7 @@ func (m *model) applyDefaultInputTheme() {
 	focused, blurred := textarea.DefaultStyles()
 	m.input.FocusedStyle = focused
 	m.input.BlurredStyle = blurred
+	m.input.Cursor.Style = textarea.New().Cursor.Style
 	_ = m.input.Cursor.SetMode(cursor.CursorBlink)
 }
 

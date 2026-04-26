@@ -133,3 +133,27 @@ func TestLandingFrameTravelFramesAndFrameLineRendering(t *testing.T) {
 		t.Fatalf("expected glow frame line text to be preserved, got %q", stripped)
 	}
 }
+
+func TestRenderLandingCanvasUsesLandingContentTop(t *testing.T) {
+	m := model{
+		width:  30,
+		height: 10,
+	}
+	content := "A\nB"
+	rendered := m.renderLandingCanvas(content)
+	lines := strings.Split(strings.ReplaceAll(rendered, "\r\n", "\n"), "\n")
+	got := -1
+	for i, line := range lines {
+		if strings.Contains(xansi.Strip(line), "A") {
+			got = i
+			break
+		}
+	}
+	if got < 0 {
+		t.Fatalf("expected rendered canvas to contain content first line")
+	}
+	want := m.landingContentTop(2)
+	if got != want {
+		t.Fatalf("expected first content row at %d, got %d", want, got)
+	}
+}

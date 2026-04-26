@@ -1097,7 +1097,7 @@ func (m model) mouseOverLandingInput(y int) bool {
 		return false
 	}
 	contentHeight := m.landingContentHeight()
-	contentTop := max(0, (m.height-contentHeight)/2)
+	contentTop := m.landingContentTop(contentHeight)
 	inputTop := m.landingInputTop(contentTop)
 	inputHeight := lipgloss.Height(m.renderLandingInputBox(false))
 	inputBottom := inputTop + max(1, inputHeight) - 1

@@ -50,3 +50,32 @@ func TestLandingInputContentWidthNeverExceedsShell(t *testing.T) {
 		t.Fatalf("expected content width <= shell-frame, shell=%d frame=%d content=%d", shell, frame, content)
 	}
 }
+
+func TestApplyDefaultInputThemeResetsLandingCursorStyle(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		screen: screenLanding,
+		input:  input,
+	}
+
+	m.syncInputStyle()
+	if !m.input.Cursor.Style.GetBold() {
+		t.Fatalf("expected landing theme cursor to be bold")
+	}
+	if m.input.Cursor.Style.GetBackground() == nil || m.input.Cursor.Style.GetForeground() == nil {
+		t.Fatalf("expected landing theme cursor to apply explicit colors")
+	}
+
+	m.screen = screenChat
+	m.syncInputStyle()
+	defaultCursorStyle := textarea.New().Cursor.Style
+	if m.input.Cursor.Style.GetBold() != defaultCursorStyle.GetBold() {
+		t.Fatalf("expected default theme to restore cursor bold setting")
+	}
+	if (m.input.Cursor.Style.GetBackground() == nil) != (defaultCursorStyle.GetBackground() == nil) {
+		t.Fatalf("expected default theme to restore cursor background setting")
+	}
+	if (m.input.Cursor.Style.GetForeground() == nil) != (defaultCursorStyle.GetForeground() == nil) {
+		t.Fatalf("expected default theme to restore cursor foreground setting")
+	}
+}

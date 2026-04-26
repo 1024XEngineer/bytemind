@@ -204,6 +204,10 @@ func (m model) landingContentHeight() int {
 	return lipgloss.Height(m.renderLandingContent(false))
 }
 
+func (m model) landingContentTop(contentHeight int) int {
+	return max(0, (m.height-contentHeight)/2+1)
+}
+
 func (m model) landingInputTop(contentTop int) int {
 	top := contentTop + lipgloss.Height(m.renderLandingHero()) + 1 + lipgloss.Height(m.renderLandingModeTabs())
 	if overlay := strings.TrimSpace(m.renderLandingOverlayPanel()); overlay != "" {
@@ -218,7 +222,7 @@ func (m model) renderLandingCanvas(content string) string {
 	}
 	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
 	rows := make([]string, 0, m.height)
-	topPad := max(0, (m.height-len(lines))/2+1)
+	topPad := m.landingContentTop(len(lines))
 	for i := 0; i < topPad && len(rows) < m.height; i++ {
 		rows = append(rows, m.renderLandingCanvasRow("", len(rows)))
 	}

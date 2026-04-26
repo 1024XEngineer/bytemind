@@ -789,7 +789,7 @@ func (m model) inputInnerBounds() (left, right, top, bottom, innerLeft, innerTop
 		boxW := max(1, lipgloss.Width(box))
 		boxH := max(1, lipgloss.Height(box))
 		contentHeight := m.landingContentHeight()
-		contentTop := max(0, (m.height-contentHeight)/2)
+		contentTop := m.landingContentTop(contentHeight)
 		top = m.landingInputTop(contentTop)
 		left = max(0, (m.width-boxW)/2)
 		right = left + boxW - 1
