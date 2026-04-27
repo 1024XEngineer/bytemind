@@ -18,7 +18,7 @@ func TestLoadUsesEnvOverrides(t *testing.T) {
 	t.Setenv("BYTEMIND_PROVIDER_TYPE", "anthropic")
 	t.Setenv("BYTEMIND_PROVIDER_AUTO_DETECT_TYPE", "true")
 	t.Setenv("BYTEMIND_STREAM", "false")
-	t.Setenv("BYTEMIND_APPROVAL_MODE", "away")
+	t.Setenv("BYTEMIND_APPROVAL_MODE", "full_access")
 	t.Setenv("BYTEMIND_AWAY_POLICY", "fail_fast")
 
 	cfg, err := Load(workspace, "")
@@ -46,7 +46,7 @@ func TestLoadUsesEnvOverrides(t *testing.T) {
 	if cfg.TokenQuota != 88000 {
 		t.Fatalf("expected token quota from env override, got %d", cfg.TokenQuota)
 	}
-	if cfg.ApprovalMode != "away" {
+	if cfg.ApprovalMode != "full_access" {
 		t.Fatalf("expected approval mode from env override, got %q", cfg.ApprovalMode)
 	}
 	if cfg.AwayPolicy != "fail_fast" {
@@ -277,7 +277,7 @@ func TestLoadMergesUserAndProjectConfigWithProjectPrecedence(t *testing.T) {
 	if cfg.ApprovalPolicy != "never" {
 		t.Fatalf("expected project approval policy precedence, got %q", cfg.ApprovalPolicy)
 	}
-	if cfg.ApprovalMode != "away" {
+	if cfg.ApprovalMode != "full_access" {
 		t.Fatalf("expected project approval mode precedence, got %q", cfg.ApprovalMode)
 	}
 	if cfg.AwayPolicy != "fail_fast" {

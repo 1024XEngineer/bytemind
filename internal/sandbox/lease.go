@@ -252,7 +252,10 @@ func normalizeLease(lease Lease, requireSignature bool) (Lease, error) {
 	if lease.ApprovalMode == "" {
 		lease.ApprovalMode = "interactive"
 	}
-	if lease.ApprovalMode != "interactive" && lease.ApprovalMode != "away" {
+	if lease.ApprovalMode == "away" {
+		lease.ApprovalMode = "full_access"
+	}
+	if lease.ApprovalMode != "interactive" && lease.ApprovalMode != "full_access" {
 		return Lease{}, &LeaseError{Code: ReasonLeaseInvalid, Message: fmt.Sprintf("invalid approval_mode %q", lease.ApprovalMode)}
 	}
 	lease.AwayPolicy = strings.ToLower(strings.TrimSpace(lease.AwayPolicy))

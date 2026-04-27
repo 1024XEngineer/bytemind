@@ -45,7 +45,7 @@ func TestLoadRuntimeConfigAppliesOverrides(t *testing.T) {
 	if cfg.MaxIterations != 9 {
 		t.Fatalf("unexpected max iterations: %d", cfg.MaxIterations)
 	}
-	if cfg.ApprovalMode != "away" {
+	if cfg.ApprovalMode != "full_access" {
 		t.Fatalf("unexpected approval mode: %q", cfg.ApprovalMode)
 	}
 	if cfg.AwayPolicy != "fail_fast" {

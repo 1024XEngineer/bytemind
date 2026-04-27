@@ -649,9 +649,12 @@ func normalize(cfg *Config) error {
 	switch strings.TrimSpace(cfg.ApprovalMode) {
 	case "", "interactive":
 		cfg.ApprovalMode = "interactive"
+	case "full_access":
+		cfg.ApprovalMode = "full_access"
 	case "away":
+		cfg.ApprovalMode = "full_access"
 	default:
-		return errors.New("approval_mode must be one of interactive, away")
+		return errors.New("approval_mode must be one of interactive, full_access")
 	}
 	switch strings.TrimSpace(cfg.AwayPolicy) {
 	case "", "auto_deny_continue":
