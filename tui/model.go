@@ -943,6 +943,33 @@ func allowsImmediateSingleRuneClipboardCapture(currentInput, fragment string) bo
 	return ok && chain == trimmed
 }
 
+func shouldProbeImplicitClipboardFragment(currentInput, fragment string) bool {
+	trimmedFragment := strings.TrimSpace(fragment)
+	if trimmedFragment == "" {
+		return false
+	}
+	trimmedInput := strings.TrimSpace(currentInput)
+	inputBoundary := trimmedInput == ""
+	if !inputBoundary {
+		if chain, ok := extractLeadingCompressedMarker(trimmedInput); ok && chain == trimmedInput {
+			inputBoundary = true
+		}
+	}
+	runeCount := len([]rune(trimmedFragment))
+	switch {
+	case runeCount == 1:
+		return allowsImmediateSingleRuneClipboardCapture(currentInput, trimmedFragment)
+	case strings.Contains(fragment, "\n") || strings.Contains(fragment, "\t"):
+		return true
+	case runeCount >= clipboardCaptureMinPrefixRunes:
+		return inputBoundary || looksLikePastedFragment(trimmedFragment)
+	case allowsEarlyClipboardCapture(trimmedFragment):
+		return inputBoundary
+	default:
+		return false
+	}
+}
+
 func (m *model) commitImplicitClipboardPaste(prefix, clipboardText string) bool {
 	if m == nil {
 		return false
@@ -1014,14 +1041,14 @@ func (m *model) tryStartImplicitClipboardPasteFromKey(msg tea.KeyMsg) tea.Cmd {
 	if strings.TrimSpace(fragment) == "" {
 		return nil
 	}
+	if !shouldProbeImplicitClipboardFragment(m.input.Value(), fragment) {
+		return nil
+	}
 	clipboardText, ok := m.readClipboardTextForPaste()
 	if !ok || !m.isLongPastedText(clipboardText) {
 		return nil
 	}
 	if !strings.HasPrefix(normalizeNewlines(clipboardText), fragment) {
-		return nil
-	}
-	if len(msg.Runes) == 1 && !allowsImmediateSingleRuneClipboardCapture(m.input.Value(), fragment) {
 		return nil
 	}
 	if len(msg.Runes) == 1 {
@@ -1265,7 +1292,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if fragment, source, ok := m.pasteFragmentFromKey(msg); ok {
-		if source == "paste-key" || source == "rune-burst-paste" {
+		if source == "paste-key" || source == "paste-burst" || source == "rune-burst-paste" {
 			m.beginOrAppendPasteTransaction(fragment, source)
 		}
 		return m, m.ingestPasteFragment(fragment, source)

@@ -33,9 +33,13 @@ func (f fakeClipboardImageReader) ReadImage(context.Context) (string, []byte, st
 type fakeClipboardTextReader struct {
 	text string
 	err  error
+	calls *int
 }
 
 func (f fakeClipboardTextReader) ReadText(context.Context) (string, error) {
+	if f.calls != nil {
+		*f.calls++
+	}
 	return f.text, f.err
 }
 

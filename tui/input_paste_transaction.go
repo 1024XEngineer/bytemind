@@ -192,7 +192,7 @@ func shouldAppendPasteTransactionPayload(currentSource, nextSource string) bool 
 		return false
 	}
 	switch current {
-	case "paste-key", "paste-payload", "rune-burst-paste":
+	case "paste-key", "paste-payload", "paste-burst", "rune-burst-paste":
 		return true
 	default:
 		return false
@@ -202,7 +202,7 @@ func shouldAppendPasteTransactionPayload(currentSource, nextSource string) bool 
 func shouldGuardTrailingPasteEnter(source string) bool {
 	source = strings.ToLower(strings.TrimSpace(source))
 	switch source {
-	case "clipboard-capture", "ctrl+v", "paste-payload", "paste-key", "rune-burst-paste":
+	case "clipboard-capture", "ctrl+v", "paste-payload", "paste-key", "paste-burst", "rune-burst-paste":
 		return true
 	default:
 		return false

@@ -2663,6 +2663,23 @@ func TestHandleKeyCapturesImplicitClipboardRuneBurstBeforeVisibleInput(t *testin
 	}
 }
 
+func TestPasteBurstFragmentStartsPasteTransaction(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	m.pasteBurstActive = true
+	m.pasteBurstGeneration = 1
+	m.pasteBurstLastEventAt = time.Now()
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tail")})
+	updated := got.(model)
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected paste-burst fragment to start paste transaction")
+	}
+	if updated.pasteTransaction.Source != "paste-burst" {
+		t.Fatalf("expected paste-burst source, got %q", updated.pasteTransaction.Source)
+	}
+}
+
 func TestHandleKeyCapturesSingleMultibyteClipboardRuneBeforeVisibleInput(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
@@ -2748,6 +2765,44 @@ func TestHiddenPasteProbeFlushesBufferedRuneWhenNotConfirmed(t *testing.T) {
 	}
 	if flushed.input.Value() != "能" {
 		t.Fatalf("expected buffered rune to flush into visible input, got %q", flushed.input.Value())
+	}
+}
+
+func TestImplicitClipboardProbeSkipsClipboardReadForSingleASCIIRune(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	calls := 0
+	m.clipboardRead = fakeClipboardTextReader{
+		text:  "alpha\nbeta\ngamma",
+		calls: &calls,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	updated := got.(model)
+	if calls != 0 {
+		t.Fatalf("expected single ASCII rune not to trigger clipboard read, got %d calls", calls)
+	}
+	if updated.input.Value() != "a" {
+		t.Fatalf("expected single ASCII rune to flow through normal input, got %q", updated.input.Value())
+	}
+}
+
+func TestImplicitClipboardProbeSkipsClipboardReadForShortASCIIBurst(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	calls := 0
+	m.clipboardRead = fakeClipboardTextReader{
+		text:  "alpha\nbeta\ngamma",
+		calls: &calls,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ab")})
+	updated := got.(model)
+	if calls != 0 {
+		t.Fatalf("expected short ASCII burst not to trigger clipboard read, got %d calls", calls)
+	}
+	if updated.input.Value() != "ab" {
+		t.Fatalf("expected short ASCII burst to flow through normal input, got %q", updated.input.Value())
 	}
 }
 
