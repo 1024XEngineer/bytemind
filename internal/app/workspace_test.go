@@ -87,8 +87,8 @@ func TestResolveWorkspaceUsesCurrentDirectoryWhenBroadAndNoProjectMarker(t *test
 	if err != nil {
 		t.Fatalf("expected broad current directory to be allowed, got %v", err)
 	}
-	if got != dir {
-		t.Fatalf("expected workspace %q, got %q", dir, got)
+	if normalizeExistingPath(got) != normalizeExistingPath(dir) {
+		t.Fatalf("expected workspace %q, got %q", normalizeExistingPath(dir), normalizeExistingPath(got))
 	}
 }
 

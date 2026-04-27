@@ -77,8 +77,8 @@ func TestBootstrapCreatesSessionInWorkspace(t *testing.T) {
 		t.Fatal("expected bootstrap to return runner, store, and session")
 	}
 	sess := runtimeBundle.Session
-	if sess.Workspace != workspace {
-		t.Fatalf("expected workspace %q, got %q", workspace, sess.Workspace)
+	if normalizeExistingPath(sess.Workspace) != normalizeExistingPath(workspace) {
+		t.Fatalf("expected workspace %q, got %q", normalizeExistingPath(workspace), normalizeExistingPath(sess.Workspace))
 	}
 	if strings.TrimSpace(sess.ID) == "" {
 		t.Fatal("expected session id to be created")
@@ -107,8 +107,8 @@ func TestBootstrapEntrypointAllowsBroadWorkspaceWithoutOverride(t *testing.T) {
 	if runtimeBundle.Session == nil {
 		t.Fatal("expected session to be created")
 	}
-	if runtimeBundle.Session.Workspace != workspace {
-		t.Fatalf("expected workspace %q, got %q", workspace, runtimeBundle.Session.Workspace)
+	if normalizeExistingPath(runtimeBundle.Session.Workspace) != normalizeExistingPath(workspace) {
+		t.Fatalf("expected workspace %q, got %q", normalizeExistingPath(workspace), normalizeExistingPath(runtimeBundle.Session.Workspace))
 	}
 }
 
