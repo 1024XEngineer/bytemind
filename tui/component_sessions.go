@@ -93,11 +93,12 @@ func (m model) handleSessionsModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.sessions) == 0 {
 			return m, nil
 		}
+		previousScreen := m.screen
 		if err := m.deleteSelectedSession(); err != nil {
 			m.statusNote = err.Error()
 			return m, nil
 		}
-		return m, m.loadSessionsCmd()
+		return m, tea.Batch(m.loadSessionsCmd(), m.startLandingGlowOnTransition(previousScreen))
 	case "enter":
 		if m.busy || len(m.sessions) == 0 {
 			return m, nil

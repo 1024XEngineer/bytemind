@@ -33,7 +33,7 @@ func (m model) helpText() string {
 		"- `Tab` toggles between Build and Plan modes.",
 		"- Plan mode keeps the plan panel visible and focused on structured steps.",
 		"- `Ctrl+G` opens or closes the help panel.",
-		"- `Ctrl+A` toggles away mode (`Away:ON/OFF`) for approval handling.",
+		"- `Ctrl+A` toggles approval mode in chat (`Access:Default` / `! Full Access`) and asks for confirmation before enabling full access.",
 		"- Drag across the conversation with the left mouse button, then press `Ctrl+C` to copy.",
 		"- If provider setup is required, paste an API key in the input and press Enter.",
 		"- Long pasted code/text is compressed to `[Paste #N ~X lines]`.",
@@ -41,7 +41,7 @@ func (m model) helpText() string {
 		"- After converging a saved plan, use the on-screen action picker to start execution or keep refining the plan.",
 		"- `start execution` and `continue execution` still work as compatibility fallbacks when the picker is unavailable.",
 		"- Approval requests appear above the input area when a shell command needs confirmation.",
-		"- Footer shortcuts: `tab` agents, `/` commands, drag select, `Ctrl+A` away, `Ctrl+C` copy/quit, `Ctrl+L` sessions.",
+		"- Footer shortcuts: `tab` agents, `/` commands, drag select, `Ctrl+A` full-access, `Ctrl+C` copy/quit, `Ctrl+L` sessions.",
 	}, "\n")
 }
 

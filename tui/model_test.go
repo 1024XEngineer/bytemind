@@ -1019,7 +1019,7 @@ func TestTabTogglesBetweenBuildAndPlanModes(t *testing.T) {
 	}
 }
 
-func TestCtrlFOpensPromptSearchAndFiltersEntries(t *testing.T) {
+func TestCtrlFDoesNotOpenPromptSearch(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	m := model{
@@ -1033,28 +1033,13 @@ func TestCtrlFOpensPromptSearchAndFiltersEntries(t *testing.T) {
 	}
 
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	if !opened.promptSearchOpen {
-		t.Fatalf("expected ctrl+f to open prompt search")
-	}
-	if len(opened.promptSearchMatches) != 3 {
-		t.Fatalf("expected 3 prompt matches, got %d", len(opened.promptSearchMatches))
-	}
-
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("test")})
-	filtered := got.(model)
-	if filtered.promptSearchQuery != "test" {
-		t.Fatalf("expected query to become test, got %q", filtered.promptSearchQuery)
-	}
-	if len(filtered.promptSearchMatches) != 1 {
-		t.Fatalf("expected one filtered prompt, got %d", len(filtered.promptSearchMatches))
-	}
-	if !strings.Contains(filtered.promptSearchMatches[0].Prompt, "test case") {
-		t.Fatalf("unexpected filtered prompt: %+v", filtered.promptSearchMatches[0])
+	updated := got.(model)
+	if updated.promptSearchOpen {
+		t.Fatalf("expected ctrl+f to have no binding")
 	}
 }
 
-func TestCtrlFWhilePromptSearchOpenMovesSelection(t *testing.T) {
+func TestCtrlFWhilePromptSearchOpenHasNoEffect(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	m := model{
@@ -1067,16 +1052,14 @@ func TestCtrlFWhilePromptSearchOpenMovesSelection(t *testing.T) {
 		},
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	if opened.promptSearchCursor != 0 {
-		t.Fatalf("expected initial cursor 0, got %d", opened.promptSearchCursor)
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	if !m.promptSearchOpen {
+		t.Fatal("expected prompt search to open through helper")
 	}
-
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
 	moved := got.(model)
-	if moved.promptSearchCursor != 1 {
-		t.Fatalf("expected ctrl+f to move cursor to 1, got %d", moved.promptSearchCursor)
+	if moved.promptSearchCursor != 0 {
+		t.Fatalf("expected ctrl+f to have no effect in prompt search, got cursor=%d", moved.promptSearchCursor)
 	}
 }
 
@@ -1093,9 +1076,8 @@ func TestPromptSearchEnterRestoresSelectedPrompt(t *testing.T) {
 		},
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
 	down := got.(model)
 
 	got, _ = down.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1120,9 +1102,8 @@ func TestPromptSearchEscRestoresOriginalInput(t *testing.T) {
 		},
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("old")})
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("old")})
 	filtered := got.(model)
 	got, _ = filtered.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	closed := got.(model)
@@ -1167,9 +1148,8 @@ func TestPromptSearchQuerySupportsWorkspaceAndSessionFilters(t *testing.T) {
 		},
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("fix ws:repo-a sid:alpha")})
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("fix ws:repo-a sid:alpha")})
 	filtered := got.(model)
 
 	if len(filtered.promptSearchMatches) != 1 {
@@ -1194,13 +1174,11 @@ func TestPromptSearchPanelSupportsPageNavigation(t *testing.T) {
 		promptHistoryEntries: entries,
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	if opened.promptSearchCursor != 0 {
-		t.Fatalf("expected cursor at 0, got %d", opened.promptSearchCursor)
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	if m.promptSearchCursor != 0 {
+		t.Fatalf("expected cursor at 0, got %d", m.promptSearchCursor)
 	}
-
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyPgDown})
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyPgDown})
 	paged := got.(model)
 	if paged.promptSearchCursor != promptSearchPageSize {
 		t.Fatalf("expected pgdown to move cursor to %d, got %d", promptSearchPageSize, paged.promptSearchCursor)
@@ -1213,26 +1191,25 @@ func TestPromptSearchPanelSupportsPageNavigation(t *testing.T) {
 	}
 }
 
-func TestCtrlFOpensPromptSearchStartsAsyncHistoryLoad(t *testing.T) {
+func TestOpenPromptSearchStartsAsyncHistoryLoad(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	m := model{
 		input: input,
 	}
 
-	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	if !opened.promptSearchOpen {
-		t.Fatalf("expected ctrl+f to open prompt search")
+	cmd := m.openPromptSearch(promptSearchModeQuick)
+	if !m.promptSearchOpen {
+		t.Fatalf("expected openPromptSearch to open prompt search")
 	}
-	if !opened.promptHistoryLoading {
+	if !m.promptHistoryLoading {
 		t.Fatalf("expected prompt history async loading state")
 	}
 	if cmd == nil {
 		t.Fatalf("expected async prompt history load command")
 	}
-	if opened.statusNote != "Prompt history loading..." {
-		t.Fatalf("expected loading status note, got %q", opened.statusNote)
+	if m.statusNote != "Prompt history loading..." {
+		t.Fatalf("expected loading status note, got %q", m.statusNote)
 	}
 }
 
@@ -4252,7 +4229,7 @@ func TestLandingViewRendersCommandPaletteAboveInput(t *testing.T) {
 	}
 }
 
-func TestCommandPaletteUsesCompactThreeRowList(t *testing.T) {
+func TestCommandPaletteUsesCompactFiveRowList(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("/")
 	m := model{
@@ -4265,8 +4242,8 @@ func TestCommandPaletteUsesCompactThreeRowList(t *testing.T) {
 
 	m.syncCommandPalette()
 
-	if len(m.visibleCommandItemsPage()) != 3 {
-		t.Fatalf("expected command palette list height 3, got %d", len(m.visibleCommandItemsPage()))
+	if len(m.visibleCommandItemsPage()) != 5 {
+		t.Fatalf("expected command palette list height 5, got %d", len(m.visibleCommandItemsPage()))
 	}
 }
 
@@ -4278,6 +4255,7 @@ func TestCommandPaletteSupportsPageNavigation(t *testing.T) {
 		{Name: "/c", Usage: "/c", Description: "c"},
 		{Name: "/d", Usage: "/d", Description: "d"},
 		{Name: "/e", Usage: "/e", Description: "e"},
+		{Name: "/f", Usage: "/f", Description: "f"},
 	}
 	defer func() { commandItems = original }()
 
@@ -4293,12 +4271,12 @@ func TestCommandPaletteSupportsPageNavigation(t *testing.T) {
 
 	afterDown, _ := m.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyPgDown})
 	downModel := afterDown.(model)
-	if downModel.commandCursor != 3 {
+	if downModel.commandCursor != 5 {
 		t.Fatalf("expected pgdown to move to next command page, got cursor %d", downModel.commandCursor)
 	}
 	page := downModel.visibleCommandItemsPage()
-	if len(page) == 0 || page[0].Name != "/d" {
-		t.Fatalf("expected second page to start with /d, got %+v", page)
+	if len(page) == 0 || page[0].Name != "/f" {
+		t.Fatalf("expected second page to start with /f, got %+v", page)
 	}
 
 	afterUp, _ := downModel.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyPgUp})
@@ -5112,8 +5090,9 @@ func TestApprovalBannerRendersAboveInput(t *testing.T) {
 		"Approval required",
 		"go test ./tui",
 		"run tests",
-		"Approve [Y/Enter]",
-		"Reject [N/Esc]",
+		"Approve",
+		"Reject",
+		"Enter to confirm",
 	} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("expected approval banner to contain %q", want)
@@ -5136,12 +5115,9 @@ func TestApprovalBannerUsesCompactSingleNormalBorder(t *testing.T) {
 	}
 
 	banner := m.renderApprovalBanner()
-	if strings.ContainsAny(banner, "╭╮╰╯") {
-		t.Fatalf("expected normal single border without rounded corners, got %q", banner)
-	}
 	lines := strings.Split(banner, "\n")
-	if len(lines) != 6 {
-		t.Fatalf("expected medium-height boxed approval banner with top/bottom padding, got %d lines: %q", len(lines), banner)
+	if len(lines) < 6 {
+		t.Fatalf("expected boxed approval banner with action buttons and hint lines, got %d lines: %q", len(lines), banner)
 	}
 	expectedWidth := max(24, m.chatPanelInnerWidth())
 	for i, line := range lines {
@@ -5149,7 +5125,7 @@ func TestApprovalBannerUsesCompactSingleNormalBorder(t *testing.T) {
 			t.Fatalf("expected banner line %d width %d, got %d (%q)", i, expectedWidth, got, line)
 		}
 	}
-	for _, want := range []string{"Tool:", "Approve [Y/Enter]", "Reject [N/Esc]"} {
+	for _, want := range []string{"Tool:", "Approve", "Reject", "Enter to confirm"} {
 		if !strings.Contains(banner, want) {
 			t.Fatalf("expected compact approval banner to contain %q", want)
 		}
@@ -5174,7 +5150,7 @@ func TestApprovalBannerDefaultsWhenCommandAndReasonEmpty(t *testing.T) {
 	if !strings.Contains(banner, "Tool: -") {
 		t.Fatalf("expected empty command to fallback to '-', got %q", banner)
 	}
-	if !strings.Contains(banner, "Approve [Y/Enter]") || !strings.Contains(banner, "Reject [N/Esc]") {
+	if !strings.Contains(banner, "Approve") || !strings.Contains(banner, "Reject") {
 		t.Fatalf("expected approval actions to render, got %q", banner)
 	}
 }
@@ -5198,7 +5174,7 @@ func TestApprovalBannerNarrowWidthFallbackKeepsAlignedHint(t *testing.T) {
 			t.Fatalf("expected banner line %d width %d under narrow layout, got %d (%q)", i, expectedWidth, got, line)
 		}
 	}
-	for _, want := range []string{"Approve", "[Y/Enter]", "Reject", "[N/Esc]"} {
+	for _, want := range []string{"Approve", "Reject", "Enter to", "confirm"} {
 		if !strings.Contains(banner, want) {
 			t.Fatalf("expected narrow-layout fallback to keep action hint token %q, got %q", want, banner)
 		}
@@ -5248,6 +5224,12 @@ func TestUpdateApprovalRequestMsgSetsApprovalPhase(t *testing.T) {
 	}
 	if updated.approval.Command != "go test ./tui" || updated.approval.Reason != "run focused tests" {
 		t.Fatalf("expected approval prompt contents to be preserved, got %+v", updated.approval)
+	}
+	if updated.approval.Kind != approvalPromptKindTool {
+		t.Fatalf("expected tool approval kind, got %q", updated.approval.Kind)
+	}
+	if updated.approval.Choice != approvalChoiceApprove {
+		t.Fatalf("expected default tool approval choice to be approve, got %d", updated.approval.Choice)
 	}
 	if updated.phase != "approval" || updated.statusNote != "Approval required." {
 		t.Fatalf("expected approval request to switch UI into approval state, got phase=%q note=%q", updated.phase, updated.statusNote)
@@ -5316,6 +5298,176 @@ func TestApprovalKeysTransitionStateAndSendDecision(t *testing.T) {
 			t.Fatalf("expected rejection decision to be sent")
 		}
 	})
+
+	t.Run("arrow-select-reject-and-enter", func(t *testing.T) {
+		reply := make(chan approvalDecision, 1)
+		m := model{
+			approval: &approvalPrompt{
+				Command: "go test ./tui",
+				Reason:  "run focused tests",
+				Reply:   reply,
+				Kind:    approvalPromptKindTool,
+				Choice:  approvalChoiceApprove,
+			},
+			phase: "approval",
+		}
+
+		got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
+		updated := got.(model)
+		if updated.approval == nil || updated.approval.Choice != approvalChoiceReject {
+			t.Fatalf("expected right key to move selection to reject, got %+v", updated.approval)
+		}
+
+		got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+		updated = got.(model)
+		if updated.approval != nil {
+			t.Fatalf("expected approval prompt to clear after confirming selection")
+		}
+		if updated.phase != "thinking" || updated.statusNote != "Shell command rejected." {
+			t.Fatalf("expected selected rejection to return to thinking phase, got phase=%q note=%q", updated.phase, updated.statusNote)
+		}
+
+		select {
+		case decision := <-reply:
+			if decision.Approved {
+				t.Fatalf("expected rejection decision to be false")
+			}
+		default:
+			t.Fatalf("expected rejection decision to be sent")
+		}
+	})
+}
+
+func TestToggleApprovalModeRequiresConfirmationToEnableFullAccess(t *testing.T) {
+	m := model{
+		cfg: config.Config{ApprovalMode: "interactive"},
+	}
+
+	m.toggleApprovalMode()
+
+	if m.cfg.ApprovalMode != "interactive" {
+		t.Fatalf("expected approval mode to remain interactive before confirmation, got %q", m.cfg.ApprovalMode)
+	}
+	if m.approval == nil {
+		t.Fatal("expected full access toggle to open confirmation prompt")
+	}
+	if m.approval.Kind != approvalPromptKindEnableFullAccess {
+		t.Fatalf("expected confirmation prompt kind %q, got %q", approvalPromptKindEnableFullAccess, m.approval.Kind)
+	}
+	if m.approval.Choice != approvalChoiceApprove {
+		t.Fatalf("expected full access confirmation to default to approve, got %d", m.approval.Choice)
+	}
+	if m.phase != "approval" {
+		t.Fatalf("expected phase to switch to approval, got %q", m.phase)
+	}
+}
+
+func TestCtrlAOnLandingDoesNotOpenFullAccessPrompt(t *testing.T) {
+	m := model{
+		screen: screenLanding,
+		cfg:    config.Config{ApprovalMode: "interactive"},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlA})
+	updated := got.(model)
+
+	if updated.approval != nil {
+		t.Fatalf("expected Ctrl+A on landing not to open approval prompt, got %+v", updated.approval)
+	}
+	if updated.cfg.ApprovalMode != "interactive" {
+		t.Fatalf("expected approval mode to remain interactive on landing, got %q", updated.cfg.ApprovalMode)
+	}
+}
+
+func TestLandingModeTabsHideAccessLabel(t *testing.T) {
+	m := model{mode: modeBuild}
+	tabs := m.renderLandingModeTabs()
+	if strings.Contains(tabs, "Access:") || strings.Contains(tabs, "Full Access") {
+		t.Fatalf("expected landing mode tabs to hide access label, got %q", tabs)
+	}
+}
+
+func TestApprovalBannerForFullAccessConfirmation(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		width: 100,
+		input: input,
+		approval: &approvalPrompt{
+			Command: "approval_mode=full_access",
+			Reason:  "Enable full access? Approval prompts will be auto-approved.",
+			Kind:    approvalPromptKindEnableFullAccess,
+		},
+	}
+
+	banner := m.renderApprovalBanner()
+	for _, want := range []string{
+		"Enable full access?",
+		"Action:",
+		"approval_mode=full_access",
+		"Enable",
+		"Cancel",
+		"Use Left/Right to choose",
+	} {
+		if !strings.Contains(banner, want) {
+			t.Fatalf("expected full access confirmation banner to contain %q, got %q", want, banner)
+		}
+	}
+}
+
+func TestFullAccessConfirmationApproveAppliesMode(t *testing.T) {
+	m := model{
+		cfg: config.Config{ApprovalMode: "interactive"},
+		approval: &approvalPrompt{
+			Command: "approval_mode=full_access",
+			Reason:  "Enable full access?",
+			Kind:    approvalPromptKindEnableFullAccess,
+		},
+		phase: "approval",
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if updated.approval != nil {
+		t.Fatalf("expected confirmation prompt to clear after approval")
+	}
+	if updated.cfg.ApprovalMode != "full_access" {
+		t.Fatalf("expected approval mode to switch to full_access, got %q", updated.cfg.ApprovalMode)
+	}
+	if updated.phase != "idle" {
+		t.Fatalf("expected phase to return to idle, got %q", updated.phase)
+	}
+	if !strings.Contains(updated.statusNote, "Full access enabled") {
+		t.Fatalf("expected warning status note after enabling full access, got %q", updated.statusNote)
+	}
+}
+
+func TestFullAccessConfirmationRejectKeepsInteractiveMode(t *testing.T) {
+	m := model{
+		cfg: config.Config{ApprovalMode: "interactive"},
+		approval: &approvalPrompt{
+			Command: "approval_mode=full_access",
+			Reason:  "Enable full access?",
+			Kind:    approvalPromptKindEnableFullAccess,
+		},
+		phase: "approval",
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.approval != nil {
+		t.Fatalf("expected confirmation prompt to clear after rejection")
+	}
+	if updated.cfg.ApprovalMode != "interactive" {
+		t.Fatalf("expected approval mode to remain interactive, got %q", updated.cfg.ApprovalMode)
+	}
+	if updated.phase != "idle" {
+		t.Fatalf("expected phase to return to idle, got %q", updated.phase)
+	}
+	if updated.statusNote != "Full access request canceled." {
+		t.Fatalf("expected canceled status note, got %q", updated.statusNote)
+	}
 }
 
 func TestUpdateRunFinishedMsgResetsBusyState(t *testing.T) {

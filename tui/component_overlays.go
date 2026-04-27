@@ -56,7 +56,20 @@ func (m model) renderApprovalBanner() string {
 		command = "-"
 	}
 
+	isFullAccessConfirm := strings.EqualFold(strings.TrimSpace(m.approval.Kind), approvalPromptKindEnableFullAccess)
 	title := "Approval required"
+	toolPrefix := "Tool: "
+	confirmLabel := "Approve"
+	rejectLabel := "Reject"
+	confirmTone := "success"
+	if isFullAccessConfirm {
+		title = "Enable full access?"
+		toolPrefix = "Action: "
+		confirmLabel = "Enable"
+		rejectLabel = "Cancel"
+		confirmTone = "warning"
+	}
+
 	reasonBudget := max(0, innerWidth-lipgloss.Width(title)-2)
 	reason := trimPreview(m.approval.Reason, reasonBudget)
 	line1 := approvalTitleStyle.Render(title)
@@ -64,27 +77,38 @@ func (m model) renderApprovalBanner() string {
 		line1 += "  " + approvalReasonStyle.Render(reason)
 	}
 
-	toolPrefix := "Tool: "
-	hint := "Approve [Y/Enter]  Reject [N/Esc]"
-	minGap := 2
-	toolBudget := innerWidth - lipgloss.Width(toolPrefix) - lipgloss.Width(hint) - minGap
-	if toolBudget < 6 {
-		toolBudget = 6
+	actionLine := approvalCommandStyle.Render(toolPrefix + trimPreview(command, max(6, innerWidth-lipgloss.Width(toolPrefix))))
+
+	choice := m.currentApprovalChoice()
+	confirmChoice := renderApprovalChoice(confirmLabel, confirmTone, choice == approvalChoiceApprove)
+	rejectChoice := renderApprovalChoice(rejectLabel, "error", choice == approvalChoiceReject)
+	choiceLine := lipgloss.JoinHorizontal(lipgloss.Left, confirmChoice, "  ", rejectChoice)
+
+	hintLine := approvalHintStyle.Render("Use Left/Right to choose, Enter to confirm, Esc to cancel")
+	if lipgloss.Width(choiceLine)+2+lipgloss.Width(hintLine) <= innerWidth {
+		choiceLine += strings.Repeat(" ", innerWidth-lipgloss.Width(choiceLine)-lipgloss.Width(hintLine)) + hintLine
+		hintLine = ""
 	}
-	tool := trimPreview(command, toolBudget)
-	leftPlain := toolPrefix + tool
-	gap := innerWidth - lipgloss.Width(leftPlain) - lipgloss.Width(hint)
-	if gap < 1 {
-		tool = trimPreview(command, max(1, innerWidth-lipgloss.Width(toolPrefix)-lipgloss.Width(hint)-1))
-		leftPlain = toolPrefix + tool
-		gap = max(1, innerWidth-lipgloss.Width(leftPlain)-lipgloss.Width(hint))
+	lines := []string{line1, actionLine, choiceLine}
+	if strings.TrimSpace(hintLine) != "" {
+		lines = append(lines, hintLine)
 	}
-	line2 := approvalCommandStyle.Render(leftPlain) + strings.Repeat(" ", gap) + approvalHintStyle.Render(hint)
 
 	body := lipgloss.NewStyle().
 		Width(innerWidth).
-		Render(strings.Join([]string{line1, line2}, "\n"))
+		Render(strings.Join(lines, "\n"))
 	return approvalBannerStyle.Render(body)
+}
+
+func renderApprovalChoice(label, tone string, selected bool) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return ""
+	}
+	if selected {
+		return statusBadgeStyle(tone).Render("> " + label)
+	}
+	return approvalOptionIdleStyle.Render("  " + label)
 }
 
 func (m model) renderActiveSkillBanner() string {

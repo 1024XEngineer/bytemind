@@ -47,9 +47,10 @@ func (m *model) handleSlashCommand(input string) error {
 }
 
 func (m model) executeCommand(input string) (tea.Model, tea.Cmd, error) {
+	previousScreen := m.screen
 	if err := m.handleSlashCommand(input); err != nil {
 		return m, nil, err
 	}
 	m.refreshViewport()
-	return m, m.loadSessionsCmd(), nil
+	return m, tea.Batch(m.loadSessionsCmd(), m.startLandingGlowOnTransition(previousScreen)), nil
 }
