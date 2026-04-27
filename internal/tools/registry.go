@@ -50,17 +50,18 @@ type ExecutionContext struct {
 
 const (
 	approvalModeInteractive = "interactive"
-	approvalModeAway        = "away"
+	approvalModeFullAccess  = "full_access"
+	approvalModeAwayCompat  = "away"
 
 	awayPolicyAutoDenyContinue = "auto_deny_continue"
 	awayPolicyFailFast         = "fail_fast"
 )
 
-func (c *ExecutionContext) isAwayMode() bool {
+func (c *ExecutionContext) isFullAccessMode() bool {
 	if c == nil {
 		return false
 	}
-	return c.approvalMode() == approvalModeAway
+	return c.approvalMode() == approvalModeFullAccess
 }
 
 func (c *ExecutionContext) approvalMode() string {
@@ -68,10 +69,14 @@ func (c *ExecutionContext) approvalMode() string {
 		return approvalModeInteractive
 	}
 	mode := strings.ToLower(strings.TrimSpace(c.ApprovalMode))
-	if mode == "" {
+	switch mode {
+	case "":
 		return approvalModeInteractive
+	case approvalModeAwayCompat:
+		return approvalModeFullAccess
+	default:
+		return mode
 	}
-	return mode
 }
 
 func (c *ExecutionContext) awayPolicy() string {

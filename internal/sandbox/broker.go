@@ -122,11 +122,11 @@ func (defaultPolicyBroker) Decide(_ context.Context, input DecisionInput) (Decis
 	requiresApproval := request.RequiresApproval || approvalPolicy == "always"
 	if requiresApproval {
 		mode := normalizeApprovalMode(input.Mode.ApprovalMode)
-		if mode == "away" {
+		if mode == "full_access" {
 			return DecisionResult{
-				Decision:   DecisionDeny,
-				ReasonCode: ReasonApprovalRequired,
-				Message:    "approval is unavailable in away mode",
+				Decision:   DecisionAllow,
+				ReasonCode: "",
+				Message:    "approval auto-granted in full_access mode",
 			}, nil
 		}
 		if approvalPolicy == "never" {
@@ -379,8 +379,8 @@ func normalizeApprovalMode(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", "interactive":
 		return "interactive"
-	case "away":
-		return "away"
+	case "full_access", "away":
+		return "full_access"
 	default:
 		return "interactive"
 	}

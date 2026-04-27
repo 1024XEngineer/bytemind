@@ -360,60 +360,46 @@ func TestExecutorSkipsDestructiveApprovalWhenPolicyNever(t *testing.T) {
 	}
 }
 
-func TestExecutorAwayModeAutoDenySkipsDestructiveApprovalPrompt(t *testing.T) {
+func TestExecutorFullAccessAutoApprovesDestructiveToolWithoutPrompt(t *testing.T) {
 	registry := &Registry{}
 	registry.Add(executorTestTool{name: "write_file", result: `{"ok":true}`})
 	executor := NewExecutor(registry)
 
 	asked := false
-	_, err := executor.Execute(context.Background(), "write_file", `{"path":"a.txt"}`, &ExecutionContext{
+	got, err := executor.Execute(context.Background(), "write_file", `{"path":"a.txt"}`, &ExecutionContext{
 		ApprovalPolicy: "on-request",
-		ApprovalMode:   "away",
+		ApprovalMode:   "full_access",
 		AwayPolicy:     "auto_deny_continue",
 		Approval: func(req ApprovalRequest) (bool, error) {
 			asked = true
 			return true, nil
 		},
 	})
-	if err == nil {
-		t.Fatal("expected away mode to deny destructive tool without prompting")
+	if err != nil {
+		t.Fatalf("expected full_access to auto-approve destructive tool, got %v", err)
+	}
+	if got != `{"ok":true}` {
+		t.Fatalf("unexpected result: %q", got)
 	}
 	if asked {
-		t.Fatal("expected away mode to skip approval prompt handler")
-	}
-	execErr, ok := AsToolExecError(err)
-	if !ok {
-		t.Fatalf("expected ToolExecError, got %T", err)
-	}
-	if execErr.Code != ToolErrorPermissionDenied {
-		t.Fatalf("unexpected code: %s", execErr.Code)
-	}
-	if !strings.Contains(execErr.Error(), "away mode") {
-		t.Fatalf("expected away mode reason, got %v", execErr)
+		t.Fatal("expected full_access mode to skip approval prompt handler")
 	}
 }
 
-func TestExecutorAwayModeFailFastStillReturnsPermissionDeniedForDestructiveTool(t *testing.T) {
+func TestExecutorAwayAliasBehavesAsFullAccessForDestructiveTool(t *testing.T) {
 	registry := &Registry{}
 	registry.Add(executorTestTool{name: "write_file", result: `{"ok":true}`})
 	executor := NewExecutor(registry)
 
-	_, err := executor.Execute(context.Background(), "write_file", `{"path":"a.txt"}`, &ExecutionContext{
+	got, err := executor.Execute(context.Background(), "write_file", `{"path":"a.txt"}`, &ExecutionContext{
 		ApprovalPolicy: "on-request",
 		ApprovalMode:   "away",
 		AwayPolicy:     "fail_fast",
 	})
-	if err == nil {
-		t.Fatal("expected away fail_fast to deny destructive tool")
+	if err != nil {
+		t.Fatalf("expected away alias to behave as full_access, got %v", err)
 	}
-	execErr, ok := AsToolExecError(err)
-	if !ok {
-		t.Fatalf("expected ToolExecError, got %T", err)
-	}
-	if execErr.Code != ToolErrorPermissionDenied {
-		t.Fatalf("unexpected code: %s", execErr.Code)
-	}
-	if !strings.Contains(execErr.Error(), "away_policy=fail_fast") {
-		t.Fatalf("expected fail_fast policy in error, got %v", execErr)
+	if got != `{"ok":true}` {
+		t.Fatalf("unexpected result: %q", got)
 	}
 }
