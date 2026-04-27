@@ -1,4 +1,4 @@
-﻿# Run Mode
+# Run Mode
 
 Run mode (`bytemind run`) executes a single task non-interactively and exits when done. There is no back-and-forth - you supply the full task in `-prompt` and the agent works to completion.
 
