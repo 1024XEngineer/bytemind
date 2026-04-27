@@ -166,3 +166,35 @@ func TestRenderConversationKeepsProgressBlueAndFinalNeutral(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderBytemindRunCardCollapsesConsecutiveReadTools(t *testing.T) {
+	view := stripANSI(renderBytemindRunCard([]chatEntry{
+		{Kind: "assistant", Title: thinkingLabel, Body: "Inspecting files", Status: "thinking"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read server.py\nrange: 1-20", Status: "done"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read index.html\nrange: 1-40", Status: "done"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read README.md\nrange: 1-80", Status: "done"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read faq.md\nrange: 1-50", Status: "done"},
+	}, 80))
+
+	if strings.Count(view, "READ x") != 1 {
+		t.Fatalf("expected consecutive read tools to collapse into one section, got %q", view)
+	}
+	if !strings.Contains(view, "READ x 4") {
+		t.Fatalf("expected collapsed read header with count, got %q", view)
+	}
+	if !strings.Contains(view, "Read 4 files: server.py, index.html, README.md +1") {
+		t.Fatalf("expected collapsed read summary, got %q", view)
+	}
+}
+
+func TestRenderBytemindRunCardDoesNotCollapseSeparatedReadTools(t *testing.T) {
+	view := stripANSI(renderBytemindRunCard([]chatEntry{
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read server.py", Status: "done"},
+		{Kind: "assistant", Title: assistantLabel, Body: "Using that result first", Status: "final"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read index.html", Status: "done"},
+	}, 80))
+
+	if strings.Count(view, "READ  ") != 2 {
+		t.Fatalf("expected separated read tools to remain distinct, got %q", view)
+	}
+}
