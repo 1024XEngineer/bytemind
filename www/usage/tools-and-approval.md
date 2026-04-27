@@ -55,21 +55,22 @@ For trusted commands you don't want to approve repeatedly, define an `exec_allow
 
 Allowlisted commands skip the approval prompt.
 
-## Away Mode
+## Full Access Mode
 
-For unattended runs (CI pipelines, scripts), set `approval_mode: away` so the agent doesn't block waiting for input:
+For unattended runs (CI pipelines, scripts), set `approval_mode: full_access` so approval-required operations are auto-approved and the agent doesn't block waiting for input:
 
 ```json
 {
-  "approval_mode": "away",
-  "away_policy": "auto_deny_continue"
+  "approval_mode": "full_access"
 }
 ```
+
+Legacy compatibility: `approval_mode: away` is still accepted and normalized to `full_access`.
 
 See [Configuration](/configuration) for all approval-related settings.
 
 ## See Also
 
-- [Configuration](/configuration) — approval policy, away mode, sandbox
+- [Configuration](/configuration) — approval policy, access modes, sandbox
 - [Run Mode](/usage/run-mode) — automated non-interactive execution
 - [Core Concepts](/core-concepts) — tools overview

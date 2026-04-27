@@ -26,7 +26,7 @@ Read by the `bytemind` binary at startup. All runtime variables override the cor
 | Variable                   | Overrides          | Description                                          |
 | -------------------------- | ------------------ | ---------------------------------------------------- |
 | `BYTEMIND_API_KEY`         | `provider.api_key` | Default API key if `api_key_env` is not set          |
-| `BYTEMIND_APPROVAL_MODE`   | `approval_mode`    | Override the approval mode (`interactive` or `away`) |
+| `BYTEMIND_APPROVAL_MODE`   | `approval_mode`    | Override the approval mode (`interactive` or `full_access`; `away` is accepted as a compatibility alias) |
 | `BYTEMIND_SANDBOX_ENABLED` | `sandbox_enabled`  | Set to `true` to enable sandbox mode                 |
 | `BYTEMIND_WRITABLE_ROOTS`  | `writable_roots`   | Colon-separated list of writable root paths          |
 | `BYTEMIND_HOME`            | —                  | Override the `.bytemind/` base directory path        |
@@ -37,7 +37,7 @@ Read by the `bytemind` binary at startup. All runtime variables override the cor
 
 ```bash
 export OPENAI_API_KEY="sk-..."
-export BYTEMIND_APPROVAL_MODE="away"
+export BYTEMIND_APPROVAL_MODE="full_access"
 export BYTEMIND_SANDBOX_ENABLED="true"
 export BYTEMIND_WRITABLE_ROOTS="./src:./docs"
 
