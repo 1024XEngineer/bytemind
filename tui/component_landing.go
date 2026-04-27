@@ -69,9 +69,9 @@ func (m model) landingPromptHeroWidth() int {
 	if m.width <= 0 {
 		return 74
 	}
-	maxFit := max(24, m.width-14)
-	preferred := min(88, max(64, (m.width*2)/3))
-	return clamp(preferred, 54, maxFit)
+	maxFit := max(24, m.width-8)
+	preferred := min(118, max(74, (m.width*5)/6))
+	return clamp(preferred, 62, maxFit)
 }
 
 func padLandingANSI(text string, width int) string {
@@ -207,8 +207,8 @@ func landingPixelLogoRows(text string, onStyle lipgloss.Style, maxWidth int) []s
 		offCell   string
 		letterGap string
 	}{
-		{onCell: onStyle.Render("█") + " ", offCell: "  ", letterGap: " "},
-		{onCell: onStyle.Render("██"), offCell: "  ", letterGap: " "},
+		{onCell: onStyle.Render("█") + " ", offCell: "  ", letterGap: "  "},
+		{onCell: onStyle.Render("█"), offCell: " ", letterGap: "  "},
 		{onCell: onStyle.Render("█"), offCell: " ", letterGap: " "},
 	}
 
