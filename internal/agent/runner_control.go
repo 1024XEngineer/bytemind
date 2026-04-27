@@ -27,9 +27,9 @@ func (r *Runner) UpdateApprovalMode(mode string) {
 		return
 	}
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case approvalModeAway:
-		r.config.ApprovalMode = approvalModeAway
+	case "full_access", "away":
+		r.config.ApprovalMode = "full_access"
 	default:
-		r.config.ApprovalMode = approvalModeInteractive
+		r.config.ApprovalMode = "interactive"
 	}
 }

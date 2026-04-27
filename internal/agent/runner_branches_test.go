@@ -457,7 +457,7 @@ func TestRenderToolFeedbackSkippedDependencyBranch(t *testing.T) {
 	runner := NewRunner(Options{})
 	var out bytes.Buffer
 
-	runner.renderToolFeedback(&out, "read_file", `{"ok":false,"error":"denied_dependency: tool \"read_file\" was skipped because a prior approval-required action was denied in away mode","status":"skipped","reason_code":"denied_dependency"}`)
+	runner.renderToolFeedback(&out, "read_file", `{"ok":false,"error":"denied_dependency: tool \"read_file\" was skipped because a prior approval-required action was denied earlier in the run","status":"skipped","reason_code":"denied_dependency"}`)
 
 	got := out.String()
 	for _, want := range []string{"skipped", "read_file", "prior approval-required action was denied"} {

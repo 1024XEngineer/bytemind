@@ -149,11 +149,8 @@ func writeApprovalChannelUnavailableNotice(out io.Writer, approvalPolicy, approv
 	if policy == "" {
 		policy = "on-request"
 	}
-	mode := strings.ToLower(strings.TrimSpace(approvalMode))
-	if mode == "" {
-		mode = "interactive"
-	}
-	if policy == "never" || mode == approvalModeAway {
+	mode := normalizeApprovalModeCompat(approvalMode)
+	if policy == "never" || mode == "full_access" {
 		return
 	}
 	_, _ = io.WriteString(out, fmt.Sprintf("%sapproval channel unavailable%s interactive approvals cannot be prompted in this run; approval-required actions will be denied\n", ansiYellow, ansiReset))
@@ -171,7 +168,6 @@ func (r *Runner) renderApprovalPrecheck(out io.Writer, setup runPromptSetup) {
 		ToolNames:      toolNames,
 		ApprovalPolicy: r.config.ApprovalPolicy,
 		ApprovalMode:   r.config.ApprovalMode,
-		AwayPolicy:     r.config.AwayPolicy,
 	})
 	if strings.TrimSpace(summary) == "" {
 		return
@@ -183,7 +179,6 @@ type approvalPrecheckSummaryInput struct {
 	ToolNames      []string
 	ApprovalPolicy string
 	ApprovalMode   string
-	AwayPolicy     string
 }
 
 func buildApprovalPrecheckSummary(input approvalPrecheckSummaryInput) string {
@@ -237,19 +232,9 @@ func buildApprovalPrecheckSummary(input approvalPrecheckSummaryInput) string {
 		lines = append(lines, fmt.Sprintf("  - workspace-modifying tools: %s", strings.Join(destructive, ", ")))
 	}
 
-	approvalMode := strings.ToLower(strings.TrimSpace(input.ApprovalMode))
-	if approvalMode == "" {
-		approvalMode = "interactive"
-	}
-	if approvalMode == "away" {
-		awayPolicy := strings.ToLower(strings.TrimSpace(input.AwayPolicy))
-		if awayPolicy == "" {
-			awayPolicy = "auto_deny_continue"
-		}
-		lines = append(lines, fmt.Sprintf("  away mode: approvals are unavailable; matched actions will be denied (away_policy=%s)", awayPolicy))
-		if awayPolicy == "fail_fast" {
-			lines = append(lines, "  fail_fast: run stops after the first denied approval-required action")
-		}
+	approvalMode := normalizeApprovalModeCompat(input.ApprovalMode)
+	if approvalMode == "full_access" {
+		lines = append(lines, "  full_access mode: approval-required actions are auto-approved without prompts")
 	} else {
 		lines = append(lines, "  interactive mode: approvals are requested only when an action is actually attempted")
 	}
@@ -265,15 +250,24 @@ func shouldAttemptPreapproval(r *Runner, setup runPromptSetup, base tools.Approv
 	if setup.RunMode != planpkg.ModeBuild {
 		return false
 	}
-	mode := strings.ToLower(strings.TrimSpace(r.config.ApprovalMode))
-	if mode == "" {
-		mode = "interactive"
-	}
+	mode := normalizeApprovalModeCompat(r.config.ApprovalMode)
 	if mode != "interactive" {
 		return false
 	}
 	policy := strings.ToLower(strings.TrimSpace(r.config.ApprovalPolicy))
 	return policy != "never"
+}
+
+func normalizeApprovalModeCompat(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case "":
+		return "interactive"
+	case "away":
+		return "full_access"
+	default:
+		return mode
+	}
 }
 
 func classifyPreapprovalToolGroups(toolNames []string) (bool, []string) {

@@ -149,6 +149,9 @@ func renderSystemBlock(input PromptInput) string {
 	if approvalMode == "" {
 		approvalMode = "interactive"
 	}
+	if strings.EqualFold(approvalMode, "away") {
+		approvalMode = "full_access"
+	}
 	awayPolicy := strings.TrimSpace(input.AwayPolicy)
 	if awayPolicy == "" {
 		awayPolicy = "auto_deny_continue"

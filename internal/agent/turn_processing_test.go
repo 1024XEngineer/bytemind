@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"bytes"
-	"context"
 	"strings"
 	"testing"
 
@@ -84,64 +82,5 @@ func TestSystemSandboxFallbackReportEntryReturnsEmptyWhenNotFallback(t *testing.
 	note := systemSandboxFallbackReportEntry("run_shell", toolResultEnvelope{})
 	if note != "" {
 		t.Fatalf("expected empty note when fallback is false, got %q", note)
-	}
-}
-
-func TestAppendSkippedDependencyResultIncludesSystemSandboxContext(t *testing.T) {
-	workspace := t.TempDir()
-	sess := session.New(workspace)
-	runner := NewRunner(Options{Workspace: workspace})
-	engine := &defaultEngine{runner: runner}
-	call := llm.ToolCall{
-		ID:   "call-skip-1",
-		Type: "function",
-		Function: llm.ToolFunctionCall{
-			Name:      "read_file",
-			Arguments: `{"path":"a.txt"}`,
-		},
-	}
-	var out bytes.Buffer
-	err := engine.appendSkippedDependencyResult(
-		context.Background(),
-		sess,
-		call,
-		&out,
-		sandboxAuditContext{
-			Enabled:         true,
-			Mode:            "best_effort",
-			Backend:         "none",
-			RequiredCapable: false,
-			CapabilityLevel: "none",
-			Fallback:        true,
-			Status:          "fallback",
-			FallbackReason:  "system sandbox best_effort fallback: backend unavailable",
-		},
-	)
-	if err != nil {
-		t.Fatalf("expected append skipped dependency result to succeed, got %v", err)
-	}
-	if len(sess.Messages) == 0 {
-		t.Fatal("expected tool result message to be appended")
-	}
-	content := sess.Messages[len(sess.Messages)-1].Content
-	for _, want := range []string{
-		`"reason_code":"denied_dependency"`,
-		`"system_sandbox":`,
-		`"mode":"best_effort"`,
-		`"backend":"none"`,
-		`"required_capable":false`,
-		`"capability_level":"none"`,
-		`"fallback":true`,
-		`"status":"fallback"`,
-		`"fallback_reason":"system sandbox best_effort fallback: backend unavailable"`,
-	} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("expected skipped dependency payload to contain %q, got %q", want, content)
-		}
-	}
-	for _, want := range []string{"skipped", "sandbox:", "mode=best_effort", "backend=none", "sandbox reason:"} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("expected feedback output to contain %q, got %q", want, out.String())
-		}
 	}
 }

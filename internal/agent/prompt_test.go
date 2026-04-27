@@ -64,7 +64,7 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	assertContains(t, prompt, "model: gpt-5.4-mini")
 	assertContains(t, prompt, "mode: plan")
 	assertContains(t, prompt, "approval_policy: on-request")
-	assertContains(t, prompt, "approval_mode: away")
+	assertContains(t, prompt, "approval_mode: full_access")
 	assertContains(t, prompt, "away_policy: fail_fast")
 	assertContains(t, prompt, "sandbox_enabled: true")
 	assertContains(t, prompt, "system_sandbox_mode: best_effort")
