@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	configpkg "bytemind/internal/config"
 )
 
 const (
@@ -376,12 +378,9 @@ func normalizeApprovalPolicy(value string) string {
 }
 
 func normalizeApprovalMode(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "interactive":
-		return "interactive"
-	case "full_access", "away":
-		return "full_access"
-	default:
+	mode, err := configpkg.NormalizeApprovalMode(value)
+	if err != nil || strings.TrimSpace(mode) == "" {
 		return "interactive"
 	}
+	return mode
 }

@@ -51,7 +51,7 @@ const LeaseSchemaV1JSON = `{
     },
     "approval_mode": {
       "type": "string",
-      "enum": ["interactive", "full_access", "away"]
+      "enum": ["interactive", "full_access"]
     },
     "away_policy": {
       "type": "string",

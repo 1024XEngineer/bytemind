@@ -21,7 +21,7 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	prompt := systemPrompt(PromptInput{
 		Workspace:                    workspace,
 		ApprovalPolicy:               "on-request",
-		ApprovalMode:                 "away",
+		ApprovalMode:                 "full_access",
 		AwayPolicy:                   "fail_fast",
 		SandboxEnabled:               true,
 		SystemSandbox:                "best_effort",

@@ -192,7 +192,7 @@ func TestRequireApprovalFullAccessAutoApprovesDoesNotPrompt(t *testing.T) {
 	}
 }
 
-func TestRequireApprovalAwayAliasBehavesAsFullAccess(t *testing.T) {
+func TestRequireApprovalAwayModeRequiresInteractiveApproval(t *testing.T) {
 	err := requireApproval("go test ./...", &ExecutionContext{
 		ApprovalPolicy: "on-request",
 		ApprovalMode:   "away",
@@ -200,8 +200,11 @@ func TestRequireApprovalAwayAliasBehavesAsFullAccess(t *testing.T) {
 		Stdin:          strings.NewReader(""),
 		Stdout:         &bytes.Buffer{},
 	})
-	if err != nil {
-		t.Fatalf("expected away alias to behave as full_access, got %v", err)
+	if err == nil {
+		t.Fatal("expected away mode to require approval (and be denied without explicit yes)")
+	}
+	if !strings.Contains(err.Error(), "was not run because approval was denied") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

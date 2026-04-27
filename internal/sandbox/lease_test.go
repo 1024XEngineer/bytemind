@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -174,7 +175,7 @@ func TestVerifySignedLeaseRejectsExpiredLease(t *testing.T) {
 		IssuedAt:     issued,
 		ExpiresAt:    issued.Add(10 * time.Minute),
 		KID:          "k1",
-		ApprovalMode: "away",
+		ApprovalMode: "interactive",
 		AwayPolicy:   "fail_fast",
 	}
 	key := []byte("lease-secret")
@@ -184,6 +185,49 @@ func TestVerifySignedLeaseRejectsExpiredLease(t *testing.T) {
 	}
 	err = VerifySignedLease(signed, map[string][]byte{"k1": key}, issued.Add(10*time.Minute))
 	assertLeaseErrorCode(t, err, ReasonLeaseExpired)
+}
+
+func TestSignLeaseRejectsAwayApprovalModeByDefault(t *testing.T) {
+	issued := time.Date(2026, 4, 20, 8, 0, 0, 0, time.UTC)
+	lease := Lease{
+		Version:      LeaseVersionV1,
+		LeaseID:      "lease-away-default",
+		RunID:        "run-away-default",
+		Scope:        LeaseScopeRun,
+		IssuedAt:     issued,
+		ExpiresAt:    issued.Add(10 * time.Minute),
+		KID:          "k1",
+		ApprovalMode: "away",
+		AwayPolicy:   "auto_deny_continue",
+	}
+	_, err := SignLease(lease, []byte("lease-secret"))
+	assertLeaseErrorCode(t, err, ReasonLeaseInvalid)
+	if err == nil || !strings.Contains(err.Error(), "approval_mode=away is blocked by default") {
+		t.Fatalf("expected away approval mode block error, got %v", err)
+	}
+}
+
+func TestSignLeaseAllowsAwayApprovalModeWhenCompatEnvEnabled(t *testing.T) {
+	t.Setenv("BYTEMIND_ALLOW_AWAY_FULL_ACCESS", "true")
+	issued := time.Date(2026, 4, 20, 8, 0, 0, 0, time.UTC)
+	lease := Lease{
+		Version:      LeaseVersionV1,
+		LeaseID:      "lease-away-compat",
+		RunID:        "run-away-compat",
+		Scope:        LeaseScopeRun,
+		IssuedAt:     issued,
+		ExpiresAt:    issued.Add(10 * time.Minute),
+		KID:          "k1",
+		ApprovalMode: "away",
+		AwayPolicy:   "auto_deny_continue",
+	}
+	signed, err := SignLease(lease, []byte("lease-secret"))
+	if err != nil {
+		t.Fatalf("expected away mode to normalize with migration gate, got %v", err)
+	}
+	if signed.ApprovalMode != "full_access" {
+		t.Fatalf("expected away mode to normalize to full_access, got %q", signed.ApprovalMode)
+	}
 }
 
 func TestParseHMACKeyring(t *testing.T) {

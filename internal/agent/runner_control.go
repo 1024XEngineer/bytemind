@@ -4,7 +4,6 @@ import (
 	"bytemind/internal/config"
 	"bytemind/internal/llm"
 	"bytemind/internal/tools"
-	"strings"
 )
 
 func (r *Runner) SetObserver(observer Observer) {
@@ -26,10 +25,9 @@ func (r *Runner) UpdateApprovalMode(mode string) {
 	if r == nil {
 		return
 	}
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "full_access", "away":
-		r.config.ApprovalMode = "full_access"
-	default:
-		r.config.ApprovalMode = "interactive"
+	normalizedMode, err := config.NormalizeApprovalMode(mode)
+	if err != nil || normalizedMode == "" {
+		normalizedMode = "interactive"
 	}
+	r.config.ApprovalMode = normalizedMode
 }

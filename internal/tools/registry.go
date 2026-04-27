@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	configpkg "bytemind/internal/config"
 	"bytemind/internal/llm"
 	planpkg "bytemind/internal/plan"
 	runtimepkg "bytemind/internal/runtime"
@@ -51,7 +52,6 @@ type ExecutionContext struct {
 const (
 	approvalModeInteractive = "interactive"
 	approvalModeFullAccess  = "full_access"
-	approvalModeAwayCompat  = "away"
 
 	awayPolicyAutoDenyContinue = "auto_deny_continue"
 	awayPolicyFailFast         = "fail_fast"
@@ -68,15 +68,11 @@ func (c *ExecutionContext) approvalMode() string {
 	if c == nil {
 		return approvalModeInteractive
 	}
-	mode := strings.ToLower(strings.TrimSpace(c.ApprovalMode))
-	switch mode {
-	case "":
+	mode, err := configpkg.NormalizeApprovalMode(c.ApprovalMode)
+	if err != nil || strings.TrimSpace(mode) == "" {
 		return approvalModeInteractive
-	case approvalModeAwayCompat:
-		return approvalModeFullAccess
-	default:
-		return mode
 	}
+	return mode
 }
 
 func (c *ExecutionContext) awayPolicy() string {

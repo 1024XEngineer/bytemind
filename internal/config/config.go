@@ -18,6 +18,9 @@ const (
 	envBytemindHome = "BYTEMIND_HOME"
 	defaultHomeDir  = ".bytemind"
 	defaultModelID  = "gpt-5.4-mini"
+	// EnvAllowAwayFullAccessCompat is a temporary migration gate that permits
+	// approval_mode=away to map to full_access.
+	EnvAllowAwayFullAccessCompat = "BYTEMIND_ALLOW_AWAY_FULL_ACCESS"
 )
 
 const (
@@ -523,6 +526,38 @@ func applyEnv(cfg *Config) {
 	}
 }
 
+// NormalizeApprovalMode validates and normalizes approval_mode values.
+// By default, legacy away mode is blocked to prevent silent privilege
+// escalation to full_access. Operators can temporarily enable migration by
+// setting BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true.
+func NormalizeApprovalMode(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "interactive":
+		return "interactive", nil
+	case "full_access":
+		return "full_access", nil
+	case "away":
+		if allowAwayFullAccessCompat() {
+			return "full_access", nil
+		}
+		return "", fmt.Errorf("approval_mode=away is blocked by default to prevent silent privilege escalation; migrate to approval_mode=interactive or approval_mode=full_access, or set %s=true for temporary migration", EnvAllowAwayFullAccessCompat)
+	default:
+		return "", errors.New("approval_mode must be one of interactive, full_access")
+	}
+}
+
+func allowAwayFullAccessCompat() bool {
+	raw := strings.TrimSpace(os.Getenv(EnvAllowAwayFullAccessCompat))
+	if raw == "" {
+		return false
+	}
+	enabled, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false
+	}
+	return enabled
+}
+
 func normalize(cfg *Config) error {
 	cfg.Provider.Type = normalizeProviderType(cfg.Provider.Type)
 	if cfg.Provider.Type == "" {
@@ -646,16 +681,11 @@ func normalize(cfg *Config) error {
 	default:
 		return errors.New("approval_policy must be one of always, on-request, never")
 	}
-	switch strings.TrimSpace(cfg.ApprovalMode) {
-	case "", "interactive":
-		cfg.ApprovalMode = "interactive"
-	case "full_access":
-		cfg.ApprovalMode = "full_access"
-	case "away":
-		cfg.ApprovalMode = "full_access"
-	default:
-		return errors.New("approval_mode must be one of interactive, full_access")
+	normalizedApprovalMode, err := NormalizeApprovalMode(cfg.ApprovalMode)
+	if err != nil {
+		return err
 	}
+	cfg.ApprovalMode = normalizedApprovalMode
 	switch strings.TrimSpace(cfg.AwayPolicy) {
 	case "", "auto_deny_continue":
 		cfg.AwayPolicy = "auto_deny_continue"

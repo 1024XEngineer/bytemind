@@ -265,7 +265,7 @@ func TestPolicyBrokerAutoApprovesFullAccessApprovalRequirement(t *testing.T) {
 	}
 }
 
-func TestPolicyBrokerNormalizesAwayAliasToFullAccess(t *testing.T) {
+func TestPolicyBrokerTreatsAwayAsInteractiveFailClosedByDefault(t *testing.T) {
 	now := time.Date(2026, 4, 20, 8, 0, 0, 0, time.UTC)
 	roots := sandboxRoots(t)
 	lease, keyring := mustSignedLease(t, now, roots)
@@ -283,8 +283,8 @@ func TestPolicyBrokerNormalizesAwayAliasToFullAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("broker decide: %v", err)
 	}
-	if result.Decision != DecisionAllow {
-		t.Fatalf("expected away alias to behave as full_access, got %#v", result)
+	if result.Decision != DecisionDeny || result.ReasonCode != ReasonApprovalChannelUnavailable {
+		t.Fatalf("expected away mode to fail closed without approval channel, got %#v", result)
 	}
 }
 

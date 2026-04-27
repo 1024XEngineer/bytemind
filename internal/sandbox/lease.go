@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	configpkg "bytemind/internal/config"
 )
 
 const (
@@ -248,16 +250,11 @@ func normalizeLease(lease Lease, requireSignature bool) (Lease, error) {
 		return Lease{}, &LeaseError{Code: ReasonLeaseInvalid, Message: "expires_at must be later than issued_at"}
 	}
 
-	lease.ApprovalMode = strings.ToLower(strings.TrimSpace(lease.ApprovalMode))
-	if lease.ApprovalMode == "" {
-		lease.ApprovalMode = "interactive"
+	normalizedApprovalMode, modeErr := configpkg.NormalizeApprovalMode(lease.ApprovalMode)
+	if modeErr != nil {
+		return Lease{}, &LeaseError{Code: ReasonLeaseInvalid, Message: strings.TrimSpace(modeErr.Error())}
 	}
-	if lease.ApprovalMode == "away" {
-		lease.ApprovalMode = "full_access"
-	}
-	if lease.ApprovalMode != "interactive" && lease.ApprovalMode != "full_access" {
-		return Lease{}, &LeaseError{Code: ReasonLeaseInvalid, Message: fmt.Sprintf("invalid approval_mode %q", lease.ApprovalMode)}
-	}
+	lease.ApprovalMode = normalizedApprovalMode
 	lease.AwayPolicy = strings.ToLower(strings.TrimSpace(lease.AwayPolicy))
 	if lease.AwayPolicy == "" {
 		lease.AwayPolicy = "auto_deny_continue"

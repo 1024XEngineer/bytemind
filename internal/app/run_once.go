@@ -35,7 +35,7 @@ func RunOneShot(req RunOneShotRequest) error {
 	streamOverride := fs.String("stream", "", "Override streaming: true or false")
 	sandboxEnabled := fs.String("sandbox-enabled", "", "Override sandbox_enabled: true or false")
 	systemSandboxMode := fs.String("system-sandbox-mode", "", "Override system sandbox mode: off, best_effort, or required")
-	approvalMode := fs.String("approval-mode", "", "Override approval mode: interactive, full_access, or away (compat alias)")
+	approvalMode := fs.String("approval-mode", "", "Override approval mode: interactive or full_access")
 	awayPolicy := fs.String("away-policy", "", "Deprecated compatibility field: auto_deny_continue or fail_fast")
 	workspaceOverride := fs.String("workspace", "", "Workspace to operate on; defaults to current directory")
 	maxIterations := fs.Int("max-iterations", 0, "Override execution budget for this run")

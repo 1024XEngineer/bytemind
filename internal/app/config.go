@@ -54,14 +54,17 @@ func LoadRuntimeConfig(req ConfigRequest) (config.Config, error) {
 	}
 	if req.ApprovalModeOverride != "" {
 		mode := strings.TrimSpace(req.ApprovalModeOverride)
-		switch mode {
-		case "interactive", "full_access":
-			cfg.ApprovalMode = mode
-		case "away":
-			cfg.ApprovalMode = "full_access"
-		default:
+		normalizedMode, err := config.NormalizeApprovalMode(mode)
+		if err != nil {
+			if strings.Contains(err.Error(), "approval_mode must be one of") {
+				return cfg, fmt.Errorf("invalid -approval-mode value: %q (expected interactive or full_access)", mode)
+			}
+			return cfg, fmt.Errorf("invalid -approval-mode value: %q: %w", mode, err)
+		}
+		if normalizedMode == "" {
 			return cfg, fmt.Errorf("invalid -approval-mode value: %q (expected interactive or full_access)", mode)
 		}
+		cfg.ApprovalMode = normalizedMode
 	}
 	if req.AwayPolicyOverride != "" {
 		policy := strings.TrimSpace(req.AwayPolicyOverride)

@@ -1887,7 +1887,7 @@ func TestRunPromptFullAccessRecordsSandboxFallbackForToolExecutions(t *testing.T
 	}
 }
 
-func TestRunPromptAwayAliasIgnoresDeprecatedAwayPolicyAndRunsNormally(t *testing.T) {
+func TestRunPromptAwayModeDoesNotAutoApproveByDefault(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
@@ -1918,7 +1918,7 @@ func TestRunPromptAwayAliasIgnoresDeprecatedAwayPolicyAndRunsNormally(t *testing
 		},
 		{
 			Role:    "assistant",
-			Content: "away alias continues with full_access semantics",
+			Content: "away mode requires approval",
 		},
 	}}
 	runner := NewRunner(Options{
@@ -1940,19 +1940,20 @@ func TestRunPromptAwayAliasIgnoresDeprecatedAwayPolicyAndRunsNormally(t *testing
 
 	answer, err := runner.RunPrompt(context.Background(), sess, "trigger permission path", "build", io.Discard)
 	if err != nil {
-		t.Fatalf("expected away alias to continue with full_access semantics, got %v", err)
+		t.Fatalf("expected run to complete with denied tool payloads, got %v", err)
 	}
-	if answer != "away alias continues with full_access semantics" {
+	if answer != "away mode requires approval" {
 		t.Fatalf("unexpected answer: %q", answer)
 	}
 	if len(sess.Messages) < 5 {
-		t.Fatalf("expected both tool calls to run successfully, got %#v", sess.Messages)
+		t.Fatalf("expected tool call payloads to be recorded, got %#v", sess.Messages)
 	}
-	if !strings.Contains(sess.Messages[2].Content, `"ok":true`) {
-		t.Fatalf("expected first tool call success payload, got %q", sess.Messages[2].Content)
+	if strings.Contains(sess.Messages[2].Content, `"ok":true`) {
+		t.Fatalf("expected away mode not to auto-approve write_file, got %q", sess.Messages[2].Content)
 	}
-	if !strings.Contains(sess.Messages[3].Content, `"ok":true`) {
-		t.Fatalf("expected second tool call success payload, got %q", sess.Messages[3].Content)
+	if !strings.Contains(strings.ToLower(sess.Messages[2].Content), "approval") &&
+		!strings.Contains(strings.ToLower(sess.Messages[2].Content), "denied") {
+		t.Fatalf("expected away mode failure payload to mention approval denial, got %q", sess.Messages[2].Content)
 	}
 	if strings.Contains(sess.Messages[2].Content, "fail_fast") || strings.Contains(sess.Messages[3].Content, "fail_fast") {
 		t.Fatalf("deprecated away_policy should not influence runtime payloads, got %#v", sess.Messages)

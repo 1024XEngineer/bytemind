@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	configpkg "bytemind/internal/config"
 	planpkg "bytemind/internal/plan"
 	"bytemind/internal/tools"
 )
@@ -259,15 +260,11 @@ func shouldAttemptPreapproval(r *Runner, setup runPromptSetup, base tools.Approv
 }
 
 func normalizeApprovalModeCompat(mode string) string {
-	mode = strings.ToLower(strings.TrimSpace(mode))
-	switch mode {
-	case "":
+	normalized, err := configpkg.NormalizeApprovalMode(mode)
+	if err != nil {
 		return "interactive"
-	case "away":
-		return "full_access"
-	default:
-		return mode
 	}
+	return normalized
 }
 
 func classifyPreapprovalToolGroups(toolNames []string) (bool, []string) {

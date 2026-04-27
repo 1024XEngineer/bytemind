@@ -63,7 +63,7 @@ func TestRunTUIBuildsOptionsAndInvokesProgram(t *testing.T) {
 			"-workspace", workspace,
 			"-model", "gpt-5.4",
 			"-stream", "true",
-			"-approval-mode", "away",
+			"-approval-mode", "full_access",
 			"-away-policy", "fail_fast",
 			"-max-iterations", "9",
 		},

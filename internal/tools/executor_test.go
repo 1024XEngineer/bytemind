@@ -386,20 +386,28 @@ func TestExecutorFullAccessAutoApprovesDestructiveToolWithoutPrompt(t *testing.T
 	}
 }
 
-func TestExecutorAwayAliasBehavesAsFullAccessForDestructiveTool(t *testing.T) {
+func TestExecutorAwayModeDoesNotAutoApproveDestructiveTool(t *testing.T) {
 	registry := &Registry{}
 	registry.Add(executorTestTool{name: "write_file", result: `{"ok":true}`})
 	executor := NewExecutor(registry)
 
-	got, err := executor.Execute(context.Background(), "write_file", `{"path":"a.txt"}`, &ExecutionContext{
+	asked := false
+	_, err := executor.Execute(context.Background(), "write_file", `{"path":"a.txt"}`, &ExecutionContext{
 		ApprovalPolicy: "on-request",
 		ApprovalMode:   "away",
 		AwayPolicy:     "fail_fast",
+		Approval: func(req ApprovalRequest) (bool, error) {
+			asked = true
+			return false, nil
+		},
 	})
-	if err != nil {
-		t.Fatalf("expected away alias to behave as full_access, got %v", err)
+	if err == nil {
+		t.Fatal("expected away mode destructive tool to require interactive approval")
 	}
-	if got != `{"ok":true}` {
-		t.Fatalf("unexpected result: %q", got)
+	if !asked {
+		t.Fatal("expected away mode to invoke approval handler")
+	}
+	if !strings.Contains(err.Error(), "was not run because approval was denied") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
