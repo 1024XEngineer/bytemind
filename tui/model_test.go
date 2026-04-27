@@ -1914,7 +1914,7 @@ func TestRunFinishedOpensClarifyChoicePicker(t *testing.T) {
 			ActiveChoice: &planpkg.ActiveChoice{
 				ID:       "frontend_stack",
 				Kind:     "clarify",
-				Question: "鍓嶇甯屾湜璧板摢鏉¤矾绾匡紵",
+				Question: "前端希望走哪条路线？",
 				Options: []planpkg.ChoiceOption{
 					{ID: "fastapi", Shortcut: "A", Title: "FastAPI + Jinja2 HTML", Recommended: true},
 					{ID: "flask", Shortcut: "B", Title: "Flask + Jinja2 HTML"},
