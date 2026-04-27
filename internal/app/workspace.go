@@ -51,9 +51,6 @@ func ResolveWorkspace(workspaceOverride string) (string, error) {
 	if projectRoot := DetectProjectRoot(cwd); projectRoot != "" {
 		return projectRoot, nil
 	}
-	if IsBroadWorkspacePath(cwd) {
-		return "", fmt.Errorf("current directory %s is too broad for default workspace; rerun with -workspace <project-dir> (or set BYTEMIND_ALLOW_BROAD_WORKSPACE=true)", cwd)
-	}
 	return cwd, nil
 }
 

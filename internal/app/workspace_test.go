@@ -65,6 +65,33 @@ func TestResolveWorkspaceAutoDetectsProjectRoot(t *testing.T) {
 	}
 }
 
+func TestResolveWorkspaceUsesCurrentDirectoryWhenBroadAndNoProjectMarker(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < DefaultBroadWorkspaceEntryThreshold; i++ {
+		if err := os.Mkdir(filepath.Join(dir, fmt.Sprintf("entry-%03d", i)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+	})
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ResolveWorkspace("")
+	if err != nil {
+		t.Fatalf("expected broad current directory to be allowed, got %v", err)
+	}
+	if got != dir {
+		t.Fatalf("expected workspace %q, got %q", dir, got)
+	}
+}
+
 func TestIsBroadWorkspacePathWithHomeFlagsKnownBroadRoots(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	for _, dir := range []string{

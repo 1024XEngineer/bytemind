@@ -85,7 +85,7 @@ func TestBootstrapCreatesSessionInWorkspace(t *testing.T) {
 	}
 }
 
-func TestBootstrapEntrypointRejectsBroadWorkspaceWithoutOverride(t *testing.T) {
+func TestBootstrapEntrypointAllowsBroadWorkspaceWithoutOverride(t *testing.T) {
 	workspace := t.TempDir()
 	for i := 0; i < DefaultBroadWorkspaceEntryThreshold; i++ {
 		path := filepath.Join(workspace, fmt.Sprintf("entry-%03d.tmp", i))
@@ -94,17 +94,21 @@ func TestBootstrapEntrypointRejectsBroadWorkspaceWithoutOverride(t *testing.T) {
 		}
 	}
 	t.Chdir(workspace)
+	t.Setenv("BYTEMIND_HOME", filepath.Join(workspace, ".bytemind-home"))
 
-	_, err := BootstrapEntrypoint(EntrypointRequest{
+	runtimeBundle, err := BootstrapEntrypoint(EntrypointRequest{
 		RequireAPIKey: false,
 		Stdin:         strings.NewReader(""),
 		Stdout:        &bytes.Buffer{},
 	})
-	if err == nil {
-		t.Fatal("expected broad workspace error")
+	if err != nil {
+		t.Fatalf("expected broad workspace to be allowed, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "too broad for default workspace") {
-		t.Fatalf("unexpected error: %v", err)
+	if runtimeBundle.Session == nil {
+		t.Fatal("expected session to be created")
+	}
+	if runtimeBundle.Session.Workspace != workspace {
+		t.Fatalf("expected workspace %q, got %q", workspace, runtimeBundle.Session.Workspace)
 	}
 }
 
