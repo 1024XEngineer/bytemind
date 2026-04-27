@@ -13,7 +13,7 @@ Model provider configuration.
 | `type`              | string | `openai-compatible`, `anthropic`, or `gemini` | `openai-compatible`       |
 | `base_url`          | string | API endpoint URL                            | `https://api.openai.com/v1` |
 | `model`             | string | Model ID to use                             | `gpt-5.4-mini`              |
-| `api_key`           | string | API key (plain text 鈥?prefer `api_key_env`) | 鈥?                          |
+| `api_key`           | string | API key (plain text - prefer `api_key_env`) | -                           |
 | `api_key_env`       | string | Env var name to read the key from           | `BYTEMIND_API_KEY`          |
 | `anthropic_version` | string | Anthropic API version header                | `2023-06-01`                |
 | `auth_header`       | string | Custom auth header name                     | `Authorization`             |

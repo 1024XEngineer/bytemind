@@ -1,6 +1,6 @@
-# Run Mode
+﻿# Run Mode
 
-Run mode (`bytemind run`) executes a single task non-interactively and exits when done. There is no back-and-forth 鈥?you supply the full task in `-prompt` and the agent works to completion.
+Run mode (`bytemind run`) executes a single task non-interactively and exits when done. There is no back-and-forth - you supply the full task in `-prompt` and the agent works to completion.
 
 ```bash
 bytemind run -prompt "update the README installation section"
@@ -29,7 +29,7 @@ bytemind run -prompt "<task>" -config ./my.json   # custom config
 
 | Flag              | Description                 | Default     |
 | ----------------- | --------------------------- | ----------- |
-| `-prompt`         | Task description (required) | 鈥?          |
+| `-prompt`         | Task description (required) | -           |
 | `-max-iterations` | Max tool-call rounds        | 32          |
 | `-config`         | Path to config file         | auto-detect |
 
@@ -76,6 +76,6 @@ bytemind run -prompt "Update the version in go.mod, README.md, and cmd/version.g
 
 ## See Also
 
-- [Chat Mode](/usage/chat-mode) 鈥?interactive, multi-turn mode
-- [Configuration](/configuration) 鈥?approval mode and compatibility fields
-- [CLI Commands](/reference/cli-commands) 鈥?full flag reference
+- [Chat Mode](/usage/chat-mode) - interactive, multi-turn mode
+- [Configuration](/configuration) - approval mode and compatibility fields
+- [CLI Commands](/reference/cli-commands) - full flag reference
