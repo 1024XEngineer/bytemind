@@ -99,7 +99,7 @@ CI runs the same focused acceptance suites in a cross-platform matrix:
 1. `approval_mode=interactive`, `sandbox_enabled=true`, allowlist does not include a shell command:
    - Expect one approval prompt.
    - Approve -> command runs.
-2. Same as above with `approval_mode=full_access` (or legacy alias `approval_mode=away`):
+2. Same as above with `approval_mode=full_access`:
    - Expect no prompt.
    - Command executes directly if sandbox/lease/network policy allows it.
 3. `write_file` with relative path under workspace:

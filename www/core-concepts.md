@@ -76,7 +76,7 @@ The approval policy controls how the agent handles high-risk operations:
 
 - **`on-request` (default)**: waits for your explicit confirmation before each high-risk tool call
 - **`full_access`**: in unattended scenarios, automatically approves approval-required actions with no prompt
-- **Compatibility alias**: `approval_mode: away` is normalized to `full_access`
+- **Migration gate**: legacy `approval_mode: away` is blocked by default; set `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` only for temporary migration
 
 See [Tools and Approval](/usage/tools-and-approval) for details.
 

@@ -65,7 +65,7 @@ Agent 调用高风险工具时，会展示：
 }
 ```
 
-兼容说明：`approval_mode: away` 仍可使用，但会自动归一化为 `full_access`。
+兼容说明：为避免静默提权，`approval_mode: away` 默认被阻止。仅在迁移旧配置时，显式设置 `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` 才会临时映射到 `full_access`。
 
 完整审批配置见[配置详解](/zh/configuration)。
 

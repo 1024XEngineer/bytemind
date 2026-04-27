@@ -65,7 +65,7 @@ For unattended runs (CI pipelines, scripts), set `approval_mode: full_access` so
 }
 ```
 
-Legacy compatibility: `approval_mode: away` is still accepted and normalized to `full_access`.
+Legacy `approval_mode: away` is blocked by default to prevent silent privilege escalation. Set `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` only for temporary migration.
 
 See [Configuration](/configuration) for all approval-related settings.
 

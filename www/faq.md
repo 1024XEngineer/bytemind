@@ -59,7 +59,7 @@ bytemind chat -max-iterations 64
 
 ### Can I use ByteMind in CI without manual approvals?
 
-Yes. Set `approval_mode` to `full_access` (legacy alias `away` also works). Approval-required operations are auto-approved without blocking prompts, so CI pipelines can run unattended.
+Yes. Set `approval_mode` to `full_access`. Approval-required operations are auto-approved without blocking prompts, so CI pipelines can run unattended. Legacy `away` is blocked by default unless you explicitly set `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` for migration.
 
 ### How do I resume a previous session?
 

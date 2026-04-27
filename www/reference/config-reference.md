@@ -35,7 +35,7 @@ Model provider configuration.
 
 ## `away_policy`
 
-Deprecated compatibility field. `approval_mode: away` is still accepted and normalized to `full_access`, and `away_policy` is preserved for compatibility only.
+Deprecated compatibility field. Legacy `approval_mode: away` is blocked by default to prevent silent privilege escalation. Temporarily set `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` only when migrating old configs; `away_policy` remains compatibility-only.
 
 | Value                          | Behavior                                             |
 | ------------------------------ | ---------------------------------------------------- |

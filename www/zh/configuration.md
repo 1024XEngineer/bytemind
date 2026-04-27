@@ -94,7 +94,7 @@ bytemind chat
 | `interactive`（默认） | 交互式审批，每次操作弹出确认              |
 | `full_access`         | 全部权限模式，审批请求自动通过且不中断任务 |
 
-兼容说明：`approval_mode: away` 仍被接受，并会归一化为 `full_access`。
+兼容说明：为避免静默提权，`approval_mode: away` 默认被阻止。仅在迁移旧配置时，显式设置 `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` 才会临时映射到 `full_access`。
 
 `away_policy`（已弃用，仅兼容保留）：
 

@@ -94,7 +94,7 @@ Set `"auto_detect_type": true` to let ByteMind infer the provider type from `bas
 | `interactive` (default) | Prompt for approval on each operation                |
 | `full_access`           | Auto-approve approval-required actions with no prompt |
 
-Legacy compatibility: `approval_mode: away` is still accepted and normalized to `full_access`.
+Legacy compatibility is now gated: `approval_mode: away` is blocked by default to prevent silent privilege escalation. Set `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` only as a temporary migration escape hatch.
 
 `away_policy` (deprecated compatibility field):
 

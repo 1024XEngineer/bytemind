@@ -66,7 +66,7 @@ bytemind chat -max-iterations 64
 ### 在 CI 中能不能不需手动审批？
 
 可以。将 `approval_mode` 设为 `full_access`，审批请求会自动通过，任务不会被弹窗阻塞。
-兼容说明：旧值 `approval_mode: away` 仍可使用，但会自动归一化为 `full_access`。
+兼容说明：旧值 `approval_mode: away` 为避免静默提权已默认阻止。仅在迁移旧配置时，显式设置 `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` 才会临时映射到 `full_access`。
 
 ### 如何恢复上次的会话？
 

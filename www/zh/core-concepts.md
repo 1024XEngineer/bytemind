@@ -76,7 +76,7 @@ Plan 模式下，Agent 会先制定逐步执行计划，每个步骤由你审阅
 
 - **`on-request`（默认）**：每次高风险操作前等待你的明确确认
 - **`full_access`**：无人值守场景自动同意审批请求，不会弹窗打断任务
-- **兼容别名**：`approval_mode: away` 会被自动归一化为 `full_access`
+- **迁移闸门**：旧值 `approval_mode: away` 默认被阻止；仅在迁移期显式设置 `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` 时才允许映射到 `full_access`
 
 详见[工具与审批](/zh/usage/tools-and-approval)。
 
