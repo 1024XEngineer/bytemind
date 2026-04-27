@@ -352,6 +352,251 @@ func TestRunPromptRepairsContinueWorkWithoutToolCalls(t *testing.T) {
 	}
 }
 
+func TestRunPromptRepairsUnavailableRunShellClaimWithoutToolCall(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "run_shell 看起来超时了，而且我当前没法继续调用 shell 工具执行命令。",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "run_shell",
+					Arguments: `{"command":"echo hello"}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>Shell checked.",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:       config.ProviderConfig{Model: "test-model"},
+			MaxIterations:  6,
+			Stream:         false,
+			ApprovalPolicy: "never",
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "inspect shell availability", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "Shell checked." {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected three requests (repair + tool + finalize), got %d", len(client.requests))
+	}
+	secondTurnMessages := client.requests[1].Messages
+	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "claimed the shell tool was unavailable or timed out") {
+		t.Fatalf("expected shell-claim repair note to be appended as user message, got %#v", secondTurnMessages)
+	}
+	if len(sess.Messages) != 4 {
+		t.Fatalf("expected user + tool call + tool result + final assistant, got %#v", sess.Messages)
+	}
+	if len(sess.Messages[1].ToolCalls) != 1 || sess.Messages[1].ToolCalls[0].Function.Name != "run_shell" {
+		t.Fatalf("expected repaired turn to execute run_shell, got %#v", sess.Messages[1])
+	}
+}
+
+func TestRunPromptRepairsConcreteRepoClaimAfterWeakEvidence(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "demos"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("Documented command: python demos/backend/server.py\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "demos", "README.md"), []byte("Only documentation exists here.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				{
+					ID:   "call-1",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "list_files",
+						Arguments: `{}`,
+					},
+				},
+				{
+					ID:   "call-2",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "search_text",
+						Arguments: `{"query":"demos/backend/server.py"}`,
+					},
+				},
+			},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>仓库里已经有最小闭环实现了，可以直接运行 `python demos/backend/server.py`。",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				{
+					ID:   "call-3",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "list_files",
+						Arguments: `{"path":"demos","depth":2}`,
+					},
+				},
+				{
+					ID:   "call-4",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "read_file",
+						Arguments: `{"path":"demos/README.md"}`,
+					},
+				},
+			},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>我目前只确认到 `demos/README.md` 这类文档线索，还没有确认 `demos/backend/server.py` 或对应实现文件存在。",
+		},
+	}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 8,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "看看 demos 里是不是已经有现成可跑的最小 demo。", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(answer, "还没有确认") {
+		t.Fatalf("expected repaired answer to stay cautious, got %q", answer)
+	}
+	if len(client.requests) != 4 {
+		t.Fatalf("expected four requests (investigate + bad claim + repair + cautious finalize), got %d", len(client.requests))
+	}
+	repairTurnMessages := client.requests[2].Messages
+	lastMsg := repairTurnMessages[len(repairTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "referenced path or command target was not directly confirmed") {
+		t.Fatalf("expected local repo path-evidence repair note to be appended as user message, got %#v", repairTurnMessages)
+	}
+}
+
+func TestRunPromptRepairsImplementationClaimAfterPathListingOnly(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "demos", "backend"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "demos", "backend", "server.py"), []byte("print('demo')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{"path":"demos/backend","depth":2}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>已经有可直接运行的实现了，执行 `python demos/backend/server.py` 就行。",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-2",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "read_file",
+					Arguments: `{"path":"demos/backend/server.py"}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>我已确认 `demos/backend/server.py` 存在，并读取了实现文件内容。",
+		},
+	}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 8,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "确认 demos/backend/server.py 是不是已经实现好了。", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(answer, "读取了实现文件内容") {
+		t.Fatalf("expected repaired answer to be grounded in implementation inspection, got %q", answer)
+	}
+	if len(client.requests) != 4 {
+		t.Fatalf("expected four requests (list + bad claim + repair + inspected finalize), got %d", len(client.requests))
+	}
+	repairTurnMessages := client.requests[2].Messages
+	lastMsg := repairTurnMessages[len(repairTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "documentation or path-level hints") {
+		t.Fatalf("expected implementation-evidence repair note to be appended as user message, got %#v", repairTurnMessages)
+	}
+}
+
 func TestRunPromptRepairsPlanDecisionAcknowledgementWithoutUpdatePlan(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
@@ -441,6 +686,100 @@ func TestRunPromptRepairsPlanDecisionAcknowledgementWithoutUpdatePlan(t *testing
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected repaired answer to include %q, got %q", want, answer)
 		}
+	}
+}
+
+func TestRunPromptRepairsInitialPlanTurnBeforeStructuredPlanExists(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModePlan
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    llm.RoleAssistant,
+			Content: "我先快速扫一眼仓库里 demos，现状后给出可执行计划。",
+		},
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{"path":"demos"}`,
+				},
+			}},
+		},
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-2",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name: "update_plan",
+					Arguments: `{
+						"goal":"Review the demos area and produce an executable plan.",
+						"summary":"Inspected the demos directory and created the first plan skeleton.",
+						"phase":"draft",
+						"decision_gaps":[],
+						"risks":["The existing demos layout may constrain where the new work should land."],
+						"verification":["Inspect the target demo path and confirm the first runnable slice before switching to Build."],
+						"plan":[
+							{"step":"Inspect the demos directory and relevant entrypoints","status":"pending"},
+							{"step":"Choose the target demo slice and define scope","status":"pending"},
+							{"step":"Draft the implementation and verification path","status":"pending"}
+						]
+					}`,
+				},
+			}},
+		},
+		{
+			Role:    llm.RoleAssistant,
+			Content: "<turn_intent>finalize</turn_intent>已建立初始计划。",
+		},
+	}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 8,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "先看下 demos 目录，然后帮我出一个可执行计划。", "plan", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 4 {
+		t.Fatalf("expected four requests (repair + investigate + update_plan + finalize), got %d", len(client.requests))
+	}
+	repairTurnMessages := client.requests[1].Messages
+	lastMsg := repairTurnMessages[len(repairTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "without creating the initial structured plan state") {
+		t.Fatalf("expected bootstrap repair note to be appended as user message, got %#v", repairTurnMessages)
+	}
+	if !planpkg.HasStructuredPlan(sess.Plan) {
+		t.Fatalf("expected session plan to be structured after repair, got %#v", sess.Plan)
+	}
+	if sess.Plan.Phase != planpkg.PhaseDraft {
+		t.Fatalf("expected repaired plan to reach draft phase, got %#v", sess.Plan.Phase)
+	}
+	if strings.Contains(answer, planpkg.StructuredPlanReminder) {
+		t.Fatalf("expected repaired answer not to fall back to structured plan reminder, got %q", answer)
+	}
+	if !strings.Contains(answer, "<proposed_plan>") {
+		t.Fatalf("expected repaired answer to include rendered structured plan, got %q", answer)
 	}
 }
 
@@ -726,6 +1065,80 @@ func TestRunPromptRepairsBuildHandoffWithoutRestartingPlanConfirmation(t *testin
 		t.Fatalf("expected build-handoff repair note to be appended as user message, got %#v", secondTurnMessages)
 	}
 	if !strings.Contains(answer, "我先检查了工作区入口") {
+		t.Fatalf("expected repaired build answer, got %q", answer)
+	}
+}
+
+func TestRunPromptRepairsBuildHandoffAcknowledgementWithoutToolCalls(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModeBuild
+	sess.Plan = planpkg.State{
+		Goal:                "Implement the first RAG demo",
+		Summary:             "Plan is converged and execution should begin from the repo baseline.",
+		Phase:               planpkg.PhaseExecuting,
+		NextAction:          "Inspect the workspace entrypoints before editing.",
+		Steps:               []planpkg.Step{{Title: "Inspect the workspace entrypoints", Status: planpkg.StepInProgress}},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+	}
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "Started execution.",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>Inspected the workspace entrypoints and continued implementation.",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 6,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "start execution", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected three requests (repair + tool + finalize), got %d requests", len(client.requests))
+	}
+	secondTurnMessages := client.requests[1].Messages
+	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "already switched to build mode") {
+		t.Fatalf("expected build-handoff repair note to be appended as user message, got %#v", secondTurnMessages)
+	}
+	if !strings.Contains(answer, "Inspected the workspace entrypoints") {
 		t.Fatalf("expected repaired build answer, got %q", answer)
 	}
 }

@@ -11,6 +11,71 @@ import (
 
 var clarifyChoiceShortcutPattern = regexp.MustCompile(`(?i)(^|[\s/|,，;；:：\-])([a-d]|1|2|3|4)([.)：:\s]|$)`)
 
+// These repair heuristics intentionally mirror the small set of execution-choice
+// labels exposed by the plan prompt/runtime once a plan is converged.
+var (
+	planAdjustmentOnlyInputs = []string{
+		"adjust",
+		"adjust plan",
+		"continue adjusting plan",
+		"continue plan",
+		"option 2",
+		"option b",
+		"2",
+		"2.",
+		"b",
+		"b.",
+		"继续微调计划",
+		"微调计划",
+		"继续调整计划",
+		"调整计划",
+	}
+	executionActionChoicePromptTokens = []string{
+		"choose next step",
+		"choose next action",
+		"next step",
+		"next action",
+		"start execution",
+		"continue execution",
+		"switch to build",
+		"build mode",
+		"adjust plan",
+		"reply with 1",
+		"reply with 2",
+		"下一步",
+		"可选下一步",
+		"开始执行",
+		"继续执行",
+		"切到 build",
+		"切换到 build",
+		"调整计划",
+		"继续微调计划",
+	}
+	planDecisionAcknowledgementTokens = []string{
+		"adopt",
+		"adopted",
+		"go with",
+		"going with",
+		"chosen",
+		"choose ",
+		"recorded",
+		"using option",
+		"start execution",
+		"adjust plan",
+		"switch to build",
+		"采用",
+		"已收到",
+		"已记录",
+		"记录为",
+		"选用",
+		"选择",
+		"开始执行",
+		"调整计划",
+		"切到 build",
+		"切换到 build",
+	}
+)
+
 func shouldRepairPlanRevisionTurn(runMode planpkg.AgentMode, state planpkg.State, latestUser string, reply llm.Message) bool {
 	if runMode != planpkg.ModePlan || len(reply.ToolCalls) > 0 {
 		return false
@@ -74,19 +139,19 @@ func shouldRepairPlanClarifyTurn(runMode planpkg.AgentMode, state planpkg.State,
 	if !planpkg.HasStructuredPlan(state) || planpkg.HasActiveChoice(state) {
 		return false
 	}
-	if planpkg.CanStartExecution(state) {
-		return false
-	}
-
 	text := strings.TrimSpace(reply.Content)
 	if text == "" {
 		return false
 	}
+	inlineChoicePrompt := looksLikeInlineClarifyChoicePrompt(text)
+	if planpkg.CanStartExecution(state) {
+		return inlineChoicePrompt && !looksLikeExecutionActionChoicePrompt(text)
+	}
 
 	if intent == turnIntentAskUser {
-		return planpkg.HasDecisionGaps(state) || looksLikeInlineClarifyChoicePrompt(text)
+		return planpkg.HasDecisionGaps(state) || inlineChoicePrompt
 	}
-	return looksLikeInlineClarifyChoicePrompt(text)
+	return inlineChoicePrompt
 }
 
 func buildPlanClarifyRepairInstruction(state planpkg.State, reply llm.Message, attempt, maxAttempts int) string {
@@ -270,25 +335,18 @@ func looksLikePlanRevisionInput(text string) bool {
 }
 
 func looksLikePlanAdjustmentOnlyInput(text string) bool {
-	switch strings.ToLower(strings.TrimSpace(text)) {
-	case "adjust",
-		"adjust plan",
-		"continue adjusting plan",
-		"continue plan",
-		"option 2",
-		"option b",
-		"2",
-		"2.",
-		"b",
-		"b.",
-		"继续微调计划",
-		"微调计划",
-		"继续调整计划",
-		"调整计划":
-		return true
-	default:
+	return matchesNormalizedExactText(text, planAdjustmentOnlyInputs...)
+}
+
+func looksLikeExecutionActionChoicePrompt(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" || countChoiceShortcuts(normalized) < 2 {
 		return false
 	}
+	if containsAnyToken(normalized, executionActionChoicePromptTokens...) {
+		return true
+	}
+	return strings.Contains(normalized, "start execution") && strings.Contains(normalized, "adjust plan")
 }
 
 func looksLikeRawPlanChoiceSelection(text string) bool {
@@ -316,27 +374,15 @@ func countChoiceShortcuts(text string) int {
 
 func looksLikePlanDecisionAcknowledgement(text string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(text))
-	return containsAnyToken(normalized,
-		"adopt",
-		"adopted",
-		"go with",
-		"going with",
-		"chosen",
-		"choose ",
-		"recorded",
-		"using option",
-		"start execution",
-		"adjust plan",
-		"switch to build",
-		"采用",
-		"已收到",
-		"已记录",
-		"记录为",
-		"选用",
-		"选择",
-		"开始执行",
-		"调整计划",
-		"切到 build",
-		"切换到 build",
-	)
+	return containsAnyToken(normalized, planDecisionAcknowledgementTokens...)
+}
+
+func matchesNormalizedExactText(text string, options ...string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	for _, option := range options {
+		if normalized == option {
+			return true
+		}
+	}
+	return false
 }

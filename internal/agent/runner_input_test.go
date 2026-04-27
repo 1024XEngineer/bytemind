@@ -8,6 +8,7 @@ import (
 
 	"bytemind/internal/config"
 	"bytemind/internal/llm"
+	planpkg "bytemind/internal/plan"
 	"bytemind/internal/session"
 	"bytemind/internal/tools"
 )
@@ -149,6 +150,26 @@ func TestRunPromptWithInputPlanModeSetsGoalFromUserMessageWhenDisplayTextBlank(t
 
 	client := &fakeClient{
 		replies: []llm.Message{
+			{
+				Role: llm.RoleAssistant,
+				ToolCalls: []llm.ToolCall{{
+					ID:   "call-1",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name: "update_plan",
+						Arguments: `{
+							"summary":"Drafted the initial plan from the structured user prompt.",
+							"phase":"draft",
+							"decision_gaps":[],
+							"plan":[
+								{"step":"Inspect the relevant repo area","status":"pending"},
+								{"step":"Draft the implementation approach","status":"pending"},
+								{"step":"Define verification","status":"pending"}
+							]
+						}`,
+					},
+				}},
+			},
 			llm.NewAssistantTextMessage("drafted plan"),
 		},
 	}
@@ -156,7 +177,7 @@ func TestRunPromptWithInputPlanModeSetsGoalFromUserMessageWhenDisplayTextBlank(t
 		Workspace: workspace,
 		Config: config.Config{
 			Provider:      config.ProviderConfig{Model: "gpt-4o"},
-			MaxIterations: 2,
+			MaxIterations: 4,
 			Stream:        false,
 		},
 		Client:   client,
@@ -181,8 +202,11 @@ func TestRunPromptWithInputPlanModeSetsGoalFromUserMessageWhenDisplayTextBlank(t
 	if !strings.Contains(answer, "drafted plan") {
 		t.Fatalf("unexpected answer: %q", answer)
 	}
-	if !strings.Contains(answer, "Plan mode requires a structured plan") {
-		t.Fatalf("expected plan-mode reminder in answer, got %q", answer)
+	if strings.Contains(answer, planpkg.StructuredPlanReminder) {
+		t.Fatalf("expected structured plan repair flow instead of reminder-only answer, got %q", answer)
+	}
+	if !strings.Contains(answer, "<proposed_plan>") {
+		t.Fatalf("expected structured plan block in answer, got %q", answer)
 	}
 	if sess.Plan.Goal != "plan from structured prompt" {
 		t.Fatalf("expected plan goal from structured user message text, got %q", sess.Plan.Goal)

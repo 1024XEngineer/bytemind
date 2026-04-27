@@ -24,6 +24,8 @@ func LegacyProviderRuntimeConfig(cfg ProviderConfig) ProviderRuntimeConfig {
 		providerID = "openai"
 	case "anthropic":
 		providerID = "anthropic"
+	case "gemini":
+		providerID = "gemini"
 	}
 	cfg.Type = providerID
 	return ProviderRuntimeConfig{

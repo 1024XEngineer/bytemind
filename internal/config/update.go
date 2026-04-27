@@ -67,14 +67,14 @@ func upsertProviderValues(configPath string, values map[string]string) (string, 
 	if strings.TrimSpace(asString(providerSection["type"])) == "" {
 		providerSection["type"] = "openai-compatible"
 	}
-	if strings.TrimSpace(asString(providerSection["base_url"])) == "" {
-		providerSection["base_url"] = "https://api.openai.com/v1"
+	providerType := asString(providerSection["type"])
+	baseURL := asString(providerSection["base_url"])
+	if strings.TrimSpace(baseURL) == "" || usesOpenAIDefaultBaseURLForNativeProvider(providerType, baseURL) {
+		providerSection["base_url"] = defaultBaseURL(providerType)
 	}
-	if strings.TrimSpace(asString(providerSection["model"])) == "" {
-		providerSection["model"] = defaultModel(
-			asString(providerSection["type"]),
-			asString(providerSection["base_url"]),
-		)
+	model := asString(providerSection["model"])
+	if strings.TrimSpace(model) == "" || usesOpenAIDefaultModelForNativeProvider(providerType, model) {
+		providerSection["model"] = defaultModel(providerType, asString(providerSection["base_url"]))
 	}
 	raw["provider"] = providerSection
 
@@ -102,43 +102,37 @@ func upsertProviderValues(configPath string, values map[string]string) (string, 
 }
 
 func MutateMCPConfig(workspace, explicitPath string, mutator func(*MCPConfig) error) (Config, string, error) {
-	path, err := ResolveWritableConfigPathForWorkspace(workspace, explicitPath)
+	path, err := ResolveWritableMCPConfigPathForWorkspace(workspace, explicitPath)
 	if err != nil {
 		return Config{}, "", err
 	}
 	configDocumentMu.Lock()
 	defer configDocumentMu.Unlock()
 
-	raw, err := loadConfigDocument(path)
-	if err != nil {
-		return Config{}, "", err
-	}
-	cfg := Default(workspace)
-	if len(raw) > 0 {
-		payload, marshalErr := json.Marshal(raw)
-		if marshalErr != nil {
-			return Config{}, "", marshalErr
+	mcp := Default(workspace).MCP
+	if _, statErr := os.Stat(path); statErr == nil {
+		if err := mergeMCPConfigFromFile(path, &mcp); err != nil {
+			return Config{}, "", err
 		}
-		if unmarshalErr := json.Unmarshal(payload, &cfg); unmarshalErr != nil {
-			return Config{}, "", unmarshalErr
-		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return Config{}, "", statErr
 	}
-	if err := normalize(&cfg); err != nil {
+
+	if err := normalizeMCPConfig(&mcp); err != nil {
 		return Config{}, "", err
 	}
 	if mutator != nil {
-		if err := mutator(&cfg.MCP); err != nil {
+		if err := mutator(&mcp); err != nil {
 			return Config{}, "", err
 		}
 	}
-	if err := normalize(&cfg); err != nil {
+	if err := normalizeMCPConfig(&mcp); err != nil {
 		return Config{}, "", err
 	}
-	raw["mcp"] = cfg.MCP
-	if err := writeConfigDocument(path, raw); err != nil {
+	if err := writeConfigDocument(path, mcp); err != nil {
 		return Config{}, "", err
 	}
-	loaded, err := Load(workspace, path)
+	loaded, err := LoadWithMCPConfigPath(workspace, "", path)
 	if err != nil {
 		return Config{}, "", err
 	}
@@ -162,7 +156,7 @@ func loadConfigDocument(path string) (map[string]any, error) {
 	return nil, err
 }
 
-func writeConfigDocument(path string, raw map[string]any) error {
+func writeConfigDocument(path string, raw any) error {
 	encoded, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return err
@@ -225,6 +219,21 @@ func ResolveWritableConfigPathForWorkspace(workspace, explicit string) (string, 
 		return filepath.Join(workspace, ".bytemind", "config.json"), nil
 	}
 	return resolveWritableConfigPath("")
+}
+
+func ResolveWritableMCPConfigPathForWorkspace(workspace, explicit string) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		return filepath.Abs(explicit)
+	}
+	workspace = strings.TrimSpace(workspace)
+	if workspace != "" {
+		return filepath.Join(workspace, ".bytemind", "mcp.json"), nil
+	}
+	home, err := EnsureHomeLayout()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "mcp.json"), nil
 }
 
 func syncDirectory(path string) {

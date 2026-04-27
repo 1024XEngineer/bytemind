@@ -604,6 +604,11 @@ func loadRuntimeConfig(t *testing.T, workspace string) configpkg.Config {
 
 func writeRuntimeConfig(t *testing.T, workspace string, doc map[string]any) {
 	t.Helper()
+	mcpDoc, hasMCP := doc["mcp"]
+	if hasMCP {
+		delete(doc, "mcp")
+	}
+
 	path := filepath.Join(workspace, ".bytemind", "config.json")
 	data, err := json.Marshal(doc)
 	if err != nil {
@@ -614,6 +619,17 @@ func writeRuntimeConfig(t *testing.T, workspace string, doc map[string]any) {
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("write config failed: %v", err)
+	}
+
+	if hasMCP {
+		mcpPath := filepath.Join(workspace, ".bytemind", "mcp.json")
+		mcpData, err := json.Marshal(mcpDoc)
+		if err != nil {
+			t.Fatalf("marshal mcp config failed: %v", err)
+		}
+		if err := os.WriteFile(mcpPath, mcpData, 0o644); err != nil {
+			t.Fatalf("write mcp config failed: %v", err)
+		}
 	}
 }
 

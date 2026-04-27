@@ -78,7 +78,7 @@ func TestShouldRenderStructuredPlanBlockShowsConvergedPlan(t *testing.T) {
 	}
 }
 
-func TestNormalizeStateClearsActiveChoiceWhenDecisionGapsClose(t *testing.T) {
+func TestNormalizeStateKeepsClarifyChoiceWhenConvergedStateStillContainsIt(t *testing.T) {
 	state := NormalizeState(State{
 		Phase:        PhaseConvergeReady,
 		Steps:        []Step{{Title: "Inspect prompt flow", Status: StepPending}},
@@ -95,8 +95,14 @@ func TestNormalizeStateClearsActiveChoiceWhenDecisionGapsClose(t *testing.T) {
 		RiskRollbackDefined: true,
 		VerificationDefined: true,
 	})
-	if state.ActiveChoice != nil {
-		t.Fatalf("expected active choice to clear after convergence, got %#v", state.ActiveChoice)
+	if state.ActiveChoice == nil {
+		t.Fatalf("expected active choice to survive inconsistent convergence state, got %#v", state)
+	}
+	if state.Phase != PhaseClarify {
+		t.Fatalf("expected phase to fall back to clarify, got %q", state.Phase)
+	}
+	if len(state.DecisionGaps) != 1 || state.DecisionGaps[0] != "Pick the frontend stack" {
+		t.Fatalf("expected decision gap to be restored from active choice, got %#v", state.DecisionGaps)
 	}
 }
 

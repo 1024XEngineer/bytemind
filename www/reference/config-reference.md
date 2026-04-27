@@ -10,7 +10,7 @@ Model provider configuration.
 
 | Field               | Type   | Description                                 | Default                     |
 | ------------------- | ------ | ------------------------------------------- | --------------------------- |
-| `type`              | string | `openai-compatible` or `anthropic`          | `openai-compatible`         |
+| `type`              | string | `openai-compatible`, `anthropic`, or `gemini` | `openai-compatible`       |
 | `base_url`          | string | API endpoint URL                            | `https://api.openai.com/v1` |
 | `model`             | string | Model ID to use                             | `gpt-5.4-mini`              |
 | `api_key`           | string | API key (plain text — prefer `api_key_env`) | —                           |

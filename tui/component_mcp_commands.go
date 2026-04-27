@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	mcpUsage = "usage: /mcp <list|show <id>|setup <id>|help>"
+	mcpUsage = "usage: /mcp <list|show <id>|help>"
 )
 
 func (m *model) runMCPCommand(input string, fields []string) error {
@@ -26,9 +26,6 @@ func (m *model) runMCPCommand(input string, fields []string) error {
 func (m *model) runMCPCommandDispatch(input string, fields []string) error {
 	if m == nil {
 		return fmt.Errorf("model is unavailable")
-	}
-	if len(fields) >= 2 && strings.EqualFold(strings.TrimSpace(fields[1]), "setup") {
-		return m.runMCPSetupSlashCommand(input, fields)
 	}
 	if m.async == nil {
 		return m.runMCPCommand(input, fields)
@@ -105,9 +102,8 @@ func formatMCPHelpText() string {
 		mcpUsage,
 		"- /mcp list",
 		"- /mcp show <id>",
-		"- /mcp setup <id> [--cmd <command>] [--args a,b] [--env K=V[,K2=V2]]",
-		"  runs Add -> Test -> Enable -> Reload in one command.",
-		"  `github` id uses built-in preset when --cmd is omitted.",
+		"- Configure MCP servers by editing `.bytemind/mcp.json` in the workspace.",
+		"- Supported file shape: `{ \"enabled\": true, \"servers\": [...] }`.",
 		"- /mcp help",
 	}, "\n")
 }

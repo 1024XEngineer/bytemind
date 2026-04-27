@@ -1,6 +1,6 @@
 # Provider Setup
 
-ByteMind supports any model provider that exposes an OpenAI-compatible API, plus Anthropic's native API.
+ByteMind supports any model provider that exposes an OpenAI-compatible API, plus Anthropic and Gemini native APIs.
 
 ## OpenAI
 
@@ -25,6 +25,19 @@ ByteMind supports any model provider that exposes an OpenAI-compatible API, plus
     "model": "claude-sonnet-4-20250514",
     "api_key_env": "ANTHROPIC_API_KEY",
     "anthropic_version": "2023-06-01"
+  }
+}
+```
+
+## Gemini
+
+```json
+{
+  "provider": {
+    "type": "gemini",
+    "base_url": "https://generativelanguage.googleapis.com/v1beta",
+    "model": "gemini-2.5-flash",
+    "api_key_env": "GEMINI_API_KEY"
   }
 }
 ```

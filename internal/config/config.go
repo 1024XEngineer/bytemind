@@ -48,7 +48,7 @@ type Config struct {
 	TokenQuota        int                   `json:"token_quota"`
 	TokenUsage        TokenUsageConfig      `json:"token_usage"`
 	ContextBudget     ContextBudgetConfig   `json:"context_budget"`
-	MCP               MCPConfig             `json:"mcp"`
+	MCP               MCPConfig             `json:"-"`
 }
 
 type UpdateCheckConfig struct {
@@ -198,6 +198,10 @@ func Default(workspace string) Config {
 }
 
 func Load(workspace, configPath string) (Config, error) {
+	return LoadWithMCPConfigPath(workspace, configPath, "")
+}
+
+func LoadWithMCPConfigPath(workspace, configPath, mcpConfigPath string) (Config, error) {
 	cfg := Default(workspace)
 
 	if strings.TrimSpace(configPath) != "" {
@@ -219,6 +223,29 @@ func Load(workspace, configPath string) (Config, error) {
 
 		if projectConfig := resolveProjectConfigPath(workspace); projectConfig != "" {
 			if err := mergeConfigFromFile(projectConfig, &cfg); err != nil {
+				return cfg, err
+			}
+		}
+	}
+
+	if strings.TrimSpace(mcpConfigPath) != "" {
+		path, err := filepath.Abs(mcpConfigPath)
+		if err != nil {
+			return cfg, err
+		}
+		if err := mergeMCPConfigFromFile(path, &cfg.MCP); err != nil {
+			return cfg, err
+		}
+	} else {
+		if userMCPConfig, err := resolveUserMCPConfigPath(); err != nil {
+			return cfg, err
+		} else if userMCPConfig != "" {
+			if err := mergeMCPConfigFromFile(userMCPConfig, &cfg.MCP); err != nil {
+				return cfg, err
+			}
+		}
+		if projectMCPConfig := resolveProjectMCPConfigPath(workspace); projectMCPConfig != "" {
+			if err := mergeMCPConfigFromFile(projectMCPConfig, &cfg.MCP); err != nil {
 				return cfg, err
 			}
 		}
@@ -330,11 +357,6 @@ func ensureDefaultConfigFile(home string) error {
 			CriticalRatio:    DefaultContextBudgetCriticalRatio,
 			MaxReactiveRetry: DefaultContextBudgetMaxReactiveRetry,
 		},
-		MCP: MCPConfig{
-			Enabled:        false,
-			SyncTTLSeconds: DefaultMCPSyncTTLSeconds,
-			Servers:        nil,
-		},
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
@@ -371,6 +393,18 @@ func resolveProjectConfigPath(workspace string) string {
 	return ""
 }
 
+func resolveProjectMCPConfigPath(workspace string) string {
+	candidates := []string{
+		filepath.Join(workspace, ".bytemind", "mcp.json"),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
 func resolveUserConfigPath() (string, error) {
 	home, err := ResolveHomeDir()
 	if err != nil {
@@ -383,11 +417,48 @@ func resolveUserConfigPath() (string, error) {
 	return "", nil
 }
 
+func resolveUserMCPConfigPath() (string, error) {
+	home, err := ResolveHomeDir()
+	if err != nil {
+		return "", err
+	}
+	candidate := filepath.Join(home, "mcp.json")
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate, nil
+	}
+	return "", nil
+}
+
 func mergeConfigFromFile(path string, cfg *Config) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+func mergeMCPConfigFromFile(path string, cfg *MCPConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return nil
+	}
+
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err == nil {
+		if _, ok := root["mcp"]; ok {
+			return errors.New("mcp config files must use top-level MCP fields; move mcp.* to the root")
+		}
+	}
+
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return err
 	}
@@ -461,13 +532,13 @@ func normalize(cfg *Config) error {
 			cfg.Provider.Type = "openai-compatible"
 		}
 	}
-	if cfg.Provider.BaseURL == "" {
+	if cfg.Provider.BaseURL == "" || usesOpenAIDefaultBaseURLForNativeProvider(cfg.Provider.Type, cfg.Provider.BaseURL) {
 		cfg.Provider.BaseURL = defaultBaseURL(cfg.Provider.Type)
 	}
 	if strings.TrimSpace(cfg.Provider.BaseURL) == "" {
 		return errors.New("provider.base_url is required")
 	}
-	if strings.TrimSpace(cfg.Provider.Model) == "" {
+	if strings.TrimSpace(cfg.Provider.Model) == "" || usesOpenAIDefaultModelForNativeProvider(cfg.Provider.Type, cfg.Provider.Model) {
 		cfg.Provider.Model = defaultModel(cfg.Provider.Type, cfg.Provider.BaseURL)
 		if strings.TrimSpace(cfg.Provider.Model) == "" {
 			return errors.New("provider.model is required")
@@ -566,7 +637,7 @@ func normalize(cfg *Config) error {
 		cfg.MaxIterations = 32
 	}
 	if !isSupportedProviderType(cfg.Provider.Type) {
-		return errors.New("provider.type must be one of openai-compatible, openai, anthropic (or leave it empty with provider.auto_detect_type=true)")
+		return errors.New("provider.type must be one of openai-compatible, openai, anthropic, gemini (or leave it empty with provider.auto_detect_type=true)")
 	}
 	switch cfg.ApprovalPolicy {
 	case "", "on-request":
@@ -820,6 +891,8 @@ func normalizeProviderType(value string) string {
 		return "openai"
 	case "anthropic":
 		return "anthropic"
+	case "gemini", "google", "google-gemini":
+		return "gemini"
 	default:
 		return strings.ToLower(strings.TrimSpace(value))
 	}
@@ -842,6 +915,12 @@ func detectProviderType(cfg ProviderConfig) string {
 	if authHeader == "x-api-key" && strings.Contains(apiPath, "messages") {
 		return "anthropic"
 	}
+	if authHeader == "x-goog-api-key" || hasHeaderName(cfg.ExtraHeaders, "x-goog-api-key") {
+		return "gemini"
+	}
+	if strings.Contains(baseURL, "generativelanguage.googleapis.com") && !strings.Contains(baseURL, "/openai") {
+		return "gemini"
+	}
 	return "openai-compatible"
 }
 
@@ -856,7 +935,7 @@ func hasHeaderName(headers map[string]string, target string) bool {
 
 func isSupportedProviderType(value string) bool {
 	switch value {
-	case "openai-compatible", "openai", "anthropic":
+	case "openai-compatible", "openai", "anthropic", "gemini":
 		return true
 	default:
 		return false
@@ -867,8 +946,28 @@ func defaultBaseURL(providerType string) string {
 	switch normalizeProviderType(providerType) {
 	case "anthropic":
 		return "https://api.anthropic.com"
+	case "gemini":
+		return "https://generativelanguage.googleapis.com/v1beta"
 	default:
 		return "https://api.openai.com/v1"
+	}
+}
+
+func usesOpenAIDefaultBaseURLForNativeProvider(providerType, baseURL string) bool {
+	switch normalizeProviderType(providerType) {
+	case "anthropic", "gemini":
+		return strings.EqualFold(strings.TrimRight(strings.TrimSpace(baseURL), "/"), "https://api.openai.com/v1")
+	default:
+		return false
+	}
+}
+
+func usesOpenAIDefaultModelForNativeProvider(providerType, model string) bool {
+	switch normalizeProviderType(providerType) {
+	case "anthropic", "gemini":
+		return strings.TrimSpace(model) == defaultModelID
+	default:
+		return false
 	}
 }
 
@@ -879,6 +978,8 @@ func defaultModel(providerType, baseURL string) string {
 			return "deepseek-chat"
 		}
 		return defaultModelID
+	case "gemini":
+		return "gemini-2.5-flash"
 	default:
 		return ""
 	}

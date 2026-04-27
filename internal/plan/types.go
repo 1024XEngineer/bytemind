@@ -324,6 +324,7 @@ func NormalizeState(state State) State {
 	state.DecisionLog = normalizeDecisionLog(state.DecisionLog)
 	state.DecisionGaps = trimStrings(state.DecisionGaps)
 	state.ActiveChoice = normalizeActiveChoice(state.ActiveChoice)
+	state = reconcileClarifyState(state)
 	if len(state.Steps) == 0 {
 		state.Steps = nil
 		if len(state.DecisionGaps) == 0 || state.Phase == PhaseConvergeReady || state.Phase == PhaseApprovedToBuild {
@@ -375,6 +376,40 @@ func NormalizeState(state State) State {
 		state.ActiveChoice = nil
 	}
 	return state
+}
+
+func reconcileClarifyState(state State) State {
+	if state.ActiveChoice == nil || !activeChoiceKeepsClarifyPhase(state.ActiveChoice) {
+		return state
+	}
+	if len(state.DecisionGaps) == 0 {
+		if gap := activeChoiceDecisionGap(state.ActiveChoice); gap != "" {
+			state.DecisionGaps = []string{gap}
+		}
+	}
+	switch state.Phase {
+	case PhaseNone, PhaseConvergeReady, PhaseApprovedToBuild:
+		state.Phase = PhaseClarify
+	}
+	return state
+}
+
+func activeChoiceKeepsClarifyPhase(choice *ActiveChoice) bool {
+	if choice == nil {
+		return false
+	}
+	kind := strings.ToLower(strings.TrimSpace(choice.Kind))
+	return kind == "" || kind == "clarify"
+}
+
+func activeChoiceDecisionGap(choice *ActiveChoice) string {
+	if choice == nil {
+		return ""
+	}
+	if gap := strings.TrimSpace(choice.GapKey); gap != "" {
+		return gap
+	}
+	return strings.TrimSpace(choice.Question)
 }
 
 func trimStrings(items []string) []string {

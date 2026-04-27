@@ -2,11 +2,21 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	planpkg "bytemind/internal/plan"
 )
+
+var streamTurnIntentTagPattern = regexp.MustCompile(`(?is)<turn_intent>\s*[a-z_]*\s*</turn_intent>|</?turn_intent>\s*`)
+
+func stripStreamControlTags(delta string) string {
+	if strings.TrimSpace(delta) == "" {
+		return delta
+	}
+	return streamTurnIntentTagPattern.ReplaceAllString(delta, "")
+}
 
 func (m model) shouldKeepStreamingIndexOnRunFinished() bool {
 	if m.streamingIndex < 0 || m.streamingIndex >= len(m.chatItems) {
@@ -21,6 +31,7 @@ func (m model) shouldKeepStreamingIndexOnRunFinished() bool {
 }
 
 func (m *model) appendAssistantDelta(delta string) {
+	delta = stripStreamControlTags(delta)
 	if delta == "" {
 		return
 	}

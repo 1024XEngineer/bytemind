@@ -412,8 +412,8 @@ func TestRunPromptUsesSessionModeWhenModeArgEmpty(t *testing.T) {
 	if _, err := runner.RunPrompt(context.Background(), sess, "draft a plan", "", io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if len(client.requests) != 1 {
-		t.Fatalf("expected one LLM request, got %d", len(client.requests))
+	if len(client.requests) == 0 {
+		t.Fatal("expected at least one LLM request")
 	}
 	systemPrompt := client.requests[0].Messages[0].Content
 	for _, want := range []string{"[Current Mode]", "plan", "mode: plan"} {

@@ -38,7 +38,39 @@ func TestShouldRepairPlanClarifyTurnIgnoresExecutionActionChoices(t *testing.T) 
 	}
 }
 
-func TestRunPromptRepairsInlineClarifyChoiceWhenDecisionGapsWereDropped(t *testing.T) {
+func TestLooksLikeExecutionActionChoicePromptMatchesChineseConvergedActions(t *testing.T) {
+	text := "可选下一步：\nA. 切到 Build 模式，开始执行\nB. 继续微调计划"
+	if !looksLikeExecutionActionChoicePrompt(text) {
+		t.Fatalf("expected converged Chinese action choices to be detected, got %q", text)
+	}
+}
+
+func TestLooksLikePlanDecisionAcknowledgementMatchesChineseChoiceAcknowledgement(t *testing.T) {
+	text := "已记录，采用 B：Streamlit。接下来切到 build。"
+	if !looksLikePlanDecisionAcknowledgement(text) {
+		t.Fatalf("expected Chinese decision acknowledgement to be detected, got %q", text)
+	}
+}
+
+func TestShouldRepairPlanClarifyTurnRepairsInlineChoicesEvenWhenStateLooksConverged(t *testing.T) {
+	state := planpkg.State{
+		Goal:                "Ship the feature",
+		Phase:               planpkg.PhaseConvergeReady,
+		Steps:               []planpkg.Step{{Title: "Implement the feature", Status: planpkg.StepPending}},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+	}
+	reply := llm.Message{
+		Role:    llm.RoleAssistant,
+		Content: "请直接选一个方案：A（标准库）、B（Flask），或 C（自定义约束）。",
+	}
+	if !shouldRepairPlanClarifyTurn(planpkg.ModePlan, state, turnIntentAskUser, reply) {
+		t.Fatalf("expected non-execution inline choices to trigger clarify repair even from a false converge state")
+	}
+}
+
+func TestRunPromptRepairsInlineClarifyChoiceWhenStateIncorrectlyLooksConverged(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
@@ -56,19 +88,12 @@ func TestRunPromptRepairsInlineClarifyChoiceWhenDecisionGapsWereDropped(t *testi
 				Function: llm.ToolFunctionCall{
 					Name: "update_plan",
 					Arguments: `{
-						"summary":"Need to lock the frontend stack before the plan converges.",
-						"phase":"clarify",
+						"summary":"The plan looks converged, but the frontend stack is still unresolved.",
+						"phase":"converge_ready",
+						"scope_defined":true,
+						"risk_and_rollback_defined":true,
+						"verification_defined":true,
 						"decision_gaps":[],
-						"active_choice":{
-							"id":"frontend_stack",
-							"kind":"clarify",
-							"question":"Choose the frontend stack.",
-							"options":[
-								{"id":"stdlib","shortcut":"A","title":"Standard library only","recommended":true},
-								{"id":"flask","shortcut":"B","title":"Flask"},
-								{"id":"custom","shortcut":"C","title":"Custom constraints","freeform":true}
-							]
-						},
 						"plan":[
 							{"step":"Choose the frontend stack","status":"pending"},
 							{"step":"Draft the implementation plan","status":"pending"},
@@ -138,7 +163,7 @@ func TestRunPromptRepairsInlineClarifyChoiceWhenDecisionGapsWereDropped(t *testi
 		t.Fatal(err)
 	}
 	if len(client.requests) != 4 {
-		t.Fatalf("expected four requests (initial plan + bad clarify + repair + ask_user), got %d", len(client.requests))
+		t.Fatalf("expected four requests (initial plan + bad inline choice + repair + ask_user), got %d", len(client.requests))
 	}
 
 	repairTurnMessages := client.requests[2].Messages
@@ -149,6 +174,9 @@ func TestRunPromptRepairsInlineClarifyChoiceWhenDecisionGapsWereDropped(t *testi
 
 	if sess.Plan.ActiveChoice == nil {
 		t.Fatalf("expected session plan to store active_choice after repair, got %#v", sess.Plan)
+	}
+	if sess.Plan.Phase != planpkg.PhaseClarify {
+		t.Fatalf("expected repaired plan to return to clarify phase, got %#v", sess.Plan.Phase)
 	}
 	if len(sess.Plan.DecisionGaps) != 1 || sess.Plan.DecisionGaps[0] != "Choose the frontend stack." {
 		t.Fatalf("expected repaired plan to restore the missing decision gap, got %#v", sess.Plan.DecisionGaps)

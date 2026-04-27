@@ -87,10 +87,6 @@ func writeMCPCLITestConfig(t *testing.T, workspace string) {
 			"model":    "gpt-5.4-mini",
 			"api_key":  "test-key",
 		},
-		"mcp": map[string]any{
-			"enabled": true,
-			"servers": []any{},
-		},
 	}
 	path := filepath.Join(workspace, ".bytemind", "config.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

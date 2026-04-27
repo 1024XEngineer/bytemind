@@ -108,3 +108,29 @@ func TestCheckAvailabilityUsesAnthropicHeaders(t *testing.T) {
 		t.Fatalf("expected ready=true, got %+v", result)
 	}
 }
+
+func TestCheckAvailabilityUsesGeminiHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			http.NotFound(w, r)
+			return
+		}
+		if got := r.Header.Get("x-goog-api-key"); got != "gem-key" {
+			http.Error(w, "bad key", http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	result := CheckAvailability(context.Background(), config.ProviderConfig{
+		Type:    "gemini",
+		BaseURL: server.URL,
+		Model:   "gemini-2.5-flash",
+		APIKey:  "gem-key",
+	})
+
+	if !result.Ready {
+		t.Fatalf("expected ready=true, got %+v", result)
+	}
+}

@@ -56,7 +56,8 @@ func (e *defaultEngine) executeToolCall(
 	if runner.policyGateway == nil {
 		return fmt.Errorf("policy gateway is unavailable")
 	}
-	if runner.runtime == nil {
+	executeDirectly := shouldExecuteToolDirectly(call.Function.Name)
+	if !executeDirectly && runner.runtime == nil {
 		return fmt.Errorf("runtime gateway is unavailable")
 	}
 
@@ -126,69 +127,85 @@ func (e *defaultEngine) executeToolCall(
 	}
 
 	execStartedAt := time.Now()
-	runtimeMetadata := map[string]string{
-		"tool_name": call.Function.Name,
+	executeTool := func(execCtx context.Context) (string, error) {
+		sandboxRoots := buildSandboxRoots(runner.workspace, runner.config.WritableRoots)
+		return runner.executor.ExecuteForMode(execCtx, runMode, call.Function.Name, call.Function.Arguments, &tools.ExecutionContext{
+			Workspace:         runner.workspace,
+			WritableRoots:     runner.config.WritableRoots,
+			ApprovalPolicy:    runner.config.ApprovalPolicy,
+			ApprovalMode:      runner.config.ApprovalMode,
+			AwayPolicy:        runner.config.AwayPolicy,
+			SandboxEnabled:    runner.config.SandboxEnabled,
+			SystemSandboxMode: runner.config.SystemSandboxMode,
+			LeaseID:           sandboxLeaseID,
+			RunID:             sandboxRunID,
+			FSRead:            append([]string(nil), sandboxRoots...),
+			FSWrite:           append([]string(nil), sandboxRoots...),
+			ExecAllowlist:     toSandboxExecRules(runner.config.ExecAllowlist),
+			NetworkAllowlist:  toSandboxNetworkRules(runner.config.NetworkAllowlist),
+			Approval:          approval,
+			Session:           sess,
+			TaskManager:       runner.taskManager,
+			Extensions:        runner.extensions,
+			Mode:              runMode,
+			Stdin:             runner.stdin,
+			Stdout:            runner.stdout,
+			AllowedTools:      allowedTools,
+			DeniedTools:       deniedTools,
+		})
 	}
-	appendSandboxAuditContext(runtimeMetadata, sandboxAudit)
-	execution, runtimeErr := runner.runtime.RunSync(ctx, RuntimeTaskRequest{
-		SessionID: sessionID,
-		TraceID:   traceID,
-		Name:      call.Function.Name,
-		Kind:      "tool",
-		Metadata:  runtimeMetadata,
-		Execute: func(execCtx context.Context) ([]byte, error) {
-			sandboxRoots := buildSandboxRoots(runner.workspace, runner.config.WritableRoots)
-			output, err := runner.executor.ExecuteForMode(execCtx, runMode, call.Function.Name, call.Function.Arguments, &tools.ExecutionContext{
-				Workspace:         runner.workspace,
-				WritableRoots:     runner.config.WritableRoots,
-				ApprovalPolicy:    runner.config.ApprovalPolicy,
-				ApprovalMode:      runner.config.ApprovalMode,
-				AwayPolicy:        runner.config.AwayPolicy,
-				SandboxEnabled:    runner.config.SandboxEnabled,
-				SystemSandboxMode: runner.config.SystemSandboxMode,
-				LeaseID:           sandboxLeaseID,
-				RunID:             sandboxRunID,
-				FSRead:            append([]string(nil), sandboxRoots...),
-				FSWrite:           append([]string(nil), sandboxRoots...),
-				ExecAllowlist:     toSandboxExecRules(runner.config.ExecAllowlist),
-				NetworkAllowlist:  toSandboxNetworkRules(runner.config.NetworkAllowlist),
-				Approval:          approval,
-				Session:           sess,
-				TaskManager:       runner.taskManager,
-				Extensions:        runner.extensions,
-				Mode:              runMode,
-				Stdin:             runner.stdin,
-				Stdout:            runner.stdout,
-				AllowedTools:      allowedTools,
-				DeniedTools:       deniedTools,
-			})
-			return []byte(output), err
-		},
-		OnTaskStateChanged: func(task runtimepkg.Task) {
-			runner.appendTaskStateAudit(
-				ctx,
-				sessionID,
-				traceID,
-				call.Function.Name,
-				sandboxAudit,
-				task,
-			)
-		},
-	})
 
-	result := string(execution.Result.Output)
-	execErr := execution.ExecutionError
-	if runtimeErr != nil && execution.Result.TaskID == "" {
-		execErr = runtimeErr
-	}
-	if execErr == nil && execution.Result.TaskID != "" && execution.Result.Status != corepkg.TaskCompleted {
-		execErr = runtimeTaskResultError{
-			status:    execution.Result.Status,
-			errorCode: execution.Result.ErrorCode,
+	var (
+		result    string
+		execErr   error
+		taskID    corepkg.TaskID
+		errorCode string
+	)
+	if executeDirectly {
+		result, execErr = executeTool(ctx)
+	} else {
+		runtimeMetadata := map[string]string{
+			"tool_name": call.Function.Name,
 		}
-	}
-	if execErr == nil && runtimeErr != nil {
-		execErr = runtimeErr
+		appendSandboxAuditContext(runtimeMetadata, sandboxAudit)
+		execution, runtimeErr := runner.runtime.RunSync(ctx, RuntimeTaskRequest{
+			SessionID: sessionID,
+			TraceID:   traceID,
+			Name:      call.Function.Name,
+			Kind:      "tool",
+			Metadata:  runtimeMetadata,
+			Execute: func(execCtx context.Context) ([]byte, error) {
+				output, err := executeTool(execCtx)
+				return []byte(output), err
+			},
+			OnTaskStateChanged: func(task runtimepkg.Task) {
+				runner.appendTaskStateAudit(
+					ctx,
+					sessionID,
+					traceID,
+					call.Function.Name,
+					sandboxAudit,
+					task,
+				)
+			},
+		})
+
+		taskID = execution.TaskID
+		errorCode = execution.Result.ErrorCode
+		result = string(execution.Result.Output)
+		execErr = execution.ExecutionError
+		if runtimeErr != nil && execution.Result.TaskID == "" {
+			execErr = runtimeErr
+		}
+		if execErr == nil && execution.Result.TaskID != "" && execution.Result.Status != corepkg.TaskCompleted {
+			execErr = runtimeTaskResultError{
+				status:    execution.Result.Status,
+				errorCode: execution.Result.ErrorCode,
+			}
+		}
+		if execErr == nil && runtimeErr != nil {
+			execErr = runtimeErr
+		}
 	}
 
 	if execErr != nil {
@@ -239,13 +256,13 @@ func (e *defaultEngine) executeToolCall(
 		"sandbox_run_id":   sandboxRunID,
 	})
 	appendSandboxAuditContext(metadata, sandboxAudit)
-	if execution.Result.ErrorCode != "" {
-		metadata["error_code"] = execution.Result.ErrorCode
+	if errorCode != "" {
+		metadata["error_code"] = errorCode
 	}
 	appendSystemSandboxAuditMetadata(metadata, result)
 	runner.appendAudit(ctx, storagepkg.AuditEvent{
 		SessionID: sessionID,
-		TaskID:    execution.TaskID,
+		TaskID:    taskID,
 		TraceID:   traceID,
 		Actor:     "agent",
 		Action:    "tool_execute_result",
@@ -292,6 +309,16 @@ func (e *defaultEngine) toolSafetyClass(name string) tools.SafetyClass {
 		return tools.SafetyClassModerate
 	}
 	return spec.SafetyClass
+}
+
+func shouldExecuteToolDirectly(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "list_files", "read_file", "search_text", "web_search", "web_fetch",
+		"write_file", "replace_in_file", "apply_patch", "update_plan":
+		return true
+	default:
+		return false
+	}
 }
 
 func (e *defaultEngine) handleRejectedToolCall(

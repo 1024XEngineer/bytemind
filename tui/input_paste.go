@@ -85,6 +85,12 @@ func schedulePasteBurstSettle(generation int) tea.Cmd {
 	})
 }
 
+func scheduleHiddenPasteProbeFlush(id int) tea.Cmd {
+	return tea.Tick(hiddenPasteProbeDelay, func(time.Time) tea.Msg {
+		return hiddenPasteProbeFlushMsg{ID: id}
+	})
+}
+
 func (m *model) touchPasteBurst(source string) int {
 	if m == nil {
 		return 0
@@ -423,6 +429,50 @@ func (m *model) clearPasteSession() {
 	m.clearPasteBurstCandidate()
 }
 
+func (m *model) clearHiddenPasteProbe() {
+	if m == nil {
+		return
+	}
+	m.hiddenPasteProbe = hiddenPasteProbeState{}
+}
+
+func (m *model) startHiddenPasteProbe(fragment, clipboardText string) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	now := time.Now()
+	id := m.hiddenPasteProbe.flushID + 1
+	if id <= 0 {
+		id = 1
+	}
+	m.hiddenPasteProbe = hiddenPasteProbeState{
+		active:      true,
+		baseInput:   m.input.Value(),
+		clipboard:   clipboardText,
+		buffered:    fragment,
+		startedAt:   now,
+		lastEventAt: now,
+		flushID:     id,
+	}
+	return scheduleHiddenPasteProbeFlush(id)
+}
+
+func (m *model) flushHiddenPasteProbeToInput() {
+	if m == nil || !m.hiddenPasteProbe.active {
+		return
+	}
+	probe := m.hiddenPasteProbe
+	m.clearHiddenPasteProbe()
+	if strings.TrimSpace(probe.buffered) == "" {
+		return
+	}
+	m.setInputValue(probe.baseInput + probe.buffered)
+	now := time.Now()
+	m.lastInputAt = now
+	m.inputBurstBaseValue = probe.baseInput
+	m.inputBurstSize = max(1, len([]rune(strings.TrimSpace(probe.buffered))))
+}
+
 func (m *model) readClipboardTextForPaste() (string, bool) {
 	if m == nil || m.clipboardRead == nil {
 		return "", false
@@ -473,6 +523,16 @@ func (m *model) clearPasteConfirmPending() {
 	}
 	m.pasteConfirmPending = false
 	m.pasteSubmitGuardUntil = time.Time{}
+}
+
+func (m *model) releasePasteSubmitSuppression() {
+	if m == nil {
+		return
+	}
+	m.clearPasteConfirmPending()
+	m.lastPasteAt = time.Time{}
+	m.clearPasteBurstCapture()
+	m.clearPasteBurstCandidate()
 }
 
 func (m *model) hasActivePasteSession() bool {
@@ -600,6 +660,7 @@ func (m model) handlePastePayload(payload string) (tea.Model, tea.Cmd) {
 		m.syncInputOverlays()
 		return m, nil
 	}
+	m.beginOrAppendPasteTransaction(cleaned, "paste-payload")
 	return m, m.ingestPasteFragment(cleaned, "paste-payload")
 }
 
@@ -637,6 +698,9 @@ func (m *model) shouldArmClipboardCaptureFromImplicitMutation(before, after, sou
 	}
 	insertedRunes := len([]rune(inserted))
 	if insertedRunes >= clipboardCaptureMinPrefixRunes {
+		return true
+	}
+	if allowsEarlyClipboardCapture(inserted) {
 		return true
 	}
 	return insertedRunes == 1 && gap <= clipboardCaptureRapidRuneGap
@@ -680,8 +744,9 @@ func (m *model) tryStartClipboardPasteCapture(before, after, source string) (str
 	consumedRunes := 0
 	insertedRunes := len([]rune(normalizedInserted))
 	if normalizedInserted != "" &&
-		insertedRunes >= clipboardCaptureMinPrefixRunes &&
-		strings.HasPrefix(normalizedClipboard, normalizedInserted) {
+		strings.HasPrefix(normalizedClipboard, normalizedInserted) &&
+		(insertedRunes >= clipboardCaptureMinPrefixRunes ||
+			allowsEarlyClipboardCapture(normalizedInserted)) {
 		consumedRunes = insertedRunes
 		buildReplacement = func(marker string) string {
 			return after[:prefix] + marker + after[len(after)-suffix:]
@@ -691,13 +756,20 @@ func (m *model) tryStartClipboardPasteCapture(before, after, source string) (str
 		normalizedAfter := normalizeNewlines(strings.ReplaceAll(after, ctrlVMarkerRune, ""))
 		beforeMatched := longestClipboardPrefixSuffixLen(normalizedBefore, normalizedClipboard)
 		afterMatched := longestClipboardPrefixSuffixLen(normalizedAfter, normalizedClipboard)
-		if afterMatched < clipboardCaptureMinPrefixRunes || afterMatched <= beforeMatched {
+		matchedPrefix := clipboardPrefixRunes(normalizedClipboard, afterMatched)
+		if afterMatched <= beforeMatched {
+			return after, "", false
+		}
+		if afterMatched < clipboardCaptureMinPrefixRunes && !allowsEarlyClipboardCapture(matchedPrefix) {
+			return after, "", false
+		}
+		afterRunes := []rune(after)
+		if afterMatched > len(afterRunes) {
 			return after, "", false
 		}
 		consumedRunes = afterMatched
 		buildReplacement = func(marker string) string {
-			keep := suffixRunes(after, len([]rune(normalizedAfter))-afterMatched)
-			return marker + keep
+			return string(afterRunes[:len(afterRunes)-afterMatched]) + marker
 		}
 	}
 
@@ -713,6 +785,15 @@ func (m *model) tryStartClipboardPasteCapture(before, after, source string) (str
 	return updated, note, true
 }
 
+func allowsEarlyClipboardCapture(fragment string) bool {
+	fragment = strings.TrimSpace(fragment)
+	if fragment == "" {
+		return false
+	}
+	runes := len([]rune(fragment))
+	return runes >= 2 && runes < clipboardCaptureMinPrefixRunes && len(fragment) >= clipboardCaptureMinPrefixRunes
+}
+
 func longestClipboardPrefixSuffixLen(value, clipboard string) int {
 	valueRunes := []rune(value)
 	clipRunes := []rune(clipboard)
@@ -725,7 +806,7 @@ func longestClipboardPrefixSuffixLen(value, clipboard string) int {
 	return 0
 }
 
-func suffixRunes(value string, count int) string {
+func clipboardPrefixRunes(value string, count int) string {
 	if count <= 0 {
 		return ""
 	}
@@ -733,7 +814,7 @@ func suffixRunes(value string, count int) string {
 	if count >= len(runes) {
 		return value
 	}
-	return string(runes[len(runes)-count:])
+	return string(runes[:count])
 }
 
 func (m *model) upsertVirtualPastePart(pasteID, placeholder string) {

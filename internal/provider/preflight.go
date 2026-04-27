@@ -112,6 +112,10 @@ func preflightRequest(cfg config.ProviderConfig, apiKey string) (string, map[str
 			"x-api-key":         apiKey,
 			"anthropic-version": version,
 		}
+	case "gemini":
+		return baseURL + "/models", map[string]string{
+			"x-goog-api-key": apiKey,
+		}
 	default:
 		return baseURL + "/models", map[string]string{
 			"Authorization": "Bearer " + apiKey,

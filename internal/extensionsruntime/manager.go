@@ -18,9 +18,10 @@ import (
 type Manager struct {
 	mu sync.RWMutex
 
-	workspace  string
-	configPath string
-	base       extensionspkg.Manager
+	workspace     string
+	configPath    string
+	mcpConfigPath string
+	base          extensionspkg.Manager
 
 	disabledMCP map[string]struct{}
 	entries     map[string]*mcpEntry
@@ -36,15 +37,20 @@ type mcpEntry struct {
 }
 
 func NewManager(workspace, configPath string, base extensionspkg.Manager, cfg configpkg.Config) *Manager {
+	return NewManagerWithMCPConfigPath(workspace, configPath, "", base, cfg)
+}
+
+func NewManagerWithMCPConfigPath(workspace, configPath, mcpConfigPath string, base extensionspkg.Manager, cfg configpkg.Config) *Manager {
 	if base == nil {
 		base = extensionspkg.NewManager(workspace)
 	}
 	manager := &Manager{
-		workspace:   strings.TrimSpace(workspace),
-		configPath:  strings.TrimSpace(configPath),
-		base:        base,
-		disabledMCP: map[string]struct{}{},
-		entries:     map[string]*mcpEntry{},
+		workspace:     strings.TrimSpace(workspace),
+		configPath:    strings.TrimSpace(configPath),
+		mcpConfigPath: strings.TrimSpace(mcpConfigPath),
+		base:          base,
+		disabledMCP:   map[string]struct{}{},
+		entries:       map[string]*mcpEntry{},
 	}
 	manager.applyConfig(cfg.MCP)
 	return manager
@@ -289,7 +295,7 @@ func invalidateEntry(entry *mcpEntry) {
 }
 
 func (m *Manager) refresh(ctx context.Context, force bool) error {
-	cfg, err := configpkg.Load(m.workspace, m.configPath)
+	cfg, err := configpkg.LoadWithMCPConfigPath(m.workspace, m.configPath, m.mcpConfigPath)
 	if err != nil {
 		return err
 	}

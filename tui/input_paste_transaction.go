@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const pasteCtrlVControlEchoWindow = 25 * time.Millisecond
+const pasteCtrlVControlEchoWindow = 120 * time.Millisecond
 const pasteTransactionAppendWindow = 120 * time.Millisecond
 
 func (m *model) beginPasteTransaction(payload, source string) {
@@ -99,6 +99,7 @@ func (m *model) consumePasteEchoKey(msg tea.KeyMsg) bool {
 	if remaining == "" {
 		if m.shouldConsumeTrailingPasteEnter(msg) {
 			m.clearPasteTransaction()
+			m.releasePasteSubmitSuppression()
 			return true
 		}
 		m.clearPasteTransaction()
@@ -109,6 +110,7 @@ func (m *model) consumePasteEchoKey(msg tea.KeyMsg) bool {
 		// characters back through key events. In that case the first plain Enter
 		// after paste should close the transaction but must not submit.
 		m.clearPasteTransaction()
+		m.releasePasteSubmitSuppression()
 		return true
 	}
 	if strings.HasPrefix(remaining, fragment) {
@@ -190,7 +192,7 @@ func shouldAppendPasteTransactionPayload(currentSource, nextSource string) bool 
 		return false
 	}
 	switch current {
-	case "paste-key", "rune-burst-paste":
+	case "paste-key", "paste-payload", "paste-burst", "rune-burst-paste":
 		return true
 	default:
 		return false
@@ -200,7 +202,7 @@ func shouldAppendPasteTransactionPayload(currentSource, nextSource string) bool 
 func shouldGuardTrailingPasteEnter(source string) bool {
 	source = strings.ToLower(strings.TrimSpace(source))
 	switch source {
-	case "clipboard-capture", "ctrl+v", "paste-payload", "paste-key", "rune-burst-paste":
+	case "clipboard-capture", "ctrl+v", "paste-payload", "paste-key", "paste-burst", "rune-burst-paste":
 		return true
 	default:
 		return false

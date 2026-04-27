@@ -53,9 +53,10 @@ func TestBuildStopSummaryIncludesTaskReportWhenPresent(t *testing.T) {
 	report.RecordSkippedDueToDependency("update_plan")
 
 	summary := BuildStopSummary(StopSummaryInput{
-		SessionID:  "sess-report",
-		Reason:     "Stopped after permission denial.",
-		TaskReport: report,
+		SessionID:         "sess-report",
+		Reason:            "Stopped after permission denial.",
+		TaskReport:        report,
+		IncludeTaskReport: true,
 	})
 	for _, want := range []string{
 		"Task report summary:",
@@ -70,6 +71,22 @@ func TestBuildStopSummaryIncludesTaskReportWhenPresent(t *testing.T) {
 	} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("expected summary to contain %q, got %q", want, summary)
+		}
+	}
+}
+
+func TestBuildStopSummaryOmitsTaskReportByDefault(t *testing.T) {
+	report := &TaskReport{}
+	report.RecordDenied("write_file")
+
+	summary := BuildStopSummary(StopSummaryInput{
+		SessionID:  "sess-report",
+		Reason:     "Stopped after permission denial.",
+		TaskReport: report,
+	})
+	for _, unwanted := range []string{"Task report summary:", "Task report (json):"} {
+		if strings.Contains(summary, unwanted) {
+			t.Fatalf("did not expect default stop summary to contain %q, got %q", unwanted, summary)
 		}
 	}
 }

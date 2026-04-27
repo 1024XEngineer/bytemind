@@ -10,7 +10,7 @@
 
 | 字段                | 类型   | 说明                                     | 默认值                      |
 | ------------------- | ------ | ---------------------------------------- | --------------------------- |
-| `type`              | string | `openai-compatible` 或 `anthropic`       | `openai-compatible`         |
+| `type`              | string | `openai-compatible`、`anthropic` 或 `gemini` | `openai-compatible`      |
 | `base_url`          | string | API 端点 URL                             | `https://api.openai.com/v1` |
 | `model`             | string | 使用的模型 ID                            | `gpt-5.4-mini`              |
 | `api_key`           | string | API 密钥（明文，建议改用 `api_key_env`） | —                           |

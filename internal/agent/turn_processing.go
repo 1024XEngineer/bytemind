@@ -45,6 +45,7 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 		return "", false, fmt.Errorf("tool registry is unavailable")
 	}
 	filteredTools := runner.registry.DefinitionsForModeWithFilters(p.RunMode, p.AllowedToolNames, p.DeniedToolNames)
+	availableToolNames := toolNames(filteredTools)
 	request := contextpkg.BuildChatRequest(contextpkg.ChatRequestInput{
 		Model:       runner.config.Provider.Model,
 		Messages:    p.Messages,
@@ -75,6 +76,40 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 			intent = inferAssistantTurnIntent(reply.Content)
 		}
 		latestUser := latestHumanUserMessageText(p.Session.Messages)
+		if shouldRepairPlanBootstrapTurn(p.RunMode, p.Session.Plan, reply) {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("plan_bootstrap_missing_update")
+				p.TaskReport.RecordStrategyAdjustment("assistant replied in plan mode before creating any structured plan state; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("plan bootstrap repair retries exceeded while waiting for initial investigation or update_plan")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept replying in plan mode without creating the initial structured plan state first (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildPlanBootstrapRepairInstruction(reply, latestUser, attempt, maxAttempts, p.Session.Messages, availableToolNames))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant replied in plan mode before creating structured plan state; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
 		if !hasToolActivitySinceLatestHumanUser(p.Session.Messages) && shouldRepairPlanRevisionTurn(p.RunMode, p.Session.Plan, latestUser, reply) {
 			attempt := 0
 			maxAttempts := 0
@@ -208,6 +243,81 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 			}
 			if p.Out != nil {
 				fmt.Fprintf(p.Out, "%sassistant treated an already-switched build handoff as pending plan confirmation; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
+		if shouldRepairUnexecutedToolClaimTurn(p.RunMode, reply, p.Session.Messages, availableToolNames) {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("unexecuted_tool_claim")
+				p.TaskReport.RecordStrategyAdjustment("assistant claimed run_shell was unavailable or timed out without a structured tool call; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("tool-claim repair retries exceeded while waiting for a real structured tool call")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept claiming run_shell was unavailable or timed out without issuing a structured tool call (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildUnexecutedToolClaimRepairInstruction(reply, latestUser, attempt, maxAttempts, availableToolNames))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant claimed shell unavailability/timeout without a structured tool call; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
+		localRepoRepairKind, localRepoEvidence := evaluateLocalRepoClaimRepairTurn(p.RunMode, latestUser, reply, p.Session.Messages)
+		if localRepoRepairKind != localRepoClaimRepairNone {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				switch localRepoRepairKind {
+				case localRepoClaimRepairPathUnverified:
+					p.TaskReport.RecordRetry("local_repo_claim_without_direct_path_confirmation")
+					p.TaskReport.RecordStrategyAdjustment("assistant made a concrete local repo claim without directly confirming the referenced path; injected correction prompt")
+				case localRepoClaimRepairImplementationUnverified:
+					p.TaskReport.RecordRetry("local_repo_claim_without_implementation_evidence")
+					p.TaskReport.RecordStrategyAdjustment("assistant concluded the repo already had a runnable implementation based only on weak signals; injected correction prompt")
+				}
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("local repo claim repair retries exceeded while waiting for direct path confirmation or implementation evidence")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept making local repository claims without enough direct evidence (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildLocalRepoClaimRepairInstruction(localRepoRepairKind, reply, latestUser, attempt, maxAttempts, localRepoEvidence))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant made a concrete local repo claim without enough direct evidence; retrying with a correction prompt%s\n", ansiDim, ansiReset)
 			}
 			return "", false, nil
 		}

@@ -55,21 +55,27 @@ type AddRequest struct {
 }
 
 type Service struct {
-	workspace  string
-	configPath string
-	manager    extensionspkg.Manager
+	workspace     string
+	configPath    string
+	mcpConfigPath string
+	manager       extensionspkg.Manager
 }
 
 func NewService(workspace, configPath string, manager extensionspkg.Manager) *Service {
+	return NewServiceWithMCPConfigPath(workspace, configPath, "", manager)
+}
+
+func NewServiceWithMCPConfigPath(workspace, configPath, mcpConfigPath string, manager extensionspkg.Manager) *Service {
 	return &Service{
-		workspace:  strings.TrimSpace(workspace),
-		configPath: strings.TrimSpace(configPath),
-		manager:    manager,
+		workspace:     strings.TrimSpace(workspace),
+		configPath:    strings.TrimSpace(configPath),
+		mcpConfigPath: strings.TrimSpace(mcpConfigPath),
+		manager:       manager,
 	}
 }
 
 func (s *Service) List(ctx context.Context) ([]ServerStatus, error) {
-	cfg, err := configpkg.Load(s.workspace, s.configPath)
+	cfg, err := configpkg.LoadWithMCPConfigPath(s.workspace, s.configPath, s.mcpConfigPath)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +139,7 @@ func (s *Service) Add(ctx context.Context, req AddRequest) (ServerStatus, error)
 		return ServerStatus{}, fmt.Errorf("server command is required")
 	}
 
-	cfg, _, err := configpkg.MutateMCPConfig(s.workspace, s.configPath, func(mcp *configpkg.MCPConfig) error {
+	cfg, _, err := configpkg.MutateMCPConfig(s.workspace, s.mcpConfigPath, func(mcp *configpkg.MCPConfig) error {
 		mcp.Enabled = true
 		for _, existing := range mcp.Servers {
 			if strings.EqualFold(strings.TrimSpace(existing.ID), req.ID) {
@@ -190,7 +196,7 @@ func (s *Service) Remove(ctx context.Context, serverID string) error {
 	if serverID == "" {
 		return fmt.Errorf("server id is required")
 	}
-	_, _, err := configpkg.MutateMCPConfig(s.workspace, s.configPath, func(mcp *configpkg.MCPConfig) error {
+	_, _, err := configpkg.MutateMCPConfig(s.workspace, s.mcpConfigPath, func(mcp *configpkg.MCPConfig) error {
 		next := make([]configpkg.MCPServerConfig, 0, len(mcp.Servers))
 		found := false
 		for _, server := range mcp.Servers {
@@ -217,7 +223,7 @@ func (s *Service) Enable(ctx context.Context, serverID string, enabled bool) (Se
 	if serverID == "" {
 		return ServerStatus{}, fmt.Errorf("server id is required")
 	}
-	_, _, err := configpkg.MutateMCPConfig(s.workspace, s.configPath, func(mcp *configpkg.MCPConfig) error {
+	_, _, err := configpkg.MutateMCPConfig(s.workspace, s.mcpConfigPath, func(mcp *configpkg.MCPConfig) error {
 		if enabled {
 			mcp.Enabled = true
 		}
@@ -258,7 +264,7 @@ func (s *Service) Show(ctx context.Context, serverID string) (ServerDetail, erro
 	if serverID == "" {
 		return ServerDetail{}, fmt.Errorf("server id is required")
 	}
-	cfg, err := configpkg.Load(s.workspace, s.configPath)
+	cfg, err := configpkg.LoadWithMCPConfigPath(s.workspace, s.configPath, s.mcpConfigPath)
 	if err != nil {
 		return ServerDetail{}, err
 	}
@@ -311,7 +317,7 @@ func (s *Service) Test(ctx context.Context, serverID string) (ServerStatus, erro
 	if serverID == "" {
 		return ServerStatus{}, fmt.Errorf("server id is required")
 	}
-	cfg, err := configpkg.Load(s.workspace, s.configPath)
+	cfg, err := configpkg.LoadWithMCPConfigPath(s.workspace, s.configPath, s.mcpConfigPath)
 	if err != nil {
 		return ServerStatus{}, err
 	}
@@ -354,12 +360,12 @@ func (s *Service) managerForConfig(cfg configpkg.Config) extensionspkg.Manager {
 	if s.manager != nil {
 		return s.manager
 	}
-	return extensionsruntime.NewManager(s.workspace, s.configPath, extensionspkg.NewManager(s.workspace), cfg)
+	return extensionsruntime.NewManagerWithMCPConfigPath(s.workspace, s.configPath, s.mcpConfigPath, extensionspkg.NewManager(s.workspace), cfg)
 }
 
 func (s *Service) reloadRuntime(ctx context.Context) error {
 	if s.manager == nil {
-		cfg, err := configpkg.Load(s.workspace, s.configPath)
+		cfg, err := configpkg.LoadWithMCPConfigPath(s.workspace, s.configPath, s.mcpConfigPath)
 		if err != nil {
 			return err
 		}
