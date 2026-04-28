@@ -13,11 +13,12 @@ func TestRenderLandingProducesContent(t *testing.T) {
 	input.Focus()
 
 	m := model{
-		screen: screenLanding,
-		width:  120,
-		height: 36,
-		mode:   modeBuild,
-		input:  input,
+		screen:    screenLanding,
+		width:     120,
+		height:    36,
+		mode:      modeBuild,
+		input:     input,
+		workspace: `D:\happycoding\lzy1\byte-lab`,
 	}
 	m.syncInputStyle()
 
@@ -26,14 +27,17 @@ func TestRenderLandingProducesContent(t *testing.T) {
 		t.Fatalf("expected landing view to render non-empty content")
 	}
 	plain := xansi.Strip(rendered)
-	if !strings.Contains(plain, "Your AI assistant") {
-		t.Fatalf("expected landing subtitle in rendered content, got %q", plain)
+	if got := strings.Count(plain, "Your AI assistant"); got != 1 {
+		t.Fatalf("expected landing assistant label once in rendered content, got %d in %q", got, plain)
 	}
-	if !strings.Contains(plain, "bytemind@localhost:~") {
-		t.Fatalf("expected prompt hero header in rendered content, got %q", plain)
+	if !strings.Contains(plain, "byte-lab") {
+		t.Fatalf("expected workspace name in prompt hero header, got %q", plain)
 	}
-	if !strings.Contains(plain, "launching bytemind") {
-		t.Fatalf("expected prompt hero launch line in rendered content, got %q", plain)
+	if strings.Contains(plain, "bytemind@localhost") {
+		t.Fatalf("expected prompt hero header not to use localhost label, got %q", plain)
+	}
+	if strings.Contains(plain, "launching bytemind") {
+		t.Fatalf("expected prompt hero launch line to use assistant label, got %q", plain)
 	}
 	if !strings.Contains(plain, "█") {
 		t.Fatalf("expected prompt hero pixel matrix logo in rendered content, got %q", plain)
@@ -80,6 +84,18 @@ func TestLandingPromptHelpers(t *testing.T) {
 	m := model{width: 0}
 	if got := m.landingPromptHeroWidth(); got != 74 {
 		t.Fatalf("expected default prompt hero width 74, got %d", got)
+	}
+	for _, tc := range []struct {
+		workspace string
+		want      string
+	}{
+		{workspace: `D:\happycoding\lzy1\bytemind`, want: "bytemind"},
+		{workspace: "/home/me/byte-lab/", want: "byte-lab"},
+		{workspace: "", want: "workspace"},
+	} {
+		if got := landingWorkspaceName(tc.workspace); got != tc.want {
+			t.Fatalf("expected workspace name %q for %q, got %q", tc.want, tc.workspace, got)
+		}
 	}
 
 	rows := landingPixelLogoRows("BY", landingModeStyle, landingModeStyle, 0, 120)

@@ -28,7 +28,7 @@ func (m model) renderLandingHero() string {
 	dotMutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#455C71"))
 	dotActiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#64DF69"))
 
-	headerHost := headerHostStyle.Render("bytemind@localhost:~")
+	headerHost := headerHostStyle.Render(landingWorkspaceName(m.workspace))
 	dots := strings.Join([]string{
 		dotMutedStyle.Render("●"),
 		dotMutedStyle.Render("●"),
@@ -37,7 +37,7 @@ func (m model) renderLandingHero() string {
 	headerGap := max(1, innerWidth-lipgloss.Width(headerHost)-lipgloss.Width(dots))
 	headerRow := headerBgStyle.Render(padLandingANSI(headerHost+strings.Repeat(" ", headerGap)+dots, innerWidth))
 
-	promptRow := padLandingANSI("  "+promptSigilStyle.Render(">_")+"  "+promptLabelStyle.Render("launching bytemind"), innerWidth)
+	promptRow := padLandingANSI("  "+promptSigilStyle.Render(">_")+"  "+promptLabelStyle.Render("Your AI assistant"), innerWidth)
 	pixelRows := landingPixelLogoRows("BYTEMIND", pixelStyle, pixelGlowStyle, m.landingGlowStep, innerWidth-2)
 	logoRows := make([]string, 0, len(pixelRows))
 	for _, row := range pixelRows {
@@ -63,8 +63,28 @@ func (m model) renderLandingHero() string {
 	)
 	frame := strings.Join(frameRows, "\n")
 
-	subtitle := landingSubtitleStyle.Render("Your AI assistant")
+	subtitle := " "
 	return frame + "\n\n" + subtitle
+}
+
+func landingWorkspaceName(workspace string) string {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return "workspace"
+	}
+	normalized := strings.ReplaceAll(workspace, "\\", "/")
+	normalized = strings.TrimRight(normalized, "/")
+	if normalized == "" || normalized == "." {
+		return "workspace"
+	}
+	if idx := strings.LastIndex(normalized, "/"); idx >= 0 {
+		normalized = normalized[idx+1:]
+	}
+	name := strings.TrimSpace(normalized)
+	if name == "" || name == "." {
+		return "workspace"
+	}
+	return name
 }
 
 func (m model) landingPromptHeroWidth() int {
