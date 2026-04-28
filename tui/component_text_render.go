@@ -58,6 +58,7 @@ func renderHelpMarkdownCopy(text string, width int) string {
 }
 
 func renderAssistantCopyBody(text string, width int) string {
+	text = stripAssistantStructuralTags(text)
 	result := renderStructuredMarkdown(markdownSurfaceAssistant, text, width)
 	if strings.TrimSpace(result.Copy) != "" {
 		return result.Copy
@@ -397,6 +398,7 @@ func needsLeadingBlankLine(line string) bool {
 }
 
 func renderAssistantBodyLegacy(text string, width int) string {
+	text = stripAssistantStructuralTags(text)
 	lines := strings.Split(text, "\n")
 	out := make([]string, 0, len(lines))
 	inCodeBlock := false
@@ -444,6 +446,32 @@ func renderAssistantBodyLegacy(text string, width int) string {
 	}
 
 	return strings.Join(out, "\n")
+}
+
+func stripAssistantStructuralTags(text string) string {
+	if text == "" {
+		return ""
+	}
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	filtered := make([]string, 0, len(lines))
+	lastBlank := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "<proposed_plan>" || trimmed == "</proposed_plan>" {
+			continue
+		}
+		if trimmed == "" {
+			if lastBlank {
+				continue
+			}
+			lastBlank = true
+			filtered = append(filtered, "")
+			continue
+		}
+		lastBlank = false
+		filtered = append(filtered, line)
+	}
+	return strings.TrimSpace(strings.Join(filtered, "\n"))
 }
 
 func renderSemanticAssistantLine(line string, width int) string {

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -25,9 +26,6 @@ func (m model) renderConversation() string {
 		}
 
 		if item.Kind == "assistant" && (item.Status == "thinking" || item.Status == "thinking_done") {
-			if rendered := m.renderThinkingRow(item, width); strings.TrimSpace(rendered) != "" {
-				blocks = append(blocks, rendered)
-			}
 			i++
 			continue
 		}
@@ -65,6 +63,11 @@ func (m model) renderConversationCopy() string {
 		item := m.chatItems[i]
 		if item.Kind == "user" {
 			blocks = append(blocks, renderChatCopySection(item, width))
+			i++
+			continue
+		}
+
+		if item.Kind == "assistant" && (item.Status == "thinking" || item.Status == "thinking_done") {
 			i++
 			continue
 		}
@@ -281,14 +284,75 @@ func renderBytemindRunRow(items []chatEntry, width int) string {
 func renderBytemindRunCard(items []chatEntry, width int) string {
 	outer := resolveRunCardStyle(items)
 	contentWidth := max(8, width-outer.GetHorizontalFrameSize())
-	sections := make([]string, 0, len(items))
-	for i, item := range items {
+	sectionGroups := collapseRunSectionGroups(items)
+	sections := make([]string, 0, len(sectionGroups))
+	for i, group := range sectionGroups {
 		if i > 0 {
 			sections = append(sections, renderRunSectionDivider(contentWidth))
 		}
-		sections = append(sections, renderRunSection(item, contentWidth))
+		sections = append(sections, renderRunSectionGroup(group, contentWidth))
 	}
 	return outer.Width(contentWidth).Render(strings.Join(sections, "\n"))
+}
+
+func collapseRunSectionGroups(items []chatEntry) [][]chatEntry {
+	groups := make([][]chatEntry, 0, len(items))
+	for i := 0; i < len(items); {
+		item := items[i]
+		name, ok := collapsibleParallelToolName(item)
+		if !ok {
+			groups = append(groups, []chatEntry{item})
+			i++
+			continue
+		}
+
+		j := i + 1
+		group := []chatEntry{item}
+		for j < len(items) {
+			nextName, nextOK := collapsibleParallelToolName(items[j])
+			if !nextOK || nextName != name {
+				break
+			}
+			group = append(group, items[j])
+			j++
+		}
+		groups = append(groups, group)
+		i = j
+	}
+	return groups
+}
+
+func collapsibleParallelToolName(item chatEntry) (string, bool) {
+	if item.Kind != "tool" {
+		return "", false
+	}
+	_, name := toolDisplayParts(item.Title)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", false
+	}
+	if toolDisplayLabel(name) != "READ" {
+		return "", false
+	}
+	return name, true
+}
+
+func renderRunSectionGroup(group []chatEntry, width int) string {
+	if len(group) == 0 {
+		return ""
+	}
+	if len(group) == 1 {
+		return renderRunSection(group[0], width)
+	}
+
+	_, name := toolDisplayParts(group[0].Title)
+	synthetic := chatEntry{
+		Kind:   "tool",
+		Title:  fmt.Sprintf("%s x %d | %s", toolDisplayLabel(name), len(group), name),
+		Body:   summarizeParallelToolGroup(group, name),
+		Status: aggregateToolGroupStatus(group),
+	}
+	return renderRunSection(synthetic, width)
 }
 
 func renderRunSection(item chatEntry, width int) string {
@@ -304,7 +368,76 @@ func renderRunSection(item chatEntry, width int) string {
 	return renderChatSection(item, width)
 }
 
+func summarizeParallelToolGroup(group []chatEntry, name string) string {
+	if len(group) == 0 {
+		return ""
+	}
+	if toolDisplayLabel(name) == "READ" {
+		return summarizeParallelReadGroup(group)
+	}
+	return fmt.Sprintf("%d parallel %s calls", len(group), strings.ToLower(toolDisplayLabel(name)))
+}
+
+func summarizeParallelReadGroup(group []chatEntry) string {
+	fileNames := make([]string, 0, len(group))
+	for _, item := range group {
+		summary := strings.TrimSpace(firstNonEmptyLine(item.Body))
+		if summary == "" {
+			continue
+		}
+		name := strings.TrimSpace(strings.TrimPrefix(summary, "Read "))
+		if name == "" {
+			name = summary
+		}
+		fileNames = append(fileNames, name)
+	}
+	if len(fileNames) == 0 {
+		return fmt.Sprintf("Read %d files", len(group))
+	}
+	previewCount := min(3, len(fileNames))
+	preview := strings.Join(fileNames[:previewCount], ", ")
+	if len(fileNames) > previewCount {
+		return fmt.Sprintf("Read %d files: %s +%d", len(fileNames), preview, len(fileNames)-previewCount)
+	}
+	return fmt.Sprintf("Read %d files: %s", len(fileNames), preview)
+}
+
+func aggregateToolGroupStatus(group []chatEntry) string {
+	hasDone := false
+	hasRunning := false
+	hasWarn := false
+	for _, item := range group {
+		switch strings.TrimSpace(strings.ToLower(item.Status)) {
+		case "error", "failed":
+			return "error"
+		case "warn", "warning", "pending":
+			hasWarn = true
+		case "running", "active":
+			hasRunning = true
+		case "done", "success":
+			hasDone = true
+		}
+	}
+	switch {
+	case hasWarn:
+		return "warn"
+	case hasRunning:
+		return "running"
+	case hasDone:
+		return "done"
+	default:
+		return strings.TrimSpace(group[0].Status)
+	}
+}
+
 func renderRunSectionDivider(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return runSectionDividerStyle.Width(width).Render(strings.Repeat("-", width))
+}
+
+func renderRunSectionDividerLegacy(width int) string {
 	if width <= 0 {
 		return ""
 	}

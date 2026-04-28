@@ -436,6 +436,9 @@ func renderConversationViewportDefault(m model) string {
 	if content == "" {
 		content = m.viewport.View()
 	}
+	if m.viewport.Width > 0 && m.viewport.Height > 0 {
+		content = lipgloss.Place(m.viewport.Width, m.viewport.Height, lipgloss.Left, lipgloss.Top, content)
+	}
 	return zone.Mark(conversationViewportZoneID, content)
 }
 
@@ -444,6 +447,9 @@ func (m model) renderInputEditorView() string {
 }
 
 func renderInputEditorViewDefault(m model) string {
+	if m.screen == screenLanding && !m.hasCopyableInputSelection() {
+		return m.renderLandingInputEditorView()
+	}
 	raw := m.input.View()
 	if !m.hasCopyableInputSelection() {
 		return raw
@@ -452,6 +458,72 @@ func renderInputEditorViewDefault(m model) string {
 		return preview
 	}
 	return raw
+}
+
+func (m model) renderLandingInputEditorView() string {
+	value := strings.ReplaceAll(m.input.Value(), "\r\n", "\n")
+	showCaret := m.landingCaretVisible()
+	if value == "" {
+		placeholder := m.input.Placeholder
+		if strings.TrimSpace(placeholder) == "" {
+			placeholder = "Let's get started..."
+		}
+		if !showCaret || !m.input.Focused() {
+			return landingPlaceholderStyle.Render(placeholder)
+		}
+		runes := []rune(placeholder)
+		if len(runes) == 0 {
+			return ""
+		}
+		first := landingInputCaretOverlayStyle.Render(string(runes[0]))
+		rest := landingPlaceholderStyle.Render(string(runes[1:]))
+		return first + rest
+	}
+
+	rawLines := strings.Split(value, "\n")
+	lines := make([]string, len(rawLines))
+	for i := range rawLines {
+		lines[i] = landingInputValueStyle.Render(rawLines[i])
+	}
+	if !m.input.Focused() {
+		return strings.Join(lines, "\n")
+	}
+
+	row := clamp(m.input.Line(), 0, len(rawLines)-1)
+	lineRunes := []rune(rawLines[row])
+	li := m.input.LineInfo()
+	col := clamp(li.StartColumn+li.ColumnOffset, 0, len(lineRunes))
+
+	// Keep text layout stable: caret is rendered as a style overlay on current rune.
+	if col < len(lineRunes) {
+		left := landingInputValueStyle.Render(string(lineRunes[:col]))
+		mid := landingInputValueStyle.Render(string(lineRunes[col]))
+		right := landingInputValueStyle.Render(string(lineRunes[col+1:]))
+		if showCaret {
+			mid = landingInputCaretOverlayStyle.Render(string(lineRunes[col]))
+		}
+		lines[row] = left + mid + right
+		return strings.Join(lines, "\n")
+	}
+
+	// End-of-line caret keeps a stable one-cell footprint while blinking.
+	base := landingInputValueStyle.Render(string(lineRunes))
+	if showCaret {
+		lines[row] = base + landingInputCaretStyle.Render("|")
+	} else {
+		lines[row] = base + landingInputValueStyle.Render(" ")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) landingCaretVisible() bool {
+	if m.screen != screenLanding || !m.input.Focused() {
+		return false
+	}
+	// Reuse the landing animation ticker (50ms) to blink the caret smoothly.
+	// 8 ticks visible + 8 ticks hidden => ~800ms full cycle.
+	const blinkHalfCycle = 8
+	return (m.landingGlowStep/blinkHalfCycle)%2 == 0
 }
 
 func (m model) renderInputSelectionPreview(raw string) string {
@@ -713,26 +785,12 @@ func (m model) inputInnerBounds() (left, right, top, bottom, innerLeft, innerTop
 		if m.height <= 0 || m.width <= 0 {
 			return 0, 0, 0, 0, 0, 0, false
 		}
-		box := landingInputStyle.Copy().
-			BorderForeground(m.modeAccentColor()).
-			Width(m.landingInputShellWidth()).
-			Render(m.input.View())
+		box := m.renderLandingInputBox(false)
 		boxW := max(1, lipgloss.Width(box))
 		boxH := max(1, lipgloss.Height(box))
-		logoHeight := lipgloss.Height(landingLogoStyle.Render(strings.Join([]string{
-			"    ____        __                      _           __",
-			"   / __ )__  __/ /____  ____ ___  ____(_)___  ____/ /",
-			"  / __  / / / / __/ _ \\/ __ `__ \\/ __/ / __ \\/ __  / ",
-			" / /_/ / /_/ / /_/  __/ / / / / / /_/ / / / / /_/ /  ",
-			"/_____/\\__, /\\__/\\___/_/ /_/ /_/\\__/_/_/ /_/\\__,_/   ",
-			"      /____/                                          ",
-		}, "\n")))
-		overlayHeight := m.calculateOverlayHeight(1)
-		modeTabsHeight := lipgloss.Height(m.renderModeTabs())
-		hintHeight := lipgloss.Height(mutedStyle.Render(footerHintText))
-		contentHeight := logoHeight + 1 + modeTabsHeight + 1 + overlayHeight + boxH + 1 + hintHeight
-		contentTop := max(0, (m.height-contentHeight)/2)
-		top = contentTop + logoHeight + 1 + modeTabsHeight + 1 + overlayHeight
+		contentHeight := m.landingContentHeight()
+		contentTop := m.landingContentTop(contentHeight)
+		top = m.landingInputTop(contentTop)
 		left = max(0, (m.width-boxW)/2)
 		right = left + boxW - 1
 		bottom = top + boxH - 1

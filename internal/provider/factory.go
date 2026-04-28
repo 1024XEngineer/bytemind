@@ -35,6 +35,8 @@ func newBaseClient(cfg config.ProviderConfig) (llm.Client, error) {
 		return NewOpenAICompatible(clientCfg), nil
 	case "anthropic":
 		return NewAnthropic(clientCfg), nil
+	case "gemini":
+		return NewGemini(clientCfg), nil
 	default:
 		return nil, fmt.Errorf("unsupported provider type %q", cfg.Type)
 	}
@@ -47,6 +49,9 @@ func NewDomainClient(cfg config.ProviderConfig) (Client, error) {
 	}
 	if providerID == "anthropic" {
 		providerID = ProviderAnthropic
+	}
+	if providerID == "gemini" {
+		providerID = ProviderGemini
 	}
 	if providerID == "" {
 		providerID = ProviderID("unknown")

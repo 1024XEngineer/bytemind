@@ -11,11 +11,16 @@ func TestIsPlanSafeShellCommand(t *testing.T) {
 		{name: "allow ls", command: "ls -la", want: true},
 		{name: "allow git status", command: "git status", want: true},
 		{name: "allow go env", command: "go env GOPATH", want: true},
+		{name: "allow find name filter", command: `find . -name "*.go"`, want: true},
 		{name: "deny empty", command: "", want: false},
 		{name: "deny write redirection", command: "echo hi > out.txt", want: false},
 		{name: "deny multiple segments", command: "git status && pwd", want: false},
 		{name: "deny script path", command: "./script.sh", want: false},
 		{name: "deny shell interpreter", command: "bash -lc 'pwd'", want: false},
+		{name: "deny command substitution", command: "ls $(pwd)", want: false},
+		{name: "deny go env write flag", command: "go env -w GOPATH=/tmp/go", want: false},
+		{name: "deny git output file flag", command: "git diff --output out.patch", want: false},
+		{name: "deny find delete", command: "find . -delete", want: false},
 	}
 	for _, tc := range cases {
 		tc := tc

@@ -9,20 +9,27 @@ import (
 )
 
 type runPromptSetup struct {
-	Input                RunPromptInput
-	UserInput            string
-	RunMode              planpkg.AgentMode
-	Mode                 string
-	ActiveSkill          *activeSkillRuntime
-	AllowedTools         map[string]struct{}
-	DeniedTools          map[string]struct{}
-	AllowedToolNames     []string
-	DeniedToolNames      []string
-	AvailableSkills      []PromptSkill
-	AvailableTools       []string
-	InstructionText      string
-	WebLookupInstruction string
-	PromptTokens         int
+	Input                        RunPromptInput
+	UserInput                    string
+	RunMode                      planpkg.AgentMode
+	Mode                         string
+	SystemSandboxBackend         string
+	SystemSandboxRequiredCapable bool
+	SystemSandboxCapabilityLevel string
+	SystemSandboxShellNetwork    bool
+	SystemSandboxWorkerNetwork   bool
+	SystemSandboxFallback        bool
+	SystemSandboxStatus          string
+	ActiveSkill                  *activeSkillRuntime
+	AllowedTools                 map[string]struct{}
+	DeniedTools                  map[string]struct{}
+	AllowedToolNames             []string
+	DeniedToolNames              []string
+	AvailableSkills              []PromptSkill
+	AvailableTools               []string
+	InstructionText              string
+	WebLookupInstruction         string
+	PromptTokens                 int
 }
 
 func (r *Runner) prepareRunPrompt(sess *session.Session, input RunPromptInput, mode string) (runPromptSetup, error) {

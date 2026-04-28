@@ -11,6 +11,9 @@ func TestDefaultUsageLinesIncludeInstall(t *testing.T) {
 	if !strings.Contains(joined, "bytemind install") {
 		t.Fatalf("expected usage to include install command, got %q", joined)
 	}
+	if !strings.Contains(joined, "bytemind mcp") {
+		t.Fatalf("expected usage to include mcp command, got %q", joined)
+	}
 	if !strings.Contains(joined, "install without Go (macOS/Linux)") {
 		t.Fatalf("expected usage to include no-go install tip, got %q", joined)
 	}
@@ -19,6 +22,12 @@ func TestDefaultUsageLinesIncludeInstall(t *testing.T) {
 	}
 	if !strings.Contains(joined, "-away-policy auto_deny_continue|fail_fast") {
 		t.Fatalf("expected usage to include away-policy flag, got %q", joined)
+	}
+	if !strings.Contains(joined, "-sandbox-enabled true|false") {
+		t.Fatalf("expected usage to include sandbox-enabled flag, got %q", joined)
+	}
+	if !strings.Contains(joined, "-system-sandbox-mode off|best_effort|required") {
+		t.Fatalf("expected usage to include system-sandbox-mode flag, got %q", joined)
 	}
 }
 

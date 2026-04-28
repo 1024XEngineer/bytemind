@@ -10,14 +10,14 @@ func TestSeedForRunNoopOutsidePlanMode(t *testing.T) {
 	}
 }
 
-func TestSeedForRunSetsGoalAndDraftingPhase(t *testing.T) {
+func TestSeedForRunSetsGoalAndExplorePhase(t *testing.T) {
 	state := State{Phase: PhaseNone}
 	SeedForRun(&state, ModePlan, "plan task", "fallback")
 	if state.Goal != "plan task" {
 		t.Fatalf("expected goal from user input, got %q", state.Goal)
 	}
-	if state.Phase != PhaseDrafting {
-		t.Fatalf("expected drafting phase, got %q", state.Phase)
+	if state.Phase != PhaseExplore {
+		t.Fatalf("expected explore phase, got %q", state.Phase)
 	}
 }
 

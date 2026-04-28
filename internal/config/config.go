@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	planpkg "bytemind/internal/plan"
 )
 
 const (
@@ -23,24 +25,30 @@ const (
 	DefaultContextBudgetWarningRatio     = 0.85
 	DefaultContextBudgetCriticalRatio    = 0.95
 	DefaultContextBudgetMaxReactiveRetry = 1
+	DefaultMCPSyncTTLSeconds             = 30
+	DefaultMCPStartupTimeoutSeconds      = 20
+	DefaultMCPCallTimeoutSeconds         = 60
+	DefaultMCPMaxConcurrency             = 4
 )
 
 type Config struct {
-	Provider         ProviderConfig        `json:"provider"`
-	ProviderRuntime  ProviderRuntimeConfig `json:"provider_runtime"`
-	ApprovalPolicy   string                `json:"approval_policy"`
-	ApprovalMode     string                `json:"approval_mode"`
-	AwayPolicy       string                `json:"away_policy"`
-	SandboxEnabled   bool                  `json:"sandbox_enabled"`
-	WritableRoots    []string              `json:"writable_roots"`
-	ExecAllowlist    []ExecAllowRule       `json:"exec_allowlist"`
-	NetworkAllowlist []NetworkAllowRule    `json:"network_allowlist"`
-	MaxIterations    int                   `json:"max_iterations"`
-	Stream           bool                  `json:"stream"`
-	UpdateCheck      UpdateCheckConfig     `json:"update_check"`
-	TokenQuota       int                   `json:"token_quota"`
-	TokenUsage       TokenUsageConfig      `json:"token_usage"`
-	ContextBudget    ContextBudgetConfig   `json:"context_budget"`
+	Provider          ProviderConfig        `json:"provider"`
+	ProviderRuntime   ProviderRuntimeConfig `json:"provider_runtime"`
+	ApprovalPolicy    string                `json:"approval_policy"`
+	ApprovalMode      string                `json:"approval_mode"`
+	AwayPolicy        string                `json:"away_policy"`
+	SandboxEnabled    bool                  `json:"sandbox_enabled"`
+	SystemSandboxMode string                `json:"system_sandbox_mode"`
+	WritableRoots     []string              `json:"writable_roots"`
+	ExecAllowlist     []ExecAllowRule       `json:"exec_allowlist"`
+	NetworkAllowlist  []NetworkAllowRule    `json:"network_allowlist"`
+	MaxIterations     int                   `json:"max_iterations"`
+	Stream            bool                  `json:"stream"`
+	UpdateCheck       UpdateCheckConfig     `json:"update_check"`
+	TokenQuota        int                   `json:"token_quota"`
+	TokenUsage        TokenUsageConfig      `json:"token_usage"`
+	ContextBudget     ContextBudgetConfig   `json:"context_budget"`
+	MCP               MCPConfig             `json:"-"`
 }
 
 type UpdateCheckConfig struct {
@@ -90,6 +98,59 @@ type NetworkAllowRule struct {
 	Scheme string `json:"scheme"`
 }
 
+type MCPConfig struct {
+	Enabled        bool              `json:"enabled"`
+	SyncTTLSeconds int               `json:"sync_ttl_s"`
+	Servers        []MCPServerConfig `json:"servers"`
+}
+
+type MCPServerConfig struct {
+	ID                    string                  `json:"id"`
+	Name                  string                  `json:"name"`
+	Enabled               *bool                   `json:"enabled,omitempty"`
+	Transport             MCPTransportConfig      `json:"transport"`
+	AutoStart             *bool                   `json:"auto_start,omitempty"`
+	StartupTimeoutSeconds int                     `json:"startup_timeout_s"`
+	CallTimeoutSeconds    int                     `json:"call_timeout_s"`
+	MaxConcurrency        int                     `json:"max_concurrency"`
+	ToolOverrides         []MCPToolOverrideConfig `json:"tool_overrides"`
+	ProtocolVersion       string                  `json:"protocol_version"`
+	ProtocolVersions      []string                `json:"protocol_versions"`
+}
+
+type MCPTransportConfig struct {
+	Type    string            `json:"type"`
+	Command string            `json:"command"`
+	Args    []string          `json:"args"`
+	Env     map[string]string `json:"env"`
+	CWD     string            `json:"cwd"`
+}
+
+type MCPToolOverrideConfig struct {
+	ToolName        string   `json:"tool_name"`
+	SafetyClass     string   `json:"safety_class,omitempty"`
+	ReadOnly        *bool    `json:"read_only,omitempty"`
+	Destructive     *bool    `json:"destructive,omitempty"`
+	AllowedModes    []string `json:"allowed_modes,omitempty"`
+	DefaultTimeoutS int      `json:"default_timeout_s,omitempty"`
+	MaxTimeoutS     int      `json:"max_timeout_s,omitempty"`
+	MaxResultChars  int      `json:"max_result_chars,omitempty"`
+}
+
+func (s MCPServerConfig) EnabledValue() bool {
+	if s.Enabled == nil {
+		return true
+	}
+	return *s.Enabled
+}
+
+func (s MCPServerConfig) AutoStartValue() bool {
+	if s.AutoStart == nil {
+		return true
+	}
+	return *s.AutoStart
+}
+
 func Default(workspace string) Config {
 	return Config{
 		Provider: ProviderConfig{
@@ -98,15 +159,16 @@ func Default(workspace string) Config {
 			Model:     defaultModelID,
 			APIKeyEnv: "BYTEMIND_API_KEY",
 		},
-		ApprovalPolicy:   "on-request",
-		ApprovalMode:     "interactive",
-		AwayPolicy:       "auto_deny_continue",
-		SandboxEnabled:   false,
-		WritableRoots:    []string{},
-		ExecAllowlist:    []ExecAllowRule{},
-		NetworkAllowlist: []NetworkAllowRule{},
-		MaxIterations:    32,
-		Stream:           true,
+		ApprovalPolicy:    "on-request",
+		ApprovalMode:      "interactive",
+		AwayPolicy:        "auto_deny_continue",
+		SandboxEnabled:    false,
+		SystemSandboxMode: "off",
+		WritableRoots:     []string{},
+		ExecAllowlist:     []ExecAllowRule{},
+		NetworkAllowlist:  []NetworkAllowRule{},
+		MaxIterations:     32,
+		Stream:            true,
 		UpdateCheck: UpdateCheckConfig{
 			Enabled: true,
 		},
@@ -127,10 +189,19 @@ func Default(workspace string) Config {
 			CriticalRatio:    DefaultContextBudgetCriticalRatio,
 			MaxReactiveRetry: DefaultContextBudgetMaxReactiveRetry,
 		},
+		MCP: MCPConfig{
+			Enabled:        false,
+			SyncTTLSeconds: DefaultMCPSyncTTLSeconds,
+			Servers:        nil,
+		},
 	}
 }
 
 func Load(workspace, configPath string) (Config, error) {
+	return LoadWithMCPConfigPath(workspace, configPath, "")
+}
+
+func LoadWithMCPConfigPath(workspace, configPath, mcpConfigPath string) (Config, error) {
 	cfg := Default(workspace)
 
 	if strings.TrimSpace(configPath) != "" {
@@ -152,6 +223,29 @@ func Load(workspace, configPath string) (Config, error) {
 
 		if projectConfig := resolveProjectConfigPath(workspace); projectConfig != "" {
 			if err := mergeConfigFromFile(projectConfig, &cfg); err != nil {
+				return cfg, err
+			}
+		}
+	}
+
+	if strings.TrimSpace(mcpConfigPath) != "" {
+		path, err := filepath.Abs(mcpConfigPath)
+		if err != nil {
+			return cfg, err
+		}
+		if err := mergeMCPConfigFromFile(path, &cfg.MCP); err != nil {
+			return cfg, err
+		}
+	} else {
+		if userMCPConfig, err := resolveUserMCPConfigPath(); err != nil {
+			return cfg, err
+		} else if userMCPConfig != "" {
+			if err := mergeMCPConfigFromFile(userMCPConfig, &cfg.MCP); err != nil {
+				return cfg, err
+			}
+		}
+		if projectMCPConfig := resolveProjectMCPConfigPath(workspace); projectMCPConfig != "" {
+			if err := mergeMCPConfigFromFile(projectMCPConfig, &cfg.MCP); err != nil {
 				return cfg, err
 			}
 		}
@@ -233,15 +327,16 @@ func ensureDefaultConfigFile(home string) error {
 			APIKeyEnv:        "BYTEMIND_API_KEY",
 			AnthropicVersion: "2023-06-01",
 		},
-		ApprovalPolicy:   "on-request",
-		ApprovalMode:     "interactive",
-		AwayPolicy:       "auto_deny_continue",
-		SandboxEnabled:   false,
-		WritableRoots:    []string{},
-		ExecAllowlist:    []ExecAllowRule{},
-		NetworkAllowlist: []NetworkAllowRule{},
-		MaxIterations:    32,
-		Stream:           true,
+		ApprovalPolicy:    "on-request",
+		ApprovalMode:      "interactive",
+		AwayPolicy:        "auto_deny_continue",
+		SandboxEnabled:    false,
+		SystemSandboxMode: "off",
+		WritableRoots:     []string{},
+		ExecAllowlist:     []ExecAllowRule{},
+		NetworkAllowlist:  []NetworkAllowRule{},
+		MaxIterations:     32,
+		Stream:            true,
 		UpdateCheck: UpdateCheckConfig{
 			Enabled: true,
 		},
@@ -298,6 +393,18 @@ func resolveProjectConfigPath(workspace string) string {
 	return ""
 }
 
+func resolveProjectMCPConfigPath(workspace string) string {
+	candidates := []string{
+		filepath.Join(workspace, ".bytemind", "mcp.json"),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
 func resolveUserConfigPath() (string, error) {
 	home, err := ResolveHomeDir()
 	if err != nil {
@@ -310,11 +417,48 @@ func resolveUserConfigPath() (string, error) {
 	return "", nil
 }
 
+func resolveUserMCPConfigPath() (string, error) {
+	home, err := ResolveHomeDir()
+	if err != nil {
+		return "", err
+	}
+	candidate := filepath.Join(home, "mcp.json")
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate, nil
+	}
+	return "", nil
+}
+
 func mergeConfigFromFile(path string, cfg *Config) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+func mergeMCPConfigFromFile(path string, cfg *MCPConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return nil
+	}
+
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err == nil {
+		if _, ok := root["mcp"]; ok {
+			return errors.New("mcp config files must use top-level MCP fields; move mcp.* to the root")
+		}
+	}
+
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return err
 	}
@@ -356,6 +500,9 @@ func applyEnv(cfg *Config) {
 			cfg.SandboxEnabled = parsed
 		}
 	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_SYSTEM_SANDBOX_MODE")); value != "" {
+		cfg.SystemSandboxMode = value
+	}
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_WRITABLE_ROOTS")); value != "" {
 		cfg.WritableRoots = splitPathList(value)
 	}
@@ -385,13 +532,13 @@ func normalize(cfg *Config) error {
 			cfg.Provider.Type = "openai-compatible"
 		}
 	}
-	if cfg.Provider.BaseURL == "" {
+	if cfg.Provider.BaseURL == "" || usesOpenAIDefaultBaseURLForNativeProvider(cfg.Provider.Type, cfg.Provider.BaseURL) {
 		cfg.Provider.BaseURL = defaultBaseURL(cfg.Provider.Type)
 	}
 	if strings.TrimSpace(cfg.Provider.BaseURL) == "" {
 		return errors.New("provider.base_url is required")
 	}
-	if strings.TrimSpace(cfg.Provider.Model) == "" {
+	if strings.TrimSpace(cfg.Provider.Model) == "" || usesOpenAIDefaultModelForNativeProvider(cfg.Provider.Type, cfg.Provider.Model) {
 		cfg.Provider.Model = defaultModel(cfg.Provider.Type, cfg.Provider.BaseURL)
 		if strings.TrimSpace(cfg.Provider.Model) == "" {
 			return errors.New("provider.model is required")
@@ -490,7 +637,7 @@ func normalize(cfg *Config) error {
 		cfg.MaxIterations = 32
 	}
 	if !isSupportedProviderType(cfg.Provider.Type) {
-		return errors.New("provider.type must be one of openai-compatible, openai, anthropic (or leave it empty with provider.auto_detect_type=true)")
+		return errors.New("provider.type must be one of openai-compatible, openai, anthropic, gemini (or leave it empty with provider.auto_detect_type=true)")
 	}
 	switch cfg.ApprovalPolicy {
 	case "", "on-request":
@@ -512,6 +659,19 @@ func normalize(cfg *Config) error {
 	case "fail_fast":
 	default:
 		return errors.New("away_policy must be one of auto_deny_continue, fail_fast")
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.SystemSandboxMode)) {
+	case "", "off":
+		cfg.SystemSandboxMode = "off"
+	case "best_effort":
+		cfg.SystemSandboxMode = "best_effort"
+	case "required":
+		cfg.SystemSandboxMode = "required"
+	default:
+		return errors.New("system_sandbox_mode must be one of off, best_effort, required")
+	}
+	if cfg.SystemSandboxMode != "off" && !cfg.SandboxEnabled {
+		return errors.New("system_sandbox_mode requires sandbox_enabled=true")
 	}
 	if err := normalizeSandboxPolicy(cfg); err != nil {
 		return err
@@ -554,6 +714,9 @@ func normalize(cfg *Config) error {
 	}
 	if cfg.ContextBudget.MaxReactiveRetry < 0 {
 		return errors.New("context_budget.max_reactive_retry must be >= 0")
+	}
+	if err := normalizeMCPConfig(&cfg.MCP); err != nil {
+		return err
 	}
 	return nil
 }
@@ -728,6 +891,8 @@ func normalizeProviderType(value string) string {
 		return "openai"
 	case "anthropic":
 		return "anthropic"
+	case "gemini", "google", "google-gemini":
+		return "gemini"
 	default:
 		return strings.ToLower(strings.TrimSpace(value))
 	}
@@ -750,6 +915,12 @@ func detectProviderType(cfg ProviderConfig) string {
 	if authHeader == "x-api-key" && strings.Contains(apiPath, "messages") {
 		return "anthropic"
 	}
+	if authHeader == "x-goog-api-key" || hasHeaderName(cfg.ExtraHeaders, "x-goog-api-key") {
+		return "gemini"
+	}
+	if strings.Contains(baseURL, "generativelanguage.googleapis.com") && !strings.Contains(baseURL, "/openai") {
+		return "gemini"
+	}
 	return "openai-compatible"
 }
 
@@ -764,7 +935,7 @@ func hasHeaderName(headers map[string]string, target string) bool {
 
 func isSupportedProviderType(value string) bool {
 	switch value {
-	case "openai-compatible", "openai", "anthropic":
+	case "openai-compatible", "openai", "anthropic", "gemini":
 		return true
 	default:
 		return false
@@ -775,8 +946,28 @@ func defaultBaseURL(providerType string) string {
 	switch normalizeProviderType(providerType) {
 	case "anthropic":
 		return "https://api.anthropic.com"
+	case "gemini":
+		return "https://generativelanguage.googleapis.com/v1beta"
 	default:
 		return "https://api.openai.com/v1"
+	}
+}
+
+func usesOpenAIDefaultBaseURLForNativeProvider(providerType, baseURL string) bool {
+	switch normalizeProviderType(providerType) {
+	case "anthropic", "gemini":
+		return strings.EqualFold(strings.TrimRight(strings.TrimSpace(baseURL), "/"), "https://api.openai.com/v1")
+	default:
+		return false
+	}
+}
+
+func usesOpenAIDefaultModelForNativeProvider(providerType, model string) bool {
+	switch normalizeProviderType(providerType) {
+	case "anthropic", "gemini":
+		return strings.TrimSpace(model) == defaultModelID
+	default:
+		return false
 	}
 }
 
@@ -787,7 +978,184 @@ func defaultModel(providerType, baseURL string) string {
 			return "deepseek-chat"
 		}
 		return defaultModelID
+	case "gemini":
+		return "gemini-2.5-flash"
 	default:
 		return ""
 	}
+}
+
+func normalizeMCPConfig(cfg *MCPConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	if cfg.SyncTTLSeconds <= 0 {
+		cfg.SyncTTLSeconds = DefaultMCPSyncTTLSeconds
+	}
+	if len(cfg.Servers) == 0 {
+		cfg.Servers = nil
+		return nil
+	}
+	normalized := make([]MCPServerConfig, 0, len(cfg.Servers))
+	normalizedSources := make(map[string]string, len(cfg.Servers))
+	for _, server := range cfg.Servers {
+		originalID := strings.TrimSpace(server.ID)
+		server.ID = normalizeMCPServerID(server.ID)
+		if server.ID == "" {
+			return errors.New("mcp.servers contains an empty server id")
+		}
+		if existingSource, exists := normalizedSources[server.ID]; exists {
+			return fmt.Errorf("mcp.servers has duplicate server id after normalization: %q (from %q and %q)", server.ID, existingSource, originalID)
+		}
+		normalizedSources[server.ID] = originalID
+		server.Name = strings.TrimSpace(server.Name)
+		if server.Name == "" {
+			server.Name = server.ID
+		}
+		if server.Enabled == nil {
+			value := true
+			server.Enabled = &value
+		}
+		if server.AutoStart == nil {
+			value := true
+			server.AutoStart = &value
+		}
+		server.Transport.Type = strings.ToLower(strings.TrimSpace(server.Transport.Type))
+		if server.Transport.Type == "" {
+			server.Transport.Type = "stdio"
+		}
+		if server.Transport.Type != "stdio" {
+			return fmt.Errorf("mcp server %q uses unsupported transport.type %q (expected stdio)", server.ID, server.Transport.Type)
+		}
+		server.Transport.Command = strings.TrimSpace(server.Transport.Command)
+		server.Transport.CWD = strings.TrimSpace(server.Transport.CWD)
+		if server.EnabledValue() && server.Transport.Command == "" {
+			return fmt.Errorf("mcp server %q requires transport.command for stdio mode", server.ID)
+		}
+		if server.Transport.Args == nil {
+			server.Transport.Args = []string{}
+		}
+		for i, arg := range server.Transport.Args {
+			server.Transport.Args[i] = strings.TrimSpace(arg)
+		}
+		cleanEnv := map[string]string{}
+		for key, value := range server.Transport.Env {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			cleanEnv[key] = strings.TrimSpace(value)
+		}
+		server.Transport.Env = cleanEnv
+		if server.StartupTimeoutSeconds <= 0 {
+			server.StartupTimeoutSeconds = DefaultMCPStartupTimeoutSeconds
+		}
+		if server.CallTimeoutSeconds <= 0 {
+			server.CallTimeoutSeconds = DefaultMCPCallTimeoutSeconds
+		}
+		if server.MaxConcurrency < 1 {
+			server.MaxConcurrency = DefaultMCPMaxConcurrency
+		}
+		server.ProtocolVersion = strings.TrimSpace(server.ProtocolVersion)
+		server.ProtocolVersions = normalizeMCPProtocolVersions(server.ProtocolVersion, server.ProtocolVersions)
+		normalizedOverrides, err := normalizeMCPToolOverrides(server.ID, server.ToolOverrides)
+		if err != nil {
+			return err
+		}
+		server.ToolOverrides = normalizedOverrides
+		normalized = append(normalized, server)
+	}
+	cfg.Servers = normalized
+	return nil
+}
+
+func normalizeMCPServerID(raw string) string {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer(" ", "-", "/", "-", "\\", "-", ":", "-", ".", "-")
+	raw = replacer.Replace(raw)
+	raw = strings.Trim(raw, "-_")
+	return raw
+}
+
+func normalizeMCPProtocolVersions(primary string, extras []string) []string {
+	versions := make([]string, 0, 1+len(extras))
+	if strings.TrimSpace(primary) != "" {
+		versions = append(versions, strings.TrimSpace(primary))
+	}
+	versions = append(versions, extras...)
+	normalized := make([]string, 0, len(versions))
+	seen := map[string]struct{}{}
+	for _, version := range versions {
+		version = strings.TrimSpace(version)
+		if version == "" {
+			continue
+		}
+		if _, ok := seen[version]; ok {
+			continue
+		}
+		seen[version] = struct{}{}
+		normalized = append(normalized, version)
+	}
+	return normalized
+}
+
+func normalizeMCPToolOverrides(serverID string, overrides []MCPToolOverrideConfig) ([]MCPToolOverrideConfig, error) {
+	if len(overrides) == 0 {
+		return nil, nil
+	}
+	normalized := make([]MCPToolOverrideConfig, 0, len(overrides))
+	seen := map[string]struct{}{}
+	for _, override := range overrides {
+		override.ToolName = strings.TrimSpace(override.ToolName)
+		if override.ToolName == "" {
+			return nil, fmt.Errorf("mcp server %q has tool override with empty tool_name", serverID)
+		}
+		toolKey := strings.ToLower(override.ToolName)
+		if _, exists := seen[toolKey]; exists {
+			return nil, fmt.Errorf("mcp server %q has duplicate tool override for %q", serverID, override.ToolName)
+		}
+		seen[toolKey] = struct{}{}
+		override.SafetyClass = strings.ToLower(strings.TrimSpace(override.SafetyClass))
+		normalizedModes := make([]string, 0, len(override.AllowedModes))
+		modeSeen := map[planpkg.AgentMode]struct{}{}
+		for _, mode := range override.AllowedModes {
+			normalizedMode := planpkg.NormalizeMode(strings.TrimSpace(mode))
+			if normalizedMode == "" {
+				return nil, fmt.Errorf("mcp server %q has tool override %q with invalid allowed mode %q", serverID, override.ToolName, mode)
+			}
+			if _, exists := modeSeen[normalizedMode]; exists {
+				continue
+			}
+			modeSeen[normalizedMode] = struct{}{}
+			normalizedModes = append(normalizedModes, string(normalizedMode))
+		}
+		override.AllowedModes = normalizedModes
+		if override.DefaultTimeoutS < 0 || override.MaxTimeoutS < 0 || override.MaxResultChars < 0 {
+			return nil, fmt.Errorf("mcp server %q has tool override %q with negative timeout/result limits", serverID, override.ToolName)
+		}
+		if err := validateMCPToolOverride(override); err != nil {
+			return nil, fmt.Errorf("mcp server %q tool override %q is invalid: %w", serverID, override.ToolName, err)
+		}
+		normalized = append(normalized, override)
+	}
+	return normalized, nil
+}
+
+func validateMCPToolOverride(override MCPToolOverrideConfig) error {
+	switch override.SafetyClass {
+	case "", "safe", "moderate", "sensitive", "destructive":
+	default:
+		return fmt.Errorf("unsupported safety_class %q", override.SafetyClass)
+	}
+
+	if override.ReadOnly != nil && override.Destructive != nil && *override.ReadOnly && *override.Destructive {
+		return fmt.Errorf("read_only and destructive cannot both be true")
+	}
+	if override.DefaultTimeoutS > 0 && override.MaxTimeoutS > 0 && override.DefaultTimeoutS > override.MaxTimeoutS {
+		return fmt.Errorf("default_timeout_s must be <= max_timeout_s")
+	}
+	return nil
 }

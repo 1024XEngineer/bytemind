@@ -24,6 +24,7 @@ func (r *Runner) appendTaskStateAudit(
 	sessionID corepkg.SessionID,
 	traceID corepkg.TraceID,
 	toolName string,
+	sandboxAudit sandboxAuditContext,
 	task runtimepkg.Task,
 ) {
 	if task.ID == "" {
@@ -33,6 +34,7 @@ func (r *Runner) appendTaskStateAudit(
 		"tool_name": toolName,
 		"status":    string(task.Status),
 	}
+	appendSandboxAuditContext(metadata, sandboxAudit)
 	if task.ErrorCode != "" {
 		metadata["error_code"] = task.ErrorCode
 	}

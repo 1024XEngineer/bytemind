@@ -412,6 +412,9 @@ func TestRouteHelpersAndPolicyBranches(t *testing.T) {
 	if preferredRouteProvider("gpt-5.4", RouteContext{}) != ProviderOpenAI {
 		t.Fatal("expected openai preference")
 	}
+	if preferredRouteProvider("gemini-2.5-flash", RouteContext{}) != ProviderGemini {
+		t.Fatal("expected gemini preference")
+	}
 	if preferredRouteProvider("", RouteContext{Tags: map[string]string{"provider": " backup "}}) != "backup" {
 		t.Fatal("expected tag provider preference")
 	}
@@ -432,6 +435,9 @@ func TestRouteHelpersAndPolicyBranches(t *testing.T) {
 	}
 	if !isOpenAIModel("gpt-5") || !isOpenAIModel("o1-mini") || isOpenAIModel("claude-3") {
 		t.Fatal("unexpected openai model detection")
+	}
+	if !isGeminiModel("gemini-2.5-flash") || isGeminiModel("gpt-5") {
+		t.Fatal("unexpected gemini model detection")
 	}
 }
 

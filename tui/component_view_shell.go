@@ -58,29 +58,24 @@ func (m model) renderLanding() string {
 
 func renderLandingDefault(m model) string {
 	ensureZoneManager()
-	logo := landingLogoStyle.Render(strings.Join([]string{
-		"    ____        __                      _           __",
-		"   / __ )__  __/ /____  ____ ___  ____(_)___  ____/ /",
-		"  / __  / / / / __/ _ \\/ __ `__ \\/ __/ / __ \\/ __  / ",
-		" / /_/ / /_/ / /_/  __/ / / / / / /_/ / / / / /_/ /  ",
-		"/_____/\\__, /\\__/\\___/_/ /_/ /_/\\__/_/_/ /_/\\__,_/   ",
-		"      /____/                                          ",
-	}, "\n"))
-	inputBox := landingInputStyle.Copy().
-		BorderForeground(m.modeAccentColor()).
-		Width(m.landingInputShellWidth()).
-		Render(zone.Mark(inputEditorZoneID, m.inputEditorViewComponent().Render(m)))
-	parts := []string{logo, "", m.renderModeTabs(), ""}
-	if m.startupGuide.Active {
-		parts = append(parts, m.renderStartupGuidePanel(), "")
-	} else if m.promptSearchOpen {
-		parts = append(parts, m.renderPromptSearchPalette(), "")
-	} else if m.mentionOpen {
-		parts = append(parts, m.renderMentionPalette(), "")
-	} else if m.commandOpen {
-		parts = append(parts, m.renderCommandPalette(), "")
+	content := m.renderLandingContent(true)
+	return m.renderLandingCanvas(content)
+}
+
+func overlayBottomAligned(base, overlay string, width int) string {
+	width = max(1, width)
+	baseLines := strings.Split(strings.ReplaceAll(base, "\r\n", "\n"), "\n")
+	overlayLines := strings.Split(strings.ReplaceAll(overlay, "\r\n", "\n"), "\n")
+	if len(baseLines) == 0 || len(overlayLines) == 0 {
+		return base
 	}
-	parts = append(parts, inputBox, "", renderFooterShortcutHints())
-	content := lipgloss.JoinVertical(lipgloss.Center, parts...)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+	if len(overlayLines) > len(baseLines) {
+		overlayLines = overlayLines[len(overlayLines)-len(baseLines):]
+	}
+	start := len(baseLines) - len(overlayLines)
+	lineStyle := lipgloss.NewStyle().Width(width)
+	for i := 0; i < len(overlayLines); i++ {
+		baseLines[start+i] = lineStyle.Render(overlayLines[i])
+	}
+	return strings.Join(baseLines, "\n")
 }

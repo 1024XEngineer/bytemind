@@ -883,6 +883,69 @@ func TestMergeTailIntoLatestMarkerUpdatesLatestOnly(t *testing.T) {
 	}
 }
 
+func TestTryStartClipboardPasteCapturePreservesExistingMarkerPrefixOnSuffixMatch(t *testing.T) {
+	m := newImagePipelineModel(t)
+
+	firstRaw := strings.Join([]string{"f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11"}, "\n")
+	marker1, _, err := m.compressPastedText(firstRaw)
+	if err != nil {
+		t.Fatalf("compress first: %v", err)
+	}
+
+	secondRaw := strings.Join([]string{"beta-1", "beta-2", "beta-3", "beta-4", "beta-5", "beta-6", "beta-7", "beta-8", "beta-9", "beta-10", "beta-11"}, "\n")
+	m.clipboardRead = fakeClipboardTextReader{text: secondRaw}
+
+	before := marker1 + "bet"
+	after := marker1 + "beta"
+	updated, note, ok := m.tryStartClipboardPasteCapture(before, after, "rune")
+	if !ok {
+		t.Fatalf("expected clipboard capture fallback branch to start")
+	}
+	if !strings.HasPrefix(updated, marker1) {
+		t.Fatalf("expected existing marker prefix to be preserved, got %q", updated)
+	}
+	re := regexp.MustCompile(`^(?:\s*\[Paste #\d+ ~\d+ lines\]\s*){2}$`)
+	if !re.MatchString(updated) {
+		t.Fatalf("expected marker chain after second capture, got %q", updated)
+	}
+	if strings.Contains(updated, "beta") {
+		t.Fatalf("expected raw clipboard prefix to be fully replaced, got %q", updated)
+	}
+	if !strings.Contains(note, "Long pasted text") {
+		t.Fatalf("expected long-paste status note, got %q", note)
+	}
+	if !m.pasteTransaction.Active || m.pasteTransaction.Consumed != 4 {
+		t.Fatalf("expected paste transaction to track consumed echoed prefix, got active=%v consumed=%d", m.pasteTransaction.Active, m.pasteTransaction.Consumed)
+	}
+}
+
+func TestHandleInputMutationCapturesTwoRuneMultibyteClipboardPrefixImmediately(t *testing.T) {
+	m := newImagePipelineModel(t)
+	secondRaw := strings.Join([]string{
+		"能、帮我看下这个仓库结构",
+		"给这段代码做 review",
+		"顺便看一下最近改动",
+		"补充下测试建议",
+		"最后总结风险点",
+	}, "\n")
+	m.clipboardRead = fakeClipboardTextReader{text: secondRaw}
+
+	firstChunk := "能、"
+	m.input.SetValue(firstChunk)
+	m.handleInputMutation("", firstChunk, "rune")
+
+	got := m.input.Value()
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(got) {
+		t.Fatalf("expected multibyte two-rune clipboard prefix to be captured immediately, got %q", got)
+	}
+	if strings.Contains(got, firstChunk) {
+		t.Fatalf("expected no visible multibyte prefix flicker, got %q", got)
+	}
+	if !m.pasteTransaction.Active || m.pasteTransaction.Consumed != len([]rune(firstChunk)) {
+		t.Fatalf("expected transaction to consume the first multibyte chunk, got active=%v consumed=%d", m.pasteTransaction.Active, m.pasteTransaction.Consumed)
+	}
+}
+
 func TestResolvePastedSelectionInvalidStartLine(t *testing.T) {
 	m := newImagePipelineModel(t)
 	_, stored, err := m.compressPastedText("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk")

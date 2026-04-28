@@ -22,6 +22,9 @@ func preferredRouteProvider(requested ModelID, rc RouteContext) ProviderID {
 	if isAnthropicModel(model) {
 		return ProviderAnthropic
 	}
+	if isGeminiModel(model) {
+		return ProviderGemini
+	}
 	if isOpenAIModel(model) {
 		return ProviderOpenAI
 	}
@@ -49,6 +52,8 @@ func routeRankLatency(id ProviderID) int {
 		return 1
 	case ProviderAnthropic:
 		return 2
+	case ProviderGemini:
+		return 3
 	default:
 		return 10
 	}
@@ -60,6 +65,8 @@ func routeRankCost(id ProviderID) int {
 		return 1
 	case ProviderOpenAI:
 		return 2
+	case ProviderGemini:
+		return 3
 	default:
 		return 10
 	}
@@ -76,4 +83,9 @@ func isOpenAIModel(model ModelID) bool {
 		return true
 	}
 	return len(value) >= len("o1") && value[:len("o1")] == "o1"
+}
+
+func isGeminiModel(model ModelID) bool {
+	value := string(model)
+	return len(value) >= len("gemini") && value[:len("gemini")] == "gemini"
 }

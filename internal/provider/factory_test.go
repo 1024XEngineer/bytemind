@@ -92,6 +92,21 @@ func TestNewBaseClientReturnsAnthropic(t *testing.T) {
 	}
 }
 
+func TestNewBaseClientReturnsGemini(t *testing.T) {
+	client, err := newBaseClient(config.ProviderConfig{
+		Type:    "gemini",
+		BaseURL: "https://generativelanguage.googleapis.com/v1beta",
+		APIKey:  "test-key",
+		Model:   "gemini-2.5-flash",
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if _, ok := client.(*Gemini); !ok {
+		t.Fatalf("expected *Gemini, got %T", client)
+	}
+}
+
 func TestNewDomainClientWrapsBaseClient(t *testing.T) {
 	client, err := NewDomainClient(config.ProviderConfig{
 		Type:    "openai-compatible",
@@ -169,6 +184,21 @@ func TestNewDomainClientPreservesAnthropicProviderID(t *testing.T) {
 	}
 }
 
+func TestNewDomainClientPreservesGeminiProviderID(t *testing.T) {
+	client, err := NewDomainClient(config.ProviderConfig{
+		Type:    "gemini",
+		BaseURL: "https://generativelanguage.googleapis.com/v1beta",
+		APIKey:  "test-key",
+		Model:   "gemini-2.5-flash",
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if client.ProviderID() != ProviderGemini {
+		t.Fatalf("expected provider id %q, got %q", ProviderGemini, client.ProviderID())
+	}
+}
+
 func TestNewDomainClientNormalizesOpenAIProviderIDVariants(t *testing.T) {
 	client, err := NewDomainClient(config.ProviderConfig{
 		Type:    " OpenAI-Compatible ",
@@ -189,6 +219,7 @@ func TestNewBaseClientAcceptsNormalizedTypeVariants(t *testing.T) {
 		{Type: " OPENAI ", BaseURL: "https://api.openai.com/v1", APIKey: "test-key", Model: "gpt-5.4"},
 		{Type: "OpenAI-Compatible", BaseURL: "https://api.openai.com/v1", APIKey: "test-key", Model: "gpt-5.4"},
 		{Type: " ANTHROPIC ", BaseURL: "https://api.anthropic.com", APIKey: "test-key", Model: "claude-sonnet", AnthropicVersion: "2023-06-01"},
+		{Type: " GEMINI ", BaseURL: "https://generativelanguage.googleapis.com/v1beta", APIKey: "test-key", Model: "gemini-2.5-flash"},
 	}
 	for _, cfg := range cases {
 		if _, err := newBaseClient(cfg); err != nil {

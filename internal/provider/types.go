@@ -10,6 +10,7 @@ import (
 const (
 	ProviderOpenAI    ProviderID = "openai"
 	ProviderAnthropic ProviderID = "anthropic"
+	ProviderGemini    ProviderID = "gemini"
 )
 
 type ErrorCode string

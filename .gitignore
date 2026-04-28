@@ -1,5 +1,6 @@
 .gocache/
 .gomodcache/
+.appdata/
 .bytemind/
 /config.json
 .installtest*/
@@ -10,4 +11,5 @@ prd-provider.md
 provider-iteration-plan.md
 prd-extension.md
 extension-iteration-plan.md
+demos/
 

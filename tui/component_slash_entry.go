@@ -35,6 +35,8 @@ func (m *model) handleSlashCommand(input string) error {
 		return m.runSkillsListCommand(input)
 	case "/skill":
 		return m.runSkillCommand(input, fields)
+	case "/mcp":
+		return m.runMCPCommandDispatch(input, fields)
 	case "/new":
 		return m.newSession()
 	case "/compact":
@@ -45,9 +47,10 @@ func (m *model) handleSlashCommand(input string) error {
 }
 
 func (m model) executeCommand(input string) (tea.Model, tea.Cmd, error) {
+	previousScreen := m.screen
 	if err := m.handleSlashCommand(input); err != nil {
 		return m, nil, err
 	}
 	m.refreshViewport()
-	return m, m.loadSessionsCmd(), nil
+	return m, tea.Batch(m.loadSessionsCmd(), m.startLandingGlowOnTransition(previousScreen)), nil
 }

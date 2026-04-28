@@ -10,11 +10,12 @@ import (
 const defaultRecentToolLimit = 4
 
 type StopSummaryInput struct {
-	SessionID       corepkg.SessionID
-	Reason          string
-	ExecutedTools   []string
-	TaskReport      *TaskReport
-	RecentToolLimit int
+	SessionID         corepkg.SessionID
+	Reason            string
+	ExecutedTools     []string
+	TaskReport        *TaskReport
+	IncludeTaskReport bool
+	RecentToolLimit   int
 }
 
 func BuildStopSummary(in StopSummaryInput) string {
@@ -33,7 +34,7 @@ func BuildStopSummary(in StopSummaryInput) string {
 			fmt.Fprintf(&builder, "- %s\n", toolName)
 		}
 	}
-	if in.TaskReport != nil && !in.TaskReport.IsEmpty() {
+	if in.IncludeTaskReport && in.TaskReport != nil && !in.TaskReport.IsEmpty() {
 		builder.WriteString("\nTask report summary:\n")
 		if human := strings.TrimSpace(in.TaskReport.HumanSummary()); human != "" {
 			builder.WriteString(human)

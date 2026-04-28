@@ -48,3 +48,35 @@ jobs:
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  sandbox-acceptance:
+    if: github.event.pull_request.draft == false
+    name: Sandbox Acceptance (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - name: Run sandbox acceptance (Unix)
+        if: runner.os != 'Windows'
+        run: bash ./scripts/sandbox-e2e.sh --skip-full
+
+      - name: Run sandbox acceptance (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/sandbox-e2e.ps1 -SkipFull

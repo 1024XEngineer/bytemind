@@ -1,0 +1,27 @@
+{
+  "enabled": true,
+  "sync_ttl_s": 30,
+  "servers": [
+    {
+      "id": "github",
+      "name": "GitHub MCP",
+      "enabled": true,
+      "transport": {
+        "type": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-github"
+        ],
+        "env": {
+          "GITHUB_PERSONAL_ACCESS_TOKEN": "<YOUR_GITHUB_PAT>"
+        },
+        "cwd": ""
+      },
+      "auto_start": true,
+      "startup_timeout_s": 20,
+      "call_timeout_s": 60,
+      "max_concurrency": 4
+    }
+  ]
+}

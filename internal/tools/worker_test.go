@@ -554,6 +554,18 @@ func TestRuntimeRequestForRunShellExtractsCurlNetworkTarget(t *testing.T) {
 	}
 }
 
+func TestRunShellArgumentsContainNetworkTarget(t *testing.T) {
+	if !RunShellArgumentsContainNetworkTarget(`{"command":"curl https://api.openai.com/v1/models"}`) {
+		t.Fatal("expected curl command arguments to be detected as network-targeted")
+	}
+	if RunShellArgumentsContainNetworkTarget(`{"command":"go test ./..."}`) {
+		t.Fatal("expected local command arguments to have no network target")
+	}
+	if RunShellArgumentsContainNetworkTarget(`{`) {
+		t.Fatal("expected malformed arguments payload to return false")
+	}
+}
+
 func TestRuntimeRequestForWebFetchExtractsNetworkTarget(t *testing.T) {
 	req, err := runtimeRequestForTool("web_fetch", json.RawMessage(`{"url":"api.openai.com/v1/models"}`), nil)
 	if err != nil {
@@ -734,6 +746,208 @@ func TestInProcessWorkerDeniesWebFetchNetworkOutsideLeaseAllowlist(t *testing.T)
 	}
 	if !strings.Contains(execErr.Message, "network_not_allowed") {
 		t.Fatalf("expected network_not_allowed reason, got %q", execErr.Message)
+	}
+}
+
+func TestInProcessWorkerRequiredModeDeniesWebFetchWhenBackendLacksNetworkIsolation(t *testing.T) {
+	registry := &Registry{}
+	registerBuiltinExecutorTool(t, registry, executorTestTool{
+		name: "web_fetch",
+		run: func(_ context.Context, _ json.RawMessage, _ *ExecutionContext) (string, error) {
+			t.Fatal("tool should not run when required mode backend lacks network isolation")
+			return "", nil
+		},
+	})
+	originalResolver := workerSandboxBackendResolver
+	workerSandboxBackendResolver = func(mode, goos string, lookPath func(string) (string, error)) (systemSandboxRuntimeBackend, error) {
+		return systemSandboxRuntimeBackend{
+			Enabled: true,
+			Name:    "windows_job_object",
+			Shell: systemSandboxLaunchSpec{
+				Policy: systemSandboxPolicy{NetworkIsolation: false},
+			},
+			Worker: systemSandboxLaunchSpec{
+				Policy: systemSandboxPolicy{NetworkIsolation: false},
+			},
+		}, nil
+	}
+	defer func() { workerSandboxBackendResolver = originalResolver }()
+
+	worker := inProcessWorker{registry: registry}
+	_, err := worker.Run(context.Background(), workerRunRequest{
+		ToolName: "web_fetch",
+		RawArgs:  json.RawMessage(`{"url":"https://api.openai.com/v1/models"}`),
+		Execution: &ExecutionContext{
+			SandboxEnabled:    true,
+			SystemSandboxMode: systemSandboxModeRequired,
+			Workspace:         t.TempDir(),
+			NetworkAllowlist: []sandboxpkg.NetworkRule{
+				{Host: "api.openai.com", Port: 443, Scheme: "https"},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected required mode network isolation denial")
+	}
+	execErr, ok := AsToolExecError(err)
+	if !ok || execErr.Code != ToolErrorPermissionDenied {
+		t.Fatalf("expected permission denied tool error, got %#v", err)
+	}
+	if !strings.Contains(strings.ToLower(execErr.Message), "lacks network isolation") {
+		t.Fatalf("expected network isolation denial message, got %q", execErr.Message)
+	}
+}
+
+func TestInProcessWorkerRequiredModeAllowsWebFetchWhenBackendHasWorkerNetworkIsolation(t *testing.T) {
+	registry := &Registry{}
+	called := false
+	registerBuiltinExecutorTool(t, registry, executorTestTool{
+		name: "web_fetch",
+		run: func(_ context.Context, _ json.RawMessage, _ *ExecutionContext) (string, error) {
+			called = true
+			return `{"ok":true}`, nil
+		},
+	})
+	originalResolver := workerSandboxBackendResolver
+	workerSandboxBackendResolver = func(mode, goos string, lookPath func(string) (string, error)) (systemSandboxRuntimeBackend, error) {
+		return systemSandboxRuntimeBackend{
+			Enabled: true,
+			Name:    "linux_unshare",
+			Shell: systemSandboxLaunchSpec{
+				Policy: systemSandboxPolicy{NetworkIsolation: true},
+			},
+			Worker: systemSandboxLaunchSpec{
+				Policy: systemSandboxPolicy{NetworkIsolation: true},
+			},
+		}, nil
+	}
+	defer func() { workerSandboxBackendResolver = originalResolver }()
+
+	worker := inProcessWorker{registry: registry}
+	out, err := worker.Run(context.Background(), workerRunRequest{
+		ToolName: "web_fetch",
+		RawArgs:  json.RawMessage(`{"url":"https://api.openai.com/v1/models"}`),
+		Execution: &ExecutionContext{
+			SandboxEnabled:    true,
+			SystemSandboxMode: systemSandboxModeRequired,
+			Workspace:         t.TempDir(),
+			NetworkAllowlist: []sandboxpkg.NetworkRule{
+				{Host: "api.openai.com", Port: 443, Scheme: "https"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected required mode to allow with worker network isolation, got %v", err)
+	}
+	if !called {
+		t.Fatal("expected underlying tool to run")
+	}
+	if out != `{"ok":true}` {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestInProcessWorkerRequiredModeDeniesRunShellNetworkWhenShellIsolationMissing(t *testing.T) {
+	registry := &Registry{}
+	registerBuiltinExecutorTool(t, registry, executorTestTool{
+		name: "run_shell",
+		run: func(_ context.Context, _ json.RawMessage, _ *ExecutionContext) (string, error) {
+			t.Fatal("tool should not run when required mode shell lacks network isolation")
+			return "", nil
+		},
+	})
+	originalResolver := workerSandboxBackendResolver
+	workerSandboxBackendResolver = func(mode, goos string, lookPath func(string) (string, error)) (systemSandboxRuntimeBackend, error) {
+		return systemSandboxRuntimeBackend{
+			Enabled: true,
+			Name:    "windows_job_object",
+			Shell: systemSandboxLaunchSpec{
+				Policy: systemSandboxPolicy{NetworkIsolation: false},
+			},
+			Worker: systemSandboxLaunchSpec{
+				Policy: systemSandboxPolicy{NetworkIsolation: false},
+			},
+		}, nil
+	}
+	defer func() { workerSandboxBackendResolver = originalResolver }()
+
+	worker := inProcessWorker{registry: registry}
+	_, err := worker.Run(context.Background(), workerRunRequest{
+		ToolName: "run_shell",
+		RawArgs:  json.RawMessage(`{"command":"curl https://api.openai.com/v1/models"}`),
+		Execution: &ExecutionContext{
+			SandboxEnabled:    true,
+			SystemSandboxMode: systemSandboxModeRequired,
+			Workspace:         t.TempDir(),
+			ExecAllowlist: []sandboxpkg.ExecRule{
+				{Command: "curl", ArgsPattern: []string{"https://api.openai.com/v1/models"}},
+			},
+			NetworkAllowlist: []sandboxpkg.NetworkRule{
+				{Host: "api.openai.com", Port: 443, Scheme: "https"},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected required mode shell network isolation denial")
+	}
+	execErr, ok := AsToolExecError(err)
+	if !ok || execErr.Code != ToolErrorPermissionDenied {
+		t.Fatalf("expected permission denied tool error, got %#v", err)
+	}
+	if !strings.Contains(strings.ToLower(execErr.Message), "lacks network isolation") {
+		t.Fatalf("expected network isolation denial message, got %q", execErr.Message)
+	}
+}
+
+func TestInProcessWorkerRequiredModeAllowsRunShellNetworkWhenShellIsolationPresent(t *testing.T) {
+	registry := &Registry{}
+	called := false
+	registerBuiltinExecutorTool(t, registry, executorTestTool{
+		name: "run_shell",
+		run: func(_ context.Context, _ json.RawMessage, _ *ExecutionContext) (string, error) {
+			called = true
+			return `{"ok":true}`, nil
+		},
+	})
+	originalResolver := workerSandboxBackendResolver
+	workerSandboxBackendResolver = func(mode, goos string, lookPath func(string) (string, error)) (systemSandboxRuntimeBackend, error) {
+		return systemSandboxRuntimeBackend{
+			Enabled: true,
+			Name:    "linux_unshare",
+			Shell: systemSandboxLaunchSpec{
+				Policy: systemSandboxPolicy{NetworkIsolation: true},
+			},
+			Worker: systemSandboxLaunchSpec{
+				Policy: systemSandboxPolicy{NetworkIsolation: false},
+			},
+		}, nil
+	}
+	defer func() { workerSandboxBackendResolver = originalResolver }()
+
+	worker := inProcessWorker{registry: registry}
+	out, err := worker.Run(context.Background(), workerRunRequest{
+		ToolName: "run_shell",
+		RawArgs:  json.RawMessage(`{"command":"curl https://api.openai.com/v1/models"}`),
+		Execution: &ExecutionContext{
+			SandboxEnabled:    true,
+			SystemSandboxMode: systemSandboxModeRequired,
+			Workspace:         t.TempDir(),
+			ExecAllowlist: []sandboxpkg.ExecRule{
+				{Command: "curl", ArgsPattern: []string{"https://api.openai.com/v1/models"}},
+			},
+			NetworkAllowlist: []sandboxpkg.NetworkRule{
+				{Host: "api.openai.com", Port: 443, Scheme: "https"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected run_shell to run when shell network isolation is present, got %v", err)
+	}
+	if !called {
+		t.Fatal("expected underlying tool to run")
+	}
+	if out != `{"ok":true}` {
+		t.Fatalf("unexpected output: %q", out)
 	}
 }
 

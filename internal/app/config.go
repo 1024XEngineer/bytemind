@@ -10,13 +10,15 @@ import (
 
 // ConfigRequest defines workspace config load plus CLI runtime overrides.
 type ConfigRequest struct {
-	Workspace             string
-	ConfigPath            string
-	ModelOverride         string
-	StreamOverride        string
-	ApprovalModeOverride  string
-	AwayPolicyOverride    string
-	MaxIterationsOverride int
+	Workspace                 string
+	ConfigPath                string
+	ModelOverride             string
+	StreamOverride            string
+	SandboxEnabledOverride    string
+	SystemSandboxModeOverride string
+	ApprovalModeOverride      string
+	AwayPolicyOverride        string
+	MaxIterationsOverride     int
 }
 
 func LoadRuntimeConfig(req ConfigRequest) (config.Config, error) {
@@ -33,6 +35,22 @@ func LoadRuntimeConfig(req ConfigRequest) (config.Config, error) {
 			return cfg, fmt.Errorf("invalid -stream value: %w", err)
 		}
 		cfg.Stream = parsed
+	}
+	if req.SandboxEnabledOverride != "" {
+		parsed, err := strconv.ParseBool(req.SandboxEnabledOverride)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid -sandbox-enabled value: %w", err)
+		}
+		cfg.SandboxEnabled = parsed
+	}
+	if req.SystemSandboxModeOverride != "" {
+		mode := strings.ToLower(strings.TrimSpace(req.SystemSandboxModeOverride))
+		switch mode {
+		case "off", "best_effort", "required":
+			cfg.SystemSandboxMode = mode
+		default:
+			return cfg, fmt.Errorf("invalid -system-sandbox-mode value: %q (expected off, best_effort, or required)", mode)
+		}
 	}
 	if req.ApprovalModeOverride != "" {
 		mode := strings.TrimSpace(req.ApprovalModeOverride)
@@ -57,6 +75,9 @@ func LoadRuntimeConfig(req ConfigRequest) (config.Config, error) {
 	}
 	if req.MaxIterationsOverride > 0 {
 		cfg.MaxIterations = req.MaxIterationsOverride
+	}
+	if cfg.SystemSandboxMode != "off" && !cfg.SandboxEnabled {
+		return cfg, fmt.Errorf("system_sandbox_mode requires sandbox_enabled=true (set -sandbox-enabled true)")
 	}
 	return cfg, nil
 }

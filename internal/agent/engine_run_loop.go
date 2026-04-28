@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	contextpkg "bytemind/internal/context"
 	corepkg "bytemind/internal/core"
 	"bytemind/internal/llm"
 	"bytemind/internal/session"
+	storagepkg "bytemind/internal/storage"
 )
 
 func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Session, setup runPromptSetup, out io.Writer) (string, error) {
@@ -22,7 +24,11 @@ func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Sessio
 	adaptiveState := newAdaptiveTurnState(runner.contextBudgetMaxReactiveRetry())
 	executedToolNames := make([]string, 0, 16)
 	taskReport := &TaskReport{}
+	writeSystemSandboxStartupNotice(out, setup, runner.config.SandboxEnabled, runner.config.SystemSandboxMode)
+	appendSystemSandboxStartupAudit(ctx, runner, sess, setup, runner.config.SandboxEnabled, runner.config.SystemSandboxMode)
+	recordSystemSandboxStartupFallback(taskReport, setup, runner.config.SystemSandboxMode)
 	approvalHandler := runner.prepareRunApprovalHandler(setup, out)
+	sandboxAudit := sandboxAuditFromSetup(setup, runner.config.SandboxEnabled, runner.config.SystemSandboxMode)
 
 	for step := 0; step < runner.config.MaxIterations; step++ {
 		messages, err := e.messagesForStep(ctx, sess, setup, step, out)
@@ -49,6 +55,7 @@ func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Sessio
 			AdaptiveState:    adaptiveState,
 			ExecutedTools:    &executedToolNames,
 			Approval:         approvalHandler,
+			SandboxAudit:     sandboxAudit,
 			TaskReport:       taskReport,
 			Out:              out,
 		})
@@ -156,4 +163,137 @@ func writeCompletionTaskReport(out io.Writer, taskReport *TaskReport) {
 	_, _ = io.WriteString(out, human+"\n")
 	_, _ = io.WriteString(out, "Task report (json):\n")
 	_, _ = io.WriteString(out, taskReport.JSON()+"\n")
+}
+
+func writeSystemSandboxStartupNotice(out io.Writer, setup runPromptSetup, sandboxEnabled bool, configuredMode string) {
+	if out == nil {
+		return
+	}
+	mode := strings.TrimSpace(configuredMode)
+	if mode == "" {
+		mode = "off"
+	}
+	backend := strings.TrimSpace(setup.SystemSandboxBackend)
+	if backend == "" {
+		backend = "none"
+	}
+	status := strings.TrimSpace(setup.SystemSandboxStatus)
+	if !sandboxEnabled && status == "" {
+		return
+	}
+	if mode == "off" && !setup.SystemSandboxFallback && status == "" {
+		return
+	}
+	sandboxState := "active"
+	if setup.SystemSandboxFallback {
+		sandboxState = "fallback"
+	} else if backend == "none" {
+		sandboxState = "inactive"
+	}
+	requiredCapable := strconv.FormatBool(setup.SystemSandboxRequiredCapable)
+	shellNetwork := strconv.FormatBool(setup.SystemSandboxShellNetwork)
+	workerNetwork := strconv.FormatBool(setup.SystemSandboxWorkerNetwork)
+	capabilityLevel := strings.TrimSpace(setup.SystemSandboxCapabilityLevel)
+	if capabilityLevel == "" {
+		capabilityLevel = "none"
+	}
+	line := fmt.Sprintf(
+		"%ssystem sandbox startup%s mode=%s backend=%s state=%s required_capable=%s capability_level=%s shell_network_isolation=%s worker_network_isolation=%s",
+		ansiDim, ansiReset, mode, backend, sandboxState, requiredCapable, capabilityLevel, shellNetwork, workerNetwork,
+	)
+	if status != "" {
+		line += fmt.Sprintf(" (%s)", status)
+	}
+	_, _ = io.WriteString(out, line+"\n")
+}
+
+func recordSystemSandboxStartupFallback(taskReport *TaskReport, setup runPromptSetup, configuredMode string) {
+	if taskReport == nil || !setup.SystemSandboxFallback {
+		return
+	}
+	mode := strings.TrimSpace(configuredMode)
+	if mode == "" {
+		mode = "off"
+	}
+	backend := strings.TrimSpace(setup.SystemSandboxBackend)
+	if backend == "" {
+		backend = "none"
+	}
+	requiredCapable := strconv.FormatBool(setup.SystemSandboxRequiredCapable)
+	shellNetwork := strconv.FormatBool(setup.SystemSandboxShellNetwork)
+	workerNetwork := strconv.FormatBool(setup.SystemSandboxWorkerNetwork)
+	capabilityLevel := strings.TrimSpace(setup.SystemSandboxCapabilityLevel)
+	if capabilityLevel == "" {
+		capabilityLevel = "none"
+	}
+	reason := strings.TrimSpace(setup.SystemSandboxStatus)
+	note := fmt.Sprintf(
+		"startup (mode=%s, backend=%s, required_capable=%s, capability_level=%s, shell_network_isolation=%s, worker_network_isolation=%s",
+		mode, backend, requiredCapable, capabilityLevel, shellNetwork, workerNetwork,
+	)
+	if reason != "" {
+		note += fmt.Sprintf(", reason=%s", reason)
+	}
+	note += ")"
+	taskReport.RecordSystemSandboxFallback(note)
+}
+
+func appendSystemSandboxStartupAudit(
+	ctx context.Context,
+	runner *Runner,
+	sess *session.Session,
+	setup runPromptSetup,
+	sandboxEnabled bool,
+	configuredMode string,
+) {
+	if runner == nil || sess == nil {
+		return
+	}
+	mode := strings.TrimSpace(configuredMode)
+	if mode == "" {
+		mode = "off"
+	}
+	backend := strings.TrimSpace(setup.SystemSandboxBackend)
+	if backend == "" {
+		backend = "none"
+	}
+	reason := strings.TrimSpace(setup.SystemSandboxStatus)
+	if !sandboxEnabled && mode == "off" && reason == "" {
+		return
+	}
+	state := "active"
+	if setup.SystemSandboxFallback {
+		state = "fallback"
+	} else if backend == "none" {
+		state = "inactive"
+	}
+	metadata := map[string]string{
+		"sandbox_enabled":                  strconv.FormatBool(sandboxEnabled),
+		"sandbox_mode":                     mode,
+		"sandbox_backend":                  backend,
+		"sandbox_required_capable":         strconv.FormatBool(setup.SystemSandboxRequiredCapable),
+		"sandbox_capability_level":         capabilityLevelFromSetup(setup),
+		"sandbox_shell_network_isolation":  strconv.FormatBool(setup.SystemSandboxShellNetwork),
+		"sandbox_worker_network_isolation": strconv.FormatBool(setup.SystemSandboxWorkerNetwork),
+		"sandbox_status":                   state,
+		"sandbox_fallback":                 strconv.FormatBool(setup.SystemSandboxFallback),
+	}
+	if reason != "" {
+		metadata["sandbox_message"] = reason
+	}
+	runner.appendAudit(ctx, storagepkg.AuditEvent{
+		SessionID: corepkg.SessionID(sess.ID),
+		Actor:     "agent",
+		Action:    "system_sandbox_startup",
+		Result:    state,
+		Metadata:  metadata,
+	})
+}
+
+func capabilityLevelFromSetup(setup runPromptSetup) string {
+	level := strings.TrimSpace(setup.SystemSandboxCapabilityLevel)
+	if level == "" {
+		return "none"
+	}
+	return level
 }

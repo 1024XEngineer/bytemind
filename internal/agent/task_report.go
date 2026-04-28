@@ -12,6 +12,7 @@ type TaskReport struct {
 	PendingApproval              []string `json:"pending_approval,omitempty"`
 	SkippedDueToDeniedDependency []string `json:"skipped_due_to_denied_dependency,omitempty"`
 	SkippedDueToDependency       []string `json:"skipped_due_to_dependency,omitempty"`
+	SystemSandboxFallback        []string `json:"system_sandbox_fallback,omitempty"`
 	StrategyAdjustments          []string `json:"strategy_adjustments,omitempty"`
 	RetryReasons                 []string `json:"retry_reasons,omitempty"`
 	NoProgressTurns              int      `json:"no_progress_turns,omitempty"`
@@ -40,6 +41,10 @@ func (r *TaskReport) RecordSkippedDueToDeniedDependency(name string) {
 	r.appendUnique(&r.SkippedDueToDependency, name)
 }
 
+func (r *TaskReport) RecordSystemSandboxFallback(note string) {
+	r.appendUnique(&r.SystemSandboxFallback, note)
+}
+
 func (r *TaskReport) RecordStrategyAdjustment(note string) {
 	r.appendUnique(&r.StrategyAdjustments, note)
 }
@@ -64,6 +69,7 @@ func (r TaskReport) IsEmpty() bool {
 		len(r.Denied) == 0 &&
 		len(r.PendingApproval) == 0 &&
 		len(r.skipped()) == 0 &&
+		len(r.SystemSandboxFallback) == 0 &&
 		len(r.StrategyAdjustments) == 0 &&
 		len(r.RetryReasons) == 0 &&
 		r.NoProgressTurns == 0 &&
@@ -74,6 +80,7 @@ func (r TaskReport) HasNonSuccessOutcomes() bool {
 	return len(r.Denied) > 0 ||
 		len(r.PendingApproval) > 0 ||
 		len(r.skipped()) > 0 ||
+		len(r.SystemSandboxFallback) > 0 ||
 		len(r.RetryReasons) > 0 ||
 		r.NoProgressTurns > 0 ||
 		len(r.Escalations) > 0
@@ -107,6 +114,7 @@ func (r TaskReport) HumanSummaryLines() []string {
 	appendLine("Denied", r.Denied)
 	appendLine("Pending approval", r.PendingApproval)
 	appendLine("Skipped due to denied dependency", r.skipped())
+	appendLine("System sandbox fallback", r.SystemSandboxFallback)
 	appendLine("Strategy adjustments", r.StrategyAdjustments)
 	appendLine("Retry reasons", r.RetryReasons)
 	if r.NoProgressTurns > 0 {
@@ -123,6 +131,7 @@ func (r *TaskReport) UnmarshalJSON(data []byte) error {
 		PendingApproval              []string `json:"pending_approval,omitempty"`
 		SkippedDueToDeniedDependency []string `json:"skipped_due_to_denied_dependency,omitempty"`
 		SkippedDueToDependency       []string `json:"skipped_due_to_dependency,omitempty"`
+		SystemSandboxFallback        []string `json:"system_sandbox_fallback,omitempty"`
 		StrategyAdjustments          []string `json:"strategy_adjustments,omitempty"`
 		RetryReasons                 []string `json:"retry_reasons,omitempty"`
 		NoProgressTurns              int      `json:"no_progress_turns,omitempty"`
@@ -141,6 +150,7 @@ func (r *TaskReport) UnmarshalJSON(data []byte) error {
 	}
 	r.SkippedDueToDeniedDependency = append([]string(nil), skipped...)
 	r.SkippedDueToDependency = append([]string(nil), skipped...)
+	r.SystemSandboxFallback = append([]string(nil), raw.SystemSandboxFallback...)
 	r.StrategyAdjustments = append([]string(nil), raw.StrategyAdjustments...)
 	r.RetryReasons = append([]string(nil), raw.RetryReasons...)
 	r.NoProgressTurns = raw.NoProgressTurns

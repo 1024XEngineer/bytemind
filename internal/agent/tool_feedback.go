@@ -9,23 +9,88 @@ import (
 
 func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 	var envelope struct {
-		OK         *bool  `json:"ok"`
-		Error      string `json:"error"`
-		Status     string `json:"status"`
-		ReasonCode string `json:"reason_code"`
+		OK            *bool  `json:"ok"`
+		Error         string `json:"error"`
+		Status        string `json:"status"`
+		ReasonCode    string `json:"reason_code"`
+		SystemSandbox struct {
+			Mode            string `json:"mode"`
+			Backend         string `json:"backend"`
+			Active          bool   `json:"active"`
+			RequiredCapable bool   `json:"required_capable"`
+			CapabilityLevel string `json:"capability_level"`
+			ShellNetwork    bool   `json:"shell_network_isolation"`
+			WorkerNetwork   bool   `json:"worker_network_isolation"`
+			Fallback        bool   `json:"fallback"`
+			Reason          string `json:"fallback_reason"`
+		} `json:"system_sandbox"`
 	}
 	if err := json.Unmarshal([]byte(payload), &envelope); err == nil && envelope.Error != "" {
 		status := strings.ToLower(strings.TrimSpace(envelope.Status))
 		reasonCode := strings.ToLower(strings.TrimSpace(envelope.ReasonCode))
-		if status == "denied" || reasonCode == "permission_denied" {
-			fmt.Fprintf(out, "  %spending approval%s %s\n\n", ansiYellow, ansiReset, normalizeApprovalErrorMessage(envelope.Error, reasonCode))
+		sandboxSummary := formatSystemSandboxSummary(
+			envelope.SystemSandbox.Mode,
+			envelope.SystemSandbox.Backend,
+			envelope.SystemSandbox.Active,
+			envelope.SystemSandbox.RequiredCapable,
+			envelope.SystemSandbox.CapabilityLevel,
+			envelope.SystemSandbox.ShellNetwork,
+			envelope.SystemSandbox.WorkerNetwork,
+			envelope.SystemSandbox.Fallback,
+		)
+		if reasonCode == "permission_denied" || (status == "denied" && reasonCode == "") {
+			fmt.Fprintf(out, "  %spending approval%s %s\n", ansiYellow, ansiReset, normalizeApprovalErrorMessage(envelope.Error, reasonCode))
+			if sandboxSummary != "" {
+				fmt.Fprintf(out, "    sandbox: %s\n", sandboxSummary)
+			}
+			if envelope.SystemSandbox.Fallback {
+				reason := strings.TrimSpace(envelope.SystemSandbox.Reason)
+				if reason != "" {
+					fmt.Fprintf(out, "    sandbox reason: %s\n", compactWhitespace(reason, 120))
+				}
+			}
+			fmt.Fprintln(out)
+			return
+		}
+		if status == "denied" {
+			fmt.Fprintf(out, "  %sdenied%s %s\n", ansiYellow, ansiReset, normalizeDeniedMessage(envelope.Error, reasonCode))
+			if sandboxSummary != "" {
+				fmt.Fprintf(out, "    sandbox: %s\n", sandboxSummary)
+			}
+			if envelope.SystemSandbox.Fallback {
+				reason := strings.TrimSpace(envelope.SystemSandbox.Reason)
+				if reason != "" {
+					fmt.Fprintf(out, "    sandbox reason: %s\n", compactWhitespace(reason, 120))
+				}
+			}
+			fmt.Fprintln(out)
 			return
 		}
 		if status == "skipped" || reasonCode == "denied_dependency" {
-			fmt.Fprintf(out, "  %sskipped%s %s\n\n", ansiDim, ansiReset, normalizeSkippedDependencyMessage(envelope.Error, reasonCode))
+			fmt.Fprintf(out, "  %sskipped%s %s\n", ansiDim, ansiReset, normalizeSkippedDependencyMessage(envelope.Error, reasonCode))
+			if sandboxSummary != "" {
+				fmt.Fprintf(out, "    sandbox: %s\n", sandboxSummary)
+			}
+			if envelope.SystemSandbox.Fallback {
+				reason := strings.TrimSpace(envelope.SystemSandbox.Reason)
+				if reason != "" {
+					fmt.Fprintf(out, "    sandbox reason: %s\n", compactWhitespace(reason, 120))
+				}
+			}
+			fmt.Fprintln(out)
 			return
 		}
-		fmt.Fprintf(out, "  %serror%s %s\n\n", ansiRed, ansiReset, envelope.Error)
+		fmt.Fprintf(out, "  %serror%s %s\n", ansiRed, ansiReset, envelope.Error)
+		if sandboxSummary != "" {
+			fmt.Fprintf(out, "    sandbox: %s\n", sandboxSummary)
+		}
+		if envelope.SystemSandbox.Fallback {
+			reason := strings.TrimSpace(envelope.SystemSandbox.Reason)
+			if reason != "" {
+				fmt.Fprintf(out, "    sandbox reason: %s\n", compactWhitespace(reason, 120))
+			}
+		}
+		fmt.Fprintln(out)
 		return
 	}
 
@@ -153,10 +218,21 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 		}
 	case "run_shell":
 		var result struct {
-			OK       bool   `json:"ok"`
-			ExitCode int    `json:"exit_code"`
-			Stdout   string `json:"stdout"`
-			Stderr   string `json:"stderr"`
+			OK            bool   `json:"ok"`
+			ExitCode      int    `json:"exit_code"`
+			Stdout        string `json:"stdout"`
+			Stderr        string `json:"stderr"`
+			SystemSandbox struct {
+				Mode            string `json:"mode"`
+				Backend         string `json:"backend"`
+				Active          bool   `json:"active"`
+				RequiredCapable bool   `json:"required_capable"`
+				CapabilityLevel string `json:"capability_level"`
+				ShellNetwork    bool   `json:"shell_network_isolation"`
+				WorkerNetwork   bool   `json:"worker_network_isolation"`
+				Fallback        bool   `json:"fallback"`
+				Reason          string `json:"fallback_reason"`
+			} `json:"system_sandbox"`
 		}
 		if err := json.Unmarshal([]byte(payload), &result); err == nil {
 			statusColor := ansiGreen
@@ -164,6 +240,24 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 				statusColor = ansiYellow
 			}
 			fmt.Fprintf(out, "  %sexit%s code %d\n", statusColor, ansiReset, result.ExitCode)
+			if summary := formatSystemSandboxSummary(
+				result.SystemSandbox.Mode,
+				result.SystemSandbox.Backend,
+				result.SystemSandbox.Active,
+				result.SystemSandbox.RequiredCapable,
+				result.SystemSandbox.CapabilityLevel,
+				result.SystemSandbox.ShellNetwork,
+				result.SystemSandbox.WorkerNetwork,
+				result.SystemSandbox.Fallback,
+			); summary != "" {
+				fmt.Fprintf(out, "    sandbox: %s\n", summary)
+			}
+			if result.SystemSandbox.Fallback {
+				reason := strings.TrimSpace(result.SystemSandbox.Reason)
+				if reason != "" {
+					fmt.Fprintf(out, "    sandbox reason: %s\n", compactWhitespace(reason, 120))
+				}
+			}
 			for _, line := range previewOutput("stdout", result.Stdout) {
 				fmt.Fprintf(out, "    %s\n", line)
 			}
@@ -261,12 +355,60 @@ func compactWhitespace(text string, limit int) string {
 	return string(runes[:limit-3]) + "..."
 }
 
+func formatSystemSandboxSummary(
+	mode,
+	backend string,
+	active,
+	requiredCapable bool,
+	capabilityLevel string,
+	shellNetwork,
+	workerNetwork,
+	fallback bool,
+) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	backend = strings.TrimSpace(backend)
+	capabilityLevel = strings.ToLower(strings.TrimSpace(capabilityLevel))
+	if mode == "" && backend == "" && !active && !requiredCapable && capabilityLevel == "" && !fallback {
+		return ""
+	}
+	if mode == "" {
+		mode = "off"
+	}
+	if backend == "" {
+		backend = "none"
+	}
+	if capabilityLevel == "" {
+		capabilityLevel = "none"
+	}
+
+	state := "inactive"
+	if active {
+		state = "active"
+	} else if fallback {
+		state = "fallback"
+	}
+	return fmt.Sprintf(
+		"%s (mode=%s, backend=%s, required_capable=%t, capability_level=%s, shell_network_isolation=%t, worker_network_isolation=%t)",
+		state,
+		mode,
+		backend,
+		requiredCapable,
+		capabilityLevel,
+		shellNetwork,
+		workerNetwork,
+	)
+}
+
 func normalizeApprovalErrorMessage(message, reasonCode string) string {
 	return normalizeReasonPrefixedMessage(message, reasonCode, "approval required")
 }
 
 func normalizeSkippedDependencyMessage(message, reasonCode string) string {
 	return normalizeReasonPrefixedMessage(message, reasonCode, "skipped due to denied dependency")
+}
+
+func normalizeDeniedMessage(message, reasonCode string) string {
+	return normalizeReasonPrefixedMessage(message, reasonCode, "operation denied")
 }
 
 func normalizeReasonPrefixedMessage(message, reasonCode, fallback string) string {

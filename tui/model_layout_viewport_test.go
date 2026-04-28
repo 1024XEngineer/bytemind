@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
 )
 
@@ -59,6 +60,27 @@ func TestConversationViewportTopFromRenderedPanelMatchesRenderedView(t *testing.
 	expectedTop := tokenRowInView - tokenRowInViewport
 	if top != expectedTop {
 		t.Fatalf("expected viewport top %d from rendered view, got %d", expectedTop, top)
+	}
+}
+
+func TestRenderConversationViewportDefaultPadsToViewportHeight(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+
+	m := model{
+		screen:     screenChat,
+		width:      100,
+		height:     30,
+		input:      input,
+		viewport:   viewport.New(60, 10),
+		tokenUsage: newTokenUsageComponent(),
+	}
+	m.resize()
+	m.viewport.SetContent("short line")
+
+	rendered := renderConversationViewportDefault(m)
+	if got := lipgloss.Height(rendered); got != m.viewport.Height {
+		t.Fatalf("expected rendered viewport height %d, got %d", m.viewport.Height, got)
 	}
 }
 

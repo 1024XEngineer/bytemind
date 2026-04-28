@@ -23,6 +23,7 @@ type ExecutionContext struct {
 	ApprovalMode              string
 	AwayPolicy                string
 	SandboxEnabled            bool
+	SystemSandboxMode         string
 	SkipShellApproval         bool
 	SandboxEscalationApproved bool
 	LeaseID                   string

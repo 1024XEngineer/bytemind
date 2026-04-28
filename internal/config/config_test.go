@@ -378,6 +378,36 @@ func TestLoadDefaultsModelFromProviderEndpointWhenMissing(t *testing.T) {
 	}
 }
 
+func TestLoadSupportsGeminiProviderDefaults(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": map[string]any{
+			"type":    "gemini",
+			"api_key": "test-key",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Type != "gemini" {
+		t.Fatalf("expected gemini provider, got %q", cfg.Provider.Type)
+	}
+	if cfg.Provider.BaseURL != "https://generativelanguage.googleapis.com/v1beta" {
+		t.Fatalf("unexpected gemini base url %q", cfg.Provider.BaseURL)
+	}
+	if cfg.Provider.Model != "gemini-2.5-flash" {
+		t.Fatalf("unexpected gemini model %q", cfg.Provider.Model)
+	}
+	if cfg.ProviderRuntime.DefaultProvider != "gemini" {
+		t.Fatalf("unexpected runtime provider %q", cfg.ProviderRuntime.DefaultProvider)
+	}
+}
+
 func TestLoadRejectsUnsupportedProviderType(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
@@ -539,6 +569,9 @@ func TestEnsureHomeLayoutCreatesStandardDirectories(t *testing.T) {
 	if strings.Contains(string(data), "\"session_dir\"") {
 		t.Fatalf("expected default config.json not to include legacy session_dir")
 	}
+	if strings.Contains(string(data), "\"mcp\"") {
+		t.Fatalf("expected default config.json not to include mcp")
+	}
 	if strings.TrimSpace(cfg.Provider.Model) == "" {
 		t.Fatalf("expected default provider model to be present")
 	}
@@ -688,6 +721,39 @@ func TestUpsertProviderFieldBackfillsModelForDeepseekEndpointWhenMissing(t *test
 	}
 }
 
+func TestUpsertProviderFieldBackfillsGeminiDefaults(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-5.4-mini",
+    "api_key": "test-key"
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := UpsertProviderField(configPath, "type", "gemini"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Type != "gemini" {
+		t.Fatalf("expected gemini provider, got %q", cfg.Provider.Type)
+	}
+	if cfg.Provider.BaseURL != "https://generativelanguage.googleapis.com/v1beta" {
+		t.Fatalf("expected gemini base url, got %q", cfg.Provider.BaseURL)
+	}
+	if cfg.Provider.Model != "gemini-2.5-flash" {
+		t.Fatalf("expected gemini model, got %q", cfg.Provider.Model)
+	}
+}
+
 func TestUpsertProviderFieldRejectsUnsupportedField(t *testing.T) {
 	_, err := UpsertProviderField(filepath.Join(t.TempDir(), "config.json"), "foo", "bar")
 	if err == nil {
@@ -764,6 +830,9 @@ func TestDefaultIncludesSandboxPolicyFields(t *testing.T) {
 	cfg := Default(t.TempDir())
 	if cfg.SandboxEnabled {
 		t.Fatal("expected sandbox_enabled to default to false")
+	}
+	if cfg.SystemSandboxMode != "off" {
+		t.Fatalf("expected system_sandbox_mode to default to off, got %q", cfg.SystemSandboxMode)
 	}
 	if cfg.ExecAllowlist == nil || len(cfg.ExecAllowlist) != 0 {
 		t.Fatalf("expected empty exec_allowlist default, got %#v", cfg.ExecAllowlist)
@@ -888,6 +957,61 @@ func TestLoadParsesSandboxEnabledFromEnv(t *testing.T) {
 	}
 }
 
+func TestLoadParsesSystemSandboxModeFromEnv(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	t.Setenv("BYTEMIND_API_KEY", "env-key")
+	t.Setenv("BYTEMIND_SANDBOX_ENABLED", "true")
+	t.Setenv("BYTEMIND_SYSTEM_SANDBOX_MODE", "required")
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SystemSandboxMode != "required" {
+		t.Fatalf("expected system_sandbox_mode=required from env override, got %q", cfg.SystemSandboxMode)
+	}
+}
+
+func TestLoadRejectsSystemSandboxModeWithoutSandboxEnabled(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider":            minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+		"sandbox_enabled":     false,
+		"system_sandbox_mode": "required",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected sandbox_enabled requirement error")
+	}
+	if !strings.Contains(err.Error(), "system_sandbox_mode requires sandbox_enabled=true") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidSystemSandboxMode(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider":            minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+		"system_sandbox_mode": "strictest",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected invalid system_sandbox_mode error")
+	}
+	if !strings.Contains(err.Error(), "system_sandbox_mode must be one of off, best_effort, required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestLoadSortsNetworkAllowlistByPortWhenHostMatches(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
@@ -913,6 +1037,517 @@ func TestLoadSortsNetworkAllowlistByPortWhenHostMatches(t *testing.T) {
 	}
 }
 
+func TestLoadAppliesMCPDefaultsAndNormalization(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeConfig(projectMCPConfigPath(workspace), map[string]any{
+		"enabled": true,
+		"servers": []map[string]any{
+			{
+				"id": "  Local Server ",
+				"transport": map[string]any{
+					"command": "node",
+					"args":    []string{"./server.js"},
+				},
+				"protocol_version":  "2025-06-18",
+				"protocol_versions": []string{" 2025-06-18 ", " 2024-11-05 "},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MCP.Enabled {
+		t.Fatal("expected mcp.enabled=true")
+	}
+	if cfg.MCP.SyncTTLSeconds != DefaultMCPSyncTTLSeconds {
+		t.Fatalf("expected default mcp.sync_ttl_s=%d, got %d", DefaultMCPSyncTTLSeconds, cfg.MCP.SyncTTLSeconds)
+	}
+	if len(cfg.MCP.Servers) != 1 {
+		t.Fatalf("expected one mcp server, got %d", len(cfg.MCP.Servers))
+	}
+	server := cfg.MCP.Servers[0]
+	if server.ID != "local-server" {
+		t.Fatalf("expected normalized server id local-server, got %q", server.ID)
+	}
+	if !server.EnabledValue() {
+		t.Fatal("expected mcp server enabled by default")
+	}
+	if !server.AutoStartValue() {
+		t.Fatal("expected mcp server auto_start enabled by default")
+	}
+	if server.Transport.Type != "stdio" {
+		t.Fatalf("expected default transport type stdio, got %q", server.Transport.Type)
+	}
+	if server.StartupTimeoutSeconds != DefaultMCPStartupTimeoutSeconds {
+		t.Fatalf("expected default startup timeout %d, got %d", DefaultMCPStartupTimeoutSeconds, server.StartupTimeoutSeconds)
+	}
+	if server.CallTimeoutSeconds != DefaultMCPCallTimeoutSeconds {
+		t.Fatalf("expected default call timeout %d, got %d", DefaultMCPCallTimeoutSeconds, server.CallTimeoutSeconds)
+	}
+	if server.MaxConcurrency != DefaultMCPMaxConcurrency {
+		t.Fatalf("expected default max concurrency %d, got %d", DefaultMCPMaxConcurrency, server.MaxConcurrency)
+	}
+	if len(server.ProtocolVersions) != 2 || server.ProtocolVersions[0] != "2025-06-18" || server.ProtocolVersions[1] != "2024-11-05" {
+		t.Fatalf("expected normalized protocol versions [2025-06-18 2024-11-05], got %#v", server.ProtocolVersions)
+	}
+}
+
+func TestLoadIgnoresMCPSectionInMainConfig(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+		"mcp": map[string]any{
+			"enabled": true,
+			"servers": []map[string]any{
+				{
+					"id": "ignored",
+					"transport": map[string]any{
+						"command": "node",
+					},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MCP.Enabled || len(cfg.MCP.Servers) != 0 {
+		t.Fatalf("expected main config mcp section to be ignored, got %#v", cfg.MCP)
+	}
+}
+
+func TestLoadReadsProjectMCPFile(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+		"mcp": map[string]any{
+			"enabled": false,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mcpPath := projectMCPConfigPath(workspace)
+	if err := writeConfig(mcpPath, map[string]any{
+		"enabled": true,
+		"servers": []map[string]any{
+			{
+				"id": "Docs",
+				"transport": map[string]any{
+					"type":    "stdio",
+					"command": "npx",
+					"args":    []string{"-y", "@modelcontextprotocol/server-filesystem"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MCP.Enabled {
+		t.Fatal("expected mcp.enabled=true from .bytemind/mcp.json")
+	}
+	if len(cfg.MCP.Servers) != 1 {
+		t.Fatalf("expected one server from .bytemind/mcp.json, got %#v", cfg.MCP.Servers)
+	}
+	if cfg.MCP.Servers[0].ID != "docs" {
+		t.Fatalf("expected normalized server id docs, got %q", cfg.MCP.Servers[0].ID)
+	}
+}
+
+func TestLoadReadsUserMCPFile(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "env-key")
+
+	mcpPath := filepath.Join(home, "mcp.json")
+	if err := writeConfig(mcpPath, map[string]any{
+		"enabled": true,
+		"servers": []map[string]any{
+			{
+				"id": "Global Docs",
+				"transport": map[string]any{
+					"type":    "stdio",
+					"command": "npx",
+					"args":    []string{"-y", "@modelcontextprotocol/server-filesystem"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MCP.Enabled {
+		t.Fatal("expected mcp.enabled=true from ~/.bytemind/mcp.json")
+	}
+	if len(cfg.MCP.Servers) != 1 {
+		t.Fatalf("expected one server from ~/.bytemind/mcp.json, got %#v", cfg.MCP.Servers)
+	}
+	if cfg.MCP.Servers[0].ID != "global-docs" {
+		t.Fatalf("expected normalized server id global-docs, got %q", cfg.MCP.Servers[0].ID)
+	}
+}
+
+func TestLoadProjectMCPFileOverridesUserMCPFile(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "env-key")
+
+	userMCPPath := filepath.Join(home, "mcp.json")
+	if err := writeConfig(userMCPPath, map[string]any{
+		"enabled": true,
+		"servers": []map[string]any{
+			{
+				"id": "user-server",
+				"transport": map[string]any{
+					"command": "node",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	projectMCPPath := projectMCPConfigPath(workspace)
+	if err := writeConfig(projectMCPPath, map[string]any{
+		"enabled": true,
+		"servers": []map[string]any{
+			{
+				"id": "project-server",
+				"transport": map[string]any{
+					"command": "node",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.MCP.Servers) != 1 {
+		t.Fatalf("expected one project server, got %#v", cfg.MCP.Servers)
+	}
+	if cfg.MCP.Servers[0].ID != "project-server" {
+		t.Fatalf("expected project mcp server precedence, got %q", cfg.MCP.Servers[0].ID)
+	}
+}
+
+func TestLoadRejectsInvalidUserMCPFile(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "env-key")
+
+	userMCPPath := filepath.Join(home, "mcp.json")
+	if err := os.WriteFile(userMCPPath, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected invalid user mcp file to fail")
+	}
+}
+
+func TestLoadRejectsInvalidProjectMCPFile(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "env-key")
+
+	projectMCPPath := projectMCPConfigPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(projectMCPPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(projectMCPPath, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected invalid project mcp file to fail")
+	}
+}
+
+func TestResolveUserMCPConfigPathNoFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+
+	got, err := resolveUserMCPConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("expected empty user mcp path when file is missing, got %q", got)
+	}
+}
+
+func TestMergeMCPConfigFromFileHandlesEdgeCases(t *testing.T) {
+	tmp := t.TempDir()
+
+	missingPath := filepath.Join(tmp, "missing.json")
+	if err := mergeMCPConfigFromFile(missingPath, nil); err != nil {
+		t.Fatalf("expected nil cfg to short-circuit, got %v", err)
+	}
+
+	cfg := MCPConfig{Enabled: true}
+	if err := mergeMCPConfigFromFile(missingPath, &cfg); err == nil {
+		t.Fatal("expected missing file to return error")
+	}
+
+	emptyPath := filepath.Join(tmp, "empty.json")
+	if err := os.WriteFile(emptyPath, []byte("   \n\t"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := mergeMCPConfigFromFile(emptyPath, &cfg); err != nil {
+		t.Fatalf("expected empty mcp file to be ignored, got %v", err)
+	}
+	if !cfg.Enabled {
+		t.Fatal("expected cfg to remain unchanged after empty mcp file")
+	}
+
+	invalidPath := filepath.Join(tmp, "invalid.json")
+	if err := os.WriteFile(invalidPath, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := mergeMCPConfigFromFile(invalidPath, &cfg); err == nil {
+		t.Fatal("expected invalid mcp file json to return error")
+	}
+
+	nestedPath := filepath.Join(tmp, "nested.json")
+	if err := writeConfig(nestedPath, map[string]any{
+		"mcp": map[string]any{
+			"enabled": true,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mergeMCPConfigFromFile(nestedPath, &cfg); err == nil || !strings.Contains(err.Error(), "top-level MCP fields") {
+		t.Fatalf("expected nested mcp config to be rejected, got %v", err)
+	}
+}
+
+func TestMutateMCPConfigWritesStandaloneMCPFile(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+
+	_, path, err := MutateMCPConfig(workspace, "", func(mcp *MCPConfig) error {
+		mcp.Enabled = true
+		mcp.Servers = []MCPServerConfig{
+			{
+				ID: "local",
+				Transport: MCPTransportConfig{
+					Command: "node",
+				},
+			},
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Clean(path) != filepath.Clean(projectMCPConfigPath(workspace)) {
+		t.Fatalf("expected mcp config path %q, got %q", projectMCPConfigPath(workspace), path)
+	}
+	if _, err := os.Stat(projectConfigPath(workspace)); !os.IsNotExist(err) {
+		t.Fatalf("expected main config not to be created, stat err=%v", err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MCP.Enabled || len(cfg.MCP.Servers) != 1 || cfg.MCP.Servers[0].ID != "local" {
+		t.Fatalf("expected standalone mcp config to load, got %#v", cfg.MCP)
+	}
+}
+
+func TestLoadRejectsDuplicateNormalizedMCPServerID(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeConfig(projectMCPConfigPath(workspace), map[string]any{
+		"enabled": true,
+		"servers": []map[string]any{
+			{
+				"id": "Server A",
+				"transport": map[string]any{
+					"command": "node",
+				},
+			},
+			{
+				"id": "server/a",
+				"transport": map[string]any{
+					"command": "node",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected duplicate normalized mcp server id error")
+	}
+	if !strings.Contains(err.Error(), "duplicate server id") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsMCPEnabledStdioServerWithoutCommand(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeConfig(projectMCPConfigPath(workspace), map[string]any{
+		"enabled": true,
+		"servers": []map[string]any{
+			{
+				"id": "missing-command",
+				"transport": map[string]any{
+					"type": "stdio",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected missing command validation error")
+	}
+	if !strings.Contains(err.Error(), "requires transport.command") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadNormalizesMCPToolOverrides(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeConfig(projectMCPConfigPath(workspace), map[string]any{
+		"enabled": true,
+		"servers": []map[string]any{
+			{
+				"id": "server1",
+				"transport": map[string]any{
+					"command": "node",
+				},
+				"tool_overrides": []map[string]any{
+					{
+						"tool_name":         "  fetch_data ",
+						"safety_class":      "SENSITIVE",
+						"allowed_modes":     []string{" build ", "plan", "BUILD"},
+						"default_timeout_s": 12,
+						"max_timeout_s":     30,
+						"max_result_chars":  2048,
+					},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.MCP.Servers) != 1 || len(cfg.MCP.Servers[0].ToolOverrides) != 1 {
+		t.Fatalf("expected one tool override, got %#v", cfg.MCP.Servers)
+	}
+	override := cfg.MCP.Servers[0].ToolOverrides[0]
+	if override.ToolName != "fetch_data" {
+		t.Fatalf("expected trimmed tool_name, got %q", override.ToolName)
+	}
+	if override.SafetyClass != "sensitive" {
+		t.Fatalf("expected lower-cased safety_class sensitive, got %q", override.SafetyClass)
+	}
+	if len(override.AllowedModes) != 2 || override.AllowedModes[0] != "build" || override.AllowedModes[1] != "plan" {
+		t.Fatalf("expected normalized allowed_modes [build plan], got %#v", override.AllowedModes)
+	}
+}
+
+func TestLoadRejectsInvalidMCPToolOverrideSafetyClass(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeConfig(projectMCPConfigPath(workspace), map[string]any{
+		"enabled": true,
+		"servers": []map[string]any{
+			{
+				"id": "server1",
+				"transport": map[string]any{
+					"command": "node",
+				},
+				"tool_overrides": []map[string]any{
+					{
+						"tool_name":    "fetch_data",
+						"safety_class": "ultra-dangerous",
+					},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected invalid safety class validation error")
+	}
+	if !strings.Contains(err.Error(), "unsupported safety_class") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func writeConfig(path string, cfg map[string]any) error {
 	data, err := json.Marshal(cfg)
 	if err != nil {
@@ -926,6 +1561,10 @@ func writeConfig(path string, cfg map[string]any) error {
 
 func projectConfigPath(workspace string) string {
 	return filepath.Join(workspace, ".bytemind", "config.json")
+}
+
+func projectMCPConfigPath(workspace string) string {
+	return filepath.Join(workspace, ".bytemind", "mcp.json")
 }
 
 func minimalProviderConfigDoc(model, apiKey string) map[string]any {

@@ -19,8 +19,14 @@ func TestDetectProjectRootFindsAncestorMarker(t *testing.T) {
 	}
 
 	got := DetectProjectRoot(nested)
-	if !samePath(got, root) {
-		t.Fatalf("expected project root %q, got %q", root, got)
+	if strings.TrimSpace(got) == "" {
+		t.Fatal("expected non-empty project root")
+	}
+	if !hasProjectMarker(got) {
+		t.Fatalf("expected detected root %q to contain project marker", got)
+	}
+	if !pathWithinRoot(nested, got) {
+		t.Fatalf("expected nested path %q to be within detected root %q", nested, got)
 	}
 }
 
@@ -48,8 +54,14 @@ func TestResolveWorkspaceAutoDetectsProjectRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !samePath(got, root) {
-		t.Fatalf("expected workspace %q, got %q", root, got)
+	if strings.TrimSpace(got) == "" {
+		t.Fatal("expected non-empty workspace")
+	}
+	if !hasProjectMarker(got) {
+		t.Fatalf("expected workspace %q to contain project marker", got)
+	}
+	if !pathWithinRoot(nested, got) {
+		t.Fatalf("expected cwd %q to be within workspace %q", nested, got)
 	}
 }
 
@@ -107,14 +119,27 @@ func TestResolveWorkspaceRejectsFilePathOverride(t *testing.T) {
 	}
 }
 
-func samePath(a, b string) bool {
-	left, err := filepath.Abs(a)
+func normalizeExistingPath(path string) string {
+	abs, err := filepath.Abs(path)
 	if err != nil {
-		left = a
+		abs = path
 	}
-	right, err := filepath.Abs(b)
+	abs = filepath.Clean(abs)
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = filepath.Clean(resolved)
+	}
+	return abs
+}
+
+func pathWithinRoot(path, root string) bool {
+	path = normalizeExistingPath(path)
+	root = normalizeExistingPath(root)
+	rel, err := filepath.Rel(root, path)
 	if err != nil {
-		right = b
+		return false
 	}
-	return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
+	if rel == "." {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

@@ -13,6 +13,47 @@ type lifecycleTransition struct {
 	code   ErrorCode
 }
 
+var mcpLifecycleTransitions = map[ExtensionStatus]map[ExtensionStatus]struct{}{
+	ExtensionStatusLoaded: {
+		ExtensionStatusReady:   {},
+		ExtensionStatusStopped: {},
+	},
+	ExtensionStatusReady: {
+		ExtensionStatusActive:  {},
+		ExtensionStatusStopped: {},
+	},
+	ExtensionStatusActive: {
+		ExtensionStatusDegraded: {},
+		ExtensionStatusFailed:   {},
+		ExtensionStatusStopped:  {},
+	},
+	ExtensionStatusDegraded: {
+		ExtensionStatusReady:   {},
+		ExtensionStatusStopped: {},
+	},
+	ExtensionStatusFailed: {
+		ExtensionStatusReady:   {},
+		ExtensionStatusStopped: {},
+	},
+	ExtensionStatusStopped: {},
+}
+
+func CanTransitionMCP(from, to ExtensionStatus) bool {
+	next, ok := mcpLifecycleTransitions[from]
+	if !ok {
+		return false
+	}
+	_, allowed := next[to]
+	return allowed
+}
+
+func ValidateMCPTransition(from, to ExtensionStatus) error {
+	if CanTransitionMCP(from, to) {
+		return nil
+	}
+	return wrapError(ErrCodeInvalidTransition, fmt.Sprintf("invalid mcp lifecycle transition: %s -> %s", from, to), nil)
+}
+
 func activateTransition(info ExtensionInfo) (ExtensionInfo, ExtensionEvent, error) {
 	return applyTransition(info, lifecycleTransition{
 		from:   ExtensionStatusLoaded,

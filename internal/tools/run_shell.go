@@ -32,6 +32,14 @@ const (
 
 type shellAssessment = policypkg.ShellAssessment
 
+const (
+	systemSandboxModeOff        = "off"
+	systemSandboxModeBestEffort = "best_effort"
+	systemSandboxModeRequired   = "required"
+)
+
+var runShellLookPath = exec.LookPath
+
 func (RunShellTool) Definition() llm.ToolDefinition {
 	return llm.ToolDefinition{
 		Type: "function",
@@ -82,7 +90,13 @@ func (RunShellTool) Run(ctx context.Context, raw json.RawMessage, execCtx *Execu
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := shellCommand(runCtx, args.Command)
+	cmd, sandboxBackend, sandboxMode, err := shellCommand(runCtx, args.Command, execCtx)
+	if err != nil {
+		if sandboxMode == systemSandboxModeRequired {
+			return "", NewToolExecError(ToolErrorPermissionDenied, strings.TrimSpace(err.Error()), false, err)
+		}
+		return "", err
+	}
 	cmd.Dir = execCtx.Workspace
 
 	var stdout bytes.Buffer
@@ -90,7 +104,7 @@ func (RunShellTool) Run(ctx context.Context, raw json.RawMessage, execCtx *Execu
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = runCommandWithSystemSandbox(cmd, sandboxBackend.Name, sandboxMode)
 	exitCode := 0
 	if err != nil {
 		if runCtx.Err() == context.DeadlineExceeded {
@@ -105,11 +119,63 @@ func (RunShellTool) Run(ctx context.Context, raw json.RawMessage, execCtx *Execu
 	}
 
 	return toJSON(map[string]any{
-		"ok":        exitCode == 0,
-		"exit_code": exitCode,
-		"stdout":    stdout.String(),
-		"stderr":    stderr.String(),
+		"ok":             exitCode == 0,
+		"exit_code":      exitCode,
+		"stdout":         stdout.String(),
+		"stderr":         stderr.String(),
+		"system_sandbox": buildSystemSandboxExecutionMetadata(sandboxMode, sandboxBackend),
 	})
+}
+
+func buildSystemSandboxExecutionMetadata(mode string, backend systemSandboxRuntimeBackend) map[string]any {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		mode = systemSandboxModeOff
+	}
+	backendName := strings.TrimSpace(backend.Name)
+	active := backend.Enabled
+	if !active {
+		backendName = "none"
+	}
+	reason := strings.TrimSpace(backend.UnavailableReason)
+	fallback := mode != systemSandboxModeOff && !active && reason != ""
+	status := "inactive"
+	if active {
+		status = "active"
+	} else if fallback {
+		status = "fallback"
+	}
+	requiredCapable := systemSandboxRequiredCapable(mode, backend)
+	capabilityLevel := strings.TrimSpace(backend.CapabilityLevel)
+	if capabilityLevel == "" {
+		capabilityLevel = systemSandboxCapabilityLevel(mode, backend)
+	}
+	payload := map[string]any{
+		"mode":                     mode,
+		"backend":                  backendName,
+		"active":                   active,
+		"required_capable":         requiredCapable,
+		"capability_level":         capabilityLevel,
+		"shell_network_isolation":  backend.Shell.Policy.NetworkIsolation,
+		"worker_network_isolation": backend.Worker.Policy.NetworkIsolation,
+		"fallback":                 fallback,
+		"status":                   status,
+	}
+	if reason != "" {
+		payload["fallback_reason"] = reason
+	}
+	return payload
+}
+
+func systemSandboxRequiredCapable(mode string, backend systemSandboxRuntimeBackend) bool {
+	if backend.RequiredCapable {
+		return true
+	}
+	if requiredSystemSandboxCapabilitiesSatisfied(backend) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(mode), systemSandboxModeRequired) &&
+		requiredWindowsRequiredCapabilitiesSatisfied(backend)
 }
 
 func requireApproval(command string, execCtx *ExecutionContext) error {
@@ -198,12 +264,163 @@ func assessShellCommand(command string) shellAssessment {
 	return policypkg.AssessShellCommand(command)
 }
 
-func shellCommand(ctx context.Context, command string) *exec.Cmd {
-	if runtime.GOOS == "windows" {
-		executable := resolveWindowsShellExecutable(exec.LookPath, os.Stat, os.Getenv)
-		return exec.CommandContext(ctx, executable, "-NoProfile", "-Command", command)
+func validateRequiredWindowsShellCommand(command string) error {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return errors.New("system sandbox mode required on windows only permits strict read-only commands")
 	}
-	return exec.CommandContext(ctx, "sh", "-lc", command)
+	if isPlanSafeCommand(command) {
+		return nil
+	}
+
+	assessment := assessShellCommand(command)
+	switch assessment.Risk {
+	case shellRiskBlocked:
+		return errors.New("system sandbox mode required on windows blocked command: " + assessment.Reason)
+	default:
+		reason := strings.TrimSpace(assessment.Reason)
+		if reason == "" {
+			reason = "command is not in strict read-only allowlist"
+		}
+		return errors.New("system sandbox mode required on windows only permits strict read-only shell commands: " + reason)
+	}
+}
+
+func shellCommand(ctx context.Context, command string, execCtx *ExecutionContext) (*exec.Cmd, systemSandboxRuntimeBackend, string, error) {
+	mode := normalizeSystemSandboxMode(execCtx)
+	backend, err := resolveSystemSandboxRuntimeBackend(mode, runtime.GOOS, runShellLookPath)
+	if err != nil {
+		return nil, systemSandboxRuntimeBackend{}, mode, err
+	}
+	var cmd *exec.Cmd
+	if backend.Enabled {
+		execCommand := strings.TrimSpace(command)
+		switch strings.TrimSpace(backend.Name) {
+		case "darwin_sandbox_exec":
+			allowNetwork := mode != systemSandboxModeRequired
+			profile, err := buildDarwinSandboxProfile(execCtx, allowNetwork)
+			if err != nil {
+				return nil, backend, mode, err
+			}
+			cmd = exec.CommandContext(ctx, backend.Runner, buildDarwinSandboxShellArgs(profile, execCommand)...)
+		case "windows_job_object":
+			if mode == systemSandboxModeRequired {
+				if err := validateRequiredWindowsShellCommand(execCommand); err != nil {
+					return nil, backend, mode, err
+				}
+			}
+			executable := resolveWindowsShellExecutable(exec.LookPath, os.Stat, os.Getenv)
+			cmd = exec.CommandContext(ctx, executable, "-NoProfile", "-Command", command)
+		default:
+			if mode == systemSandboxModeRequired && runtime.GOOS == "linux" {
+				wrapped, err := buildRequiredLinuxShellCommand(execCommand, execCtx)
+				if err != nil {
+					return nil, backend, mode, err
+				}
+				execCommand = wrapped
+			}
+			args := append(append([]string(nil), backend.Shell.ArgPrefix...), execCommand)
+			cmd = exec.CommandContext(ctx, backend.Runner, args...)
+		}
+	} else if runtime.GOOS == "windows" {
+		executable := resolveWindowsShellExecutable(exec.LookPath, os.Stat, os.Getenv)
+		cmd = exec.CommandContext(ctx, executable, "-NoProfile", "-Command", command)
+	} else {
+		cmd = exec.CommandContext(ctx, "sh", "-lc", command)
+	}
+
+	if backend.Enabled && mode == systemSandboxModeRequired {
+		forced := map[string]string{}
+		if execCtx != nil {
+			workspace := strings.TrimSpace(execCtx.Workspace)
+			if workspace != "" {
+				forced["HOME"] = workspace
+			}
+		}
+		forced["TMPDIR"] = "/tmp"
+		cmd.Env = buildSandboxEnv(os.Environ(), sandboxEnvOptions{
+			GOOS:          runtime.GOOS,
+			RequiredMode:  true,
+			DropSensitive: true,
+			ForceSet:      forced,
+		})
+	}
+	return cmd, backend, mode, nil
+}
+
+func withRequiredLinuxShellLimits(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return command
+	}
+	guards := []string{
+		"ulimit -t 120 >/dev/null 2>&1 || true",
+		"ulimit -f 1048576 >/dev/null 2>&1 || true",
+		"ulimit -v 2097152 >/dev/null 2>&1 || true",
+	}
+	return strings.Join(append(guards, command), "; ")
+}
+
+type systemSandboxBackend struct {
+	Enabled   bool
+	Runner    string
+	ArgPrefix []string
+}
+
+func normalizeSystemSandboxMode(execCtx *ExecutionContext) string {
+	if execCtx == nil {
+		return systemSandboxModeOff
+	}
+	switch strings.ToLower(strings.TrimSpace(execCtx.SystemSandboxMode)) {
+	case "", systemSandboxModeOff:
+		return systemSandboxModeOff
+	case systemSandboxModeBestEffort:
+		return systemSandboxModeBestEffort
+	case systemSandboxModeRequired:
+		return systemSandboxModeRequired
+	default:
+		return systemSandboxModeOff
+	}
+}
+
+func resolveSystemSandboxBackend(mode, goos string, lookPath func(string) (string, error)) (systemSandboxBackend, error) {
+	resolved, err := resolveSystemSandboxRuntimeBackend(mode, goos, lookPath)
+	if err != nil {
+		return systemSandboxBackend{}, err
+	}
+	if !resolved.Enabled {
+		return systemSandboxBackend{}, nil
+	}
+	return systemSandboxBackend{
+		Enabled:   true,
+		Runner:    resolved.Runner,
+		ArgPrefix: append([]string(nil), resolved.Shell.ArgPrefix...),
+	}, nil
+}
+
+func linuxSystemSandboxNamespaceArgs() []string {
+	return []string{
+		"--user",
+		"--map-root-user",
+		"--mount",
+		"--pid",
+		"--fork",
+		"--ipc",
+		"--uts",
+		"--net",
+	}
+}
+
+func linuxSystemSandboxWorkerArgs() []string {
+	return []string{
+		"--user",
+		"--map-root-user",
+		"--mount",
+		"--pid",
+		"--fork",
+		"--ipc",
+		"--uts",
+	}
 }
 
 func resolveWindowsShellExecutable(

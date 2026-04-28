@@ -8,6 +8,7 @@ import (
 
 	"bytemind/internal/assets"
 	"bytemind/internal/config"
+	"bytemind/internal/mcpctl"
 	"bytemind/tui"
 )
 
@@ -103,6 +104,7 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 		Options: tui.Options{
 			Runner:       newTUIRunnerAdapter(runner),
 			Store:        runtimeBundle.Store,
+			MCPService:   mcpctl.NewService(workspace, *configPath, runtimeBundle.Extensions),
 			Session:      runtimeBundle.Session,
 			ImageStore:   imageStore,
 			Config:       cfg,

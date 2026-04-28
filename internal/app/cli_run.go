@@ -9,6 +9,7 @@ func RunCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		RunOneShot:  RunOneShotArgs,
 		RunWorker:   RunWorkerArgs,
 		RunInstall:  RunInstall,
+		RunMCP:      RunMCP,
 		RenderUsage: RenderUsage,
 	})
 }

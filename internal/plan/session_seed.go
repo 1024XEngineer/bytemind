@@ -16,6 +16,6 @@ func SeedForRun(state *State, runMode AgentMode, userInput, fallbackUserText str
 		state.Goal = goalText
 	}
 	if state.Phase == PhaseNone {
-		state.Phase = PhaseDrafting
+		state.Phase = PhaseExplore
 	}
 }

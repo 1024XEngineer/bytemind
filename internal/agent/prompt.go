@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	planpkg "bytemind/internal/plan"
 )
 
 const (
@@ -45,18 +47,28 @@ type PromptActiveSkill struct {
 }
 
 type PromptInput struct {
-	Workspace      string
-	ApprovalPolicy string
-	ApprovalMode   string
-	AwayPolicy     string
-	Model          string
-	Mode           string
-	Platform       string
-	Now            time.Time
-	Skills         []PromptSkill
-	Tools          []string
-	ActiveSkill    *PromptActiveSkill
-	Instruction    string
+	Workspace                    string
+	ApprovalPolicy               string
+	ApprovalMode                 string
+	AwayPolicy                   string
+	SandboxEnabled               bool
+	SystemSandbox                string
+	SystemSandboxBackend         string
+	SystemSandboxRequiredCapable bool
+	SystemSandboxCapabilityLevel string
+	SystemSandboxShellNetwork    bool
+	SystemSandboxWorkerNetwork   bool
+	SystemSandboxFallback        bool
+	SystemSandboxStatus          string
+	Model                        string
+	Mode                         string
+	Platform                     string
+	Now                          time.Time
+	Skills                       []PromptSkill
+	Tools                        []string
+	Plan                         planpkg.State
+	ActiveSkill                  *PromptActiveSkill
+	Instruction                  string
 }
 
 func systemPrompt(input PromptInput) string {
@@ -141,6 +153,39 @@ func renderSystemBlock(input PromptInput) string {
 	if awayPolicy == "" {
 		awayPolicy = "auto_deny_continue"
 	}
+	systemSandbox := strings.TrimSpace(input.SystemSandbox)
+	if systemSandbox == "" {
+		systemSandbox = "off"
+	}
+	systemSandboxBackend := strings.TrimSpace(input.SystemSandboxBackend)
+	if systemSandboxBackend == "" {
+		systemSandboxBackend = "none"
+	}
+	systemSandboxFallback := "false"
+	if input.SystemSandboxFallback {
+		systemSandboxFallback = "true"
+	}
+	systemSandboxRequiredCapable := "false"
+	if input.SystemSandboxRequiredCapable {
+		systemSandboxRequiredCapable = "true"
+	}
+	systemSandboxCapabilityLevel := strings.ToLower(strings.TrimSpace(input.SystemSandboxCapabilityLevel))
+	if systemSandboxCapabilityLevel == "" {
+		systemSandboxCapabilityLevel = "none"
+	}
+	systemSandboxShellNetwork := "false"
+	if input.SystemSandboxShellNetwork {
+		systemSandboxShellNetwork = "true"
+	}
+	systemSandboxWorkerNetwork := "false"
+	if input.SystemSandboxWorkerNetwork {
+		systemSandboxWorkerNetwork = "true"
+	}
+	systemSandboxStatus := strings.TrimSpace(input.SystemSandboxStatus)
+	sandboxEnabled := "false"
+	if input.SandboxEnabled {
+		sandboxEnabled = "true"
+	}
 	gitRepo := "no"
 	if isGitRepository(workspace) {
 		gitRepo = "yes"
@@ -158,6 +203,14 @@ func renderSystemBlock(input PromptInput) string {
 		fmt.Sprintf("approval_policy: %s", approval),
 		fmt.Sprintf("approval_mode: %s", approvalMode),
 		fmt.Sprintf("away_policy: %s", awayPolicy),
+		fmt.Sprintf("sandbox_enabled: %s", sandboxEnabled),
+		fmt.Sprintf("system_sandbox_mode: %s", systemSandbox),
+		fmt.Sprintf("system_sandbox_backend: %s", systemSandboxBackend),
+		fmt.Sprintf("system_sandbox_required_capable: %s", systemSandboxRequiredCapable),
+		fmt.Sprintf("system_sandbox_capability_level: %s", systemSandboxCapabilityLevel),
+		fmt.Sprintf("system_sandbox_shell_network_isolation: %s", systemSandboxShellNetwork),
+		fmt.Sprintf("system_sandbox_worker_network_isolation: %s", systemSandboxWorkerNetwork),
+		fmt.Sprintf("system_sandbox_fallback: %s", systemSandboxFallback),
 		"",
 		"[Available Skills]",
 		"- Skills are reusable task profiles available in this session. Only the [Active Skill] block, when present, is currently in effect.",
@@ -165,6 +218,12 @@ func renderSystemBlock(input PromptInput) string {
 		"",
 		"[Available Tools]",
 		formatTools(input.Tools),
+	}
+	if planState := strings.TrimSpace(planpkg.RenderPromptStateBlock(input.Plan)); planState != "" {
+		lines = append(lines, "", "[Current Plan State]", planState)
+	}
+	if systemSandboxStatus != "" {
+		lines = append(lines, "", fmt.Sprintf("system_sandbox_status: %s", systemSandboxStatus))
 	}
 	return strings.Join(lines, "\n")
 }

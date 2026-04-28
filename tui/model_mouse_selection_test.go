@@ -446,6 +446,39 @@ func locateLandingInputDragPoints(t *testing.T, m model) (targetRow, startX, dra
 	return 0, 0, 0
 }
 
+func TestLandingInputBoundsAlignWithLandingCanvasOffset(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.ShowLineNumbers = false
+	input.Prompt = ""
+	input.SetValue("hello")
+
+	m := model{
+		screen:     screenLanding,
+		width:      110,
+		height:     34,
+		input:      input,
+		tokenUsage: newTokenUsageComponent(),
+	}
+	_ = m.View()
+
+	_, _, top, _, _, _, ok := m.inputInnerBounds()
+	if !ok {
+		t.Fatalf("expected landing input bounds to be available")
+	}
+	contentTop := m.landingContentTop(m.landingContentHeight())
+	wantTop := m.landingInputTop(contentTop)
+	if top != wantTop {
+		t.Fatalf("expected landing input top %d, got %d", wantTop, top)
+	}
+	if !m.mouseOverLandingInput(top) {
+		t.Fatalf("expected mouseOverLandingInput to include top row %d", top)
+	}
+	if top > 0 && m.mouseOverLandingInput(top-1) {
+		t.Fatalf("expected row above input top to be outside hit area")
+	}
+}
+
 func TestViewportSelectionTextUsesVisibleViewportLayout(t *testing.T) {
 	m := model{
 		viewport: viewport.New(32, 6),

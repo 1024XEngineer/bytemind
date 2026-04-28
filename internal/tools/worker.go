@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 	"unicode"
@@ -30,6 +31,8 @@ type inProcessWorker struct {
 	registry   *Registry
 	normalizer OutputNormalizer
 }
+
+var workerSandboxBackendResolver = resolveSystemSandboxRuntimeBackend
 
 func (w inProcessWorker) Run(ctx context.Context, req workerRunRequest) (string, error) {
 	resolved, err := w.resolveTool(req.ToolName)
@@ -109,6 +112,9 @@ func workerSandboxDecision(ctx context.Context, toolName string, raw json.RawMes
 		}
 		return sandboxpkg.DecisionResult{}, NewToolExecError(code, err.Error(), false, err)
 	}
+	if err := enforceRequiredSystemSandboxCapabilities(toolName, runtimeReq, execCtx); err != nil {
+		return sandboxpkg.DecisionResult{}, err
+	}
 
 	broker := sandboxpkg.NewPolicyBroker()
 	decision, err := broker.Decide(ctx, sandboxpkg.DecisionInput{
@@ -129,6 +135,69 @@ func workerSandboxDecision(ctx context.Context, toolName string, raw json.RawMes
 		return sandboxpkg.DecisionResult{}, NewToolExecError(ToolErrorPermissionDenied, err.Error(), false, err)
 	}
 	return decision, nil
+}
+
+func enforceRequiredSystemSandboxCapabilities(toolName string, runtimeReq sandboxpkg.RuntimeRequest, execCtx *ExecutionContext) error {
+	if execCtx == nil || !execCtx.SandboxEnabled {
+		return nil
+	}
+	if normalizeSystemSandboxMode(execCtx) != systemSandboxModeRequired {
+		return nil
+	}
+	backend, err := workerSandboxBackendResolver(systemSandboxModeRequired, runtime.GOOS, runShellLookPath)
+	if err != nil {
+		return NewToolExecError(
+			ToolErrorPermissionDenied,
+			"system sandbox required mode backend is unavailable: "+strings.TrimSpace(err.Error()),
+			false,
+			err,
+		)
+	}
+	if !backend.Enabled {
+		reason := strings.TrimSpace(backend.UnavailableReason)
+		if reason == "" {
+			reason = "backend is unavailable"
+		}
+		return NewToolExecError(
+			ToolErrorPermissionDenied,
+			"system sandbox required mode backend is unavailable: "+reason,
+			false,
+			nil,
+		)
+	}
+	if !runtimeRequestHasNetworkTarget(runtimeReq) {
+		return nil
+	}
+	if requiredNetworkIsolationSatisfiedForTool(strings.TrimSpace(toolName), backend) {
+		return nil
+	}
+	return NewToolExecError(
+		ToolErrorPermissionDenied,
+		fmt.Sprintf(
+			"system sandbox required mode cannot run network-targeted %q because backend %q lacks network isolation",
+			strings.TrimSpace(toolName),
+			strings.TrimSpace(backend.Name),
+		),
+		false,
+		nil,
+	)
+}
+
+func requiredNetworkIsolationSatisfiedForTool(toolName string, backend systemSandboxRuntimeBackend) bool {
+	switch toolName {
+	case "run_shell":
+		return backend.Shell.Policy.NetworkIsolation
+	case "web_fetch", "web_search":
+		return backend.Worker.Policy.NetworkIsolation
+	default:
+		return backend.Worker.Policy.NetworkIsolation
+	}
+}
+
+func runtimeRequestHasNetworkTarget(request sandboxpkg.RuntimeRequest) bool {
+	return strings.TrimSpace(request.Network.Host) != "" ||
+		strings.TrimSpace(request.Network.Scheme) != "" ||
+		request.Network.Port != 0
 }
 
 func isRuntimeRequestPermissionError(err error) bool {
@@ -496,6 +565,30 @@ func collectApplyPatchPaths(patch string) []string {
 
 func extractRunShellNetworkTarget(parts []string) sandboxpkg.NetworkRule {
 	return extractRunShellNetworkTargetWithDepth(parts, 0)
+}
+
+// RunShellCommandHasNetworkTarget reports whether a run_shell command string
+// contains an explicit network target URL.
+func RunShellCommandHasNetworkTarget(command string) bool {
+	parts := splitShellCommandFields(command)
+	rule := extractRunShellNetworkTarget(parts)
+	return strings.TrimSpace(rule.Host) != ""
+}
+
+// RunShellArgumentsContainNetworkTarget reports whether serialized run_shell
+// tool arguments (JSON) contain a network-targeted command.
+func RunShellArgumentsContainNetworkTarget(rawArguments string) bool {
+	rawArguments = strings.TrimSpace(rawArguments)
+	if rawArguments == "" {
+		return false
+	}
+	var args struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal([]byte(rawArguments), &args); err != nil {
+		return false
+	}
+	return RunShellCommandHasNetworkTarget(args.Command)
 }
 
 func extractRunShellNetworkTargetWithDepth(parts []string, depth int) sandboxpkg.NetworkRule {

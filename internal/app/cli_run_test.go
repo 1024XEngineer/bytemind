@@ -17,4 +17,7 @@ func TestRunCLIHelpRendersUsage(t *testing.T) {
 	if !strings.Contains(output, "bytemind chat") || !strings.Contains(output, "bytemind run") {
 		t.Fatalf("expected help usage output, got %q", output)
 	}
+	if !strings.Contains(output, "bytemind mcp") {
+		t.Fatalf("expected help usage to include mcp command, got %q", output)
+	}
 }

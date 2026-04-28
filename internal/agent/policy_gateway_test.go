@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corepkg "bytemind/internal/core"
@@ -37,6 +38,211 @@ func TestDefaultPolicyGatewayDecisionPriority(t *testing.T) {
 				Decision:   corepkg.DecisionDeny,
 				ReasonCode: policyReasonExplicitDeny,
 				RiskLevel:  corepkg.RiskHigh,
+			},
+		},
+		{
+			name: "sandbox_guard_skipped_when_system_sandbox_disabled",
+			in: ToolDecisionInput{
+				ToolName:             "web_fetch",
+				ApprovalPolicy:       "always",
+				SafetyClass:          tools.SafetyClassModerate,
+				SandboxEnabled:       false,
+				SandboxMode:          "required",
+				SandboxBackend:       "windows_job_object",
+				SandboxCapability:    "guarded",
+				SandboxRequiredCapab: true,
+			},
+			want: ToolDecision{
+				Decision:   corepkg.DecisionAllow,
+				ReasonCode: policyReasonModeDefault,
+				RiskLevel:  corepkg.RiskMedium,
+			},
+		},
+		{
+			name: "sandbox_guard_denies_web_fetch_in_windows_required_mode",
+			in: ToolDecisionInput{
+				ToolName:             "web_fetch",
+				ApprovalPolicy:       "always",
+				SafetyClass:          tools.SafetyClassModerate,
+				SandboxEnabled:       true,
+				SandboxMode:          "required",
+				SandboxBackend:       "windows_job_object",
+				SandboxCapability:    "guarded",
+				SandboxRequiredCapab: true,
+			},
+			want: ToolDecision{
+				Decision:   corepkg.DecisionDeny,
+				ReasonCode: policyReasonSandboxGuard,
+				RiskLevel:  corepkg.RiskMedium,
+			},
+		},
+		{
+			name: "sandbox_guard_denies_web_fetch_in_unknown_required_backend",
+			in: ToolDecisionInput{
+				ToolName:             "web_fetch",
+				ApprovalPolicy:       "always",
+				SafetyClass:          tools.SafetyClassModerate,
+				SandboxEnabled:       true,
+				SandboxMode:          "required",
+				SandboxBackend:       "unknown_backend",
+				SandboxCapability:    "unknown",
+				SandboxRequiredCapab: false,
+			},
+			want: ToolDecision{
+				Decision:   corepkg.DecisionDeny,
+				ReasonCode: policyReasonSandboxGuard,
+				RiskLevel:  corepkg.RiskMedium,
+			},
+		},
+		{
+			name: "sandbox_guard_denies_web_fetch_in_linux_required_mode",
+			in: ToolDecisionInput{
+				ToolName:             "web_fetch",
+				ApprovalPolicy:       "always",
+				SafetyClass:          tools.SafetyClassModerate,
+				SandboxEnabled:       true,
+				SandboxMode:          "required",
+				SandboxBackend:       "linux_unshare",
+				SandboxCapability:    "full",
+				SandboxRequiredCapab: true,
+			},
+			want: ToolDecision{
+				Decision:   corepkg.DecisionDeny,
+				ReasonCode: policyReasonSandboxGuard,
+				RiskLevel:  corepkg.RiskMedium,
+			},
+		},
+		{
+			name: "sandbox_guard_denies_web_search_in_darwin_required_mode",
+			in: ToolDecisionInput{
+				ToolName:             "web_search",
+				ApprovalPolicy:       "always",
+				SafetyClass:          tools.SafetyClassSafe,
+				SandboxEnabled:       true,
+				SandboxMode:          "required",
+				SandboxBackend:       "darwin_sandbox_exec",
+				SandboxCapability:    "full",
+				SandboxRequiredCapab: true,
+			},
+			want: ToolDecision{
+				Decision:   corepkg.DecisionDeny,
+				ReasonCode: policyReasonSandboxGuard,
+				RiskLevel:  corepkg.RiskLow,
+			},
+		},
+		{
+			name: "sandbox_guard_overrides_allowlist_for_web_search",
+			in: ToolDecisionInput{
+				ToolName:             "web_search",
+				AllowedTools:         map[string]struct{}{"web_search": {}},
+				ApprovalPolicy:       "always",
+				SafetyClass:          tools.SafetyClassSafe,
+				SandboxEnabled:       true,
+				SandboxMode:          "required",
+				SandboxBackend:       "windows_job_object",
+				SandboxCapability:    "guarded",
+				SandboxRequiredCapab: true,
+			},
+			want: ToolDecision{
+				Decision:   corepkg.DecisionDeny,
+				ReasonCode: policyReasonSandboxGuard,
+				RiskLevel:  corepkg.RiskLow,
+			},
+		},
+		{
+			name: "sandbox_guard_denies_network_targeted_run_shell_in_windows_required_mode",
+			in: ToolDecisionInput{
+				ToolName:             "run_shell",
+				ToolArguments:        `{"command":"curl https://example.com/data"}`,
+				ApprovalPolicy:       "always",
+				SafetyClass:          tools.SafetyClassModerate,
+				SandboxEnabled:       true,
+				SandboxMode:          "required",
+				SandboxBackend:       "windows_job_object",
+				SandboxCapability:    "guarded",
+				SandboxRequiredCapab: true,
+			},
+			want: ToolDecision{
+				Decision:   corepkg.DecisionDeny,
+				ReasonCode: policyReasonSandboxGuard,
+				RiskLevel:  corepkg.RiskMedium,
+			},
+		},
+		{
+			name: "sandbox_guard_denies_network_targeted_run_shell_in_unknown_required_backend",
+			in: ToolDecisionInput{
+				ToolName:             "run_shell",
+				ToolArguments:        `{"command":"curl https://example.com/data"}`,
+				ApprovalPolicy:       "always",
+				SafetyClass:          tools.SafetyClassModerate,
+				SandboxEnabled:       true,
+				SandboxMode:          "required",
+				SandboxBackend:       "unknown_backend",
+				SandboxCapability:    "unknown",
+				SandboxRequiredCapab: false,
+			},
+			want: ToolDecision{
+				Decision:   corepkg.DecisionDeny,
+				ReasonCode: policyReasonSandboxGuard,
+				RiskLevel:  corepkg.RiskMedium,
+			},
+		},
+		{
+			name: "sandbox_guard_denies_network_targeted_run_shell_in_darwin_required_mode",
+			in: ToolDecisionInput{
+				ToolName:             "run_shell",
+				ToolArguments:        `{"command":"curl https://example.com/data"}`,
+				ApprovalPolicy:       "always",
+				SafetyClass:          tools.SafetyClassSafe,
+				SandboxEnabled:       true,
+				SandboxMode:          "required",
+				SandboxBackend:       "darwin_sandbox_exec",
+				SandboxCapability:    "full",
+				SandboxRequiredCapab: true,
+			},
+			want: ToolDecision{
+				Decision:   corepkg.DecisionDeny,
+				ReasonCode: policyReasonSandboxGuard,
+				RiskLevel:  corepkg.RiskLow,
+			},
+		},
+		{
+			name: "sandbox_guard_allows_network_targeted_run_shell_in_linux_required_mode",
+			in: ToolDecisionInput{
+				ToolName:             "run_shell",
+				ToolArguments:        `{"command":"curl https://example.com/data"}`,
+				ApprovalPolicy:       "always",
+				SafetyClass:          tools.SafetyClassModerate,
+				SandboxEnabled:       true,
+				SandboxMode:          "required",
+				SandboxBackend:       "linux_unshare",
+				SandboxCapability:    "full",
+				SandboxRequiredCapab: true,
+				SandboxShellNetwork:  true,
+			},
+			want: ToolDecision{
+				Decision:   corepkg.DecisionAllow,
+				ReasonCode: policyReasonModeDefault,
+				RiskLevel:  corepkg.RiskMedium,
+			},
+		},
+		{
+			name: "sandbox_guard_allows_local_run_shell_in_required_mode",
+			in: ToolDecisionInput{
+				ToolName:             "run_shell",
+				ToolArguments:        `{"command":"go test ./..."}`,
+				ApprovalPolicy:       "always",
+				SafetyClass:          tools.SafetyClassModerate,
+				SandboxEnabled:       true,
+				SandboxMode:          "required",
+				SandboxBackend:       "windows_job_object",
+				SandboxCapability:    "guarded",
+				SandboxRequiredCapab: true,
+			},
+			want: ToolDecision{
+				Decision:   corepkg.DecisionAllow,
+				ReasonCode: policyReasonModeDefault,
+				RiskLevel:  corepkg.RiskMedium,
 			},
 		},
 		{
@@ -124,6 +330,15 @@ func TestDefaultPolicyGatewayDecisionPriority(t *testing.T) {
 			}
 			if got.Reason == "" {
 				t.Fatal("expected non-empty reason")
+			}
+			if got.ReasonCode == policyReasonSandboxGuard {
+				backend := strings.TrimSpace(tt.in.SandboxBackend)
+				if backend == "" {
+					backend = "<unknown>"
+				}
+				if !strings.Contains(got.Reason, backend) {
+					t.Fatalf("expected sandbox_guard reason to mention backend %q, got %q", backend, got.Reason)
+				}
 			}
 		})
 	}

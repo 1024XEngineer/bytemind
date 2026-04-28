@@ -40,6 +40,9 @@ func IsPlanSafeShellCommand(command string) bool {
 	if command == "" {
 		return false
 	}
+	if hasShellSubstitution(command) {
+		return false
+	}
 	if hasWriteRedirection(command) {
 		return false
 	}
@@ -67,25 +70,72 @@ func IsPlanSafeShellCommand(command string) bool {
 	}
 
 	switch first {
-	case "ls", "dir", "pwd", "cat", "type", "rg", "grep", "find", "tree":
+	case "ls", "dir", "pwd", "cat", "type", "rg", "grep", "tree":
 		return true
+	case "find":
+		return planSafeFindArgs(fields[1:])
 	case "git":
 		if len(fields) < 2 {
 			return false
 		}
 		sub := strings.ToLower(fields[1])
-		return sub == "status" || sub == "diff" || sub == "log"
+		if sub != "status" && sub != "diff" && sub != "log" {
+			return false
+		}
+		return planSafeGitArgs(sub, fields[2:])
 	case "go":
 		if len(fields) < 2 {
 			return false
 		}
 		sub := strings.ToLower(fields[1])
-		return sub == "env" || sub == "list"
+		switch sub {
+		case "env":
+			return planSafeGoEnvArgs(fields[2:])
+		case "list":
+			return true
+		default:
+			return false
+		}
 	case "bash", "sh", "pwsh", "powershell", "python", "python3", "node":
 		return false
 	default:
 		return false
 	}
+}
+
+func hasShellSubstitution(command string) bool {
+	return strings.Contains(command, "$(") || strings.Contains(command, "`")
+}
+
+func planSafeFindArgs(args []string) bool {
+	for _, arg := range args {
+		value := strings.ToLower(strings.TrimSpace(arg))
+		switch value {
+		case "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls":
+			return false
+		}
+	}
+	return true
+}
+
+func planSafeGitArgs(sub string, args []string) bool {
+	for _, arg := range args {
+		value := strings.ToLower(strings.TrimSpace(arg))
+		if value == "-o" || value == "--output" || strings.HasPrefix(value, "--output=") {
+			return false
+		}
+	}
+	return true
+}
+
+func planSafeGoEnvArgs(args []string) bool {
+	for _, arg := range args {
+		value := strings.ToLower(strings.TrimSpace(arg))
+		if value == "-w" || value == "-u" || strings.HasPrefix(value, "-w=") || strings.HasPrefix(value, "-u=") {
+			return false
+		}
+	}
+	return true
 }
 
 func shellRiskOrder(risk ShellRisk) int {

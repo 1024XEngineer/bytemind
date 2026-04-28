@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	planpkg "bytemind/internal/plan"
 )
 
 func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
@@ -17,14 +19,22 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	}
 
 	prompt := systemPrompt(PromptInput{
-		Workspace:      workspace,
-		ApprovalPolicy: "on-request",
-		ApprovalMode:   "away",
-		AwayPolicy:     "fail_fast",
-		Model:          "gpt-5.4-mini",
-		Mode:           "plan",
-		Platform:       "linux/amd64",
-		Now:            time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
+		Workspace:                    workspace,
+		ApprovalPolicy:               "on-request",
+		ApprovalMode:                 "away",
+		AwayPolicy:                   "fail_fast",
+		SandboxEnabled:               true,
+		SystemSandbox:                "best_effort",
+		SystemSandboxBackend:         "linux_unshare",
+		SystemSandboxRequiredCapable: true,
+		SystemSandboxShellNetwork:    true,
+		SystemSandboxWorkerNetwork:   false,
+		SystemSandboxFallback:        false,
+		SystemSandboxStatus:          `system sandbox backend "linux_unshare" is active`,
+		Model:                        "gpt-5.4-mini",
+		Mode:                         "plan",
+		Platform:                     "linux/amd64",
+		Now:                          time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
 		Skills: []PromptSkill{
 			{Name: "review", Description: "Review code changes for regressions.", Enabled: true},
 		},
@@ -56,6 +66,15 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	assertContains(t, prompt, "approval_policy: on-request")
 	assertContains(t, prompt, "approval_mode: away")
 	assertContains(t, prompt, "away_policy: fail_fast")
+	assertContains(t, prompt, "sandbox_enabled: true")
+	assertContains(t, prompt, "system_sandbox_mode: best_effort")
+	assertContains(t, prompt, "system_sandbox_backend: linux_unshare")
+	assertContains(t, prompt, "system_sandbox_required_capable: true")
+	assertContains(t, prompt, "system_sandbox_capability_level: none")
+	assertContains(t, prompt, "system_sandbox_shell_network_isolation: true")
+	assertContains(t, prompt, "system_sandbox_worker_network_isolation: false")
+	assertContains(t, prompt, "system_sandbox_fallback: false")
+	assertContains(t, prompt, `system_sandbox_status: system sandbox backend "linux_unshare" is active`)
 	assertContains(t, prompt, "[Available Skills]")
 	assertContains(t, prompt, "Skills are reusable task profiles available in this session")
 	assertContains(t, prompt, "- review: Review code changes for regressions.")
@@ -93,6 +112,14 @@ func TestSystemPromptOmitsOptionalBlocksWhenEmpty(t *testing.T) {
 	assertContains(t, prompt, "- none")
 	assertContains(t, prompt, "approval_mode: interactive")
 	assertContains(t, prompt, "away_policy: auto_deny_continue")
+	assertContains(t, prompt, "sandbox_enabled: false")
+	assertContains(t, prompt, "system_sandbox_mode: off")
+	assertContains(t, prompt, "system_sandbox_backend: none")
+	assertContains(t, prompt, "system_sandbox_required_capable: false")
+	assertContains(t, prompt, "system_sandbox_capability_level: none")
+	assertContains(t, prompt, "system_sandbox_shell_network_isolation: false")
+	assertContains(t, prompt, "system_sandbox_worker_network_isolation: false")
+	assertContains(t, prompt, "system_sandbox_fallback: false")
 	if strings.Contains(prompt, "[Instructions]") {
 		t.Fatalf("did not expect instruction block in prompt: %q", prompt)
 	}
@@ -100,6 +127,61 @@ func TestSystemPromptOmitsOptionalBlocksWhenEmpty(t *testing.T) {
 		t.Fatalf("did not expect active skill block in prompt: %q", prompt)
 	}
 	assertNoTemplateMarkers(t, prompt)
+}
+
+func TestSystemPromptIncludesCurrentPlanStateWhenPresent(t *testing.T) {
+	prompt := systemPrompt(PromptInput{
+		Workspace:      "/tmp/workspace",
+		ApprovalPolicy: "never",
+		Model:          "deepseek-chat",
+		Mode:           "build",
+		Platform:       "darwin/arm64",
+		Now:            time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
+		Plan: planpkg.State{
+			Goal:                "Harden plan mode",
+			Phase:               planpkg.PhaseConvergeReady,
+			Steps:               []planpkg.Step{{Title: "Rewrite plan prompt", Status: planpkg.StepPending}},
+			DecisionGaps:        []string{"Pick the execution trigger copy"},
+			ScopeDefined:        true,
+			RiskRollbackDefined: true,
+		},
+	})
+
+	assertContains(t, prompt, "[Current Plan State]")
+	assertContains(t, prompt, "phase: converge_ready")
+	assertContains(t, prompt, "goal: Harden plan mode")
+	assertContains(t, prompt, "decision_gaps: Pick the execution trigger copy")
+	assertContains(t, prompt, "steps:")
+	assertContains(t, prompt, "execution_readiness: scope=yes, risks_rollback=yes, verification=no")
+}
+
+func TestSystemPromptIncludesActiveChoiceWhenPresent(t *testing.T) {
+	prompt := systemPrompt(PromptInput{
+		Workspace:      "/tmp/workspace",
+		ApprovalPolicy: "never",
+		Model:          "deepseek-chat",
+		Mode:           "plan",
+		Platform:       "darwin/arm64",
+		Now:            time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
+		Plan: planpkg.State{
+			Phase:        planpkg.PhaseClarify,
+			Steps:        []planpkg.Step{{Title: "Choose frontend", Status: planpkg.StepPending}},
+			DecisionGaps: []string{"Choose the frontend stack"},
+			ActiveChoice: &planpkg.ActiveChoice{
+				ID:       "frontend_stack",
+				Kind:     "clarify",
+				Question: "前端希望走哪条路线？",
+				Options: []planpkg.ChoiceOption{
+					{ID: "a", Shortcut: "A", Title: "FastAPI + Jinja2", Recommended: true},
+					{ID: "b", Shortcut: "B", Title: "Flask + Jinja2"},
+				},
+			},
+		},
+	})
+
+	assertContains(t, prompt, "active_choice:")
+	assertContains(t, prompt, "- question: 前端希望走哪条路线？")
+	assertContains(t, prompt, "- [A] FastAPI + Jinja2 -- recommended")
 }
 
 func TestModePromptDefaultsToBuild(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	sandboxpkg "bytemind/internal/sandbox"
@@ -33,6 +34,23 @@ type subprocessWorker struct {
 
 type osExecWorkerInvoker struct {
 	executablePath string
+	lookPath       func(string) (string, error)
+	goos           string
+}
+
+type workerLaunchError struct {
+	cause error
+}
+
+func (e workerLaunchError) Error() string {
+	if e.cause == nil {
+		return "worker launch failed"
+	}
+	return e.cause.Error()
+}
+
+func (e workerLaunchError) Unwrap() error {
+	return e.cause
 }
 
 type workerRPCRequest struct {
@@ -49,6 +67,7 @@ type workerRPCExecutionContext struct {
 	ApprovalMode              string                   `json:"approval_mode"`
 	AwayPolicy                string                   `json:"away_policy"`
 	SandboxEnabled            bool                     `json:"sandbox_enabled"`
+	SystemSandboxMode         string                   `json:"system_sandbox_mode"`
 	SkipShellApproval         bool                     `json:"skip_shell_approval"`
 	SandboxEscalationApproved bool                     `json:"sandbox_escalation_approved"`
 	LeaseID                   string                   `json:"lease_id"`
@@ -114,6 +133,11 @@ func (w subprocessWorker) Run(ctx context.Context, req workerRunRequest) (string
 		if details == "" {
 			details = strings.TrimSpace(err.Error())
 		}
+		var launchErr workerLaunchError
+		if errors.As(err, &launchErr) &&
+			normalizeSystemSandboxMode(normalizedReq.Execution) == systemSandboxModeRequired {
+			return "", NewToolExecError(ToolErrorPermissionDenied, "sandbox worker process failed: "+details, false, err)
+		}
 		return "", NewToolExecError(ToolErrorInternal, "sandbox worker process failed: "+details, true, err)
 	}
 	if response.Error != nil {
@@ -130,21 +154,20 @@ func shouldUseSubprocessWorker(execCtx *ExecutionContext) bool {
 }
 
 func (i osExecWorkerInvoker) Invoke(ctx context.Context, req workerRPCRequest) (workerRPCResponse, string, error) {
-	executablePath := strings.TrimSpace(i.executablePath)
-	if executablePath == "" {
-		return workerRPCResponse{}, "", errors.New("worker executable path is empty")
+	launch, err := i.resolveLaunch(req)
+	if err != nil {
+		return workerRPCResponse{}, "", workerLaunchError{cause: err}
 	}
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return workerRPCResponse{}, "", err
 	}
 
-	cmd := exec.CommandContext(ctx, executablePath, sandboxWorkerSubcommand, sandboxWorkerStdioFlag)
-	workspace := strings.TrimSpace(req.Execution.Workspace)
-	if workspace != "" {
-		cmd.Dir = workspace
+	cmd := exec.CommandContext(ctx, launch.Path, launch.Args[1:]...)
+	if strings.TrimSpace(launch.Dir) != "" {
+		cmd.Dir = launch.Dir
 	}
-	cmd.Env = buildWorkerProcessEnv(os.Environ())
+	cmd.Env = launch.Env
 	cmd.Stdin = bytes.NewReader(append(payload, '\n'))
 
 	var stdoutBuffer bytes.Buffer
@@ -152,7 +175,7 @@ func (i osExecWorkerInvoker) Invoke(ctx context.Context, req workerRPCRequest) (
 	cmd.Stdout = &stdoutBuffer
 	cmd.Stderr = &stderrBuffer
 
-	if err := cmd.Run(); err != nil {
+	if err := runCommandWithSystemSandbox(cmd, launch.SystemSandboxBackendName, launch.SystemSandboxMode); err != nil {
 		return workerRPCResponse{}, stderrBuffer.String(), err
 	}
 
@@ -161,6 +184,98 @@ func (i osExecWorkerInvoker) Invoke(ctx context.Context, req workerRPCRequest) (
 		return workerRPCResponse{}, stderrBuffer.String(), fmt.Errorf("decode worker response: %w", err)
 	}
 	return response, stderrBuffer.String(), nil
+}
+
+type workerProcessLaunch struct {
+	Path                     string
+	Args                     []string
+	Dir                      string
+	Env                      []string
+	SystemSandboxBackendName string
+	SystemSandboxMode        string
+}
+
+func (i osExecWorkerInvoker) resolveLaunch(req workerRPCRequest) (workerProcessLaunch, error) {
+	executablePath := strings.TrimSpace(i.executablePath)
+	if executablePath == "" {
+		return workerProcessLaunch{}, errors.New("worker executable path is empty")
+	}
+
+	mode := normalizeSystemSandboxMode(&ExecutionContext{SystemSandboxMode: req.Execution.SystemSandboxMode})
+	goos := strings.TrimSpace(i.goos)
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	lookPath := i.lookPath
+	if lookPath == nil {
+		lookPath = runShellLookPath
+	}
+	backend, err := resolveSystemSandboxRuntimeBackend(mode, goos, lookPath)
+	if err != nil {
+		return workerProcessLaunch{}, err
+	}
+
+	path := executablePath
+	args := []string{executablePath, sandboxWorkerSubcommand, sandboxWorkerStdioFlag}
+	backendName := ""
+	if backend.Enabled {
+		backendName = strings.TrimSpace(backend.Name)
+		switch strings.TrimSpace(backend.Name) {
+		case "windows_job_object":
+			// Keep direct executable path. Windows process isolation is applied
+			// by runCommandWithSystemSandbox when launching this process.
+		case "darwin_sandbox_exec":
+			path = backend.Runner
+			allowNetwork := !strings.EqualFold(mode, systemSandboxModeRequired)
+			profile, profileErr := buildDarwinSandboxProfile(&ExecutionContext{
+				Workspace:     req.Execution.Workspace,
+				WritableRoots: append([]string(nil), req.Execution.WritableRoots...),
+			}, allowNetwork)
+			if profileErr != nil {
+				return workerProcessLaunch{}, profileErr
+			}
+			args = append([]string{backend.Runner}, buildDarwinSandboxWorkerArgs(profile, executablePath)...)
+		default:
+			path = backend.Runner
+			backendArgs := append([]string(nil), backend.Worker.ArgPrefix...)
+			if strings.EqualFold(mode, systemSandboxModeRequired) && strings.EqualFold(goos, "linux") {
+				wrapped, wrapErr := buildRequiredLinuxWorkerCommand(executablePath, req.Execution)
+				if wrapErr != nil {
+					return workerProcessLaunch{}, wrapErr
+				}
+				backendArgs = append(backendArgs, "sh", "-lc", wrapped)
+			} else {
+				backendArgs = append(backendArgs, executablePath, sandboxWorkerSubcommand, sandboxWorkerStdioFlag)
+			}
+			args = append([]string{backend.Runner}, backendArgs...)
+		}
+	}
+
+	return workerProcessLaunch{
+		Path:                     path,
+		Args:                     args,
+		Dir:                      strings.TrimSpace(req.Execution.Workspace),
+		Env:                      buildWorkerProcessEnv(os.Environ(), mode, goos),
+		SystemSandboxBackendName: backendName,
+		SystemSandboxMode:        mode,
+	}, nil
+}
+
+func buildRequiredLinuxWorkerCommand(executablePath string, execution workerRPCExecutionContext) (string, error) {
+	executablePath = strings.TrimSpace(executablePath)
+	if executablePath == "" {
+		return "", errors.New("worker executable path is empty")
+	}
+	command := strings.Join([]string{
+		"exec",
+		shellSingleQuote(executablePath),
+		shellSingleQuote(sandboxWorkerSubcommand),
+		shellSingleQuote(sandboxWorkerStdioFlag),
+	}, " ")
+	return buildRequiredLinuxShellCommand(command, &ExecutionContext{
+		Workspace:     execution.Workspace,
+		WritableRoots: append([]string(nil), execution.WritableRoots...),
+	})
 }
 
 func RunWorkerProcess(ctx context.Context, stdin io.Reader, stdout io.Writer) error {
@@ -229,6 +344,7 @@ func encodeWorkerExecutionContext(execCtx *ExecutionContext) workerRPCExecutionC
 		ApprovalMode:              execCtx.ApprovalMode,
 		AwayPolicy:                execCtx.AwayPolicy,
 		SandboxEnabled:            execCtx.SandboxEnabled,
+		SystemSandboxMode:         execCtx.SystemSandboxMode,
 		SkipShellApproval:         execCtx.SkipShellApproval,
 		SandboxEscalationApproved: execCtx.SandboxEscalationApproved,
 		LeaseID:                   execCtx.LeaseID,
@@ -250,6 +366,7 @@ func decodeWorkerExecutionContext(payload workerRPCExecutionContext) *ExecutionC
 		ApprovalMode:              payload.ApprovalMode,
 		AwayPolicy:                payload.AwayPolicy,
 		SandboxEnabled:            payload.SandboxEnabled,
+		SystemSandboxMode:         payload.SystemSandboxMode,
 		SkipShellApproval:         payload.SkipShellApproval,
 		SandboxEscalationApproved: payload.SandboxEscalationApproved,
 		LeaseID:                   payload.LeaseID,
@@ -360,33 +477,19 @@ func workerRunShellCommand(raw json.RawMessage) (string, error) {
 	return command, nil
 }
 
-func buildWorkerProcessEnv(base []string) []string {
-	if len(base) == 0 {
-		return []string{sandboxWorkerEnvKey + "=" + sandboxWorkerEnvValue}
-	}
-	trimmed := make([]string, 0, len(base)+1)
-	for _, kv := range base {
-		kv = strings.TrimSpace(kv)
-		if kv == "" {
-			continue
-		}
-		name, _, ok := strings.Cut(kv, "=")
-		if !ok {
-			continue
-		}
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		upperName := strings.ToUpper(name)
-		if upperName == "BYTEMIND_API_KEY" || upperName == "BYTEMIND_PROVIDER_API_KEY" {
-			continue
-		}
-		if upperName == sandboxWorkerEnvKey {
-			continue
-		}
-		trimmed = append(trimmed, kv)
-	}
-	trimmed = append(trimmed, sandboxWorkerEnvKey+"="+sandboxWorkerEnvValue)
-	return trimmed
+func buildWorkerProcessEnv(base []string, mode, goos string) []string {
+	return buildSandboxEnv(base, sandboxEnvOptions{
+		GOOS:          goos,
+		RequiredMode:  strings.EqualFold(strings.TrimSpace(mode), systemSandboxModeRequired),
+		DropSensitive: strings.EqualFold(strings.TrimSpace(mode), systemSandboxModeRequired),
+		AlwaysDrop: map[string]struct{}{
+			"BYTEMIND_API_KEY":              {},
+			"BYTEMIND_PROVIDER_API_KEY":     {},
+			"BYTEMIND_PROVIDER_API_KEY_ENV": {},
+			sandboxWorkerEnvKey:             {},
+		},
+		ForceSet: map[string]string{
+			sandboxWorkerEnvKey: sandboxWorkerEnvValue,
+		},
+	})
 }

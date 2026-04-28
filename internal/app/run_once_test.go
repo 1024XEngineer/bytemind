@@ -29,6 +29,66 @@ func TestRunOneShotRejectsMissingPrompt(t *testing.T) {
 	}
 }
 
+func TestRunOneShotRejectsInvalidSandboxEnabledValue(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	configPath := writeRunOneShotTestConfig(t, workspace, map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.openai.com/v1",
+			"model":    "gpt-5.4-mini",
+			"api_key":  "test-key",
+		},
+		"stream": false,
+	})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := RunOneShot(RunOneShotRequest{
+		Args:   []string{"-config", configPath, "-prompt", "inspect repo", "-sandbox-enabled", "maybe"},
+		Stdin:  strings.NewReader(""),
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+	if err == nil {
+		t.Fatal("expected invalid sandbox-enabled error")
+	}
+	if !strings.Contains(err.Error(), "invalid -sandbox-enabled value") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunOneShotRejectsRequiredSystemSandboxWithoutSandboxEnabled(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	configPath := writeRunOneShotTestConfig(t, workspace, map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.openai.com/v1",
+			"model":    "gpt-5.4-mini",
+			"api_key":  "test-key",
+		},
+		"stream":              false,
+		"sandbox_enabled":     false,
+		"system_sandbox_mode": "off",
+	})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := RunOneShot(RunOneShotRequest{
+		Args:   []string{"-config", configPath, "-prompt", "inspect repo", "-system-sandbox-mode", "required"},
+		Stdin:  strings.NewReader(""),
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+	if err == nil {
+		t.Fatal("expected sandbox-enabled requirement error")
+	}
+	if !strings.Contains(err.Error(), "system_sandbox_mode requires sandbox_enabled=true") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestRunOneShotAcceptsTrailingPromptText(t *testing.T) {
 	workspace := t.TempDir()
 	t.Chdir(workspace)

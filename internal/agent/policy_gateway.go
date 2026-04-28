@@ -12,17 +12,26 @@ const (
 	policyReasonHardDeny      = "hard_deny"
 	policyReasonExplicitDeny  = "explicit_deny"
 	policyReasonRiskRule      = "risk_rule"
+	policyReasonSandboxGuard  = "sandbox_guard"
 	policyReasonExplicitAllow = "explicit_allow"
 	policyReasonModeDefault   = "mode_default"
 	policyReasonFallbackAsk   = "fallback_ask"
 )
 
 type ToolDecisionInput struct {
-	ToolName       string
-	AllowedTools   map[string]struct{}
-	DeniedTools    map[string]struct{}
-	ApprovalPolicy string
-	SafetyClass    tools.SafetyClass
+	ToolName             string
+	ToolArguments        string
+	AllowedTools         map[string]struct{}
+	DeniedTools          map[string]struct{}
+	ApprovalPolicy       string
+	SafetyClass          tools.SafetyClass
+	SandboxEnabled       bool
+	SandboxMode          string
+	SandboxBackend       string
+	SandboxCapability    string
+	SandboxRequiredCapab bool
+	SandboxShellNetwork  bool
+	SandboxWorkerNetwork bool
 }
 
 type ToolDecision struct {
@@ -76,6 +85,10 @@ func (defaultPolicyGateway) DecideTool(_ context.Context, in ToolDecisionInput) 
 		}
 	}
 
+	if decision, ok := decideBySandboxGuard(in); ok {
+		return decision, nil
+	}
+
 	if decision, ok := decideByRiskRule(in); ok {
 		return decision, nil
 	}
@@ -105,6 +118,58 @@ func (defaultPolicyGateway) DecideTool(_ context.Context, in ToolDecisionInput) 
 		Reason:     "tool is allowed by mode default policy",
 		RiskLevel:  toRiskLevel(in.SafetyClass),
 	}, nil
+}
+
+func decideBySandboxGuard(in ToolDecisionInput) (ToolDecision, bool) {
+	if !in.SandboxEnabled {
+		return ToolDecision{}, false
+	}
+	mode := strings.ToLower(strings.TrimSpace(in.SandboxMode))
+	if mode != "required" {
+		return ToolDecision{}, false
+	}
+	name := strings.TrimSpace(in.ToolName)
+	switch name {
+	case "web_fetch", "web_search":
+		if in.SandboxWorkerNetwork {
+			return ToolDecision{}, false
+		}
+		backend := sandboxBackendDisplayName(in.SandboxBackend)
+		return ToolDecision{
+			Decision:   corepkg.DecisionDeny,
+			ReasonCode: policyReasonSandboxGuard,
+			Reason:     "system sandbox required mode cannot run web_* tools because backend " + backend + " worker network isolation is unavailable",
+			RiskLevel:  toRiskLevel(in.SafetyClass),
+		}, true
+	case "run_shell":
+		if !runShellArgumentsRequireNetworkIsolation(in.ToolArguments) {
+			return ToolDecision{}, false
+		}
+		if in.SandboxShellNetwork {
+			return ToolDecision{}, false
+		}
+		backend := sandboxBackendDisplayName(in.SandboxBackend)
+		return ToolDecision{
+			Decision:   corepkg.DecisionDeny,
+			ReasonCode: policyReasonSandboxGuard,
+			Reason:     "system sandbox required mode cannot run network-targeted run_shell because backend " + backend + " shell network isolation is unavailable",
+			RiskLevel:  toRiskLevel(in.SafetyClass),
+		}, true
+	default:
+		return ToolDecision{}, false
+	}
+}
+
+func runShellArgumentsRequireNetworkIsolation(raw string) bool {
+	return tools.RunShellArgumentsContainNetworkTarget(raw)
+}
+
+func sandboxBackendDisplayName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "<unknown>"
+	}
+	return value
 }
 
 func decideByRiskRule(in ToolDecisionInput) (ToolDecision, bool) {

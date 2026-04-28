@@ -33,6 +33,8 @@ func RunOneShot(req RunOneShotRequest) error {
 	sessionID := fs.String("session", "", "Reuse an existing session")
 	prompt := fs.String("prompt", "", "Prompt to send")
 	streamOverride := fs.String("stream", "", "Override streaming: true or false")
+	sandboxEnabled := fs.String("sandbox-enabled", "", "Override sandbox_enabled: true or false")
+	systemSandboxMode := fs.String("system-sandbox-mode", "", "Override system sandbox mode: off, best_effort, or required")
 	approvalMode := fs.String("approval-mode", "", "Override approval mode: interactive or away")
 	awayPolicy := fs.String("away-policy", "", "Override away mode policy: auto_deny_continue or fail_fast")
 	workspaceOverride := fs.String("workspace", "", "Workspace to operate on; defaults to current directory")
@@ -50,17 +52,19 @@ func RunOneShot(req RunOneShotRequest) error {
 	}
 
 	runtimeBundle, err := BootstrapEntrypoint(EntrypointRequest{
-		WorkspaceOverride:     *workspaceOverride,
-		ConfigPath:            *configPath,
-		ModelOverride:         *model,
-		SessionID:             *sessionID,
-		StreamOverride:        *streamOverride,
-		ApprovalModeOverride:  *approvalMode,
-		AwayPolicyOverride:    *awayPolicy,
-		MaxIterationsOverride: *maxIterations,
-		RequireAPIKey:         true,
-		Stdin:                 req.Stdin,
-		Stdout:                req.Stdout,
+		WorkspaceOverride:         *workspaceOverride,
+		ConfigPath:                *configPath,
+		ModelOverride:             *model,
+		SessionID:                 *sessionID,
+		StreamOverride:            *streamOverride,
+		SandboxEnabledOverride:    *sandboxEnabled,
+		SystemSandboxModeOverride: *systemSandboxMode,
+		ApprovalModeOverride:      *approvalMode,
+		AwayPolicyOverride:        *awayPolicy,
+		MaxIterationsOverride:     *maxIterations,
+		RequireAPIKey:             true,
+		Stdin:                     req.Stdin,
+		Stdout:                    req.Stdout,
 	})
 	if err != nil {
 		return err

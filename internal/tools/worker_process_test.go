@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -184,6 +185,48 @@ func TestSubprocessWorkerPropagatesWorkerError(t *testing.T) {
 	}
 	if execErr.Code != ToolErrorPermissionDenied {
 		t.Fatalf("unexpected error code: %s", execErr.Code)
+	}
+}
+
+func TestSubprocessWorkerRequiredModeLaunchFailureReturnsPermissionDenied(t *testing.T) {
+	worker := subprocessWorker{
+		fallback: inProcessWorker{},
+		invoker: osExecWorkerInvoker{
+			executablePath: "/tmp/bytemind",
+			goos:           "freebsd",
+			lookPath: func(string) (string, error) {
+				t.Fatal("lookPath should not be called on unsupported OS")
+				return "", nil
+			},
+		},
+	}
+
+	_, err := worker.Run(context.Background(), workerRunRequest{
+		ToolName: "run_shell",
+		RawArgs:  json.RawMessage(`{"command":"git status"}`),
+		Execution: &ExecutionContext{
+			Workspace:         t.TempDir(),
+			SandboxEnabled:    true,
+			SystemSandboxMode: "required",
+			ApprovalMode:      "interactive",
+			ApprovalPolicy:    "never",
+			ExecAllowlist: []sandboxpkg.ExecRule{
+				{Command: "git status"},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected required-mode launch failure")
+	}
+	execErr, ok := AsToolExecError(err)
+	if !ok {
+		t.Fatalf("expected ToolExecError, got %T (%v)", err, err)
+	}
+	if execErr.Code != ToolErrorPermissionDenied {
+		t.Fatalf("expected permission_denied code, got %s (%v)", execErr.Code, err)
+	}
+	if !strings.Contains(strings.ToLower(execErr.Message), "required") {
+		t.Fatalf("expected required-mode context in error message, got %q", execErr.Message)
 	}
 }
 
@@ -386,7 +429,7 @@ func TestBuildWorkerProcessEnvStripsSensitiveKeys(t *testing.T) {
 		"BYTEMIND_PROVIDER_API_KEY=provider-secret",
 		"BYTEMIND_SANDBOX_WORKER=0",
 		"HOME=/home/test",
-	})
+	}, "off", "linux")
 	joined := strings.Join(env, "\n")
 	if strings.Contains(joined, "BYTEMIND_API_KEY=") {
 		t.Fatalf("expected BYTEMIND_API_KEY to be removed, got %q", joined)
@@ -399,10 +442,303 @@ func TestBuildWorkerProcessEnvStripsSensitiveKeys(t *testing.T) {
 	}
 }
 
+func TestBuildWorkerProcessEnvRequiredLinuxKeepsAllowlistedKeysOnly(t *testing.T) {
+	env := buildWorkerProcessEnv([]string{
+		"PATH=/usr/bin",
+		"HOME=/home/test",
+		"WINDIR=C:\\Windows",
+		"OPENAI_API_KEY=secret",
+	}, "required", "linux")
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "OPENAI_API_KEY=") {
+		t.Fatalf("expected sensitive key to be removed in required mode, got %q", joined)
+	}
+	if strings.Contains(joined, "WINDIR=") {
+		t.Fatalf("expected non-linux allowlist key to be removed, got %q", joined)
+	}
+	if !strings.Contains(joined, "PATH=/usr/bin") {
+		t.Fatalf("expected PATH to remain, got %q", joined)
+	}
+	if !strings.Contains(joined, "BYTEMIND_SANDBOX_WORKER=1") {
+		t.Fatalf("expected sandbox worker marker, got %q", joined)
+	}
+}
+
+func TestResolveLaunchFailsClosedWhenRequiredBackendUnavailable(t *testing.T) {
+	invoker := osExecWorkerInvoker{
+		executablePath: "/tmp/bytemind",
+		goos:           "freebsd",
+		lookPath: func(string) (string, error) {
+			t.Fatal("lookPath should not be called on unsupported OS")
+			return "", nil
+		},
+	}
+	_, err := invoker.resolveLaunch(workerRPCRequest{
+		Execution: workerRPCExecutionContext{
+			SystemSandboxMode: "required",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected required mode to fail closed when backend is unavailable")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "required") {
+		t.Fatalf("expected required-mode error, got %v", err)
+	}
+}
+
+func TestResolveLaunchWindowsBestEffortKeepsDirectExecutableAndTracksBackend(t *testing.T) {
+	invoker := osExecWorkerInvoker{
+		executablePath: `C:\bytemind.exe`,
+		goos:           "windows",
+		lookPath: func(string) (string, error) {
+			t.Fatal("lookPath should not be called for windows job-object backend")
+			return "", nil
+		},
+	}
+	launch, err := invoker.resolveLaunch(workerRPCRequest{
+		Execution: workerRPCExecutionContext{
+			Workspace:         `C:\workspace`,
+			SystemSandboxMode: "best_effort",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve launch: %v", err)
+	}
+	if launch.Path != `C:\bytemind.exe` {
+		t.Fatalf("expected direct executable path for windows backend, got %q", launch.Path)
+	}
+	if len(launch.Args) != 3 || launch.Args[0] != `C:\bytemind.exe` || launch.Args[1] != sandboxWorkerSubcommand || launch.Args[2] != sandboxWorkerStdioFlag {
+		t.Fatalf("unexpected windows launch args: %#v", launch.Args)
+	}
+	if launch.SystemSandboxBackendName != "windows_job_object" {
+		t.Fatalf("expected windows_job_object backend marker, got %#v", launch)
+	}
+	if launch.SystemSandboxMode != "best_effort" {
+		t.Fatalf("expected best_effort mode marker, got %#v", launch)
+	}
+}
+
+func TestResolveLaunchWindowsRequiredUsesJobObjectBackend(t *testing.T) {
+	invoker := osExecWorkerInvoker{
+		executablePath: `C:\bytemind.exe`,
+		goos:           "windows",
+		lookPath: func(string) (string, error) {
+			t.Fatal("lookPath should not be called for windows job-object backend")
+			return "", nil
+		},
+	}
+	launch, err := invoker.resolveLaunch(workerRPCRequest{
+		Execution: workerRPCExecutionContext{
+			Workspace:         `C:\workspace`,
+			SystemSandboxMode: "required",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve launch: %v", err)
+	}
+	if launch.Path != `C:\bytemind.exe` {
+		t.Fatalf("expected direct executable path for windows backend, got %q", launch.Path)
+	}
+	if len(launch.Args) != 3 || launch.Args[0] != `C:\bytemind.exe` || launch.Args[1] != sandboxWorkerSubcommand || launch.Args[2] != sandboxWorkerStdioFlag {
+		t.Fatalf("unexpected windows launch args: %#v", launch.Args)
+	}
+	if launch.SystemSandboxBackendName != "windows_job_object" {
+		t.Fatalf("expected windows_job_object backend marker, got %#v", launch)
+	}
+	if launch.SystemSandboxMode != "required" {
+		t.Fatalf("expected required mode marker, got %#v", launch)
+	}
+}
+
+func TestResolveLaunchBestEffortFallsBackWithoutBackend(t *testing.T) {
+	invoker := osExecWorkerInvoker{
+		executablePath: "/tmp/bytemind",
+		goos:           "linux",
+		lookPath: func(string) (string, error) {
+			return "", errors.New("missing backend")
+		},
+	}
+	launch, err := invoker.resolveLaunch(workerRPCRequest{
+		Execution: workerRPCExecutionContext{
+			Workspace:         "/tmp/workspace",
+			SystemSandboxMode: "best_effort",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve launch: %v", err)
+	}
+	if launch.Path != "/tmp/bytemind" {
+		t.Fatalf("expected fallback executable path, got %q", launch.Path)
+	}
+	if len(launch.Args) != 3 || launch.Args[1] != sandboxWorkerSubcommand || launch.Args[2] != sandboxWorkerStdioFlag {
+		t.Fatalf("unexpected fallback args: %#v", launch.Args)
+	}
+	if launch.Dir != "/tmp/workspace" {
+		t.Fatalf("expected workspace dir propagation, got %q", launch.Dir)
+	}
+}
+
+func TestResolveLaunchUsesLinuxBackendWhenAvailable(t *testing.T) {
+	invoker := osExecWorkerInvoker{
+		executablePath: "/tmp/bytemind",
+		goos:           "linux",
+		lookPath: func(name string) (string, error) {
+			if name != "unshare" {
+				t.Fatalf("unexpected binary lookup: %q", name)
+			}
+			return "/usr/bin/unshare", nil
+		},
+	}
+	launch, err := invoker.resolveLaunch(workerRPCRequest{
+		Execution: workerRPCExecutionContext{
+			SystemSandboxMode: "best_effort",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve launch: %v", err)
+	}
+	if launch.Path != "/usr/bin/unshare" {
+		t.Fatalf("expected unshare backend, got %q", launch.Path)
+	}
+	expected := append([]string{"/usr/bin/unshare"}, append(linuxSystemSandboxWorkerArgs(), "/tmp/bytemind", sandboxWorkerSubcommand, sandboxWorkerStdioFlag)...)
+	if strings.Join(launch.Args, "\n") != strings.Join(expected, "\n") {
+		t.Fatalf("unexpected backend args:\nwant: %#v\ngot:  %#v", expected, launch.Args)
+	}
+	for _, arg := range launch.Args {
+		if arg == "--net" {
+			t.Fatalf("worker launch should not force --net isolation: %#v", launch.Args)
+		}
+	}
+}
+
+func TestResolveLaunchRequiredLinuxWrapsWorkerWithFilesystemIsolation(t *testing.T) {
+	invoker := osExecWorkerInvoker{
+		executablePath: "/tmp/bytemind",
+		goos:           "linux",
+		lookPath: func(name string) (string, error) {
+			if name != "unshare" {
+				t.Fatalf("unexpected binary lookup: %q", name)
+			}
+			return "/usr/bin/unshare", nil
+		},
+	}
+	launch, err := invoker.resolveLaunch(workerRPCRequest{
+		Execution: workerRPCExecutionContext{
+			Workspace:         "/tmp/workspace",
+			WritableRoots:     []string{"/tmp/workspace/out"},
+			SystemSandboxMode: "required",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve launch: %v", err)
+	}
+	if launch.Path != "/usr/bin/unshare" {
+		t.Fatalf("expected unshare backend, got %q", launch.Path)
+	}
+	if len(launch.Args) < 5 {
+		t.Fatalf("unexpected launch args: %#v", launch.Args)
+	}
+	last := launch.Args[len(launch.Args)-1]
+	if !strings.Contains(last, "mount -o remount,ro /") {
+		t.Fatalf("expected filesystem isolation wrapper in command, got %#v", launch.Args)
+	}
+	if !strings.Contains(last, "exec '/tmp/bytemind' 'worker' '--sandbox-stdio'") {
+		t.Fatalf("expected worker exec bootstrap in wrapped command, got %q", last)
+	}
+}
+
+func TestResolveLaunchDarwinUsesSandboxExecProfile(t *testing.T) {
+	invoker := osExecWorkerInvoker{
+		executablePath: "/tmp/bytemind",
+		goos:           "darwin",
+		lookPath: func(name string) (string, error) {
+			if name != "sandbox-exec" {
+				t.Fatalf("unexpected binary lookup: %q", name)
+			}
+			return "/usr/bin/sandbox-exec", nil
+		},
+	}
+	launch, err := invoker.resolveLaunch(workerRPCRequest{
+		Execution: workerRPCExecutionContext{
+			Workspace:         "/tmp/workspace",
+			WritableRoots:     []string{"/tmp/workspace/out"},
+			SystemSandboxMode: "best_effort",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve launch: %v", err)
+	}
+	if launch.Path != "/usr/bin/sandbox-exec" {
+		t.Fatalf("expected sandbox-exec backend, got %q", launch.Path)
+	}
+	if len(launch.Args) != 6 {
+		t.Fatalf("unexpected launch args: %#v", launch.Args)
+	}
+	if launch.Args[1] != "-p" {
+		t.Fatalf("expected -p profile arg, got %#v", launch.Args)
+	}
+	if !strings.Contains(launch.Args[2], "(deny default)") {
+		t.Fatalf("expected sandbox profile payload, got %q", launch.Args[2])
+	}
+	if !strings.Contains(launch.Args[2], "(allow network*)") {
+		t.Fatalf("expected best_effort darwin worker profile to allow network, got %q", launch.Args[2])
+	}
+	if launch.Args[3] != "/tmp/bytemind" || launch.Args[4] != sandboxWorkerSubcommand || launch.Args[5] != sandboxWorkerStdioFlag {
+		t.Fatalf("unexpected worker command args: %#v", launch.Args)
+	}
+}
+
+func TestResolveLaunchDarwinRequiredDisablesNetworkInProfile(t *testing.T) {
+	invoker := osExecWorkerInvoker{
+		executablePath: "/tmp/bytemind",
+		goos:           "darwin",
+		lookPath: func(name string) (string, error) {
+			if name != "sandbox-exec" {
+				t.Fatalf("unexpected binary lookup: %q", name)
+			}
+			return "/usr/bin/sandbox-exec", nil
+		},
+	}
+	launch, err := invoker.resolveLaunch(workerRPCRequest{
+		Execution: workerRPCExecutionContext{
+			Workspace:         "/tmp/workspace",
+			WritableRoots:     []string{"/tmp/workspace/out"},
+			SystemSandboxMode: "required",
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve launch: %v", err)
+	}
+	if launch.Path != "/usr/bin/sandbox-exec" {
+		t.Fatalf("expected sandbox-exec backend, got %q", launch.Path)
+	}
+	if len(launch.Args) != 6 {
+		t.Fatalf("unexpected launch args: %#v", launch.Args)
+	}
+	if strings.Contains(launch.Args[2], "(allow network*)") {
+		t.Fatalf("expected required darwin worker profile to deny network, got %q", launch.Args[2])
+	}
+}
+
 func TestNewDefaultExecutorWorkerSkipsSubprocessInsideWorkerEnv(t *testing.T) {
 	t.Setenv(sandboxWorkerEnvKey, sandboxWorkerEnvValue)
 	worker := newDefaultExecutorWorker(DefaultRegistry(), maxCharsOutputNormalizer{})
 	if _, ok := worker.(inProcessWorker); !ok {
 		t.Fatalf("expected in-process worker when %s is set, got %T", sandboxWorkerEnvKey, worker)
+	}
+}
+
+func TestWorkerExecutionContextRoundTripsSystemSandboxMode(t *testing.T) {
+	payload := encodeWorkerExecutionContext(&ExecutionContext{
+		Workspace:         "C:\\workspace",
+		SandboxEnabled:    true,
+		SystemSandboxMode: "required",
+	})
+	decoded := decodeWorkerExecutionContext(payload)
+	if decoded == nil {
+		t.Fatal("expected decoded execution context")
+	}
+	if decoded.SystemSandboxMode != "required" {
+		t.Fatalf("expected system sandbox mode to roundtrip, got %#v", decoded)
 	}
 }

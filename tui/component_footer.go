@@ -19,7 +19,7 @@ func renderFooterDefault(m model) string {
 	inputBorder := m.inputBorderStyle().
 		Width(m.chatPanelInnerWidth()).
 		Render(zone.Mark(inputEditorZoneID, m.inputEditorViewComponent().Render(m)))
-	parts := make([]string, 0, 4)
+	parts := make([]string, 0, 5)
 	if m.approval != nil {
 		parts = append(parts, m.renderApprovalBanner())
 	}
@@ -31,18 +31,17 @@ func renderFooterDefault(m model) string {
 		parts = append(parts, m.renderMentionPalette())
 	} else if m.commandOpen {
 		parts = append(parts, m.renderCommandPalette())
+	} else if m.planActionOpen {
+		parts = append(parts, m.renderPlanActionPicker())
 	}
 	if banner := m.renderActiveSkillBanner(); banner != "" {
 		parts = append(parts, banner)
 	}
-	parts = append(parts, inputBorder, m.renderFooterInfoLine())
+	parts = append(parts, m.renderRunIndicator(), inputBorder, m.renderFooterInfoLine())
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (m model) renderRunIndicator() string {
-	if !m.busy {
-		return ""
-	}
 	width := max(24, m.chatPanelInnerWidth())
 	return runIndicatorStyle.Width(width).Render(m.runIndicatorText())
 }
@@ -77,34 +76,93 @@ func formatElapsedClock(startedAt, now time.Time) string {
 	return fmt.Sprintf("%02d:%02d", minutes, secs)
 }
 
+func formatElapsedDurationClock(duration time.Duration) string {
+	if duration <= 0 {
+		return "00:00"
+	}
+	return formatElapsedClock(time.Unix(0, 0), time.Unix(0, 0).Add(duration))
+}
+
 func (m model) runIndicatorText() string {
-	spin := strings.TrimSpace(m.spinner.View())
-	if spin == "" {
-		spin = "⠋"
+	state := m.runIndicatorState
+	if state == "" {
+		state = runIndicatorReady
 	}
-	indicator := fmt.Sprintf("%s %s", spin, runIndicatorPhaseText(m.phase))
-	if strings.EqualFold(strings.TrimSpace(m.phase), "thinking") {
-		indicator = thinkingIndicatorStyle.Render(indicator)
+
+	detailStyle := mutedStyle
+	switch state {
+	case runIndicatorRunning:
+		spin := strings.TrimSpace(m.spinner.View())
+		if spin == "" {
+			spin = "..."
+		}
+		detail := fmt.Sprintf("%s %s (%s)", spin, runIndicatorPhaseText(m.phase), formatElapsedClock(m.runStartedAt, time.Now()))
+		return lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			renderPillBadge("Thinking", "running"),
+			" ",
+			thinkingIndicatorStyle.Render(detail),
+		)
+	case runIndicatorComplete:
+		detail := "Complete"
+		if m.lastRunDuration > 0 {
+			detail = fmt.Sprintf("Complete (%s)", formatElapsedDurationClock(m.lastRunDuration))
+		}
+		return lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			renderPillBadge("Complete", "done"),
+			" ",
+			detailStyle.Render(detail),
+		)
+	case runIndicatorFailed:
+		detail := "Failed"
+		if m.lastRunDuration > 0 {
+			detail = fmt.Sprintf("Failed (%s)", formatElapsedDurationClock(m.lastRunDuration))
+		}
+		return lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			renderPillBadge("Failed", "error"),
+			" ",
+			detailStyle.Render(detail),
+		)
+	case runIndicatorCanceled:
+		detail := "Canceled"
+		if m.lastRunDuration > 0 {
+			detail = fmt.Sprintf("Canceled (%s)", formatElapsedDurationClock(m.lastRunDuration))
+		}
+		return lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			renderPillBadge("Canceled", "warning"),
+			" ",
+			detailStyle.Render(detail),
+		)
+	default:
+		return lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			renderPillBadge("Ready", "neutral"),
+			" ",
+			detailStyle.Render("Waiting for the next prompt."),
+		)
 	}
-	return fmt.Sprintf("%s (%s)", indicator, formatElapsedClock(m.runStartedAt, time.Now()))
 }
 
 func (m model) renderModeTabs() string {
 	buildStyle := modeTabStyle.Copy().Foreground(colorMuted)
 	planStyle := modeTabStyle.Copy().Foreground(colorMuted)
-	awayStyle := modeTabStyle.Copy().Foreground(colorMuted)
 	if m.mode == modeBuild {
 		buildStyle = buildStyle.Copy().Foreground(colorAccent).Bold(true)
 	} else {
 		planStyle = planStyle.Copy().Foreground(colorThinking).Bold(true)
 	}
-	if m.awayEnabled() {
-		awayStyle = awayStyle.Copy().Foreground(colorWarningBright).Bold(true)
+	accessLabel := m.approvalModeStatusLabel()
+	accessText := modeTabStyle.Copy().Foreground(colorMuted).Render(accessLabel)
+	if m.fullAccessEnabled() {
+		accessText = fullAccessTabStyle.Render(accessLabel)
 	}
 	parts := []string{
 		buildStyle.Render("Build"),
 		planStyle.Render("Plan"),
-		awayStyle.Render(m.awayStatusLabel()),
+		accessText,
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Left, parts...)
 }

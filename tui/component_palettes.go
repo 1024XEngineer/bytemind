@@ -83,8 +83,8 @@ func (m model) renderCommandPalette() string {
 	}
 
 	selected, _ := m.selectedCommandItem()
-	nameWidth := min(26, max(14, width/4))
-	descWidth := max(12, width-commandPaletteStyle.GetHorizontalFrameSize()-nameWidth-4)
+	nameWidth := min(22, max(12, width/5))
+	descWidth := max(12, width-commandPaletteStyle.GetHorizontalFrameSize()-nameWidth-3)
 	rows := make([]string, 0, commandPageSize+1)
 	for _, item := range m.visibleCommandItemsPage() {
 		rowStyle := commandPaletteRowStyle
@@ -99,7 +99,7 @@ func (m model) renderCommandPalette() string {
 		name := nameStyle.Width(nameWidth).Render(item.Usage)
 		desc := descStyle.Width(descWidth).Render(compact(item.Description, max(12, descWidth)))
 		rows = append(rows, rowStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render(
-			lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", desc),
+			lipgloss.JoinHorizontal(lipgloss.Top, name, " ", desc),
 		))
 	}
 	for len(rows) < commandPageSize {

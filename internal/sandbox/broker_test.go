@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -300,6 +301,46 @@ func TestPolicyBrokerDeniesInvalidSignature(t *testing.T) {
 	}
 	if result.Decision != DecisionDeny || result.ReasonCode != ReasonLeaseSignatureInvalid {
 		t.Fatalf("expected lease_signature_invalid deny, got %#v", result)
+	}
+}
+
+func TestPolicyBrokerAllowsMissingPathWithinSymlinkedLeaseRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior varies by Windows permissions")
+	}
+
+	now := time.Date(2026, 4, 20, 8, 0, 0, 0, time.UTC)
+	base := t.TempDir()
+	realRoot := filepath.Join(base, "real-root")
+	linkRoot := filepath.Join(base, "link-root")
+
+	if err := os.MkdirAll(realRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realRoot, linkRoot); err != nil {
+		t.Skipf("symlink unavailable in current environment: %v", err)
+	}
+
+	lease, keyring := mustSignedLease(t, now, testSandboxRoots{
+		Read:  linkRoot,
+		Write: linkRoot,
+	})
+
+	broker := NewPolicyBroker()
+	result, err := broker.Decide(context.Background(), DecisionInput{
+		Lease:   lease,
+		Keyring: keyring,
+		Now:     now.Add(1 * time.Minute),
+		Request: RuntimeRequest{
+			FilePath:   filepath.Join(linkRoot, "nested", "new-file.txt"),
+			FileAccess: FileAccessWrite,
+		},
+	})
+	if err != nil {
+		t.Fatalf("broker decide: %v", err)
+	}
+	if result.Decision != DecisionAllow {
+		t.Fatalf("expected allow decision for symlinked lease root path, got %#v", result)
 	}
 }
 

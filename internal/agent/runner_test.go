@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"bytemind/internal/config"
 	contextpkg "bytemind/internal/context"
 	"bytemind/internal/llm"
+	planpkg "bytemind/internal/plan"
 	"bytemind/internal/session"
 	"bytemind/internal/tokenusage"
 	"bytemind/internal/tools"
@@ -347,6 +349,851 @@ func TestRunPromptRepairsContinueWorkWithoutToolCalls(t *testing.T) {
 	}
 	if len(sess.Messages) != 4 {
 		t.Fatalf("expected user + tool call + tool result + final assistant, got %#v", sess.Messages)
+	}
+}
+
+func TestRunPromptRepairsUnavailableRunShellClaimWithoutToolCall(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "run_shell 看起来超时了，而且我当前没法继续调用 shell 工具执行命令。",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "run_shell",
+					Arguments: `{"command":"echo hello"}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>Shell checked.",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:       config.ProviderConfig{Model: "test-model"},
+			MaxIterations:  6,
+			Stream:         false,
+			ApprovalPolicy: "never",
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "inspect shell availability", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "Shell checked." {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected three requests (repair + tool + finalize), got %d", len(client.requests))
+	}
+	secondTurnMessages := client.requests[1].Messages
+	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "claimed the shell tool was unavailable or timed out") {
+		t.Fatalf("expected shell-claim repair note to be appended as user message, got %#v", secondTurnMessages)
+	}
+	if len(sess.Messages) != 4 {
+		t.Fatalf("expected user + tool call + tool result + final assistant, got %#v", sess.Messages)
+	}
+	if len(sess.Messages[1].ToolCalls) != 1 || sess.Messages[1].ToolCalls[0].Function.Name != "run_shell" {
+		t.Fatalf("expected repaired turn to execute run_shell, got %#v", sess.Messages[1])
+	}
+}
+
+func TestRunPromptRepairsConcreteRepoClaimAfterWeakEvidence(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "demos"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("Documented command: python demos/backend/server.py\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "demos", "README.md"), []byte("Only documentation exists here.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				{
+					ID:   "call-1",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "list_files",
+						Arguments: `{}`,
+					},
+				},
+				{
+					ID:   "call-2",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "search_text",
+						Arguments: `{"query":"demos/backend/server.py"}`,
+					},
+				},
+			},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>仓库里已经有最小闭环实现了，可以直接运行 `python demos/backend/server.py`。",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				{
+					ID:   "call-3",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "list_files",
+						Arguments: `{"path":"demos","depth":2}`,
+					},
+				},
+				{
+					ID:   "call-4",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "read_file",
+						Arguments: `{"path":"demos/README.md"}`,
+					},
+				},
+			},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>我目前只确认到 `demos/README.md` 这类文档线索，还没有确认 `demos/backend/server.py` 或对应实现文件存在。",
+		},
+	}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 8,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "看看 demos 里是不是已经有现成可跑的最小 demo。", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(answer, "还没有确认") {
+		t.Fatalf("expected repaired answer to stay cautious, got %q", answer)
+	}
+	if len(client.requests) != 4 {
+		t.Fatalf("expected four requests (investigate + bad claim + repair + cautious finalize), got %d", len(client.requests))
+	}
+	repairTurnMessages := client.requests[2].Messages
+	lastMsg := repairTurnMessages[len(repairTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "referenced path or command target was not directly confirmed") {
+		t.Fatalf("expected local repo path-evidence repair note to be appended as user message, got %#v", repairTurnMessages)
+	}
+}
+
+func TestRunPromptRepairsImplementationClaimAfterPathListingOnly(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "demos", "backend"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "demos", "backend", "server.py"), []byte("print('demo')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{"path":"demos/backend","depth":2}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>已经有可直接运行的实现了，执行 `python demos/backend/server.py` 就行。",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-2",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "read_file",
+					Arguments: `{"path":"demos/backend/server.py"}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>我已确认 `demos/backend/server.py` 存在，并读取了实现文件内容。",
+		},
+	}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 8,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "确认 demos/backend/server.py 是不是已经实现好了。", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(answer, "读取了实现文件内容") {
+		t.Fatalf("expected repaired answer to be grounded in implementation inspection, got %q", answer)
+	}
+	if len(client.requests) != 4 {
+		t.Fatalf("expected four requests (list + bad claim + repair + inspected finalize), got %d", len(client.requests))
+	}
+	repairTurnMessages := client.requests[2].Messages
+	lastMsg := repairTurnMessages[len(repairTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "documentation or path-level hints") {
+		t.Fatalf("expected implementation-evidence repair note to be appended as user message, got %#v", repairTurnMessages)
+	}
+}
+
+func TestRunPromptRepairsPlanDecisionAcknowledgementWithoutUpdatePlan(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModePlan
+	sess.Plan = planpkg.State{
+		Goal:         "Implement the first RAG demo",
+		Summary:      "Need to lock the frontend choice before convergence.",
+		Phase:        planpkg.PhaseClarify,
+		DecisionGaps: []string{"Choose the first frontend stack."},
+		Steps: []planpkg.Step{
+			{Title: "Freeze the frontend stack", Status: planpkg.StepPending},
+			{Title: "Implement the minimal flow", Status: planpkg.StepPending},
+		},
+	}
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>已收到，采用 B: Streamlit + LangChain。\n你回复 start execution 我就切到 Build 模式。",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name: "update_plan",
+					Arguments: `{
+						"summary":"Frontend choice is locked and the plan is ready for execution review.",
+						"implementation_brief":"Objective: deliver the first local RAG demo in demos/ with Streamlit + LangChain.\nTechnical direction: keep the existing local Python stack, use Streamlit for UI, LangChain for orchestration, and a local vector store path.\nDeliverables: a runnable demo app, document ingestion flow, retrieval + answer generation flow, and basic local verification.\nAcceptance: another coding model should be able to implement directly from this brief.",
+						"phase":"converge_ready",
+						"decision_log":[{"decision":"Adopt Streamlit + LangChain for the first frontend stack","reason":"User selected option B for faster UI delivery."}],
+						"decision_gaps":[],
+						"scope_defined":true,
+						"risk_and_rollback_defined":true,
+						"verification_defined":true,
+						"risks":["Frontend stack change may require adapter refactors."],
+						"verification":["Run the local Streamlit app and validate one ingest + one query flow."],
+						"next_action":"Present the full handoff-ready plan and ask whether to start execution.",
+						"plan":[
+							{"step":"Freeze the frontend stack", "status":"pending"},
+							{"step":"Implement the minimal flow", "status":"pending"}
+						]
+					}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>已记录，采用 B: Streamlit + LangChain。\n可选下一步：\n- Start execution\n- Adjust plan",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 6,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "b", "plan", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected three requests (repair + update_plan + finalize), got %d", len(client.requests))
+	}
+	secondTurnMessages := client.requests[1].Messages
+	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "without calling update_plan first") {
+		t.Fatalf("expected plan-state repair note to be appended as user message, got %#v", secondTurnMessages)
+	}
+	if sess.Plan.Phase != planpkg.PhaseConvergeReady {
+		t.Fatalf("expected session plan to converge after repair, got %#v", sess.Plan)
+	}
+	for _, want := range []string{"<proposed_plan>", "Implementation Brief", "Start execution"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected repaired answer to include %q, got %q", want, answer)
+		}
+	}
+}
+
+func TestRunPromptRepairsInitialPlanTurnBeforeStructuredPlanExists(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModePlan
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    llm.RoleAssistant,
+			Content: "我先快速扫一眼仓库里 demos，现状后给出可执行计划。",
+		},
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{"path":"demos"}`,
+				},
+			}},
+		},
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-2",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name: "update_plan",
+					Arguments: `{
+						"goal":"Review the demos area and produce an executable plan.",
+						"summary":"Inspected the demos directory and created the first plan skeleton.",
+						"phase":"draft",
+						"decision_gaps":[],
+						"risks":["The existing demos layout may constrain where the new work should land."],
+						"verification":["Inspect the target demo path and confirm the first runnable slice before switching to Build."],
+						"plan":[
+							{"step":"Inspect the demos directory and relevant entrypoints","status":"pending"},
+							{"step":"Choose the target demo slice and define scope","status":"pending"},
+							{"step":"Draft the implementation and verification path","status":"pending"}
+						]
+					}`,
+				},
+			}},
+		},
+		{
+			Role:    llm.RoleAssistant,
+			Content: "<turn_intent>finalize</turn_intent>已建立初始计划。",
+		},
+	}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 8,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "先看下 demos 目录，然后帮我出一个可执行计划。", "plan", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 4 {
+		t.Fatalf("expected four requests (repair + investigate + update_plan + finalize), got %d", len(client.requests))
+	}
+	repairTurnMessages := client.requests[1].Messages
+	lastMsg := repairTurnMessages[len(repairTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "without creating the initial structured plan state") {
+		t.Fatalf("expected bootstrap repair note to be appended as user message, got %#v", repairTurnMessages)
+	}
+	if !planpkg.HasStructuredPlan(sess.Plan) {
+		t.Fatalf("expected session plan to be structured after repair, got %#v", sess.Plan)
+	}
+	if sess.Plan.Phase != planpkg.PhaseDraft {
+		t.Fatalf("expected repaired plan to reach draft phase, got %#v", sess.Plan.Phase)
+	}
+	if strings.Contains(answer, planpkg.StructuredPlanReminder) {
+		t.Fatalf("expected repaired answer not to fall back to structured plan reminder, got %q", answer)
+	}
+	if !strings.Contains(answer, "<proposed_plan>") {
+		t.Fatalf("expected repaired answer to include rendered structured plan, got %q", answer)
+	}
+}
+
+func TestRunPromptRepairsClarifyQuestionWithoutActiveChoice(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModePlan
+	sess.Plan = planpkg.State{
+		Goal:         "Implement the first paper RAG demo",
+		Summary:      "Need to choose the target demo directory before the rest of the plan converges.",
+		Phase:        planpkg.PhaseClarify,
+		DecisionGaps: []string{"Choose the target demo directory."},
+		Steps: []planpkg.Step{
+			{Title: "Choose the target demo directory", Status: planpkg.StepPending},
+			{Title: "Lock the technical path", Status: planpkg.StepPending},
+			{Title: "Define the runnable acceptance path", Status: planpkg.StepPending},
+		},
+	}
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "请先选目录： A 复用 demos/paper_rag_minimal（推荐） / B 复用 demos/paper_rag / C 新建 demos/paper_rag_mvp。",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name: "update_plan",
+					Arguments: `{
+						"summary":"The first directory choice is waiting on the user before plan convergence.",
+						"phase":"clarify",
+						"decision_gaps":["Choose the target demo directory."],
+						"active_choice":{
+							"id":"target_demo_directory",
+							"kind":"clarify",
+							"question":"请先选目录：",
+							"gap_key":"Choose the target demo directory.",
+							"options":[
+								{"id":"reuse_paper_rag_minimal","shortcut":"A","title":"复用 demos/paper_rag_minimal","description":"推荐，最接近最小闭环。","recommended":true},
+								{"id":"reuse_paper_rag","shortcut":"B","title":"复用 demos/paper_rag","description":"复用现有目录，但改动面更大。"},
+								{"id":"new_paper_rag_mvp","shortcut":"C","title":"新建 demos/paper_rag_mvp","description":"隔离更强，但会多一些样板搭建。"}
+							]
+						},
+						"plan":[
+							{"step":"Choose the target demo directory", "status":"pending"},
+							{"step":"Lock the technical path", "status":"pending"},
+							{"step":"Define the runnable acceptance path", "status":"pending"}
+						]
+					}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>ask_user</turn_intent>先从下面的选项里确认目录方案。",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 6,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "继续规划", "plan", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected three requests (repair + update_plan + ask_user), got %d", len(client.requests))
+	}
+	secondTurnMessages := client.requests[1].Messages
+	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "without storing active_choice first") {
+		t.Fatalf("expected clarify repair note to be appended as user message, got %#v", secondTurnMessages)
+	}
+	if sess.Plan.ActiveChoice == nil {
+		t.Fatalf("expected session plan to store active_choice after repair, got %#v", sess.Plan)
+	}
+	if sess.Plan.ActiveChoice.ID != "target_demo_directory" {
+		t.Fatalf("expected active_choice to preserve the directory decision key, got %#v", sess.Plan.ActiveChoice)
+	}
+	if !strings.Contains(answer, "确认目录方案") {
+		t.Fatalf("expected repaired answer to keep a short lead sentence, got %q", answer)
+	}
+	if strings.Contains(answer, "demos/paper_rag_minimal") {
+		t.Fatalf("expected repaired answer to avoid inlining option text once the picker can render it, got %q", answer)
+	}
+}
+
+func TestRunPromptRepairsPlanRevisionAndReturnsRevisedPlanDocument(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModePlan
+	sess.Plan = planpkg.State{
+		Goal:                "Implement the first paper RAG demo",
+		Summary:             "The plan is converged and ready to execute.",
+		ImplementationBrief: "Objective: deliver the first local paper RAG demo.\nDeliverables: upload, retrieval, answer generation, and a minimal HTML page.",
+		Phase:               planpkg.PhaseConvergeReady,
+		DecisionLog: []planpkg.Decision{
+			{Decision: "Use FastAPI + Jinja2 HTML for the first UI path", Reason: "Keeps the HTML GUI simple and local."},
+		},
+		Steps: []planpkg.Step{
+			{Title: "Freeze the MVP scope", Status: planpkg.StepPending},
+			{Title: "Implement the minimal UI flow", Status: planpkg.StepPending},
+		},
+		Verification:        []string{"Start the local app and validate one upload + one answer flow."},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+		NextAction:          "Ask whether to start execution or keep adjusting the plan.",
+	}
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "非常好，这一步很关键。建议先把 HTML GUI 收敛成页面功能、页面布局和交互细节三块，这样后面实现会更稳。",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name: "update_plan",
+					Arguments: `{
+						"summary":"The plan stays converged and now includes a more detailed HTML GUI specification.",
+						"implementation_brief":"Objective: deliver the first local paper RAG demo in demos/.\nUI Specification: refine the HTML GUI into explicit page regions and interactions.\nLayout: top bar with title and current model tag; left column for paper management and system status; right upper panel for QA; right lower panel for synthesis and retrieval results.\nInteraction Flow: upload triggers indexing with progress states; answer and synthesis are split into separate tabs; each answer lists its cited source papers.\nDeliverables: runnable FastAPI app, HTML templates, upload/index/qa/synthesis flows, and verification notes.",
+						"phase":"converge_ready",
+						"decision_log":[
+							{"decision":"Use FastAPI + Jinja2 HTML for the first UI path","reason":"Keeps the HTML GUI simple and local."},
+							{"decision":"Expand the HTML GUI spec into concrete layout and interaction sections","reason":"User asked for a more detailed UI design before execution."}
+						],
+						"decision_gaps":[],
+						"scope_defined":true,
+						"risk_and_rollback_defined":true,
+						"verification_defined":true,
+						"verification":[
+							"Start the local app and validate one upload + one answer flow.",
+							"Confirm the HTML page shows the top bar, paper panel, QA tab, and synthesis tab."
+						],
+						"next_action":"Ask whether to start execution or keep adjusting the plan.",
+						"plan":[
+							{"step":"Freeze the MVP scope", "status":"pending", "description":"Lock the minimal local paper-RAG scope and the refined HTML GUI boundaries."},
+							{"step":"Implement the HTML GUI flow", "status":"pending", "description":"Build the top bar, paper management area, QA tab, and synthesis tab with clear state feedback."}
+						]
+					}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>非常好，这一步很关键。现在我已经把 UI 细化进计划里了，下面是页面功能、页面布局和交互细节的整理版本。",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 6,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "我觉得 html 的界面设计还可以再细化一下，比如明确页面分区和交互。", "plan", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected three requests (repair + update_plan + finalize), got %d", len(client.requests))
+	}
+	secondTurnMessages := client.requests[1].Messages
+	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "plan-refinement feedback without updating the structured plan first") {
+		t.Fatalf("expected plan-revision repair note to be appended as user message, got %#v", secondTurnMessages)
+	}
+	if !strings.Contains(sess.Plan.ImplementationBrief, "UI Specification") {
+		t.Fatalf("expected revised plan to absorb the UI detail, got %#v", sess.Plan)
+	}
+	if !strings.Contains(answer, "已按你的反馈更新计划") {
+		t.Fatalf("expected final answer to be condensed into a short revision acknowledgement, got %q", answer)
+	}
+	if strings.Contains(answer, "非常好，这一步很关键") {
+		t.Fatalf("expected standalone revision prose to be removed from the final answer, got %q", answer)
+	}
+	for _, want := range []string{"<proposed_plan>", "UI Specification", "top bar with title", "right upper panel for QA"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected revised plan answer to include %q, got %q", want, answer)
+		}
+	}
+}
+
+func TestRunPromptRepairsBuildHandoffWithoutRestartingPlanConfirmation(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModeBuild
+	sess.Plan = planpkg.State{
+		Goal:                "Implement the first RAG demo",
+		Summary:             "Plan is converged and execution should begin from the repo baseline.",
+		Phase:               planpkg.PhaseExecuting,
+		NextAction:          "Inspect the workspace entrypoints before editing.",
+		Steps:               []planpkg.Step{{Title: "Inspect the workspace entrypoints", Status: planpkg.StepInProgress}},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+	}
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>收到，准备开工。\n当前仍停在计划确认流里，请再发 continue execution 或在 UI 切到 Build。",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>我先检查了工作区入口，接下来继续实现。",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 6,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "start execution", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected three requests (repair + tool + finalize), got %d", len(client.requests))
+	}
+	secondTurnMessages := client.requests[1].Messages
+	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "already switched to build mode") {
+		t.Fatalf("expected build-handoff repair note to be appended as user message, got %#v", secondTurnMessages)
+	}
+	if !strings.Contains(answer, "我先检查了工作区入口") {
+		t.Fatalf("expected repaired build answer, got %q", answer)
+	}
+}
+
+func TestRunPromptRepairsBuildHandoffAcknowledgementWithoutToolCalls(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModeBuild
+	sess.Plan = planpkg.State{
+		Goal:                "Implement the first RAG demo",
+		Summary:             "Plan is converged and execution should begin from the repo baseline.",
+		Phase:               planpkg.PhaseExecuting,
+		NextAction:          "Inspect the workspace entrypoints before editing.",
+		Steps:               []planpkg.Step{{Title: "Inspect the workspace entrypoints", Status: planpkg.StepInProgress}},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+	}
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "Started execution.",
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>finalize</turn_intent>Inspected the workspace entrypoints and continued implementation.",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 6,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "start execution", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected three requests (repair + tool + finalize), got %d requests", len(client.requests))
+	}
+	secondTurnMessages := client.requests[1].Messages
+	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
+	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "already switched to build mode") {
+		t.Fatalf("expected build-handoff repair note to be appended as user message, got %#v", secondTurnMessages)
+	}
+	if !strings.Contains(answer, "Inspected the workspace entrypoints") {
+		t.Fatalf("expected repaired build answer, got %q", answer)
+	}
+}
+
+func TestRunPromptDoesNotRepairBuildHandoffWhenAssistantRequestsRealBlockerInfo(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModeBuild
+	sess.Plan = planpkg.State{
+		Goal:                "Implement the first RAG demo",
+		Summary:             "Plan is converged and execution should continue from the repo baseline.",
+		Phase:               planpkg.PhaseExecuting,
+		NextAction:          "Run the first execution step.",
+		Steps:               []planpkg.Step{{Title: "Run the first execution step", Status: planpkg.StepInProgress}},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+	}
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "<turn_intent>ask_user</turn_intent>Before I proceed, I need the missing API token for the target service.",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 4,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "start execution", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("expected direct ask_user response without build-handoff repair retry, got %d requests", len(client.requests))
+	}
+	if !strings.Contains(strings.ToLower(answer), "missing api token") {
+		t.Fatalf("expected answer to preserve the genuine blocker clarification, got %q", answer)
+	}
+	if len(sess.Messages) != 2 {
+		t.Fatalf("expected user + assistant messages only, got %#v", sess.Messages)
 	}
 }
 
@@ -963,6 +1810,98 @@ func TestRunPromptAwayAutoDenyContinueKeepsRunningAfterPermissionDenied(t *testi
 	}
 }
 
+func TestRunPromptAwayAutoDenyContinueRecordsSandboxFallbackForSkippedDependency(t *testing.T) {
+	original := resolveAgentSystemSandboxRuntimeStatus
+	resolveAgentSystemSandboxRuntimeStatus = func(enabled bool, mode string) (tools.SystemSandboxRuntimeStatus, error) {
+		if !enabled {
+			return tools.SystemSandboxRuntimeStatus{}, nil
+		}
+		return tools.SystemSandboxRuntimeStatus{
+			Mode:            mode,
+			BackendEnabled:  false,
+			BackendName:     "none",
+			RequiredCapable: false,
+			CapabilityLevel: "none",
+			Fallback:        true,
+			Message:         "system sandbox best_effort fallback: test backend unavailable",
+		}, nil
+	}
+	t.Cleanup(func() {
+		resolveAgentSystemSandboxRuntimeStatus = original
+	})
+
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				{
+					ID:   "call-1",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "write_file",
+						Arguments: `{"path":"x.txt","content":"x"}`,
+					},
+				},
+				{
+					ID:   "call-2",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "read_file",
+						Arguments: `{"path":"x.txt"}`,
+					},
+				},
+			},
+		},
+		{
+			Role:    "assistant",
+			Content: "continued after denied approval",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:          config.ProviderConfig{Model: "test-model"},
+			MaxIterations:     4,
+			Stream:            false,
+			ApprovalPolicy:    "on-request",
+			ApprovalMode:      "away",
+			AwayPolicy:        "auto_deny_continue",
+			SandboxEnabled:    true,
+			SystemSandboxMode: "best_effort",
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	var out bytes.Buffer
+	answer, err := runner.RunPrompt(context.Background(), sess, "trigger permission path", "build", &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "continued after denied approval" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	for _, want := range []string{
+		"- System sandbox fallback:",
+		"startup (mode=best_effort, backend=none, required_capable=false, capability_level=none, shell_network_isolation=false, worker_network_isolation=false, reason=system sandbox best_effort fallback: test backend unavailable)",
+		"write_file (mode=best_effort, backend=none, required_capable=false, capability_level=none, shell_network_isolation=false, worker_network_isolation=false, reason=system sandbox best_effort fallback: test backend unavailable)",
+		"read_file (mode=best_effort, backend=none, required_capable=false, capability_level=none, shell_network_isolation=false, worker_network_isolation=false, reason=system sandbox best_effort fallback: test backend unavailable)",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("expected task report output to contain %q, got %q", want, out.String())
+		}
+	}
+}
+
 func TestRunPromptAwayFailFastStopsAfterPermissionDenied(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
@@ -1047,6 +1986,191 @@ func TestRunPromptAwayFailFastStopsAfterPermissionDenied(t *testing.T) {
 	}
 	if !strings.Contains(sess.Messages[2].Content, `"status":"denied"`) || !strings.Contains(sess.Messages[2].Content, `"reason_code":"permission_denied"`) {
 		t.Fatalf("expected denied status and reason code in fail_fast payload, got %q", sess.Messages[2].Content)
+	}
+}
+
+func TestRunPromptRequiredSystemSandboxFailsClosedWhenBackendUnavailable(t *testing.T) {
+	original := resolveAgentSystemSandboxRuntimeStatus
+	resolveAgentSystemSandboxRuntimeStatus = func(enabled bool, mode string) (tools.SystemSandboxRuntimeStatus, error) {
+		if !enabled {
+			return tools.SystemSandboxRuntimeStatus{}, nil
+		}
+		return tools.SystemSandboxRuntimeStatus{}, errors.New("required backend unavailable in test")
+	}
+	t.Cleanup(func() {
+		resolveAgentSystemSandboxRuntimeStatus = original
+	})
+
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &fakeClient{replies: []llm.Message{{
+		Role:    "assistant",
+		Content: "should not run",
+	}}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:          config.ProviderConfig{Model: "test-model"},
+			MaxIterations:     2,
+			Stream:            false,
+			SandboxEnabled:    true,
+			SystemSandboxMode: "required",
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "hello", "build", io.Discard)
+	if err == nil {
+		t.Fatal("expected required system sandbox to fail closed when backend is unavailable")
+	}
+	if strings.TrimSpace(answer) != "" {
+		t.Fatalf("expected empty answer on required sandbox startup failure, got %q", answer)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "required") || !strings.Contains(strings.ToLower(err.Error()), "unavailable") {
+		t.Fatalf("expected required unavailable error, got %v", err)
+	}
+	if len(client.requests) != 0 {
+		t.Fatalf("expected no llm request when required sandbox fails closed at startup, got %d", len(client.requests))
+	}
+}
+
+func TestRunPromptReportsSystemSandboxStartupFallbackOnSuccess(t *testing.T) {
+	original := resolveAgentSystemSandboxRuntimeStatus
+	resolveAgentSystemSandboxRuntimeStatus = func(enabled bool, mode string) (tools.SystemSandboxRuntimeStatus, error) {
+		if !enabled {
+			return tools.SystemSandboxRuntimeStatus{}, nil
+		}
+		return tools.SystemSandboxRuntimeStatus{
+			Mode:            mode,
+			BackendEnabled:  false,
+			CapabilityLevel: "none",
+			Fallback:        true,
+			Message:         "system sandbox best_effort fallback: test backend unavailable",
+			BackendName:     "",
+		}, nil
+	}
+	t.Cleanup(func() {
+		resolveAgentSystemSandboxRuntimeStatus = original
+	})
+
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:          config.ProviderConfig{Model: "test-model"},
+			MaxIterations:     2,
+			Stream:            false,
+			SandboxEnabled:    true,
+			SystemSandboxMode: "best_effort",
+		},
+		Client: &fakeClient{replies: []llm.Message{{
+			Role:    "assistant",
+			Content: "done",
+		}}},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	var out bytes.Buffer
+	answer, err := runner.RunPrompt(context.Background(), sess, "hello", "build", &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "done" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	for _, want := range []string{
+		"mode=best_effort backend=none state=fallback required_capable=false capability_level=none",
+		"Task report summary:",
+		"- System sandbox fallback: startup (mode=best_effort, backend=none, required_capable=false, capability_level=none, shell_network_isolation=false, worker_network_isolation=false, reason=system sandbox best_effort fallback: test backend unavailable)",
+		"Task report (json):",
+		`"system_sandbox_fallback":["startup (mode=best_effort, backend=none, required_capable=false, capability_level=none, shell_network_isolation=false, worker_network_isolation=false, reason=system sandbox best_effort fallback: test backend unavailable)"]`,
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("expected output to contain %q, got %q", want, out.String())
+		}
+	}
+}
+
+func TestRunPromptReportsSystemSandboxStartupActiveRequiredCapable(t *testing.T) {
+	original := resolveAgentSystemSandboxRuntimeStatus
+	resolveAgentSystemSandboxRuntimeStatus = func(enabled bool, mode string) (tools.SystemSandboxRuntimeStatus, error) {
+		if !enabled {
+			return tools.SystemSandboxRuntimeStatus{}, nil
+		}
+		return tools.SystemSandboxRuntimeStatus{
+			Mode:            mode,
+			BackendEnabled:  true,
+			BackendName:     "linux_unshare",
+			RequiredCapable: true,
+			CapabilityLevel: "full",
+			Fallback:        false,
+			Message:         `system sandbox backend "linux_unshare" is active`,
+		}, nil
+	}
+	t.Cleanup(func() {
+		resolveAgentSystemSandboxRuntimeStatus = original
+	})
+
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:          config.ProviderConfig{Model: "test-model"},
+			MaxIterations:     2,
+			Stream:            false,
+			SandboxEnabled:    true,
+			SystemSandboxMode: "required",
+		},
+		Client: &fakeClient{replies: []llm.Message{{
+			Role:    "assistant",
+			Content: "done",
+		}}},
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	var out bytes.Buffer
+	answer, err := runner.RunPrompt(context.Background(), sess, "hello", "build", &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "done" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	for _, want := range []string{
+		"mode=required backend=linux_unshare state=active required_capable=true capability_level=full",
+		`(system sandbox backend "linux_unshare" is active)`,
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("expected output to contain %q, got %q", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "Task report summary:") {
+		t.Fatalf("did not expect fallback task report summary on active required-capable startup, got %q", out.String())
 	}
 }
 

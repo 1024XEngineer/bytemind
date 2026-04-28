@@ -92,3 +92,51 @@ func TestStateStoreListReturnsSnapshot(t *testing.T) {
 		t.Fatalf("expected snapshot isolation, got %q", got.ID)
 	}
 }
+
+func TestCanTransitionMCPAllowsExpectedTransitions(t *testing.T) {
+	allowed := []struct {
+		from ExtensionStatus
+		to   ExtensionStatus
+	}{
+		{from: ExtensionStatusLoaded, to: ExtensionStatusReady},
+		{from: ExtensionStatusReady, to: ExtensionStatusActive},
+		{from: ExtensionStatusActive, to: ExtensionStatusDegraded},
+		{from: ExtensionStatusActive, to: ExtensionStatusFailed},
+		{from: ExtensionStatusDegraded, to: ExtensionStatusReady},
+		{from: ExtensionStatusFailed, to: ExtensionStatusReady},
+		{from: ExtensionStatusLoaded, to: ExtensionStatusStopped},
+		{from: ExtensionStatusReady, to: ExtensionStatusStopped},
+		{from: ExtensionStatusActive, to: ExtensionStatusStopped},
+		{from: ExtensionStatusDegraded, to: ExtensionStatusStopped},
+		{from: ExtensionStatusFailed, to: ExtensionStatusStopped},
+	}
+	for _, item := range allowed {
+		if !CanTransitionMCP(item.from, item.to) {
+			t.Fatalf("expected transition %s -> %s to be allowed", item.from, item.to)
+		}
+		if err := ValidateMCPTransition(item.from, item.to); err != nil {
+			t.Fatalf("expected transition %s -> %s to validate: %v", item.from, item.to, err)
+		}
+	}
+}
+
+func TestCanTransitionMCPRejectsInvalidTransitions(t *testing.T) {
+	disallowed := []struct {
+		from ExtensionStatus
+		to   ExtensionStatus
+	}{
+		{from: ExtensionStatusStopped, to: ExtensionStatusActive},
+		{from: ExtensionStatusStopped, to: ExtensionStatusFailed},
+		{from: ExtensionStatusFailed, to: ExtensionStatusActive},
+		{from: ExtensionStatusUnknown, to: ExtensionStatusReady},
+		{from: ExtensionStatusReady, to: ExtensionStatusFailed},
+	}
+	for _, item := range disallowed {
+		if CanTransitionMCP(item.from, item.to) {
+			t.Fatalf("expected transition %s -> %s to be disallowed", item.from, item.to)
+		}
+		if err := ValidateMCPTransition(item.from, item.to); err == nil {
+			t.Fatalf("expected transition %s -> %s to fail validation", item.from, item.to)
+		}
+	}
+}

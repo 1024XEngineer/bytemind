@@ -6,7 +6,7 @@ Keep prompt assembly simple, testable, and close to OpenCode's runtime layering 
 
 1. main system prompt text
 2. mode prompt (`build` or `plan`)
-3. runtime context block (environment + skills + tools)
+3. runtime context block (environment + skills + tools, plus current structured plan state when present)
 4. optional active skill block
 5. repository instruction block (`AGENTS.md`)
 
@@ -55,7 +55,7 @@ The current runtime only auto-loads the workspace-root `AGENTS.md`. Nested-scope
 
 The previous prompt design had additional blocks (`repo rules`, `skills summary`, `output contract`, and injected plan state) that were mostly unwired at runtime. That created complexity without behavior gain.
 
-The current architecture keeps blocks that are always meaningful in runtime, while still supporting session-level active skill guidance.
+The current architecture keeps blocks that are always meaningful in runtime, while still supporting session-level active skill guidance. A concise current-plan snapshot now lives inside the runtime context block so plan/build handoff stays aligned without adding another top-level prompt layer.
 
 ## OpenCode Alignment Notes
 

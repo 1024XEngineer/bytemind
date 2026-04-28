@@ -30,6 +30,7 @@ type turnProcessParams struct {
 	AdaptiveState    *adaptiveTurnState
 	ExecutedTools    *[]string
 	Approval         tools.ApprovalHandler
+	SandboxAudit     sandboxAuditContext
 	TaskReport       *TaskReport
 	Out              io.Writer
 }
@@ -44,6 +45,7 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 		return "", false, fmt.Errorf("tool registry is unavailable")
 	}
 	filteredTools := runner.registry.DefinitionsForModeWithFilters(p.RunMode, p.AllowedToolNames, p.DeniedToolNames)
+	availableToolNames := toolNames(filteredTools)
 	request := contextpkg.BuildChatRequest(contextpkg.ChatRequestInput{
 		Model:       runner.config.Provider.Model,
 		Messages:    p.Messages,
@@ -72,6 +74,252 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 	if len(reply.ToolCalls) == 0 {
 		if intent == turnIntentUnknown {
 			intent = inferAssistantTurnIntent(reply.Content)
+		}
+		latestUser := latestHumanUserMessageText(p.Session.Messages)
+		if shouldRepairPlanBootstrapTurn(p.RunMode, p.Session.Plan, reply) {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("plan_bootstrap_missing_update")
+				p.TaskReport.RecordStrategyAdjustment("assistant replied in plan mode before creating any structured plan state; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("plan bootstrap repair retries exceeded while waiting for initial investigation or update_plan")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept replying in plan mode without creating the initial structured plan state first (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildPlanBootstrapRepairInstruction(reply, latestUser, attempt, maxAttempts, p.Session.Messages, availableToolNames))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant replied in plan mode before creating structured plan state; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
+		if !hasToolActivitySinceLatestHumanUser(p.Session.Messages) && shouldRepairPlanRevisionTurn(p.RunMode, p.Session.Plan, latestUser, reply) {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("plan_revision_missing_update")
+				p.TaskReport.RecordStrategyAdjustment("assistant responded to converged-plan refinement feedback without update_plan; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("plan revision repair retries exceeded while waiting for update_plan")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept responding to plan-refinement feedback without updating the structured plan first (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildPlanRevisionRepairInstruction(p.Session.Plan, latestUser, reply, attempt, maxAttempts))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant replied to plan refinement feedback without update_plan; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
+		if shouldRepairPlanClarifyTurn(p.RunMode, p.Session.Plan, intent, reply) {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("plan_clarify_missing_active_choice")
+				p.TaskReport.RecordStrategyAdjustment("assistant asked a plan clarification question without update_plan.active_choice; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("plan clarify repair retries exceeded while waiting for active_choice")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept asking plan clarification questions without storing active_choice first (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildPlanClarifyRepairInstruction(p.Session.Plan, reply, attempt, maxAttempts))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant asked a plan clarification question without active_choice; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
+		if shouldRepairPlanDecisionTurn(p.RunMode, p.Session.Plan, intent, reply) {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("plan_state_not_updated_after_user_decision")
+				p.TaskReport.RecordStrategyAdjustment("assistant acknowledged a plan decision without update_plan; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("plan-state repair retries exceeded while waiting for update_plan")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept acknowledging plan decisions without updating the structured plan state first (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildPlanDecisionRepairInstruction(p.Session.Plan, reply, attempt, maxAttempts))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant acknowledged a plan decision without update_plan; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
+		if shouldRepairBuildHandoffTurn(p.RunMode, p.Session.Plan, intent, reply, p.Session.Messages) {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("build_handoff_not_started")
+				p.TaskReport.RecordStrategyAdjustment("assistant treated an already-switched build handoff as if plan confirmation were still pending; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("build-handoff repair retries exceeded while waiting for execution to start")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept treating an already-approved build handoff as if plan confirmation were still pending (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildBuildHandoffRepairInstruction(p.Session.Plan, reply, latestUser, attempt, maxAttempts))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant treated an already-switched build handoff as pending plan confirmation; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
+		if shouldRepairUnexecutedToolClaimTurn(p.RunMode, reply, p.Session.Messages, availableToolNames) {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("unexecuted_tool_claim")
+				p.TaskReport.RecordStrategyAdjustment("assistant claimed run_shell was unavailable or timed out without a structured tool call; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("tool-claim repair retries exceeded while waiting for a real structured tool call")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept claiming run_shell was unavailable or timed out without issuing a structured tool call (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildUnexecutedToolClaimRepairInstruction(reply, latestUser, attempt, maxAttempts, availableToolNames))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant claimed shell unavailability/timeout without a structured tool call; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
+		localRepoRepairKind, localRepoEvidence := evaluateLocalRepoClaimRepairTurn(p.RunMode, latestUser, reply, p.Session.Messages)
+		if localRepoRepairKind != localRepoClaimRepairNone {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				switch localRepoRepairKind {
+				case localRepoClaimRepairPathUnverified:
+					p.TaskReport.RecordRetry("local_repo_claim_without_direct_path_confirmation")
+					p.TaskReport.RecordStrategyAdjustment("assistant made a concrete local repo claim without directly confirming the referenced path; injected correction prompt")
+				case localRepoClaimRepairImplementationUnverified:
+					p.TaskReport.RecordRetry("local_repo_claim_without_implementation_evidence")
+					p.TaskReport.RecordStrategyAdjustment("assistant concluded the repo already had a runnable implementation based only on weak signals; injected correction prompt")
+				}
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("local repo claim repair retries exceeded while waiting for direct path confirmation or implementation evidence")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept making local repository claims without enough direct evidence (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildLocalRepoClaimRepairInstruction(localRepoRepairKind, reply, latestUser, attempt, maxAttempts, localRepoEvidence))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant made a concrete local repo claim without enough direct evidence; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
 		}
 		switch intent {
 		case turnIntentContinueWork:
@@ -165,10 +413,15 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 				"tool_call_id":   call.ID,
 			},
 		})
-		if err := e.executeToolCall(ctx, p.Session, p.RunMode, call, p.Out, p.AllowedTools, p.DeniedTools, p.Approval); err != nil {
+		if err := e.executeToolCall(ctx, p.Session, p.RunMode, call, p.Out, p.AllowedTools, p.DeniedTools, p.Approval, p.SandboxAudit); err != nil {
 			return "", false, err
 		}
 		envelope, ok := latestToolResultEnvelope(p.Session)
+		if ok && p.TaskReport != nil {
+			if note := systemSandboxFallbackReportEntry(call.Function.Name, envelope); note != "" {
+				p.TaskReport.RecordSystemSandboxFallback(note)
+			}
+		}
 		if ok && p.TaskReport != nil && envelope.Status == statusDenied {
 			p.TaskReport.RecordDenied(call.Function.Name)
 		}
@@ -189,8 +442,16 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 			if failFast {
 				continue
 			}
-			if err := e.appendSkippedDependencyResult(ctx, p.Session, skippedCall, p.Out); err != nil {
+			if err := e.appendSkippedDependencyResult(ctx, p.Session, skippedCall, p.Out, p.SandboxAudit); err != nil {
 				return "", false, err
+			}
+			if p.TaskReport == nil {
+				continue
+			}
+			if skippedEnvelope, ok := latestToolResultEnvelope(p.Session); ok {
+				if note := systemSandboxFallbackReportEntry(skippedCall.Function.Name, skippedEnvelope); note != "" {
+					p.TaskReport.RecordSystemSandboxFallback(note)
+				}
 			}
 		}
 		if failFast {
@@ -219,10 +480,20 @@ const (
 )
 
 type toolResultEnvelope struct {
-	OK         *bool  `json:"ok"`
-	Error      string `json:"error"`
-	Status     string `json:"status"`
-	ReasonCode string `json:"reason_code"`
+	OK            *bool  `json:"ok"`
+	Error         string `json:"error"`
+	Status        string `json:"status"`
+	ReasonCode    string `json:"reason_code"`
+	SystemSandbox struct {
+		Mode            string `json:"mode"`
+		Backend         string `json:"backend"`
+		RequiredCapable bool   `json:"required_capable"`
+		CapabilityLevel string `json:"capability_level"`
+		ShellNetwork    bool   `json:"shell_network_isolation"`
+		WorkerNetwork   bool   `json:"worker_network_isolation"`
+		Fallback        bool   `json:"fallback"`
+		FallbackReason  string `json:"fallback_reason"`
+	} `json:"system_sandbox"`
 }
 
 func latestToolResultEnvelope(sess *session.Session) (toolResultEnvelope, bool) {
@@ -266,11 +537,45 @@ func normalizeAwayPolicy(policy string) string {
 	return policy
 }
 
+func systemSandboxFallbackReportEntry(toolName string, envelope toolResultEnvelope) string {
+	if !envelope.SystemSandbox.Fallback {
+		return ""
+	}
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		toolName = "unknown_tool"
+	}
+	mode := strings.TrimSpace(envelope.SystemSandbox.Mode)
+	backend := strings.TrimSpace(envelope.SystemSandbox.Backend)
+	reason := strings.TrimSpace(envelope.SystemSandbox.FallbackReason)
+	parts := make([]string, 0, 3)
+	if mode != "" {
+		parts = append(parts, "mode="+mode)
+	}
+	if backend != "" {
+		parts = append(parts, "backend="+backend)
+	}
+	parts = append(parts, fmt.Sprintf("required_capable=%t", envelope.SystemSandbox.RequiredCapable))
+	if capability := strings.TrimSpace(envelope.SystemSandbox.CapabilityLevel); capability != "" {
+		parts = append(parts, "capability_level="+capability)
+	}
+	parts = append(parts, fmt.Sprintf("shell_network_isolation=%t", envelope.SystemSandbox.ShellNetwork))
+	parts = append(parts, fmt.Sprintf("worker_network_isolation=%t", envelope.SystemSandbox.WorkerNetwork))
+	if reason != "" {
+		parts = append(parts, "reason="+reason)
+	}
+	if len(parts) == 0 {
+		return toolName
+	}
+	return toolName + " (" + strings.Join(parts, ", ") + ")"
+}
+
 func (e *defaultEngine) appendSkippedDependencyResult(
 	ctx context.Context,
 	sess *session.Session,
 	call llm.ToolCall,
 	out io.Writer,
+	sandboxAudit sandboxAuditContext,
 ) error {
 	if e == nil || e.runner == nil {
 		return fmt.Errorf("agent engine is unavailable")
@@ -278,12 +583,16 @@ func (e *defaultEngine) appendSkippedDependencyResult(
 	runner := e.runner
 
 	errText := fmt.Sprintf("%s: tool %q was skipped because a prior approval-required action was denied in away mode", reasonCodeDeniedDependency, call.Function.Name)
-	result := marshalToolResult(map[string]any{
+	payload := map[string]any{
 		"ok":          false,
 		"error":       errText,
 		"status":      statusSkipped,
 		"reason_code": reasonCodeDeniedDependency,
-	})
+	}
+	if systemSandbox := systemSandboxResultPayload(sandboxAudit); len(systemSandbox) != 0 {
+		payload["system_sandbox"] = systemSandbox
+	}
+	result := marshalToolResult(payload)
 	if out != nil {
 		runner.renderToolFeedback(out, call.Function.Name, result)
 	}

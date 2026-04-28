@@ -17,7 +17,7 @@ func (m model) planModeLabel() string {
 func (m model) planPhaseLabel() string {
 	phase := planpkg.NormalizePhase(string(m.plan.Phase))
 	if phase == planpkg.PhaseNone && m.mode == modePlan {
-		phase = planpkg.PhaseDrafting
+		phase = planpkg.PhaseExplore
 	}
 	if phase == planpkg.PhaseNone {
 		return "none"
@@ -43,6 +43,20 @@ func (m model) planPanelContent(width int) string {
 	if summary := strings.TrimSpace(m.plan.Summary); summary != "" {
 		lines = append(lines, "", cardTitleStyle.Render("Summary"), wrapPlainText(summary, width))
 	}
+	if len(m.plan.DecisionGaps) > 0 {
+		lines = append(lines, "", cardTitleStyle.Render("Decision Gaps"), m.renderPlanStringList(m.plan.DecisionGaps, width))
+	}
+	if len(m.plan.DecisionLog) > 0 {
+		items := make([]string, 0, len(m.plan.DecisionLog))
+		for _, entry := range m.plan.DecisionLog {
+			line := entry.Decision
+			if entry.Reason != "" {
+				line += " (" + entry.Reason + ")"
+			}
+			items = append(items, line)
+		}
+		lines = append(lines, "", cardTitleStyle.Render("Decision Log"), m.renderPlanStringList(items, width))
+	}
 
 	lines = append(lines, "", cardTitleStyle.Render("Steps"))
 	if len(m.plan.Steps) == 0 {
@@ -54,6 +68,19 @@ func (m model) planPanelContent(width int) string {
 		if len(lines) > 0 && lines[len(lines)-1] == "" {
 			lines = lines[:len(lines)-1]
 		}
+	}
+	if len(m.plan.Risks) > 0 {
+		lines = append(lines, "", cardTitleStyle.Render("Risks"), m.renderPlanStringList(m.plan.Risks, width))
+	}
+	if len(m.plan.Verification) > 0 {
+		lines = append(lines, "", cardTitleStyle.Render("Verification"), m.renderPlanStringList(m.plan.Verification, width))
+	}
+	if planpkg.HasStructuredPlan(m.plan) || m.plan.ScopeDefined || m.plan.RiskRollbackDefined || m.plan.VerificationDefined {
+		lines = append(lines, "", cardTitleStyle.Render("Execution Readiness"), m.renderPlanStringList([]string{
+			"Scope defined: " + yesNoLabel(m.plan.ScopeDefined),
+			"Risks and rollback defined: " + yesNoLabel(m.plan.RiskRollbackDefined),
+			"Verification path defined: " + yesNoLabel(m.plan.VerificationDefined),
+		}, width))
 	}
 
 	if nextAction := strings.TrimSpace(m.plan.NextAction); nextAction != "" {
@@ -89,4 +116,26 @@ func (m model) renderPlanStep(step planpkg.Step, width int) string {
 		parts = append(parts, mutedStyle.Render("Risk: "+risk))
 	}
 	return strings.Join(parts, "\n")
+}
+
+func (m model) renderPlanStringList(items []string, width int) string {
+	lines := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		lines = append(lines, wrapPlainText("- "+item, width))
+	}
+	if len(lines) == 0 {
+		return mutedStyle.Render("None")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func yesNoLabel(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
 }

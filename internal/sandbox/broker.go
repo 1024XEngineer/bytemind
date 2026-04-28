@@ -2,6 +2,8 @@ package sandbox
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -247,11 +249,66 @@ func pathWithinAnyRoot(path string, roots []string) bool {
 }
 
 func normalizeCandidatePath(path string) (string, bool) {
-	normalized, err := normalizePaths([]string{path})
-	if err != nil || len(normalized) == 0 {
+	path = strings.TrimSpace(path)
+	if path == "" {
 		return "", false
 	}
-	return normalized[0], true
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	abs = filepath.Clean(abs)
+	canonical, err := canonicalPathForBoundary(abs)
+	if err != nil {
+		return "", false
+	}
+	return canonical, true
+}
+
+func canonicalPathForBoundary(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return filepath.Clean(resolved), nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	existingAncestor, missingSegments, err := splitMissingPathSegments(path)
+	if err != nil {
+		return "", err
+	}
+	resolvedAncestor, err := filepath.EvalSymlinks(existingAncestor)
+	if err != nil {
+		return "", err
+	}
+	canonical := filepath.Clean(resolvedAncestor)
+	for _, segment := range missingSegments {
+		canonical = filepath.Join(canonical, segment)
+	}
+	return canonical, nil
+}
+
+func splitMissingPathSegments(path string) (existingAncestor string, missingSegments []string, err error) {
+	current := filepath.Clean(path)
+	missing := make([]string, 0, 4)
+	for {
+		_, statErr := os.Lstat(current)
+		if statErr == nil {
+			for i, j := 0, len(missing)-1; i < j; i, j = i+1, j-1 {
+				missing[i], missing[j] = missing[j], missing[i]
+			}
+			return current, missing, nil
+		}
+		if !errors.Is(statErr, os.ErrNotExist) {
+			return "", nil, statErr
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", nil, statErr
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }
 
 func commandAllowedByLease(command string, args []string, rules []ExecRule) bool {

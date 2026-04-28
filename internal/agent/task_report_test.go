@@ -15,6 +15,7 @@ func TestTaskReportRecordsUniqueItemsInOrder(t *testing.T) {
 	report.RecordPendingApproval("write_file")
 	report.RecordPendingApproval("write_file")
 	report.RecordSkippedDueToDependency("update_plan")
+	report.RecordSystemSandboxFallback("run_shell (mode=best_effort, backend=none, reason=darwin backend unavailable)")
 
 	if got, want := strings.Join(report.Executed, ","), "list_files,read_file"; got != want {
 		t.Fatalf("unexpected executed tools: got=%q want=%q", got, want)
@@ -27,6 +28,9 @@ func TestTaskReportRecordsUniqueItemsInOrder(t *testing.T) {
 	}
 	if got, want := strings.Join(report.SkippedDueToDependency, ","), "update_plan"; got != want {
 		t.Fatalf("unexpected skipped tools: got=%q want=%q", got, want)
+	}
+	if got, want := strings.Join(report.SystemSandboxFallback, ","), "run_shell (mode=best_effort, backend=none, reason=darwin backend unavailable)"; got != want {
+		t.Fatalf("unexpected system sandbox fallback notes: got=%q want=%q", got, want)
 	}
 }
 
@@ -60,6 +64,7 @@ func TestTaskReportHumanSummaryIncludesPendingApproval(t *testing.T) {
 		Denied:                       []string{"write_file"},
 		PendingApproval:              []string{"write_file"},
 		SkippedDueToDeniedDependency: []string{"update_plan"},
+		SystemSandboxFallback:        []string{"run_shell (mode=best_effort, backend=none, reason=darwin backend unavailable)"},
 	}
 	text := report.HumanSummary()
 	for _, want := range []string{
@@ -67,6 +72,7 @@ func TestTaskReportHumanSummaryIncludesPendingApproval(t *testing.T) {
 		"- Denied: write_file",
 		"- Pending approval: write_file",
 		"- Skipped due to denied dependency: update_plan",
+		"- System sandbox fallback: run_shell (mode=best_effort, backend=none, reason=darwin backend unavailable)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected human summary to contain %q, got %q", want, text)
@@ -123,5 +129,21 @@ func TestTaskReportRetryAndNoProgressAreNonSuccess(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected human summary to contain %q, got %q", want, text)
 		}
+	}
+}
+
+func TestTaskReportSystemSandboxFallbackIsNonSuccess(t *testing.T) {
+	var report TaskReport
+	report.RecordSystemSandboxFallback("run_shell (mode=best_effort, backend=none, reason=linux backend unavailable)")
+
+	if !report.HasNonSuccessOutcomes() {
+		t.Fatal("expected system sandbox fallback to mark non-success outcomes")
+	}
+	text := report.HumanSummary()
+	if !strings.Contains(text, "- System sandbox fallback: run_shell (mode=best_effort, backend=none, reason=linux backend unavailable)") {
+		t.Fatalf("expected fallback summary line, got %q", text)
+	}
+	if got := report.JSON(); !strings.Contains(got, `"system_sandbox_fallback":["run_shell (mode=best_effort, backend=none, reason=linux backend unavailable)"]`) {
+		t.Fatalf("expected fallback JSON payload, got %q", got)
 	}
 }

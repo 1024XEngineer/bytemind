@@ -1024,7 +1024,7 @@ func TestTabTogglesBetweenBuildAndPlanModes(t *testing.T) {
 	}
 }
 
-func TestCtrlFOpensPromptSearchAndFiltersEntries(t *testing.T) {
+func TestCtrlFDoesNotOpenPromptSearch(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	m := model{
@@ -1038,28 +1038,13 @@ func TestCtrlFOpensPromptSearchAndFiltersEntries(t *testing.T) {
 	}
 
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	if !opened.promptSearchOpen {
-		t.Fatalf("expected ctrl+f to open prompt search")
-	}
-	if len(opened.promptSearchMatches) != 3 {
-		t.Fatalf("expected 3 prompt matches, got %d", len(opened.promptSearchMatches))
-	}
-
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("test")})
-	filtered := got.(model)
-	if filtered.promptSearchQuery != "test" {
-		t.Fatalf("expected query to become test, got %q", filtered.promptSearchQuery)
-	}
-	if len(filtered.promptSearchMatches) != 1 {
-		t.Fatalf("expected one filtered prompt, got %d", len(filtered.promptSearchMatches))
-	}
-	if !strings.Contains(filtered.promptSearchMatches[0].Prompt, "test case") {
-		t.Fatalf("unexpected filtered prompt: %+v", filtered.promptSearchMatches[0])
+	updated := got.(model)
+	if updated.promptSearchOpen {
+		t.Fatalf("expected ctrl+f to have no binding")
 	}
 }
 
-func TestCtrlFWhilePromptSearchOpenMovesSelection(t *testing.T) {
+func TestCtrlFWhilePromptSearchOpenHasNoEffect(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	m := model{
@@ -1072,16 +1057,14 @@ func TestCtrlFWhilePromptSearchOpenMovesSelection(t *testing.T) {
 		},
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	if opened.promptSearchCursor != 0 {
-		t.Fatalf("expected initial cursor 0, got %d", opened.promptSearchCursor)
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	if !m.promptSearchOpen {
+		t.Fatal("expected prompt search to open through helper")
 	}
-
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
 	moved := got.(model)
-	if moved.promptSearchCursor != 1 {
-		t.Fatalf("expected ctrl+f to move cursor to 1, got %d", moved.promptSearchCursor)
+	if moved.promptSearchCursor != 0 {
+		t.Fatalf("expected ctrl+f to have no effect in prompt search, got cursor=%d", moved.promptSearchCursor)
 	}
 }
 
@@ -1098,9 +1081,8 @@ func TestPromptSearchEnterRestoresSelectedPrompt(t *testing.T) {
 		},
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
 	down := got.(model)
 
 	got, _ = down.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1125,9 +1107,8 @@ func TestPromptSearchEscRestoresOriginalInput(t *testing.T) {
 		},
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("old")})
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("old")})
 	filtered := got.(model)
 	got, _ = filtered.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	closed := got.(model)
@@ -1172,9 +1153,8 @@ func TestPromptSearchQuerySupportsWorkspaceAndSessionFilters(t *testing.T) {
 		},
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("fix ws:repo-a sid:alpha")})
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("fix ws:repo-a sid:alpha")})
 	filtered := got.(model)
 
 	if len(filtered.promptSearchMatches) != 1 {
@@ -1199,13 +1179,11 @@ func TestPromptSearchPanelSupportsPageNavigation(t *testing.T) {
 		promptHistoryEntries: entries,
 	}
 
-	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	if opened.promptSearchCursor != 0 {
-		t.Fatalf("expected cursor at 0, got %d", opened.promptSearchCursor)
+	_ = m.openPromptSearch(promptSearchModeQuick)
+	if m.promptSearchCursor != 0 {
+		t.Fatalf("expected cursor at 0, got %d", m.promptSearchCursor)
 	}
-
-	got, _ = opened.handleKey(tea.KeyMsg{Type: tea.KeyPgDown})
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyPgDown})
 	paged := got.(model)
 	if paged.promptSearchCursor != promptSearchPageSize {
 		t.Fatalf("expected pgdown to move cursor to %d, got %d", promptSearchPageSize, paged.promptSearchCursor)
@@ -1218,26 +1196,25 @@ func TestPromptSearchPanelSupportsPageNavigation(t *testing.T) {
 	}
 }
 
-func TestCtrlFOpensPromptSearchStartsAsyncHistoryLoad(t *testing.T) {
+func TestOpenPromptSearchStartsAsyncHistoryLoad(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
 	m := model{
 		input: input,
 	}
 
-	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlF})
-	opened := got.(model)
-	if !opened.promptSearchOpen {
-		t.Fatalf("expected ctrl+f to open prompt search")
+	cmd := m.openPromptSearch(promptSearchModeQuick)
+	if !m.promptSearchOpen {
+		t.Fatalf("expected openPromptSearch to open prompt search")
 	}
-	if !opened.promptHistoryLoading {
+	if !m.promptHistoryLoading {
 		t.Fatalf("expected prompt history async loading state")
 	}
 	if cmd == nil {
 		t.Fatalf("expected async prompt history load command")
 	}
-	if opened.statusNote != "Prompt history loading..." {
-		t.Fatalf("expected loading status note, got %q", opened.statusNote)
+	if m.statusNote != "Prompt history loading..." {
+		t.Fatalf("expected loading status note, got %q", m.statusNote)
 	}
 }
 
@@ -1657,11 +1634,731 @@ func TestContinueExecutionInputPreparesPlanAndSubmitsPrompt(t *testing.T) {
 	}
 }
 
+func TestResolvePlanActionSelectionSupportsOptionChoices(t *testing.T) {
+	sess := session.New("E:\\bytemind")
+	sess.Messages = append(sess.Messages, llm.NewAssistantTextMessage(strings.Join([]string{
+		"Choose next step:",
+		"1. Start execution",
+		"2. Adjust plan",
+	}, "\n")))
+	state := planpkg.State{
+		Goal:                "Finish plan mode",
+		Phase:               planpkg.PhaseReady,
+		Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+	}
+
+	if got, ok := resolvePlanActionSelection("1", state, sess); !ok || got != "start execution" {
+		t.Fatalf("expected option 1 to resolve to start execution, got %q ok=%v", got, ok)
+	}
+	if got, ok := resolvePlanActionSelection("b", state, sess); !ok || got != "adjust plan" {
+		t.Fatalf("expected option b to resolve to adjust plan, got %q ok=%v", got, ok)
+	}
+}
+
+func TestResolvePlanActionSelectionSupportsFullLabeledChoices(t *testing.T) {
+	state := planpkg.State{
+		Goal:                "Finish plan mode",
+		Phase:               planpkg.PhaseReady,
+		Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+	}
+
+	startItem, ok := syntheticPlanActionItemForAction(state, planActionStartExecution)
+	if !ok {
+		t.Fatal("expected synthetic start-execution item")
+	}
+	if got, ok := resolvePlanActionSelection(startItem.Shortcut+". "+startItem.TitleText, state, nil); !ok || got != planActionStartExecution {
+		t.Fatalf("expected labeled start execution choice to resolve, got %q ok=%v", got, ok)
+	}
+
+	adjustItem, ok := syntheticPlanActionItemForAction(state, planActionAdjustPlan)
+	if !ok {
+		t.Fatal("expected synthetic adjust-plan item")
+	}
+	if got, ok := resolvePlanActionSelection(adjustItem.Shortcut+". "+adjustItem.TitleText, state, nil); !ok || got != planActionAdjustPlan {
+		t.Fatalf("expected labeled adjust-plan choice to resolve, got %q ok=%v", got, ok)
+	}
+}
+
+func TestResolvePlanActionSelectionDoesNotHijackClarifyAnswers(t *testing.T) {
+	sess := session.New("E:\\bytemind")
+	sess.Messages = append(sess.Messages, llm.NewAssistantTextMessage(strings.Join([]string{
+		"Question: Which stack should we use?",
+		"A. Flask",
+		"B. Streamlit",
+		"Other: custom",
+	}, "\n")))
+	state := planpkg.State{
+		Goal:         "Finish plan mode",
+		Phase:        planpkg.PhaseClarify,
+		DecisionGaps: []string{"Choose the first stack."},
+		Steps:        []planpkg.Step{{Title: "Freeze the stack", Status: planpkg.StepPending}},
+	}
+
+	if got, ok := resolvePlanActionSelection("b", state, sess); ok || got != "" {
+		t.Fatalf("expected clarify answer to stay untouched, got %q ok=%v", got, ok)
+	}
+}
+
+func TestBuildExecutionStartPromptIncludesPlanContext(t *testing.T) {
+	state := planpkg.State{
+		Goal:       "Finish handoff",
+		Phase:      planpkg.PhaseExecuting,
+		NextAction: "Inspect the workspace entrypoints before editing.",
+		Steps: []planpkg.Step{
+			{Title: "Inspect the workspace entrypoints", Status: planpkg.StepInProgress},
+		},
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+	}
+
+	got := buildExecutionStartPrompt(state)
+	for _, want := range []string{
+		"start execution",
+		"Execution handoff is already approved.",
+		"The session has switched to build mode.",
+		"Current step: Inspect the workspace entrypoints",
+		"Next action: Inspect the workspace entrypoints before editing.",
+		"Emit structured tool calls immediately unless a real blocker requires user input.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected execution handoff prompt to include %q, got %q", want, got)
+		}
+	}
+}
+
+func TestPlanActionOptionStartExecutionSwitchesBuildAndPreservesDisplay(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetWidth(40)
+	input.SetHeight(3)
+	input.SetValue("1")
+	input.CursorEnd()
+	sess := session.New("E:\\bytemind")
+	sess.Messages = append(sess.Messages, llm.NewAssistantTextMessage(strings.Join([]string{
+		"Choose next step:",
+		"1. Start execution",
+		"2. Adjust plan",
+	}, "\n")))
+	m := model{
+		screen:    screenChat,
+		width:     100,
+		height:    24,
+		input:     input,
+		viewport:  viewport.New(0, 0),
+		planView:  viewport.New(0, 0),
+		mode:      modePlan,
+		sess:      sess,
+		workspace: "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:                "Finish plan mode",
+			Phase:               planpkg.PhaseReady,
+			NextAction:          "Start: Implement continuation",
+			Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+			ScopeDefined:        true,
+			RiskRollbackDefined: true,
+			VerificationDefined: true,
+		},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	if updated.mode != modeBuild {
+		t.Fatalf("expected option 1 to switch to build mode, got %q", updated.mode)
+	}
+	if updated.sess.Mode != planpkg.ModeBuild {
+		t.Fatalf("expected session mode to switch to build, got %q", updated.sess.Mode)
+	}
+	if updated.plan.Phase != planpkg.PhaseExecuting {
+		t.Fatalf("expected plan phase to become executing, got %q", updated.plan.Phase)
+	}
+	if len(updated.chatItems) < 1 || updated.chatItems[0].Body != "1" {
+		t.Fatalf("expected original option input to stay visible, got %#v", updated.chatItems)
+	}
+}
+
+func TestPlanActionOptionAdjustPlanWaitsForManualInput(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetWidth(40)
+	input.SetHeight(3)
+	input.SetValue("2")
+	input.CursorEnd()
+	sess := session.New("E:\\bytemind")
+	sess.Messages = append(sess.Messages, llm.NewAssistantTextMessage(strings.Join([]string{
+		"Choose next step:",
+		"1. Start execution",
+		"2. Adjust plan",
+	}, "\n")))
+	m := model{
+		screen:    screenChat,
+		width:     100,
+		height:    24,
+		input:     input,
+		viewport:  viewport.New(0, 0),
+		planView:  viewport.New(0, 0),
+		mode:      modePlan,
+		sess:      sess,
+		workspace: "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:                "Finish plan mode",
+			Phase:               planpkg.PhaseReady,
+			NextAction:          "Adjust the rollout detail",
+			Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+			ScopeDefined:        true,
+			RiskRollbackDefined: true,
+			VerificationDefined: true,
+		},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	if updated.mode != modePlan {
+		t.Fatalf("expected option 2 to stay in plan mode, got %q", updated.mode)
+	}
+	if updated.plan.Phase != planpkg.PhaseReady {
+		t.Fatalf("expected plan phase to remain converge-ready, got %q", updated.plan.Phase)
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected adjust-plan selection to stay silent, got %#v", updated.chatItems)
+	}
+	if updated.planActionOpen {
+		t.Fatalf("expected adjust-plan selection to close the picker")
+	}
+	if updated.busy {
+		t.Fatalf("expected adjust-plan selection not to start a new run")
+	}
+	if strings.TrimSpace(updated.input.Value()) != "" {
+		t.Fatalf("expected input to reset after adjust-plan selection, got %q", updated.input.Value())
+	}
+	if updated.statusNote != "Plan mode kept. Describe what to refine next." {
+		t.Fatalf("expected refine guidance note, got %q", updated.statusNote)
+	}
+}
+
+func TestRunFinishedOpensPlanActionPicker(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		screen:    screenChat,
+		width:     100,
+		height:    24,
+		input:     input,
+		viewport:  viewport.New(0, 0),
+		planView:  viewport.New(0, 0),
+		mode:      modePlan,
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:                "Finish plan mode",
+			Phase:               planpkg.PhaseReady,
+			Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+			ScopeDefined:        true,
+			RiskRollbackDefined: true,
+			VerificationDefined: true,
+		},
+	}
+
+	m.handleAgentEvent(Event{Type: EventRunFinished, Content: "done"})
+	if !m.planActionOpen {
+		t.Fatalf("expected plan action picker to open")
+	}
+	footer := m.renderFooter()
+	for _, want := range []string{"下一步", "A", "切到 Build 模式，开始执行", "B", "继续微调计划"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("expected footer to include %q, got %q", want, footer)
+		}
+	}
+}
+
+func TestRunFinishedOpensClarifyChoicePicker(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		screen:    screenChat,
+		width:     100,
+		height:    24,
+		input:     input,
+		viewport:  viewport.New(0, 0),
+		planView:  viewport.New(0, 0),
+		mode:      modePlan,
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:         "Finish clarify picker",
+			Phase:        planpkg.PhaseClarify,
+			DecisionGaps: []string{"Choose the frontend stack"},
+			Steps:        []planpkg.Step{{Title: "Choose frontend", Status: planpkg.StepPending}},
+			ActiveChoice: &planpkg.ActiveChoice{
+				ID:       "frontend_stack",
+				Kind:     "clarify",
+				Question: "前端希望走哪条路线？",
+				Options: []planpkg.ChoiceOption{
+					{ID: "fastapi", Shortcut: "A", Title: "FastAPI + Jinja2 HTML", Recommended: true},
+					{ID: "flask", Shortcut: "B", Title: "Flask + Jinja2 HTML"},
+					{ID: "other", Shortcut: "C", Title: "Other", Freeform: true},
+				},
+			},
+		},
+	}
+
+	m.handleAgentEvent(Event{Type: EventRunFinished, Content: "done"})
+	if !m.planActionOpen {
+		t.Fatalf("expected clarify picker to open immediately when run already finished")
+	}
+	if m.statusNote != "Choose the current decision from the picker." {
+		t.Fatalf("expected clarify picker status note, got %q", m.statusNote)
+	}
+}
+
+func TestRunFinishedSequenceOpensPlanActionPickerAfterBusyClears(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		screen:      screenChat,
+		width:       100,
+		height:      24,
+		input:       input,
+		viewport:    viewport.New(0, 0),
+		planView:    viewport.New(0, 0),
+		mode:        modePlan,
+		busy:        true,
+		activeRunID: 7,
+		sess:        session.New("E:\\bytemind"),
+		workspace:   "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:                "Finish plan mode",
+			Phase:               planpkg.PhaseReady,
+			Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+			ScopeDefined:        true,
+			RiskRollbackDefined: true,
+			VerificationDefined: true,
+		},
+	}
+
+	m.handleAgentEvent(Event{Type: EventRunFinished, Content: "done"})
+	if m.planActionOpen {
+		t.Fatalf("expected picker to stay closed until runFinishedMsg clears busy")
+	}
+
+	got, _ := m.Update(runFinishedMsg{RunID: 7})
+	updated := got.(model)
+	if !updated.planActionOpen {
+		t.Fatalf("expected plan action picker to open after runFinishedMsg")
+	}
+	if updated.statusNote != "Choose the next step from the picker." {
+		t.Fatalf("expected picker status note, got %q", updated.statusNote)
+	}
+}
+
+func TestRunFinishedCanceledClosesPlanActionPicker(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		screen:         screenChat,
+		width:          100,
+		height:         24,
+		input:          input,
+		viewport:       viewport.New(0, 0),
+		planView:       viewport.New(0, 0),
+		mode:           modePlan,
+		planActionOpen: true,
+		activeRunID:    8,
+		sess:           session.New("E:\\bytemind"),
+		workspace:      "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:                "Finish plan mode",
+			Phase:               planpkg.PhaseReady,
+			Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+			ScopeDefined:        true,
+			RiskRollbackDefined: true,
+			VerificationDefined: true,
+		},
+	}
+
+	got, _ := m.Update(runFinishedMsg{RunID: 8, Err: context.Canceled})
+	updated := got.(model)
+	if updated.planActionOpen {
+		t.Fatalf("expected canceled run to close the plan action picker")
+	}
+	if updated.statusNote != "Run canceled." {
+		t.Fatalf("expected canceled status note, got %q", updated.statusNote)
+	}
+}
+
+func TestPlanActionPickerHandlesShortcutSelectionWithoutTextInput(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	m := model{
+		screen:    screenChat,
+		width:     100,
+		height:    24,
+		input:     input,
+		viewport:  viewport.New(0, 0),
+		planView:  viewport.New(0, 0),
+		mode:      modePlan,
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:                "Finish plan mode",
+			Phase:               planpkg.PhaseReady,
+			NextAction:          "Start: Implement continuation",
+			Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+			ScopeDefined:        true,
+			RiskRollbackDefined: true,
+			VerificationDefined: true,
+		},
+	}
+	m.syncPlanActionPicker()
+
+	got, _ := m.handlePlanActionKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	updated := got.(model)
+	if updated.mode != modeBuild {
+		t.Fatalf("expected picker shortcut to switch to build mode, got %q", updated.mode)
+	}
+	if updated.sess.Mode != planpkg.ModeBuild {
+		t.Fatalf("expected session mode to switch to build, got %q", updated.sess.Mode)
+	}
+	if len(updated.chatItems) == 0 || updated.chatItems[0].Body != "A. 切到 Build 模式，开始执行" {
+		t.Fatalf("expected picker action to append labeled choice, got %#v", updated.chatItems)
+	}
+}
+
+func TestPlanActionPickerAdjustPlanWaitsForManualInput(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("should clear")
+	m := model{
+		screen:    screenChat,
+		width:     100,
+		height:    24,
+		input:     input,
+		viewport:  viewport.New(0, 0),
+		planView:  viewport.New(0, 0),
+		mode:      modePlan,
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:                "Finish plan mode",
+			Phase:               planpkg.PhaseReady,
+			NextAction:          "Adjust the rollout detail",
+			Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+			ScopeDefined:        true,
+			RiskRollbackDefined: true,
+			VerificationDefined: true,
+		},
+	}
+	m.syncPlanActionPicker()
+
+	got, _ := m.handlePlanActionKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	updated := got.(model)
+	if updated.mode != modePlan {
+		t.Fatalf("expected adjust-plan picker shortcut to stay in plan mode, got %q", updated.mode)
+	}
+	if updated.planActionOpen {
+		t.Fatalf("expected adjust-plan picker shortcut to close the picker")
+	}
+	if updated.busy {
+		t.Fatalf("expected adjust-plan picker shortcut not to start a run")
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected adjust-plan picker shortcut to avoid appending a user message, got %#v", updated.chatItems)
+	}
+	if strings.TrimSpace(updated.input.Value()) != "" {
+		t.Fatalf("expected input to reset after picker shortcut, got %q", updated.input.Value())
+	}
+	if updated.statusNote != "Plan mode kept. Describe what to refine next." {
+		t.Fatalf("expected refine guidance note, got %q", updated.statusNote)
+	}
+}
+
+func TestRunFinishedSequenceOpensClarifyChoicePickerAfterBusyClears(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		screen:      screenChat,
+		width:       100,
+		height:      24,
+		input:       input,
+		viewport:    viewport.New(0, 0),
+		planView:    viewport.New(0, 0),
+		mode:        modePlan,
+		busy:        true,
+		activeRunID: 9,
+		sess:        session.New("E:\\bytemind"),
+		workspace:   "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:         "Finish clarify picker",
+			Phase:        planpkg.PhaseClarify,
+			DecisionGaps: []string{"Choose the frontend stack"},
+			Steps:        []planpkg.Step{{Title: "Choose frontend", Status: planpkg.StepPending}},
+			ActiveChoice: &planpkg.ActiveChoice{
+				ID:       "frontend_stack",
+				Kind:     "clarify",
+				Question: "前端希望走哪条路线？",
+				Options: []planpkg.ChoiceOption{
+					{ID: "fastapi", Shortcut: "A", Title: "FastAPI + Jinja2 HTML", Recommended: true},
+					{ID: "flask", Shortcut: "B", Title: "Flask + Jinja2 HTML"},
+					{ID: "other", Shortcut: "C", Title: "Other", Freeform: true},
+				},
+			},
+		},
+	}
+
+	m.handleAgentEvent(Event{Type: EventRunFinished, Content: "done"})
+	if m.planActionOpen {
+		t.Fatalf("expected clarify picker to stay closed until runFinishedMsg clears busy")
+	}
+
+	got, _ := m.Update(runFinishedMsg{RunID: 9})
+	updated := got.(model)
+	if !updated.planActionOpen {
+		t.Fatalf("expected clarify picker to open after runFinishedMsg")
+	}
+	if updated.statusNote != "Choose the current decision from the picker." {
+		t.Fatalf("expected clarify picker status note, got %q", updated.statusNote)
+	}
+	footer := updated.renderFooter()
+	for _, want := range []string{"当前决策", "前端希望走哪条路线？", "FastAPI + Jinja2 HTML", "Flask + Jinja2 HTML", "Other"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("expected footer to include %q, got %q", want, footer)
+		}
+	}
+}
+
+func TestPlanActionPickerHandlesClarifyShortcutSelectionWithoutTextInput(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	m := model{
+		screen:    screenChat,
+		width:     100,
+		height:    24,
+		input:     input,
+		viewport:  viewport.New(0, 0),
+		planView:  viewport.New(0, 0),
+		mode:      modePlan,
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:         "Finish clarify picker",
+			Phase:        planpkg.PhaseClarify,
+			DecisionGaps: []string{"Choose the frontend stack"},
+			Steps:        []planpkg.Step{{Title: "Choose frontend", Status: planpkg.StepPending}},
+			ActiveChoice: &planpkg.ActiveChoice{
+				ID:       "frontend_stack",
+				Kind:     "clarify",
+				Question: "前端希望走哪条路线？",
+				Options: []planpkg.ChoiceOption{
+					{ID: "fastapi", Shortcut: "A", Title: "FastAPI + Jinja2 HTML", Recommended: true},
+					{ID: "other", Shortcut: "B", Title: "Other", Freeform: true},
+				},
+			},
+		},
+	}
+	m.syncPlanActionPicker()
+
+	got, _ := m.handlePlanActionKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	updated := got.(model)
+	if updated.mode != modePlan {
+		t.Fatalf("expected clarify picker to stay in plan mode, got %q", updated.mode)
+	}
+	if len(updated.chatItems) == 0 || updated.chatItems[0].Body != "A. FastAPI + Jinja2 HTML" {
+		t.Fatalf("expected clarify choice to append labeled choice, got %#v", updated.chatItems)
+	}
+}
+
+func TestPlanActionPickerFreeformOptionClosesPickerAndWaitsForInput(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	m := model{
+		screen:    screenChat,
+		width:     100,
+		height:    24,
+		input:     input,
+		viewport:  viewport.New(0, 0),
+		planView:  viewport.New(0, 0),
+		mode:      modePlan,
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:         "Finish clarify picker",
+			Phase:        planpkg.PhaseClarify,
+			DecisionGaps: []string{"Choose the frontend stack"},
+			Steps:        []planpkg.Step{{Title: "Choose frontend", Status: planpkg.StepPending}},
+			ActiveChoice: &planpkg.ActiveChoice{
+				ID:       "frontend_stack",
+				Kind:     "clarify",
+				Question: "前端希望走哪条路线？",
+				Options: []planpkg.ChoiceOption{
+					{ID: "fastapi", Shortcut: "A", Title: "FastAPI + Jinja2 HTML"},
+					{ID: "other", Shortcut: "B", Title: "Other", Freeform: true},
+				},
+			},
+		},
+	}
+	m.syncPlanActionPicker()
+
+	got, _ := m.handlePlanActionKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	updated := got.(model)
+	if updated.planActionOpen {
+		t.Fatalf("expected freeform choice to close the picker")
+	}
+	if updated.statusNote != "请在输入框补充你的自定义方案，然后按 Enter。" {
+		t.Fatalf("expected freeform guidance note, got %q", updated.statusNote)
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected freeform choice not to submit yet, got %#v", updated.chatItems)
+	}
+}
+
+func TestFinishAssistantMessageStripsPlanActionTailWhenPickerRendersSeparately(t *testing.T) {
+	m := model{
+		mode: modePlan,
+		plan: planpkg.State{
+			Goal:                "Finish plan mode",
+			Phase:               planpkg.PhaseReady,
+			Steps:               []planpkg.Step{{Title: "Implement continuation", Status: planpkg.StepPending}},
+			ScopeDefined:        true,
+			RiskRollbackDefined: true,
+			VerificationDefined: true,
+		},
+	}
+
+	m.finishAssistantMessage(strings.Join([]string{
+		"Plan is converged.",
+		"",
+		"<proposed_plan>",
+		"Goal",
+		"- Finish plan mode",
+		"</proposed_plan>",
+		"",
+		"Choose next step:",
+		"1. Start execution",
+		"2. Adjust plan",
+		"Reply with 1 / A / start execution / continue execution to enter Build mode.",
+	}, "\n"))
+
+	if len(m.chatItems) == 0 {
+		t.Fatalf("expected assistant message to be recorded")
+	}
+	body := m.chatItems[len(m.chatItems)-1].Body
+	if strings.Contains(body, "Reply with 1") || strings.Contains(body, "Choose next step:") {
+		t.Fatalf("expected action tail to be stripped, got %q", body)
+	}
+	if !strings.Contains(body, "<proposed_plan>") {
+		t.Fatalf("expected proposed plan to remain, got %q", body)
+	}
+}
+
+func TestFinishAssistantMessageStripsClarifyChoiceBlockWhenPickerRendersSeparately(t *testing.T) {
+	m := model{
+		mode: modePlan,
+		plan: planpkg.State{
+			Phase:        planpkg.PhaseClarify,
+			DecisionGaps: []string{"Choose the frontend stack"},
+			Steps:        []planpkg.Step{{Title: "Choose frontend", Status: planpkg.StepPending}},
+			ActiveChoice: &planpkg.ActiveChoice{
+				ID:       "frontend_stack",
+				Kind:     "clarify",
+				Question: "前端希望走哪条路线？",
+				Options: []planpkg.ChoiceOption{
+					{ID: "fastapi", Shortcut: "A", Title: "FastAPI + Jinja2 HTML"},
+					{ID: "flask", Shortcut: "B", Title: "Flask + Jinja2 HTML"},
+				},
+			},
+		},
+	}
+
+	m.finishAssistantMessage(strings.Join([]string{
+		"请确认下面这个关键决策。",
+		"",
+		"Question: 前端希望走哪条路线？",
+		"A. FastAPI + Jinja2 HTML - 推荐",
+		"B. Flask + Jinja2 HTML - 兼容现有栈",
+	}, "\n"))
+
+	if len(m.chatItems) == 0 {
+		t.Fatalf("expected assistant message to be recorded")
+	}
+	body := m.chatItems[len(m.chatItems)-1].Body
+	if strings.Contains(body, "Question:") || strings.Contains(body, "A. FastAPI + Jinja2 HTML") {
+		t.Fatalf("expected clarify choice block to be stripped, got %q", body)
+	}
+	if !strings.Contains(body, "请确认下面这个关键决策。") {
+		t.Fatalf("expected lead sentence to remain, got %q", body)
+	}
+}
+
+func TestResolvePlanActionSelectionUsesActiveChoice(t *testing.T) {
+	state := planpkg.State{
+		Phase:        planpkg.PhaseClarify,
+		DecisionGaps: []string{"Choose the frontend stack"},
+		Steps:        []planpkg.Step{{Title: "Choose frontend", Status: planpkg.StepPending}},
+		ActiveChoice: &planpkg.ActiveChoice{
+			ID:       "frontend_stack",
+			Kind:     "clarify",
+			Question: "前端希望走哪条路线？",
+			Options: []planpkg.ChoiceOption{
+				{ID: "fastapi", Shortcut: "A", Title: "FastAPI + Jinja2 HTML"},
+				{ID: "other", Shortcut: "B", Title: "Other", Freeform: true},
+			},
+		},
+	}
+
+	if got, ok := resolvePlanActionSelection("a", state, nil); !ok || got != "choice:frontend_stack:fastapi" {
+		t.Fatalf("expected active choice shortcut to resolve, got %q ok=%v", got, ok)
+	}
+	if got, ok := resolvePlanActionSelection("other", state, nil); !ok || got != "choice:frontend_stack:other" {
+		t.Fatalf("expected active choice freeform shortcut to resolve, got %q ok=%v", got, ok)
+	}
+}
+
 func TestIsContinueExecutionInputSupportsPlanAlias(t *testing.T) {
-	for _, input := range []string{"continue plan", "\u7ee7\u7eed"} {
+	for _, input := range []string{"continue plan", "start execution", "\u7ee7\u7eed", "\u5f00\u59cb\u6267\u884c"} {
 		if !isContinueExecutionInput(input) {
 			t.Fatalf("expected %q to be treated as continue input", input)
 		}
+	}
+}
+
+func TestContinueExecutionInputRequiresConvergedPlan(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetWidth(40)
+	input.SetHeight(3)
+	input.SetValue("\u5f00\u59cb\u6267\u884c")
+	input.CursorEnd()
+	m := model{
+		screen:    screenChat,
+		width:     100,
+		height:    24,
+		input:     input,
+		viewport:  viewport.New(0, 0),
+		planView:  viewport.New(0, 0),
+		mode:      modePlan,
+		sess:      session.New("E:\\bytemind"),
+		workspace: "E:\\bytemind",
+		plan: planpkg.State{
+			Goal:       "Finish plan mode",
+			Phase:      planpkg.PhaseDraft,
+			NextAction: "Close the remaining decision gap",
+			Steps: []planpkg.Step{
+				{Title: "Implement continuation", Status: planpkg.StepPending},
+			},
+		},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	if updated.mode != modePlan {
+		t.Fatalf("expected unconverged plan to stay in plan mode, got %q", updated.mode)
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected unconverged plan not to submit a prompt, got %d items", len(updated.chatItems))
+	}
+	if !strings.Contains(updated.statusNote, "plan is not converged yet") {
+		t.Fatalf("expected convergence guidance, got %q", updated.statusNote)
 	}
 }
 
@@ -1954,6 +2651,237 @@ func TestCtrlVWithoutImageShowsStatusNote(t *testing.T) {
 	}
 }
 
+func TestCtrlVTextTransactionIgnoresControlMarkerEcho(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	m.clipboard = fakeClipboardImageReader{
+		err: errors.New("clipboard backend unavailable"),
+	}
+	m.clipboardRead = fakeClipboardTextReader{
+		text: strings.Join([]string{"echo line 1", "echo line 2", "echo line 3"}, "\n"),
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlV})
+	updated := got.(model)
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected ctrl+v text fallback to start paste transaction")
+	}
+	afterPaste := updated.input.Value()
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(afterPaste) {
+		t.Fatalf("expected ctrl+v text fallback to compress into marker, got %q", afterPaste)
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\x16'}})
+	updated = got.(model)
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected ctrl+v marker rune to be ignored without clearing transaction")
+	}
+	if updated.input.Value() != afterPaste {
+		t.Fatalf("expected ctrl+v marker rune not to change input, got %q", updated.input.Value())
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyCtrlV})
+	updated = got.(model)
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected ctrl+v key event to be ignored without clearing transaction")
+	}
+	if updated.input.Value() != afterPaste {
+		t.Fatalf("expected ctrl+v key event not to change input, got %q", updated.input.Value())
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("echo line 1")})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("echo line 2")})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("echo line 3")})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+
+	if updated.input.Value() != afterPaste {
+		t.Fatalf("expected echoed ctrl+v stream to be consumed, got %q", updated.input.Value())
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected echoed ctrl+v stream not to submit, got %d items", len(updated.chatItems))
+	}
+	if updated.pasteTransaction.Active {
+		t.Fatalf("expected transaction to clear after trailing enter echo is consumed")
+	}
+}
+
+func TestHandleKeyCapturesImplicitClipboardRuneBurstBeforeVisibleInput(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	m.clipboardRead = fakeClipboardTextReader{
+		text: strings.Join([]string{
+			"能、帮我看下这个仓库结构",
+			"给这段代码做 review",
+			"顺便看一下最近改动",
+			"补充下测试建议",
+			"最后总结风险点",
+		}, "\n"),
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("能、")})
+	updated := got.(model)
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(updated.input.Value()) {
+		t.Fatalf("expected implicit clipboard rune burst to be captured before visible input, got %q", updated.input.Value())
+	}
+	if strings.Contains(updated.input.Value(), "能、") {
+		t.Fatalf("expected no visible rune-burst prefix, got %q", updated.input.Value())
+	}
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected implicit clipboard rune burst to start paste transaction")
+	}
+}
+
+func TestPasteBurstFragmentStartsPasteTransaction(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	m.pasteBurstActive = true
+	m.pasteBurstGeneration = 1
+	m.pasteBurstLastEventAt = time.Now()
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tail")})
+	updated := got.(model)
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected paste-burst fragment to start paste transaction")
+	}
+	if updated.pasteTransaction.Source != "paste-burst" {
+		t.Fatalf("expected paste-burst source, got %q", updated.pasteTransaction.Source)
+	}
+}
+
+func TestHandleKeyCapturesSingleMultibyteClipboardRuneBeforeVisibleInput(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	m.clipboardRead = fakeClipboardTextReader{
+		text: strings.Join([]string{
+			"能、帮我看下这个仓库结构",
+			"给这段代码做 review",
+			"顺便看一下最近改动",
+			"补充下测试建议",
+			"最后总结风险点",
+		}, "\n"),
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("能")})
+	updated := got.(model)
+	if updated.input.Value() != "" {
+		t.Fatalf("expected single multibyte rune to stay hidden before confirmation, got %q", updated.input.Value())
+	}
+	if !updated.hiddenPasteProbe.active {
+		t.Fatalf("expected hidden paste probe to activate for single multibyte rune")
+	}
+	if updated.hiddenPasteProbe.buffered != "能" {
+		t.Fatalf("expected hidden paste probe to buffer the first rune, got %q", updated.hiddenPasteProbe.buffered)
+	}
+}
+
+func TestHiddenPasteProbeCommitsMarkerOnSecondMatchingRune(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	m.clipboardRead = fakeClipboardTextReader{
+		text: strings.Join([]string{
+			"能、帮我看下这个仓库结构",
+			"给这段代码做 review",
+			"顺便看一下最近改动",
+			"补充下测试建议",
+			"最后总结风险点",
+		}, "\n"),
+	}
+
+	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("能")})
+	updated := got.(model)
+	if cmd == nil {
+		t.Fatalf("expected first hidden probe rune to schedule a flush command")
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("、")})
+	updated = got.(model)
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(updated.input.Value()) {
+		t.Fatalf("expected second matching rune to commit marker without visible raw text, got %q", updated.input.Value())
+	}
+	if updated.hiddenPasteProbe.active {
+		t.Fatalf("expected hidden paste probe to clear after marker commit")
+	}
+	if !updated.pasteTransaction.Active || updated.pasteTransaction.Consumed != 2 {
+		t.Fatalf("expected marker commit to start transaction with consumed=2, got active=%v consumed=%d", updated.pasteTransaction.Active, updated.pasteTransaction.Consumed)
+	}
+}
+
+func TestHiddenPasteProbeFlushesBufferedRuneWhenNotConfirmed(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	m.clipboardRead = fakeClipboardTextReader{
+		text: strings.Join([]string{
+			"能、帮我看下这个仓库结构",
+			"给这段代码做 review",
+			"顺便看一下最近改动",
+			"补充下测试建议",
+			"最后总结风险点",
+		}, "\n"),
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("能")})
+	updated := got.(model)
+	if !updated.hiddenPasteProbe.active {
+		t.Fatalf("expected hidden paste probe to activate")
+	}
+	flushID := updated.hiddenPasteProbe.flushID
+
+	got, _ = updated.Update(hiddenPasteProbeFlushMsg{ID: flushID})
+	flushed := got.(model)
+	if flushed.hiddenPasteProbe.active {
+		t.Fatalf("expected hidden paste probe to clear after flush")
+	}
+	if flushed.input.Value() != "能" {
+		t.Fatalf("expected buffered rune to flush into visible input, got %q", flushed.input.Value())
+	}
+}
+
+func TestImplicitClipboardProbeSkipsClipboardReadForSingleASCIIRune(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	calls := 0
+	m.clipboardRead = fakeClipboardTextReader{
+		text:  "alpha\nbeta\ngamma",
+		calls: &calls,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	updated := got.(model)
+	if calls != 0 {
+		t.Fatalf("expected single ASCII rune not to trigger clipboard read, got %d calls", calls)
+	}
+	if updated.input.Value() != "a" {
+		t.Fatalf("expected single ASCII rune to flow through normal input, got %q", updated.input.Value())
+	}
+}
+
+func TestImplicitClipboardProbeSkipsClipboardReadForShortASCIIBurst(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	calls := 0
+	m.clipboardRead = fakeClipboardTextReader{
+		text:  "alpha\nbeta\ngamma",
+		calls: &calls,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ab")})
+	updated := got.(model)
+	if calls != 0 {
+		t.Fatalf("expected short ASCII burst not to trigger clipboard read, got %d calls", calls)
+	}
+	if updated.input.Value() != "ab" {
+		t.Fatalf("expected short ASCII burst to flow through normal input, got %q", updated.input.Value())
+	}
+}
+
 func TestTerminalPasteEventWithEmptyPayloadPastesClipboardImage(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
@@ -2169,6 +3097,94 @@ func TestSplitPastePayloadFinalizesIntoSingleMarker(t *testing.T) {
 	}
 }
 
+func TestPasteMsgTransactionConsumesEchoedPlainKeyStream(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	longPaste := strings.Join([]string{"echo line 1", "echo line 2", "echo line 3"}, "\n")
+
+	got, _ := m.handlePastePayload(longPaste + "\n")
+	updated := got.(model)
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected paste transaction to activate for paste payload")
+	}
+	afterPaste := updated.input.Value()
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(afterPaste) {
+		t.Fatalf("expected paste payload to compress into marker, got %q", afterPaste)
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("echo line 1")})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("echo line 2")})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("echo line 3")})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+
+	if updated.input.Value() != afterPaste {
+		t.Fatalf("expected echoed paste stream to be consumed, got %q", updated.input.Value())
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected echoed paste stream not to submit, got %d items", len(updated.chatItems))
+	}
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected paste transaction to stay active briefly to guard trailing enter echo")
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected trailing enter echo to be consumed, got %d items", len(updated.chatItems))
+	}
+	if updated.pasteTransaction.Active {
+		t.Fatalf("expected paste transaction to clear after trailing enter echo is consumed")
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected enter after transaction completion to submit")
+	}
+}
+
+func TestPasteKeyTransactionConsumesEchoedPlainKeyStream(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("title\nbody"), Paste: true})
+	updated := got.(model)
+	if !updated.pasteTransaction.Active {
+		t.Fatalf("expected paste-key flow to activate paste transaction")
+	}
+	afterPaste := updated.input.Value()
+	if afterPaste != "title\nbody" {
+		t.Fatalf("expected paste-key flow to keep preview text visible, got %q", afterPaste)
+	}
+
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("title")})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("body")})
+	updated = got.(model)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated = got.(model)
+
+	if updated.input.Value() != afterPaste {
+		t.Fatalf("expected echoed plain stream after paste-key boundary to be consumed, got %q", updated.input.Value())
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected echoed plain stream not to submit, got %d items", len(updated.chatItems))
+	}
+	if updated.pasteTransaction.Active {
+		t.Fatalf("expected paste transaction to clear after trailing enter echo is consumed")
+	}
+}
+
 func TestRunesEnterRunesPasteFlowDoesNotSubmitFirstLine(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
@@ -2282,6 +3298,7 @@ func TestHelpTextOnlyMentionsSupportedEntryPoints(t *testing.T) {
 		"/quit",
 		"/new",
 		"Ctrl+G",
+		"start execution",
 		"continue execution",
 	} {
 		if !strings.Contains(text, wanted) {
@@ -2353,19 +3370,39 @@ func TestRenderFooterInfoLineCombinesModeAndHints(t *testing.T) {
 	}
 }
 
-func TestRenderFooterDoesNotShowBusyRunIndicator(t *testing.T) {
+func TestRenderFooterShowsBusyRunIndicator(t *testing.T) {
 	input := textarea.New()
 	m := model{
-		width:        120,
-		input:        input,
-		busy:         true,
-		phase:        "thinking",
-		runStartedAt: time.Time{},
+		width:             120,
+		input:             input,
+		busy:              true,
+		phase:             "thinking",
+		runStartedAt:      time.Date(2026, 4, 24, 10, 0, 0, 0, time.UTC),
+		runIndicatorState: runIndicatorRunning,
 	}
 
 	footer := m.renderFooter()
-	if strings.Contains(footer, "thinking...") || strings.Contains(footer, "(00:00)") {
-		t.Fatalf("expected busy footer not to include run indicator, got %q", footer)
+	for _, want := range []string{"Thinking", "thinking..."} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("expected busy footer to include %q, got %q", want, footer)
+		}
+	}
+}
+
+func TestRenderFooterShowsCompletedRunIndicator(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		width:             120,
+		input:             input,
+		runIndicatorState: runIndicatorComplete,
+		lastRunDuration:   28 * time.Second,
+	}
+
+	footer := m.renderFooter()
+	for _, want := range []string{"Complete", "(00:28)"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("expected completed footer to include %q, got %q", want, footer)
+		}
 	}
 }
 
@@ -2530,6 +3567,40 @@ func TestCommandPaletteListsQuitCommand(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected command palette to include /quit")
+	}
+}
+
+func TestCommandPaletteDoesNotListMCPAddAlias(t *testing.T) {
+	for _, item := range commandItems {
+		if item.Name == "/mcp-add" {
+			t.Fatalf("did not expect command palette to include /mcp-add")
+		}
+	}
+}
+
+func TestCommandPaletteListsMCPHelpCommand(t *testing.T) {
+	found := false
+	for _, item := range commandItems {
+		if item.Name == "/mcp help" && item.Kind == "command" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected command palette to include /mcp help")
+	}
+}
+
+func TestCommandPaletteListsMCPShowCommand(t *testing.T) {
+	found := false
+	for _, item := range commandItems {
+		if item.Name == "/mcp show" && item.Kind == "command" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected command palette to include /mcp show")
 	}
 }
 
@@ -3985,6 +5056,29 @@ func TestFinishAssistantMessageAppendsFinalCardAfterThinking(t *testing.T) {
 	}
 }
 
+func TestRenderConversationOmitsThinkingRowsFromViewport(t *testing.T) {
+	m := model{
+		width: 120,
+		viewport: func() viewport.Model {
+			vp := viewport.New(60, 10)
+			return vp
+		}(),
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "inspect repo", Status: "final"},
+			{Kind: "assistant", Title: thinkingLabel, Body: "thinking...", Status: "thinking_done"},
+			{Kind: "assistant", Title: assistantLabel, Body: "Done.", Status: "final"},
+		},
+	}
+
+	rendered := m.renderConversation()
+	if strings.Contains(rendered, "thinking...") {
+		t.Fatalf("expected conversation viewport to omit inline thinking rows, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "Done.") {
+		t.Fatalf("expected final answer to remain visible, got %q", rendered)
+	}
+}
+
 func TestApprovalBannerRendersAboveInput(t *testing.T) {
 	input := textarea.New()
 	m := model{
@@ -4026,9 +5120,6 @@ func TestApprovalBannerUsesCompactSingleNormalBorder(t *testing.T) {
 	}
 
 	banner := m.renderApprovalBanner()
-	if strings.ContainsAny(banner, "╭╮╰╯") {
-		t.Fatalf("expected normal single border without rounded corners, got %q", banner)
-	}
 	lines := strings.Split(banner, "\n")
 	if len(lines) < 10 {
 		t.Fatalf("expected taller boxed approval panel with selectable options, got %d lines: %q", len(lines), banner)
@@ -4088,7 +5179,7 @@ func TestApprovalBannerNarrowWidthFallbackKeepsAlignedHint(t *testing.T) {
 			t.Fatalf("expected banner line %d width %d under narrow layout, got %d (%q)", i, expectedWidth, got, line)
 		}
 	}
-	for _, want := range []string{"Up/Down", "Enter confirm", "Y approve once", "N/Esc", "reject"} {
+	for _, want := range []string{"Up/Down", "Enter", "confirm", "Y approve", "once", "N/Esc", "reject"} {
 		if !strings.Contains(banner, want) {
 			t.Fatalf("expected narrow-layout fallback to keep action hint token %q, got %q", want, banner)
 		}
@@ -4142,6 +5233,12 @@ func TestUpdateApprovalRequestMsgSetsApprovalPhase(t *testing.T) {
 	}
 	if updated.approval.ToolName != "run_shell" || updated.approval.Cursor != 0 {
 		t.Fatalf("expected approval prompt metadata to be initialized, got %+v", updated.approval)
+	}
+	if updated.approval.Kind != approvalPromptKindTool {
+		t.Fatalf("expected tool approval kind, got %q", updated.approval.Kind)
+	}
+	if updated.approval.Choice != approvalChoiceApprove {
+		t.Fatalf("expected default tool approval choice to be approve, got %d", updated.approval.Choice)
 	}
 	if updated.phase != "approval" || updated.statusNote != "Approval required." {
 		t.Fatalf("expected approval request to switch UI into approval state, got phase=%q note=%q", updated.phase, updated.statusNote)
@@ -4261,6 +5358,178 @@ func TestApprovalKeysTransitionStateAndSendDecision(t *testing.T) {
 			t.Fatal("expected cached approval reply")
 		}
 	})
+	t.Run("arrow-select-cancel-and-enter-for-full-access", func(t *testing.T) {
+		reply := make(chan approvalDecision, 1)
+		m := model{
+			approval: &approvalPrompt{
+				Command: "approval_mode=full_access",
+				Reason:  "Enable full access?",
+				Reply:   reply,
+				Kind:    approvalPromptKindEnableFullAccess,
+				Choice:  approvalChoiceApprove,
+			},
+			phase: "approval",
+		}
+
+		got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
+		updated := got.(model)
+		if updated.approval == nil || updated.approval.Choice != approvalChoiceReject {
+			t.Fatalf("expected right key to move selection to reject, got %+v", updated.approval)
+		}
+
+		got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+		updated = got.(model)
+		if updated.approval != nil {
+			t.Fatalf("expected approval prompt to clear after confirming selection")
+		}
+		if updated.phase != "idle" || updated.statusNote != "Full access request canceled." {
+			t.Fatalf("expected selected cancellation to return to idle phase, got phase=%q note=%q", updated.phase, updated.statusNote)
+		}
+		if updated.cfg.ApprovalMode != "" {
+			t.Fatalf("expected approval mode to remain unchanged after cancel, got %q", updated.cfg.ApprovalMode)
+		}
+
+		select {
+		case decision := <-reply:
+			if decision.Decision.Approved() {
+				t.Fatalf("expected cancellation decision to be false")
+			}
+		default:
+			t.Fatalf("expected cancellation decision to be sent")
+		}
+	})
+}
+
+func TestToggleApprovalModeRequiresConfirmationToEnableFullAccess(t *testing.T) {
+	m := model{
+		cfg: config.Config{ApprovalMode: "interactive"},
+	}
+
+	m.toggleApprovalMode()
+
+	if m.cfg.ApprovalMode != "interactive" {
+		t.Fatalf("expected approval mode to remain interactive before confirmation, got %q", m.cfg.ApprovalMode)
+	}
+	if m.approval == nil {
+		t.Fatal("expected full access toggle to open confirmation prompt")
+	}
+	if m.approval.Kind != approvalPromptKindEnableFullAccess {
+		t.Fatalf("expected confirmation prompt kind %q, got %q", approvalPromptKindEnableFullAccess, m.approval.Kind)
+	}
+	if m.approval.Choice != approvalChoiceApprove {
+		t.Fatalf("expected full access confirmation to default to approve, got %d", m.approval.Choice)
+	}
+	if m.phase != "approval" {
+		t.Fatalf("expected phase to switch to approval, got %q", m.phase)
+	}
+}
+
+func TestCtrlAOnLandingDoesNotOpenFullAccessPrompt(t *testing.T) {
+	m := model{
+		screen: screenLanding,
+		cfg:    config.Config{ApprovalMode: "interactive"},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlA})
+	updated := got.(model)
+
+	if updated.approval != nil {
+		t.Fatalf("expected Ctrl+A on landing not to open approval prompt, got %+v", updated.approval)
+	}
+	if updated.cfg.ApprovalMode != "interactive" {
+		t.Fatalf("expected approval mode to remain interactive on landing, got %q", updated.cfg.ApprovalMode)
+	}
+}
+
+func TestLandingModeTabsHideAccessLabel(t *testing.T) {
+	m := model{mode: modeBuild}
+	tabs := m.renderLandingModeTabs()
+	if strings.Contains(tabs, "Access:") || strings.Contains(tabs, "Full Access") {
+		t.Fatalf("expected landing mode tabs to hide access label, got %q", tabs)
+	}
+}
+
+func TestApprovalBannerForFullAccessConfirmation(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		width: 100,
+		input: input,
+		approval: &approvalPrompt{
+			Command: "approval_mode=full_access",
+			Reason:  "Enable full access? Approval prompts will be auto-approved.",
+			Kind:    approvalPromptKindEnableFullAccess,
+		},
+	}
+
+	banner := m.renderApprovalBanner()
+	for _, want := range []string{
+		"Enable full access?",
+		"Action:",
+		"approval_mode=full_access",
+		"Enable",
+		"Cancel",
+		"Use Left/Right to choose",
+	} {
+		if !strings.Contains(banner, want) {
+			t.Fatalf("expected full access confirmation banner to contain %q, got %q", want, banner)
+		}
+	}
+}
+
+func TestFullAccessConfirmationApproveAppliesMode(t *testing.T) {
+	m := model{
+		cfg: config.Config{ApprovalMode: "interactive"},
+		approval: &approvalPrompt{
+			Command: "approval_mode=full_access",
+			Reason:  "Enable full access?",
+			Kind:    approvalPromptKindEnableFullAccess,
+		},
+		phase: "approval",
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if updated.approval != nil {
+		t.Fatalf("expected confirmation prompt to clear after approval")
+	}
+	if updated.cfg.ApprovalMode != "full_access" {
+		t.Fatalf("expected approval mode to switch to full_access, got %q", updated.cfg.ApprovalMode)
+	}
+	if updated.phase != "idle" {
+		t.Fatalf("expected phase to return to idle, got %q", updated.phase)
+	}
+	if !strings.Contains(updated.statusNote, "Full access enabled") {
+		t.Fatalf("expected warning status note after enabling full access, got %q", updated.statusNote)
+	}
+}
+
+func TestFullAccessConfirmationRejectKeepsInteractiveMode(t *testing.T) {
+	m := model{
+		cfg: config.Config{ApprovalMode: "interactive"},
+		approval: &approvalPrompt{
+			Command: "approval_mode=full_access",
+			Reason:  "Enable full access?",
+			Kind:    approvalPromptKindEnableFullAccess,
+		},
+		phase: "approval",
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.approval != nil {
+		t.Fatalf("expected confirmation prompt to clear after rejection")
+	}
+	if updated.cfg.ApprovalMode != "interactive" {
+		t.Fatalf("expected approval mode to remain interactive, got %q", updated.cfg.ApprovalMode)
+	}
+	if updated.phase != "idle" {
+		t.Fatalf("expected phase to return to idle, got %q", updated.phase)
+	}
+	if updated.statusNote != "Full access request canceled." {
+		t.Fatalf("expected canceled status note, got %q", updated.statusNote)
+	}
 }
 
 func TestUpdateRunFinishedMsgResetsBusyState(t *testing.T) {
@@ -5101,6 +6370,39 @@ func TestFormatChatBodyRendersMarkdownHeadingWithoutHashes(t *testing.T) {
 	}
 }
 
+func TestFormatChatBodyHidesProposedPlanTagsAndKeepsDocumentSections(t *testing.T) {
+	item := chatEntry{
+		Kind: "assistant",
+		Body: strings.Join([]string{
+			"<proposed_plan>",
+			"",
+			"## Goal",
+			"",
+			"- Ship the converged plan cleanly.",
+			"",
+			"## Implementation Brief",
+			"",
+			"### Objective",
+			"Deliver a runnable handoff document.",
+			"",
+			"## Execution Readiness",
+			"",
+			"- [x] Scope defined",
+			"</proposed_plan>",
+		}, "\n"),
+	}
+
+	got := formatChatBody(item, 80)
+	if strings.Contains(got, "<proposed_plan>") || strings.Contains(got, "</proposed_plan>") {
+		t.Fatalf("expected structural tags to be hidden from display, got %q", got)
+	}
+	for _, want := range []string{"Goal", "Ship the converged plan cleanly.", "Objective", "Scope defined"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected rendered plan body to keep %q, got %q", want, got)
+		}
+	}
+}
+
 func TestFormatChatBodyHelpMarkdownAppliesVisualStyles(t *testing.T) {
 	item := chatEntry{
 		Kind: "assistant",
@@ -5677,21 +6979,27 @@ func TestCompressedPasteRequiresExplicitConfirmationBeforeSubmit(t *testing.T) {
 	}
 
 	got, _ = afterPaste.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	afterConfirm := got.(model)
-	if afterConfirm.pasteConfirmPending {
+	afterFirstEnter := got.(model)
+	if afterFirstEnter.pasteTransaction.Active {
+		t.Fatalf("expected first enter after compressed paste to close paste transaction")
+	}
+	if afterFirstEnter.pasteConfirmPending {
 		t.Fatalf("expected first enter after compressed paste to clear confirmation latch")
 	}
-	if len(afterConfirm.chatItems) != 0 {
-		t.Fatalf("expected first enter after compressed paste not to submit, got %d chat items", len(afterConfirm.chatItems))
+	if len(afterFirstEnter.chatItems) != 0 {
+		t.Fatalf("expected first enter after compressed paste not to submit, got %d chat items", len(afterFirstEnter.chatItems))
 	}
-	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(afterConfirm.input.Value()) {
-		t.Fatalf("expected compressed marker to remain after confirmation enter, got %q", afterConfirm.input.Value())
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(afterFirstEnter.input.Value()) {
+		t.Fatalf("expected compressed marker to remain after confirmation enter, got %q", afterFirstEnter.input.Value())
 	}
 
-	got, _ = afterConfirm.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	afterSubmit := got.(model)
-	if len(afterSubmit.chatItems) == 0 && !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]\s*$`).MatchString(afterSubmit.input.Value()) {
-		t.Fatalf("expected second enter either to submit or keep compressed marker state, got chat=%#v input=%q", afterSubmit.chatItems, afterSubmit.input.Value())
+	got, _ = afterFirstEnter.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	afterSecondEnter := got.(model)
+	if len(afterSecondEnter.chatItems) == 0 {
+		t.Fatalf("expected second enter after compressed paste to submit")
+	}
+	if !strings.Contains(afterSecondEnter.chatItems[0].Body, "[Paste #") {
+		t.Fatalf("expected submitted body to include compressed marker, got %q", afterSecondEnter.chatItems[0].Body)
 	}
 }
 
@@ -5847,8 +7155,8 @@ func TestBusyEnterDuringActivePasteBurstDoesNotQueueBTW(t *testing.T) {
 	if len(updated.chatItems) != 0 {
 		t.Fatalf("expected enter during active paste burst not to submit, got %#v", updated.chatItems)
 	}
-	if !updated.hasActivePasteSession() {
-		t.Fatalf("expected enter during active paste burst to stay inside paste session")
+	if updated.input.Value() == "" || !strings.HasPrefix(updated.input.Value(), "[Paste #") {
+		t.Fatalf("expected enter during active paste burst to preserve compressed paste marker, got %q", updated.input.Value())
 	}
 }
 
