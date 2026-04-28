@@ -14,15 +14,27 @@ import (
 	"bytemind/internal/config"
 )
 
+func withUpdateCheckBuildVersion(t *testing.T, version string) {
+	t.Helper()
+	previousVersion := buildVersion
+	previousGitDescribe := gitDescribe
+	buildVersion = version
+	gitDescribe = func() string { return "" }
+	resetVersionCacheForTest()
+	t.Cleanup(func() {
+		buildVersion = previousVersion
+		gitDescribe = previousGitDescribe
+		resetVersionCacheForTest()
+	})
+}
+
 func TestMaybePrintUpdateReminderSkipsWhenDisabled(t *testing.T) {
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
 
 	cfg := config.Default(t.TempDir())
 	cfg.UpdateCheck.Enabled = false
 
-	previousVersion := buildVersion
-	buildVersion = "v1.0.0"
-	defer func() { buildVersion = previousVersion }()
+	withUpdateCheckBuildVersion(t, "v1.0.0")
 
 	previousFetcher := updateCheckFetchLatestVersion
 	calls := 0
@@ -49,9 +61,7 @@ func TestMaybePrintUpdateReminderChecksAtMostOncePerDay(t *testing.T) {
 	cfg := config.Default(t.TempDir())
 	cfg.UpdateCheck.Enabled = true
 
-	previousVersion := buildVersion
-	buildVersion = "v1.0.0"
-	defer func() { buildVersion = previousVersion }()
+	withUpdateCheckBuildVersion(t, "v1.0.0")
 
 	previousNow := updateCheckNow
 	now := time.Date(2026, 4, 19, 10, 0, 0, 0, time.UTC)
@@ -101,9 +111,7 @@ func TestMaybePrintUpdateReminderSkipsDevVersion(t *testing.T) {
 	cfg := config.Default(t.TempDir())
 	cfg.UpdateCheck.Enabled = true
 
-	previousVersion := buildVersion
-	buildVersion = "dev"
-	defer func() { buildVersion = previousVersion }()
+	withUpdateCheckBuildVersion(t, "dev")
 
 	previousFetcher := updateCheckFetchLatestVersion
 	calls := 0
@@ -129,9 +137,7 @@ func TestMaybePrintUpdateReminderSkipsWhenVersionNotNewer(t *testing.T) {
 	cfg := config.Default(t.TempDir())
 	cfg.UpdateCheck.Enabled = true
 
-	previousVersion := buildVersion
-	buildVersion = "v1.2.0"
-	defer func() { buildVersion = previousVersion }()
+	withUpdateCheckBuildVersion(t, "v1.2.0")
 
 	previousNow := updateCheckNow
 	updateCheckNow = func() time.Time { return time.Date(2026, 4, 19, 10, 0, 0, 0, time.UTC) }
