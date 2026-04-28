@@ -65,6 +65,88 @@ func TestResolveWorkspaceAutoDetectsProjectRoot(t *testing.T) {
 	}
 }
 
+func TestResolveWorkspaceUsesCurrentDirectoryWhenBroadAndNoProjectMarker(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < DefaultBroadWorkspaceEntryThreshold; i++ {
+		if err := os.Mkdir(filepath.Join(dir, fmt.Sprintf("entry-%03d", i)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+	})
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ResolveWorkspace("")
+	if err != nil {
+		t.Fatalf("expected broad current directory to be allowed, got %v", err)
+	}
+	if normalizeExistingPath(got) != normalizeExistingPath(dir) {
+		t.Fatalf("expected workspace %q, got %q", normalizeExistingPath(dir), normalizeExistingPath(got))
+	}
+}
+
+func TestResolveWorkspaceRejectsHighRiskHomeWithoutOverride(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+	})
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", "")
+	if err := os.Chdir(home); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ResolveWorkspace("")
+	if err == nil {
+		t.Fatal("expected high-risk home workspace to be rejected")
+	}
+	if !strings.Contains(err.Error(), "too broad for default workspace") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveWorkspaceAllowsHighRiskHomeWithEnvOptIn(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+	})
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", "")
+	t.Setenv("BYTEMIND_ALLOW_BROAD_WORKSPACE", "true")
+	if err := os.Chdir(home); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ResolveWorkspace("")
+	if err != nil {
+		t.Fatalf("expected opt-in to allow high-risk workspace, got %v", err)
+	}
+	if normalizeExistingPath(got) != normalizeExistingPath(home) {
+		t.Fatalf("expected workspace %q, got %q", normalizeExistingPath(home), normalizeExistingPath(got))
+	}
+}
+
 func TestIsBroadWorkspacePathWithHomeFlagsKnownBroadRoots(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 	for _, dir := range []string{
@@ -82,6 +164,24 @@ func TestIsBroadWorkspacePathWithHomeFlagsKnownBroadRoots(t *testing.T) {
 	}
 }
 
+func TestIsHighRiskWorkspacePathWithHomeFlagsKnownRoots(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	for _, dir := range []string{
+		filesystemRootForTest(home),
+		home,
+		filepath.Join(home, "Desktop"),
+		filepath.Join(home, "Documents"),
+		filepath.Join(home, "Downloads"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if !IsHighRiskWorkspacePathWithHome(dir, home) {
+			t.Fatalf("expected %q to be treated as high-risk workspace", dir)
+		}
+	}
+}
+
 func TestIsBroadWorkspacePathWithHomeFlagsLargeDirectory(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < DefaultBroadWorkspaceEntryThreshold; i++ {
@@ -91,6 +191,18 @@ func TestIsBroadWorkspacePathWithHomeFlagsLargeDirectory(t *testing.T) {
 	}
 	if !IsBroadWorkspacePathWithHome(dir, "") {
 		t.Fatalf("expected directory with %d entries to be broad", DefaultBroadWorkspaceEntryThreshold)
+	}
+}
+
+func TestIsHighRiskWorkspacePathWithHomeAllowsOrdinaryLargeDirectory(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < DefaultBroadWorkspaceEntryThreshold; i++ {
+		if err := os.Mkdir(filepath.Join(dir, fmt.Sprintf("entry-%03d", i)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if IsHighRiskWorkspacePathWithHome(dir, "") {
+		t.Fatalf("did not expect ordinary large directory %q to be high-risk", dir)
 	}
 }
 
@@ -142,4 +254,12 @@ func pathWithinRoot(path, root string) bool {
 		return true
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func filesystemRootForTest(path string) string {
+	volume := filepath.VolumeName(path)
+	if volume == "" {
+		return string(filepath.Separator)
+	}
+	return volume + string(filepath.Separator)
 }

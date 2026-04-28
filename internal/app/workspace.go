@@ -51,7 +51,7 @@ func ResolveWorkspace(workspaceOverride string) (string, error) {
 	if projectRoot := DetectProjectRoot(cwd); projectRoot != "" {
 		return projectRoot, nil
 	}
-	if IsBroadWorkspacePath(cwd) {
+	if IsHighRiskWorkspacePath(cwd) {
 		return "", fmt.Errorf("current directory %s is too broad for default workspace; rerun with -workspace <project-dir> (or set BYTEMIND_ALLOW_BROAD_WORKSPACE=true)", cwd)
 	}
 	return cwd, nil
@@ -88,11 +88,29 @@ func hasProjectMarker(dir string) bool {
 }
 
 func IsBroadWorkspacePath(dir string) bool {
-	if value := strings.TrimSpace(os.Getenv("BYTEMIND_ALLOW_BROAD_WORKSPACE")); value != "" {
-		if parsed, err := strconv.ParseBool(value); err == nil && parsed {
-			return false
-		}
+	if allowBroadWorkspace() {
+		return false
 	}
+	return IsBroadWorkspacePathWithHome(dir, workspaceRiskHome())
+}
+
+func IsHighRiskWorkspacePath(dir string) bool {
+	if allowBroadWorkspace() {
+		return false
+	}
+	return IsHighRiskWorkspacePathWithHome(dir, workspaceRiskHome())
+}
+
+func allowBroadWorkspace() bool {
+	value := strings.TrimSpace(os.Getenv("BYTEMIND_ALLOW_BROAD_WORKSPACE"))
+	if value == "" {
+		return false
+	}
+	parsed, err := strconv.ParseBool(value)
+	return err == nil && parsed
+}
+
+func workspaceRiskHome() string {
 	home := strings.TrimSpace(os.Getenv("HOME"))
 	if home == "" {
 		home = strings.TrimSpace(os.Getenv("USERPROFILE"))
@@ -100,10 +118,22 @@ func IsBroadWorkspacePath(dir string) bool {
 	if home == "" {
 		home, _ = os.UserHomeDir()
 	}
-	return IsBroadWorkspacePathWithHome(dir, home)
+	return home
 }
 
 func IsBroadWorkspacePathWithHome(dir, home string) bool {
+	if IsHighRiskWorkspacePathWithHome(dir, home) {
+		return true
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	return len(entries) >= DefaultBroadWorkspaceEntryThreshold
+}
+
+func IsHighRiskWorkspacePathWithHome(dir, home string) bool {
 	dir = filepath.Clean(strings.TrimSpace(dir))
 	if dir == "" {
 		return false
@@ -126,11 +156,7 @@ func IsBroadWorkspacePathWithHome(dir, home string) bool {
 		}
 	}
 
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	return len(entries) >= DefaultBroadWorkspaceEntryThreshold
+	return false
 }
 
 func IsFilesystemRoot(path string) bool {

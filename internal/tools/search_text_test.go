@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestSearchTextToolFindsMatchesCaseInsensitiveAndSkipsHiddenDirsAndBinary(t *testing.T) {
@@ -175,6 +176,18 @@ func TestSearchTextCanUseRipgrepBudgetsDisabledByEnvOverride(t *testing.T) {
 	t.Setenv("BYTEMIND_SEARCH_MAX_FILES", "1")
 	if searchTextCanUseRipgrepBudgets() {
 		t.Fatal("expected ripgrep path to be disabled when custom budgets are configured")
+	}
+}
+
+func TestSearchTextRipgrepTimeoutFromEnv(t *testing.T) {
+	t.Setenv("BYTEMIND_SEARCH_RG_TIMEOUT_MS", "25")
+	if got := searchTextRipgrepTimeout(); got != 25*time.Millisecond {
+		t.Fatalf("expected 25ms timeout, got %s", got)
+	}
+
+	t.Setenv("BYTEMIND_SEARCH_RG_TIMEOUT_MS", "invalid")
+	if got := searchTextRipgrepTimeout(); got != defaultSearchTextRipgrepTimeout {
+		t.Fatalf("expected invalid timeout to use default, got %s", got)
 	}
 }
 
