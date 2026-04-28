@@ -5385,6 +5385,9 @@ func TestLandingModeTabsHideAccessLabel(t *testing.T) {
 	if strings.Contains(tabs, "Access:") || strings.Contains(tabs, "Full Access") {
 		t.Fatalf("expected landing mode tabs to hide access label, got %q", tabs)
 	}
+	if !strings.Contains(stripANSI(tabs), "[ Build ]") {
+		t.Fatalf("expected active build tab to use bracket style, got %q", tabs)
+	}
 }
 
 func TestApprovalBannerForFullAccessConfirmation(t *testing.T) {

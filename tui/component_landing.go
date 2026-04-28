@@ -10,10 +10,14 @@ import (
 )
 
 var landingShortcutHints = []footerShortcutHint{
+	{Key: "Enter", Label: "send"},
+	{Key: "Ctrl+J", Label: "newline"},
 	{Key: "/", Label: "commands"},
 	{Key: "Ctrl+L", Label: "sessions"},
 	{Key: "Ctrl+C", Label: "quit"},
 }
+
+const landingLogoText = "BYTEMIND"
 
 func (m model) renderLandingHero() string {
 	innerWidth := m.landingPromptHeroWidth()
@@ -25,20 +29,14 @@ func (m model) renderLandingHero() string {
 	brandStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#E6F2FF")).Bold(true)
 	pixelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#2BE8FF"))
 	pixelGlowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#91CFD5"))
-	dotMutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#455C71"))
-	dotActiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#64DF69"))
 
-	headerHost := headerHostStyle.Render("bytemind@localhost:~")
-	dots := strings.Join([]string{
-		dotMutedStyle.Render("●"),
-		dotMutedStyle.Render("●"),
-		dotActiveStyle.Render("●"),
-	}, " ")
-	headerGap := max(1, innerWidth-lipgloss.Width(headerHost)-lipgloss.Width(dots))
-	headerRow := headerBgStyle.Render(padLandingANSI(headerHost+strings.Repeat(" ", headerGap)+dots, innerWidth))
+	headerHost := headerHostStyle.Render(landingWorkspaceName(m.workspace))
+	headerMeta := m.landingHeaderVersion(innerWidth - lipgloss.Width(headerHost) - 1)
+	headerGap := max(0, innerWidth-lipgloss.Width(headerHost)-lipgloss.Width(headerMeta))
+	headerRow := headerBgStyle.Render(padLandingANSI(headerHost+strings.Repeat(" ", headerGap)+headerMeta, innerWidth))
 
-	promptRow := padLandingANSI("  "+promptSigilStyle.Render(">_")+"  "+promptLabelStyle.Render("launching bytemind"), innerWidth)
-	pixelRows := landingPixelLogoRows("BYTEMIND", pixelStyle, pixelGlowStyle, m.landingGlowStep, innerWidth-2)
+	promptRow := padLandingANSI("  "+promptSigilStyle.Render(">_")+"  "+promptLabelStyle.Render("Your AI assistant"), innerWidth)
+	pixelRows := landingPixelLogoRows(landingLogoText, pixelStyle, pixelGlowStyle, m.landingGlowStep, innerWidth-2)
 	logoRows := make([]string, 0, len(pixelRows))
 	for _, row := range pixelRows {
 		left := max(0, (innerWidth-lipgloss.Width(row))/2)
@@ -63,8 +61,28 @@ func (m model) renderLandingHero() string {
 	)
 	frame := strings.Join(frameRows, "\n")
 
-	subtitle := landingSubtitleStyle.Render("Your AI assistant")
+	subtitle := " "
 	return frame + "\n\n" + subtitle
+}
+
+func landingWorkspaceName(workspace string) string {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return "./workspace"
+	}
+	normalized := strings.ReplaceAll(workspace, "\\", "/")
+	normalized = strings.TrimRight(normalized, "/")
+	if normalized == "" || normalized == "." {
+		return "./workspace"
+	}
+	if idx := strings.LastIndex(normalized, "/"); idx >= 0 {
+		normalized = normalized[idx+1:]
+	}
+	name := strings.TrimSpace(normalized)
+	if name == "" || name == "." {
+		return "./workspace"
+	}
+	return "./" + name
 }
 
 func (m model) landingPromptHeroWidth() int {
@@ -72,8 +90,34 @@ func (m model) landingPromptHeroWidth() int {
 		return 74
 	}
 	maxFit := max(24, m.width-8)
-	preferred := min(118, max(74, (m.width*5)/6))
+	preferred := max(landingStableHeroWidth(), m.landingInputShellWidth())
 	return clamp(preferred, 62, maxFit)
+}
+
+func landingStableHeroWidth() int {
+	return landingPreferredLogoWidth(landingLogoText) + 2
+}
+
+func landingPreferredLogoWidth(text string) int {
+	const (
+		glyphWidth = 5
+		cellWidth  = 2
+		gapWidth   = 2
+	)
+	runeCount := len([]rune(text))
+	if runeCount == 0 {
+		return 0
+	}
+	return runeCount*glyphWidth*cellWidth + (runeCount-1)*gapWidth
+}
+
+func (m model) landingHeaderVersion(maxWidth int) string {
+	version := strings.TrimSpace(m.version)
+	if version == "" || maxWidth <= 0 {
+		return ""
+	}
+	version = xansi.Cut(version, 0, maxWidth)
+	return landingVersionStyle.Render(version)
 }
 
 func padLandingANSI(text string, width int) string {
@@ -298,33 +342,32 @@ func ensureMinRows(text string, rows int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m model) renderLandingInputActions() string {
-	actions := landingActionKeyStyle.Render("Enter") + " " + landingActionLabelStyle.Render("send") +
-		landingActionDividerStyle.Render(" | ") +
-		landingActionKeyStyle.Render("Shift+Enter") + " " + landingActionLabelStyle.Render("newline")
-	return landingHintStyle.Render(actions)
-}
-
 func (m model) renderLandingModeTabs() string {
-	buildStyle := landingModeInactiveStyle
-	planStyle := landingModeInactiveStyle
+	buildLabel := landingModeInactiveStyle.Render("Build")
+	planLabel := landingModeInactiveStyle.Render("Plan")
 	if m.mode == modeBuild {
-		buildStyle = landingModeBuildActiveStyle
+		buildLabel = landingModeBuildActiveStyle.Render("[ Build ]")
 	} else {
-		planStyle = landingModePlanActiveStyle
+		planLabel = landingModePlanActiveStyle.Render("[ Plan ]")
 	}
-	sep := landingModeInactiveStyle.Render("   ")
-	return buildStyle.Render("Build") +
+	sep := landingModeInactiveStyle.Render("    ")
+	tabs := buildLabel +
 		sep +
-		planStyle.Render("Plan")
+		planLabel
+	modelLabel := m.currentModelLabel()
+	if strings.TrimSpace(modelLabel) == "" || modelLabel == "-" {
+		return tabs
+	}
+	return tabs + sep + landingModelStyle.Render(modelLabel)
 }
 
 func renderLandingShortcutHints() string {
 	parts := make([]string, 0, len(landingShortcutHints))
 	for _, hint := range landingShortcutHints {
-		parts = append(parts, landingShortcutKeyStyle.Render(hint.Key)+" "+landingShortcutLabelStyle.Render(hint.Label))
+		key := landingShortcutKeyStyle.Render("[" + hint.Key + "]")
+		parts = append(parts, key+" "+landingShortcutLabelStyle.Render(hint.Label))
 	}
-	return strings.Join(parts, landingShortcutDividerStyle.Render("  |  "))
+	return strings.Join(parts, landingShortcutDividerStyle.Render("   "))
 }
 
 func (m model) renderLandingContent(markInputZone bool) string {
@@ -340,8 +383,6 @@ func (m model) renderLandingContent(markInputZone bool) string {
 		parts,
 		"",
 		m.renderLandingInputBox(markInputZone),
-		m.renderLandingInputActions(),
-		"",
 		renderLandingShortcutHints(),
 	)
 	return strings.Join(parts, "\n")

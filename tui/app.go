@@ -20,6 +20,7 @@ type Options struct {
 	ImageStore   assets.ImageStore
 	Config       config.Config
 	Workspace    string
+	Version      string
 	StartupGuide StartupGuide
 }
 

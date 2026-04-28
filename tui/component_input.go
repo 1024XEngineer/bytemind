@@ -8,13 +8,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const landingInputPlaceholder = "Ask anything, or type / for commands..."
+
 func (m model) landingInputShellWidth() int {
 	if m.width <= 0 {
 		return 52
 	}
 	maxFit := max(1, m.width-16)
-	preferred := max(58, (m.width*2)/3)
-	maxPreferred := 104
+	preferred := max(landingStableHeroWidth(), (m.width*2)/3)
+	maxPreferred := max(104, landingStableHeroWidth())
 	if maxFit < 52 {
 		return maxFit
 	}
@@ -24,9 +26,9 @@ func (m model) landingInputShellWidth() int {
 func (m model) modeAccentColor() lipgloss.Color {
 	if m.screen == screenLanding {
 		if m.mode == modePlan {
-			return lipgloss.Color("#A9C6E8")
+			return lipgloss.Color(landingPlanAccent)
 		}
-		return lipgloss.Color("#4CB7FF")
+		return lipgloss.Color(landingBuildAccent)
 	}
 	if m.mode == modePlan {
 		return colorThinking
@@ -53,7 +55,7 @@ func (m *model) syncInputStyle() {
 	if m.startupGuide.Active {
 		m.input.Placeholder = startupGuideInputPlaceholder(m.startupGuide.CurrentField)
 	} else if m.screen == screenLanding {
-		m.input.Placeholder = "Let's get started..."
+		m.input.Placeholder = landingInputPlaceholder
 	} else {
 		m.input.Placeholder = "Ask Bytemind to inspect, change, or verify this workspace..."
 	}

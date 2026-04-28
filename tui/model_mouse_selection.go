@@ -466,7 +466,7 @@ func (m model) renderLandingInputEditorView() string {
 	if value == "" {
 		placeholder := m.input.Placeholder
 		if strings.TrimSpace(placeholder) == "" {
-			placeholder = "Let's get started..."
+			placeholder = landingInputPlaceholder
 		}
 		if !showCaret || !m.input.Focused() {
 			return landingPlaceholderStyle.Render(placeholder)

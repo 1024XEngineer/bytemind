@@ -109,6 +109,7 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 			ImageStore:   imageStore,
 			Config:       cfg,
 			Workspace:    runtimeBundle.Session.Workspace,
+			Version:      CurrentVersion(),
 			StartupGuide: guide,
 		},
 		close: runner.Close,
