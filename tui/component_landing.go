@@ -70,21 +70,21 @@ func (m model) renderLandingHero() string {
 func landingWorkspaceName(workspace string) string {
 	workspace = strings.TrimSpace(workspace)
 	if workspace == "" {
-		return "workspace"
+		return "./workspace"
 	}
 	normalized := strings.ReplaceAll(workspace, "\\", "/")
 	normalized = strings.TrimRight(normalized, "/")
 	if normalized == "" || normalized == "." {
-		return "workspace"
+		return "./workspace"
 	}
 	if idx := strings.LastIndex(normalized, "/"); idx >= 0 {
 		normalized = normalized[idx+1:]
 	}
 	name := strings.TrimSpace(normalized)
 	if name == "" || name == "." {
-		return "workspace"
+		return "./workspace"
 	}
-	return name
+	return "./" + name
 }
 
 func (m model) landingPromptHeroWidth() int {
@@ -334,9 +334,14 @@ func (m model) renderLandingModeTabs() string {
 		planStyle = landingModePlanActiveStyle
 	}
 	sep := landingModeInactiveStyle.Render("   ")
-	return buildStyle.Render("Build") +
+	tabs := buildStyle.Render("Build") +
 		sep +
 		planStyle.Render("Plan")
+	modelLabel := m.currentModelLabel()
+	if strings.TrimSpace(modelLabel) == "" || modelLabel == "-" {
+		return tabs
+	}
+	return tabs + sep + landingModelStyle.Render(modelLabel)
 }
 
 func renderLandingShortcutHints() string {
@@ -402,7 +407,26 @@ func (m model) renderLandingCanvas(content string) string {
 	for len(rows) < m.height {
 		rows = append(rows, m.renderLandingCanvasRow("", len(rows)))
 	}
+	if versionRow, ok := m.renderLandingVersionRow(m.height - 1); ok {
+		rows[m.height-1] = versionRow
+	}
 	return strings.Join(rows, "\n")
+}
+
+func (m model) renderLandingVersionRow(row int) (string, bool) {
+	version := strings.TrimSpace(m.version)
+	if version == "" || m.width <= 0 {
+		return "", false
+	}
+	rowStyle := lipgloss.NewStyle().Background(m.landingGradientColor(row))
+	label := landingVersionStyle.Render(version)
+	labelWidth := lipgloss.Width(label)
+	if labelWidth >= m.width {
+		return xansi.Cut(label, 0, m.width), true
+	}
+	left := max(0, m.width-labelWidth-2)
+	right := max(0, m.width-left-labelWidth)
+	return rowStyle.Width(left).Render("") + rowStyle.Render(label) + rowStyle.Width(right).Render(""), true
 }
 
 func (m model) renderLandingCanvasRow(line string, row int) string {

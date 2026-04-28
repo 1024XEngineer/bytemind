@@ -336,6 +336,7 @@ type model struct {
 	imageStore assets.ImageStore
 	cfg        config.Config
 	workspace  string
+	version    string
 
 	width  int
 	height int
@@ -507,6 +508,7 @@ func newModel(opts Options) model {
 		imageStore:           opts.ImageStore,
 		cfg:                  opts.Config,
 		workspace:            opts.Workspace,
+		version:              opts.Version,
 		async:                async,
 		viewport:             vp,
 		copyView:             copyVP,

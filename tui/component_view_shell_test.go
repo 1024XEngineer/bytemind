@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/1024XEngineer/bytemind/internal/config"
+
 	"github.com/charmbracelet/bubbles/textarea"
 	xansi "github.com/charmbracelet/x/ansi"
 )
@@ -19,6 +21,10 @@ func TestRenderLandingProducesContent(t *testing.T) {
 		mode:      modeBuild,
 		input:     input,
 		workspace: `D:\happycoding\lzy1\byte-lab`,
+		version:   "v1.2.3",
+		cfg: config.Config{
+			Provider: config.ProviderConfig{Model: "gpt-5.4-mini"},
+		},
 	}
 	m.syncInputStyle()
 
@@ -30,8 +36,14 @@ func TestRenderLandingProducesContent(t *testing.T) {
 	if got := strings.Count(plain, "Your AI assistant"); got != 1 {
 		t.Fatalf("expected landing assistant label once in rendered content, got %d in %q", got, plain)
 	}
-	if !strings.Contains(plain, "byte-lab") {
+	if !strings.Contains(plain, "./byte-lab") {
 		t.Fatalf("expected workspace name in prompt hero header, got %q", plain)
+	}
+	if !strings.Contains(plain, "gpt-5.4-mini") {
+		t.Fatalf("expected current model in landing mode row, got %q", plain)
+	}
+	if !strings.Contains(plain, "v1.2.3") {
+		t.Fatalf("expected version in landing canvas, got %q", plain)
 	}
 	if strings.Contains(plain, "bytemind@localhost") {
 		t.Fatalf("expected prompt hero header not to use localhost label, got %q", plain)
@@ -89,9 +101,9 @@ func TestLandingPromptHelpers(t *testing.T) {
 		workspace string
 		want      string
 	}{
-		{workspace: `D:\happycoding\lzy1\bytemind`, want: "bytemind"},
-		{workspace: "/home/me/byte-lab/", want: "byte-lab"},
-		{workspace: "", want: "workspace"},
+		{workspace: `D:\happycoding\lzy1\bytemind`, want: "./bytemind"},
+		{workspace: "/home/me/byte-lab/", want: "./byte-lab"},
+		{workspace: "", want: "./workspace"},
 	} {
 		if got := landingWorkspaceName(tc.workspace); got != tc.want {
 			t.Fatalf("expected workspace name %q for %q, got %q", tc.want, tc.workspace, got)
@@ -135,6 +147,26 @@ func TestRenderLandingCanvasUsesLandingContentTop(t *testing.T) {
 	want := m.landingContentTop(2)
 	if got != want {
 		t.Fatalf("expected first content row at %d, got %d", want, got)
+	}
+}
+
+func TestRenderLandingCanvasPlacesVersionBottomRight(t *testing.T) {
+	m := model{
+		width:   30,
+		height:  5,
+		version: "v1.2.3",
+	}
+	rendered := m.renderLandingCanvas("A")
+	lines := strings.Split(strings.ReplaceAll(rendered, "\r\n", "\n"), "\n")
+	if len(lines) != m.height {
+		t.Fatalf("expected %d canvas rows, got %d", m.height, len(lines))
+	}
+	bottom := xansi.Strip(lines[len(lines)-1])
+	if got := xansi.StringWidth(lines[len(lines)-1]); got != m.width {
+		t.Fatalf("expected version row width %d, got %d", m.width, got)
+	}
+	if !strings.HasSuffix(strings.TrimRight(bottom, " "), "v1.2.3") {
+		t.Fatalf("expected version to be bottom-right aligned, got %q", bottom)
 	}
 }
 

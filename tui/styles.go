@@ -167,7 +167,13 @@ var (
 				Bold(true)
 
 	landingModelStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#A9C6E8"))
+				Foreground(lipgloss.Color("#A9C6E8")).
+				Background(colorLandingPanel)
+
+	landingVersionStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#DDE6F0")).
+				Background(colorLandingPanel).
+				Faint(true)
 
 	landingHintStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#7FA4CC")).
