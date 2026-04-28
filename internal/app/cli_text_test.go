@@ -14,6 +14,12 @@ func TestDefaultUsageLinesIncludeInstall(t *testing.T) {
 	if !strings.Contains(joined, "bytemind mcp") {
 		t.Fatalf("expected usage to include mcp command, got %q", joined)
 	}
+	if !strings.Contains(joined, "bytemind --version") {
+		t.Fatalf("expected usage to include version command, got %q", joined)
+	}
+	if !strings.Contains(joined, "bytemind --yolo") {
+		t.Fatalf("expected usage to include yolo command, got %q", joined)
+	}
 	if !strings.Contains(joined, "install without Go (macOS/Linux)") {
 		t.Fatalf("expected usage to include no-go install tip, got %q", joined)
 	}
