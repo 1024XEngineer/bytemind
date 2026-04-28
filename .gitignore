@@ -13,3 +13,6 @@ prd-extension.md
 extension-iteration-plan.md
 demos/
 
+
+.tmp-gocache/
+output/

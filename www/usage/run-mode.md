@@ -1,6 +1,6 @@
 # Run Mode
 
-Run mode (`bytemind run`) executes a single task non-interactively and exits when done. There is no back-and-forth — you supply the full task in `-prompt` and the agent works to completion.
+Run mode (`bytemind run`) executes a single task non-interactively and exits when done. There is no back-and-forth - you supply the full task in `-prompt` and the agent works to completion.
 
 ```bash
 bytemind run -prompt "update the README installation section"
@@ -29,29 +29,28 @@ bytemind run -prompt "<task>" -config ./my.json   # custom config
 
 | Flag              | Description                 | Default     |
 | ----------------- | --------------------------- | ----------- |
-| `-prompt`         | Task description (required) | —           |
+| `-prompt`         | Task description (required) | -           |
 | `-max-iterations` | Max tool-call rounds        | 32          |
 | `-config`         | Path to config file         | auto-detect |
 
 ## Approval in Run Mode
 
-By default, run mode still uses `approval_mode: interactive`, which means it will **block waiting for your input** on high-risk operations. For fully automated pipelines, set away mode so approvals are handled automatically:
+By default, run mode still uses `approval_mode: interactive`, which means it will **block waiting for your input** on high-risk operations. For fully automated pipelines, set `full_access` so approval-required operations are auto-approved:
 
 ```json
 {
-  "approval_mode": "away",
-  "away_policy": "auto_deny_continue"
+  "approval_mode": "full_access"
 }
 ```
 
 Or via environment variable:
 
 ```bash
-BYTEMIND_APPROVAL_MODE=away bytemind run -prompt "regenerate all API docs"
+BYTEMIND_APPROVAL_MODE=full_access bytemind run -prompt "regenerate all API docs"
 ```
 
 :::warning
-With `auto_deny_continue`, any tool calls requiring approval will be automatically denied. The agent will skip those operations and continue. Use `fail_fast` if you want the task to abort instead.
+`away_policy` is a deprecated compatibility field. Keep it only if older tooling still expects that key; it no longer changes runtime behavior.
 :::
 
 ## Practical Examples
@@ -65,7 +64,7 @@ bytemind run -prompt "Regenerate the API reference in docs/api.md based on curre
 **Automated code cleanup in CI**
 
 ```bash
-BYTEMIND_APPROVAL_MODE=away \
+BYTEMIND_APPROVAL_MODE=full_access \
   bytemind run -prompt "Remove all TODO comments from the src/ directory and log what was removed"
 ```
 
@@ -77,6 +76,6 @@ bytemind run -prompt "Update the version in go.mod, README.md, and cmd/version.g
 
 ## See Also
 
-- [Chat Mode](/usage/chat-mode) — interactive, multi-turn mode
-- [Configuration](/configuration) — approval mode, away policy
-- [CLI Commands](/reference/cli-commands) — full flag reference
+- [Chat Mode](/usage/chat-mode) - interactive, multi-turn mode
+- [Configuration](/configuration) - approval mode and compatibility fields
+- [CLI Commands](/reference/cli-commands) - full flag reference

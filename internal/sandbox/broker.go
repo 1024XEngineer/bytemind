@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	configpkg "bytemind/internal/config"
 )
 
 const (
@@ -122,11 +124,11 @@ func (defaultPolicyBroker) Decide(_ context.Context, input DecisionInput) (Decis
 	requiresApproval := request.RequiresApproval || approvalPolicy == "always"
 	if requiresApproval {
 		mode := normalizeApprovalMode(input.Mode.ApprovalMode)
-		if mode == "away" {
+		if mode == "full_access" {
 			return DecisionResult{
-				Decision:   DecisionDeny,
-				ReasonCode: ReasonApprovalRequired,
-				Message:    "approval is unavailable in away mode",
+				Decision:   DecisionAllow,
+				ReasonCode: "",
+				Message:    "approval auto-granted in full_access mode",
 			}, nil
 		}
 		if approvalPolicy == "never" {
@@ -376,12 +378,9 @@ func normalizeApprovalPolicy(value string) string {
 }
 
 func normalizeApprovalMode(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "interactive":
-		return "interactive"
-	case "away":
-		return "away"
-	default:
+	mode, err := configpkg.NormalizeApprovalMode(value)
+	if err != nil || strings.TrimSpace(mode) == "" {
 		return "interactive"
 	}
+	return mode
 }

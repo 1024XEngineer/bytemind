@@ -175,27 +175,24 @@ func TestRequireApprovalReturnsClearDenialMessage(t *testing.T) {
 	}
 }
 
-func TestRequireApprovalAwayModeAutoDenyDoesNotPrompt(t *testing.T) {
+func TestRequireApprovalFullAccessAutoApprovesDoesNotPrompt(t *testing.T) {
 	var out bytes.Buffer
 	err := requireApproval("go test ./...", &ExecutionContext{
 		ApprovalPolicy: "on-request",
-		ApprovalMode:   "away",
+		ApprovalMode:   "full_access",
 		AwayPolicy:     "auto_deny_continue",
 		Stdin:          strings.NewReader("yes\n"),
 		Stdout:         &out,
 	})
-	if err == nil {
-		t.Fatal("expected away mode to deny approval-required shell command")
+	if err != nil {
+		t.Fatalf("expected full_access to auto-approve shell command, got %v", err)
 	}
 	if out.Len() != 0 {
-		t.Fatalf("expected no prompt output in away mode, got %q", out.String())
-	}
-	if !strings.Contains(err.Error(), "away mode") {
-		t.Fatalf("expected away mode message, got %v", err)
+		t.Fatalf("expected no prompt output in full_access mode, got %q", out.String())
 	}
 }
 
-func TestRequireApprovalAwayModeFailFastIncludesPolicyInError(t *testing.T) {
+func TestRequireApprovalAwayModeRequiresInteractiveApproval(t *testing.T) {
 	err := requireApproval("go test ./...", &ExecutionContext{
 		ApprovalPolicy: "on-request",
 		ApprovalMode:   "away",
@@ -204,10 +201,10 @@ func TestRequireApprovalAwayModeFailFastIncludesPolicyInError(t *testing.T) {
 		Stdout:         &bytes.Buffer{},
 	})
 	if err == nil {
-		t.Fatal("expected away mode fail_fast to deny approval-required shell command")
+		t.Fatal("expected away mode to require approval (and be denied without explicit yes)")
 	}
-	if !strings.Contains(err.Error(), "away_policy=fail_fast") {
-		t.Fatalf("expected fail_fast policy in error, got %v", err)
+	if !strings.Contains(err.Error(), "was not run because approval was denied") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

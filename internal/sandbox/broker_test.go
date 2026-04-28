@@ -242,7 +242,30 @@ func TestPolicyBrokerDeniesWhenApprovalChannelUnavailable(t *testing.T) {
 	}
 }
 
-func TestPolicyBrokerDeniesAwayApprovalRequirement(t *testing.T) {
+func TestPolicyBrokerAutoApprovesFullAccessApprovalRequirement(t *testing.T) {
+	now := time.Date(2026, 4, 20, 8, 0, 0, 0, time.UTC)
+	roots := sandboxRoots(t)
+	lease, keyring := mustSignedLease(t, now, roots)
+
+	broker := NewPolicyBroker()
+	result, err := broker.Decide(context.Background(), DecisionInput{
+		Lease:   lease,
+		Keyring: keyring,
+		Now:     now.Add(1 * time.Minute),
+		Mode:    ModeContext{ApprovalMode: "full_access", AwayPolicy: "auto_deny_continue"},
+		Request: RuntimeRequest{
+			RequiresApproval: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("broker decide: %v", err)
+	}
+	if result.Decision != DecisionAllow {
+		t.Fatalf("expected allow decision in full_access mode, got %#v", result)
+	}
+}
+
+func TestPolicyBrokerTreatsAwayAsInteractiveFailClosedByDefault(t *testing.T) {
 	now := time.Date(2026, 4, 20, 8, 0, 0, 0, time.UTC)
 	roots := sandboxRoots(t)
 	lease, keyring := mustSignedLease(t, now, roots)
@@ -260,8 +283,8 @@ func TestPolicyBrokerDeniesAwayApprovalRequirement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("broker decide: %v", err)
 	}
-	if result.Decision != DecisionDeny || result.ReasonCode != ReasonApprovalRequired {
-		t.Fatalf("expected approval_required deny in away mode, got %#v", result)
+	if result.Decision != DecisionDeny || result.ReasonCode != ReasonApprovalChannelUnavailable {
+		t.Fatalf("expected away mode to fail closed without approval channel, got %#v", result)
 	}
 }
 

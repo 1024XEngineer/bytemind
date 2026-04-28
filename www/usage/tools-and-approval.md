@@ -55,21 +55,22 @@ For trusted commands you don't want to approve repeatedly, define an `exec_allow
 
 Allowlisted commands skip the approval prompt.
 
-## Away Mode
+## Full Access Mode
 
-For unattended runs (CI pipelines, scripts), set `approval_mode: away` so the agent doesn't block waiting for input:
+For unattended runs (CI pipelines, scripts), set `approval_mode: full_access` so approval-required operations are auto-approved and the agent doesn't block waiting for input:
 
 ```json
 {
-  "approval_mode": "away",
-  "away_policy": "auto_deny_continue"
+  "approval_mode": "full_access"
 }
 ```
+
+Legacy `approval_mode: away` is blocked by default to prevent silent privilege escalation. Set `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` only for temporary migration.
 
 See [Configuration](/configuration) for all approval-related settings.
 
 ## See Also
 
-- [Configuration](/configuration) — approval policy, away mode, sandbox
+- [Configuration](/configuration) — approval policy, access modes, sandbox
 - [Run Mode](/usage/run-mode) — automated non-interactive execution
 - [Core Concepts](/core-concepts) — tools overview

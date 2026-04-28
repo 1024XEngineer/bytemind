@@ -32,18 +32,16 @@ func TestBuildApprovalPrecheckSummaryInteractive(t *testing.T) {
 	}
 }
 
-func TestBuildApprovalPrecheckSummaryAwayFailFast(t *testing.T) {
+func TestBuildApprovalPrecheckSummaryFullAccess(t *testing.T) {
 	summary := buildApprovalPrecheckSummary(approvalPrecheckSummaryInput{
 		ToolNames:      []string{"run_shell"},
 		ApprovalPolicy: "always",
-		ApprovalMode:   "away",
-		AwayPolicy:     "fail_fast",
+		ApprovalMode:   "full_access",
 	})
 	for _, want := range []string{
 		"approval precheck",
 		"approval_policy=always",
-		"away_policy=fail_fast",
-		"fail_fast",
+		"full_access mode",
 	} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("expected summary to contain %q, got %q", want, summary)

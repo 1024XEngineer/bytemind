@@ -15,7 +15,7 @@ This document defines the minimum acceptance checks for the current sandbox impl
   - `web_fetch`
   - `web_search`
 - Subprocess worker path for sandbox-enabled executions.
-- Approval behavior alignment across `interactive` and `away` modes.
+- Approval behavior alignment across `interactive` and `full_access` modes.
 - Fail-closed behavior when subprocess worker is unavailable.
 - Linux `required` mode execution hardening:
   - root filesystem remounted read-only inside sandboxed shell namespace
@@ -31,7 +31,7 @@ This document defines the minimum acceptance checks for the current sandbox impl
 | `sandbox_enabled=true` + lease denies file/exec/network | Tool result is denied with a clear reason code. |
 | `interactive` + escalation needed + approval available | Parent process prompts once, then executes. |
 | `interactive` + escalation needed + no approval channel | Operation is denied with `approval_channel_unavailable`. |
-| `away` + operation needs approval | Operation is denied immediately, no approval prompt. |
+| `full_access` + operation needs approval | Operation is auto-approved immediately, no approval prompt. |
 | Subprocess worker unavailable while sandbox enabled | Fail closed with internal sandbox worker error. |
 | `system_sandbox_mode=required` + OS backend unavailable | Fail closed before worker execution. |
 | `system_sandbox_mode=best_effort` + OS backend unavailable | Fallback to normal worker launch with explicit fallback reason in startup status/log. |
@@ -69,7 +69,7 @@ CI runs the same focused acceptance suites in a cross-platform matrix:
 - `internal/tools/worker_process_test.go`
   - subprocess route eligibility
   - parent pre-approval behavior
-  - away-mode no-prompt denial
+  - full_access no-prompt auto-approval
   - fail-closed when invoker is missing
   - worker protocol version validation
   - worker env sanitization
@@ -82,7 +82,7 @@ CI runs the same focused acceptance suites in a cross-platform matrix:
   - runtime request path resolution for workspace-relative file paths
 - `internal/tools/run_shell_test.go`
   - shell approval policy behavior
-  - away-mode denial behavior
+  - full_access auto-approval behavior
   - skip-shell-approval branch for parent-approved subprocess path
 - `internal/agent/runner_test.go`
   - required system sandbox fail-closed at startup before first model call
@@ -99,9 +99,9 @@ CI runs the same focused acceptance suites in a cross-platform matrix:
 1. `approval_mode=interactive`, `sandbox_enabled=true`, allowlist does not include a shell command:
    - Expect one approval prompt.
    - Approve -> command runs.
-2. Same as above with `approval_mode=away`:
+2. Same as above with `approval_mode=full_access`:
    - Expect no prompt.
-   - Command denied and run continues or stops based on `away_policy`.
+   - Command executes directly if sandbox/lease/network policy allows it.
 3. `write_file` with relative path under workspace:
    - Expect success when lease allows workspace root.
 4. `write_file` to path outside workspace/writable roots:

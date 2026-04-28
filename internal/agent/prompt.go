@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	configpkg "bytemind/internal/config"
 	planpkg "bytemind/internal/plan"
 )
 
@@ -145,8 +146,8 @@ func renderSystemBlock(input PromptInput) string {
 	if approval == "" {
 		approval = "on-request"
 	}
-	approvalMode := strings.TrimSpace(input.ApprovalMode)
-	if approvalMode == "" {
+	approvalMode, err := configpkg.NormalizeApprovalMode(input.ApprovalMode)
+	if err != nil {
 		approvalMode = "interactive"
 	}
 	awayPolicy := strings.TrimSpace(input.AwayPolicy)

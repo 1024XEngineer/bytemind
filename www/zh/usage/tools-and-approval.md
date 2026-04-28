@@ -55,21 +55,22 @@ Agent 调用高风险工具时，会展示：
 
 在白名单中的命令不会弹出审批提示。
 
-## Away 模式
+## Full Access 模式
 
-无人値守场景（CI、流水线）下，配置 `approval_mode: away` 让 Agent 不需阻塞等待输入：
+无人值守场景（CI、流水线）下，配置 `approval_mode: full_access`，审批请求会自动通过，任务不再被弹窗阻塞：
 
 ```json
 {
-  "approval_mode": "away",
-  "away_policy": "auto_deny_continue"
+  "approval_mode": "full_access"
 }
 ```
+
+兼容说明：为避免静默提权，`approval_mode: away` 默认被阻止。仅在迁移旧配置时，显式设置 `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` 才会临时映射到 `full_access`。
 
 完整审批配置见[配置详解](/zh/configuration)。
 
 ## 相关页面
 
-- [配置](/zh/configuration) — 审批策略、Away 模式、沙筱
+- [配置](/zh/configuration) — 审批策略、权限模式、沙箱
 - [单次执行模式](/zh/usage/run-mode) — 自动化非交互执行
 - [核心概念](/zh/core-concepts) — 工具概述

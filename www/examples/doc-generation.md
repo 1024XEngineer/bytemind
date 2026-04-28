@@ -37,7 +37,7 @@ Add to your CI pipeline:
 - name: Regenerate API docs
   env:
     OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-    BYTEMIND_APPROVAL_MODE: away
+    BYTEMIND_APPROVAL_MODE: full_access
   run: |
     bytemind run -prompt "Regenerate docs/api-reference.md from current source code in internal/api/"
 ```

@@ -1717,7 +1717,7 @@ func TestRunPromptEncodesToolExecutionErrorsAndContinues(t *testing.T) {
 	}
 }
 
-func TestRunPromptAwayAutoDenyContinueKeepsRunningAfterPermissionDenied(t *testing.T) {
+func TestRunPromptFullAccessAutoApprovesApprovalRequiredTools(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
@@ -1748,7 +1748,7 @@ func TestRunPromptAwayAutoDenyContinueKeepsRunningAfterPermissionDenied(t *testi
 		},
 		{
 			Role:    "assistant",
-			Content: "continued after denied approval",
+			Content: "continued after full_access approvals",
 		},
 	}}
 	runner := NewRunner(Options{
@@ -1758,7 +1758,7 @@ func TestRunPromptAwayAutoDenyContinueKeepsRunningAfterPermissionDenied(t *testi
 			MaxIterations:  4,
 			Stream:         false,
 			ApprovalPolicy: "on-request",
-			ApprovalMode:   "away",
+			ApprovalMode:   "full_access",
 			AwayPolicy:     "auto_deny_continue",
 		},
 		Client:   client,
@@ -1773,44 +1773,29 @@ func TestRunPromptAwayAutoDenyContinueKeepsRunningAfterPermissionDenied(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if answer != "continued after denied approval" {
+	if answer != "continued after full_access approvals" {
 		t.Fatalf("unexpected answer: %q", answer)
 	}
-	if len(sess.Messages) < 4 {
+	if len(sess.Messages) < 5 {
 		t.Fatalf("expected tool result message, got %#v", sess.Messages)
 	}
-	toolMsg := sess.Messages[2]
-	if !strings.Contains(toolMsg.Content, `"ok":false`) || !strings.Contains(toolMsg.Content, "away mode") {
-		t.Fatalf("expected away-mode denial payload, got %q", toolMsg.Content)
+	writeToolMsg := sess.Messages[2]
+	if !strings.Contains(writeToolMsg.Content, `"ok":true`) {
+		t.Fatalf("expected full_access write_file success payload, got %q", writeToolMsg.Content)
 	}
-	if !strings.Contains(toolMsg.Content, `"status":"denied"`) || !strings.Contains(toolMsg.Content, `"reason_code":"permission_denied"`) {
-		t.Fatalf("expected denied status and permission reason_code, got %q", toolMsg.Content)
+	readToolMsg := sess.Messages[3]
+	if !strings.Contains(readToolMsg.Content, `"ok":true`) {
+		t.Fatalf("expected read_file success payload after full_access write, got %q", readToolMsg.Content)
 	}
-	skippedMsg := sess.Messages[3]
-	if !strings.Contains(skippedMsg.Content, `"status":"skipped"`) || !strings.Contains(skippedMsg.Content, `"reason_code":"denied_dependency"`) {
-		t.Fatalf("expected skipped due dependency payload, got %q", skippedMsg.Content)
-	}
-	if !strings.Contains(skippedMsg.Content, "skipped because a prior approval-required action was denied") {
-		t.Fatalf("expected skipped message to describe denied dependency, got %q", skippedMsg.Content)
-	}
-	for _, want := range []string{
-		"Task report summary:",
-		"- Skipped due to denied dependency: read_file",
-		"Task report (json):",
-		`"denied":["write_file"]`,
-		`"skipped_due_to_denied_dependency":["read_file"]`,
-		`"skipped_due_to_dependency":["read_file"]`,
-	} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("expected successful auto_deny_continue output to contain %q, got %q", want, out.String())
-		}
+	if strings.Contains(out.String(), "Skipped due to denied dependency") {
+		t.Fatalf("did not expect skipped dependency report in full_access mode, got %q", out.String())
 	}
 	if strings.Contains(out.String(), `"pending_approval"`) {
-		t.Fatalf("expected away-mode task report to avoid pending_approval, got %q", out.String())
+		t.Fatalf("did not expect pending approval in full_access mode, got %q", out.String())
 	}
 }
 
-func TestRunPromptAwayAutoDenyContinueRecordsSandboxFallbackForSkippedDependency(t *testing.T) {
+func TestRunPromptFullAccessRecordsSandboxFallbackForToolExecutions(t *testing.T) {
 	original := resolveAgentSystemSandboxRuntimeStatus
 	resolveAgentSystemSandboxRuntimeStatus = func(enabled bool, mode string) (tools.SystemSandboxRuntimeStatus, error) {
 		if !enabled {
@@ -1860,7 +1845,7 @@ func TestRunPromptAwayAutoDenyContinueRecordsSandboxFallbackForSkippedDependency
 		},
 		{
 			Role:    "assistant",
-			Content: "continued after denied approval",
+			Content: "continued after full_access approvals",
 		},
 	}}
 	runner := NewRunner(Options{
@@ -1870,7 +1855,7 @@ func TestRunPromptAwayAutoDenyContinueRecordsSandboxFallbackForSkippedDependency
 			MaxIterations:     4,
 			Stream:            false,
 			ApprovalPolicy:    "on-request",
-			ApprovalMode:      "away",
+			ApprovalMode:      "full_access",
 			AwayPolicy:        "auto_deny_continue",
 			SandboxEnabled:    true,
 			SystemSandboxMode: "best_effort",
@@ -1887,7 +1872,7 @@ func TestRunPromptAwayAutoDenyContinueRecordsSandboxFallbackForSkippedDependency
 	if err != nil {
 		t.Fatal(err)
 	}
-	if answer != "continued after denied approval" {
+	if answer != "continued after full_access approvals" {
 		t.Fatalf("unexpected answer: %q", answer)
 	}
 	for _, want := range []string{
@@ -1902,7 +1887,7 @@ func TestRunPromptAwayAutoDenyContinueRecordsSandboxFallbackForSkippedDependency
 	}
 }
 
-func TestRunPromptAwayFailFastStopsAfterPermissionDenied(t *testing.T) {
+func TestRunPromptAwayModeDoesNotAutoApproveByDefault(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
@@ -1933,7 +1918,7 @@ func TestRunPromptAwayFailFastStopsAfterPermissionDenied(t *testing.T) {
 		},
 		{
 			Role:    "assistant",
-			Content: "this reply should not be consumed",
+			Content: "away mode requires approval",
 		},
 	}}
 	runner := NewRunner(Options{
@@ -1954,38 +1939,24 @@ func TestRunPromptAwayFailFastStopsAfterPermissionDenied(t *testing.T) {
 	})
 
 	answer, err := runner.RunPrompt(context.Background(), sess, "trigger permission path", "build", io.Discard)
-	if err == nil {
-		t.Fatal("expected fail_fast mode to stop run after permission denial")
+	if err != nil {
+		t.Fatalf("expected run to complete with denied tool payloads, got %v", err)
 	}
-	if strings.TrimSpace(answer) != "" {
-		t.Fatalf("expected empty answer when fail_fast stops run, got %q", answer)
+	if answer != "away mode requires approval" {
+		t.Fatalf("unexpected answer: %q", answer)
 	}
-	if !strings.Contains(err.Error(), "fail_fast stopped run") {
-		t.Fatalf("expected fail_fast stop reason, got %v", err)
+	if len(sess.Messages) < 5 {
+		t.Fatalf("expected tool call payloads to be recorded, got %#v", sess.Messages)
 	}
-	for _, want := range []string{
-		"Task report summary:",
-		"- Skipped due to denied dependency: read_file",
-		"Task report (json):",
-		`"denied":["write_file"]`,
-		`"skipped_due_to_denied_dependency":["read_file"]`,
-		`"skipped_due_to_dependency":["read_file"]`,
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("expected fail_fast error to include task report item %q, got %v", want, err)
-		}
+	if strings.Contains(sess.Messages[2].Content, `"ok":true`) {
+		t.Fatalf("expected away mode not to auto-approve write_file, got %q", sess.Messages[2].Content)
 	}
-	if strings.Contains(err.Error(), `"pending_approval"`) {
-		t.Fatalf("expected away-mode fail_fast report to avoid pending_approval, got %v", err)
+	if !strings.Contains(strings.ToLower(sess.Messages[2].Content), "approval") &&
+		!strings.Contains(strings.ToLower(sess.Messages[2].Content), "denied") {
+		t.Fatalf("expected away mode failure payload to mention approval denial, got %q", sess.Messages[2].Content)
 	}
-	if len(sess.Messages) != 3 {
-		t.Fatalf("expected session to stop after first denied tool call, got %#v", sess.Messages)
-	}
-	if !strings.Contains(sess.Messages[2].Content, "away_policy=fail_fast") {
-		t.Fatalf("expected denied tool payload to include fail_fast policy, got %q", sess.Messages[2].Content)
-	}
-	if !strings.Contains(sess.Messages[2].Content, `"status":"denied"`) || !strings.Contains(sess.Messages[2].Content, `"reason_code":"permission_denied"`) {
-		t.Fatalf("expected denied status and reason code in fail_fast payload, got %q", sess.Messages[2].Content)
+	if strings.Contains(sess.Messages[2].Content, "fail_fast") || strings.Contains(sess.Messages[3].Content, "fail_fast") {
+		t.Fatalf("deprecated away_policy should not influence runtime payloads, got %#v", sess.Messages)
 	}
 }
 

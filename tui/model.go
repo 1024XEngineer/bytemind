@@ -2726,8 +2726,11 @@ func (m model) currentSkillLabel() string {
 }
 
 func (m model) fullAccessEnabled() bool {
-	mode := strings.TrimSpace(m.cfg.ApprovalMode)
-	return strings.EqualFold(mode, "full_access") || strings.EqualFold(mode, "away")
+	mode, err := config.NormalizeApprovalMode(m.cfg.ApprovalMode)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(mode, "full_access")
 }
 
 func (m model) approvalModeStatusLabel() string {

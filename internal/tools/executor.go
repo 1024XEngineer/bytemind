@@ -280,8 +280,8 @@ func requireDestructiveApproval(toolName string, execCtx *ExecutionContext) erro
 	if execCtx == nil {
 		return nil
 	}
-	if execCtx.isAwayMode() {
-		return awayModeApprovalDeniedError("tool", toolName, execCtx)
+	if execCtx.isFullAccessMode() {
+		return nil
 	}
 	switch strings.TrimSpace(execCtx.ApprovalPolicy) {
 	case "never":
@@ -298,8 +298,8 @@ func promptDestructiveApproval(toolName string, execCtx *ExecutionContext) error
 	if toolName == "" {
 		toolName = "unknown_tool"
 	}
-	if execCtx.isAwayMode() {
-		return awayModeApprovalDeniedError("tool", toolName, execCtx)
+	if execCtx != nil && execCtx.isFullAccessMode() {
+		return nil
 	}
 	reason := fmt.Sprintf("destructive tool may modify workspace files: %s", toolName)
 	if execCtx.Approval != nil {
@@ -331,27 +331,6 @@ func promptDestructiveApproval(toolName string, execCtx *ExecutionContext) error
 		return NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q was not run because approval was denied", toolName), false, nil)
 	}
 	return nil
-}
-
-func awayModeApprovalDeniedError(kind, command string, execCtx *ExecutionContext) error {
-	kind = strings.TrimSpace(kind)
-	if kind == "" {
-		kind = "operation"
-	}
-	command = strings.TrimSpace(command)
-	if command == "" {
-		command = "unknown"
-	}
-	policy := awayPolicyAutoDenyContinue
-	if execCtx != nil {
-		policy = execCtx.awayPolicy()
-	}
-	return NewToolExecError(
-		ToolErrorPermissionDenied,
-		fmt.Sprintf("%s %q was not run because approval is unavailable in away mode (away_policy=%s)", kind, command, policy),
-		false,
-		nil,
-	)
 }
 
 func executionTimeout(raw json.RawMessage, spec ToolSpec) time.Duration {

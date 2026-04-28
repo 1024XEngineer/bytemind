@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"bytemind/internal/config"
 )
 
 func TestLoadRuntimeConfigAppliesOverrides(t *testing.T) {
@@ -29,7 +31,7 @@ func TestLoadRuntimeConfigAppliesOverrides(t *testing.T) {
 		StreamOverride:            "true",
 		SandboxEnabledOverride:    "true",
 		SystemSandboxModeOverride: "required",
-		ApprovalModeOverride:      "away",
+		ApprovalModeOverride:      "full_access",
 		AwayPolicyOverride:        "fail_fast",
 		MaxIterationsOverride:     9,
 	})
@@ -45,7 +47,7 @@ func TestLoadRuntimeConfigAppliesOverrides(t *testing.T) {
 	if cfg.MaxIterations != 9 {
 		t.Fatalf("unexpected max iterations: %d", cfg.MaxIterations)
 	}
-	if cfg.ApprovalMode != "away" {
+	if cfg.ApprovalMode != "full_access" {
 		t.Fatalf("unexpected approval mode: %q", cfg.ApprovalMode)
 	}
 	if cfg.AwayPolicy != "fail_fast" {
@@ -56,6 +58,61 @@ func TestLoadRuntimeConfigAppliesOverrides(t *testing.T) {
 	}
 	if cfg.SystemSandboxMode != "required" {
 		t.Fatalf("expected system sandbox mode override to apply, got %q", cfg.SystemSandboxMode)
+	}
+}
+
+func TestLoadRuntimeConfigRejectsLegacyAwayApprovalModeOverrideByDefault(t *testing.T) {
+	workspace := t.TempDir()
+	writeCfg := `{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-5.4-mini",
+    "api_key": "test-key"
+  }
+}`
+	if err := osWriteFile(workspace+"/config.json", writeCfg); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := LoadRuntimeConfig(ConfigRequest{
+		Workspace:            workspace,
+		ConfigPath:           workspace + "/config.json",
+		ApprovalModeOverride: "away",
+	})
+	if err == nil {
+		t.Fatal("expected away approval mode override to be rejected by default")
+	}
+	if !strings.Contains(err.Error(), "approval_mode=away is blocked by default") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRuntimeConfigAllowsLegacyAwayApprovalModeOverrideWithCompatEnv(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv(config.EnvAllowAwayFullAccessCompat, "true")
+	writeCfg := `{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-5.4-mini",
+    "api_key": "test-key"
+  }
+}`
+	if err := osWriteFile(workspace+"/config.json", writeCfg); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadRuntimeConfig(ConfigRequest{
+		Workspace:            workspace,
+		ConfigPath:           workspace + "/config.json",
+		ApprovalModeOverride: "away",
+	})
+	if err != nil {
+		t.Fatalf("expected away approval mode override to work when compat env enabled, got %v", err)
+	}
+	if cfg.ApprovalMode != "full_access" {
+		t.Fatalf("expected away override to normalize to full_access with migration gate, got %q", cfg.ApprovalMode)
 	}
 }
 

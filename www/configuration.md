@@ -25,7 +25,7 @@ Works with OpenAI, DeepSeek, Azure OpenAI, and any service that implements the `
 }
 ```
 
-Pass the API key via environment variable (recommended — keeps secrets out of files):
+Pass the API key via environment variable (recommended 閳?keeps secrets out of files):
 
 ```json
 {
@@ -92,17 +92,19 @@ Set `"auto_detect_type": true` to let ByteMind infer the provider type from `bas
 | Value                   | Behavior                                             |
 | ----------------------- | ---------------------------------------------------- |
 | `interactive` (default) | Prompt for approval on each operation                |
-| `away`                  | Unattended — handled automatically via `away_policy` |
+| `full_access`           | Auto-approve approval-required actions with no prompt |
 
-`away_policy` (applies only when `approval_mode` is `away`):
+Legacy compatibility is now gated: `approval_mode: away` is blocked by default to prevent silent privilege escalation. Set `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` only as a temporary migration escape hatch.
+
+`away_policy` (deprecated compatibility field):
 
 | Value                          | Behavior                                             |
 | ------------------------------ | ---------------------------------------------------- |
-| `auto_deny_continue` (default) | Automatically deny high-risk operations and continue |
-| `fail_fast`                    | Abort the task immediately when approval is required |
+| `auto_deny_continue` (default) | Accepted for compatibility; no runtime behavior change |
+| `fail_fast`                    | Accepted for compatibility; no runtime behavior change |
 
-:::warning Away mode caution
-In away mode, all approval-required operations are automatically denied. Make sure your task prompt does not depend on shell execution or file writes, or explicitly allow the needed commands via `exec_allowlist`.
+:::warning Full access caution
+In `full_access` mode, approval-required operations are auto-approved with no prompt. Keep sandbox/allowlist settings strict when running unattended.
 :::
 
 ## Sandbox
@@ -132,7 +134,7 @@ BYTEMIND_SANDBOX_ENABLED=true BYTEMIND_WRITABLE_ROOTS=./src bytemind chat
 }
 ```
 
-When the limit is reached, the agent produces a progress summary and stops gracefully — it does not error out. Raise this value for complex refactors or large migrations.
+When the limit is reached, the agent produces a progress summary and stops gracefully 閳?it does not error out. Raise this value for complex refactors or large migrations.
 
 ## Token Quota
 

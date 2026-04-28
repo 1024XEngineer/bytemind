@@ -18,7 +18,7 @@ func TestLoadUsesEnvOverrides(t *testing.T) {
 	t.Setenv("BYTEMIND_PROVIDER_TYPE", "anthropic")
 	t.Setenv("BYTEMIND_PROVIDER_AUTO_DETECT_TYPE", "true")
 	t.Setenv("BYTEMIND_STREAM", "false")
-	t.Setenv("BYTEMIND_APPROVAL_MODE", "away")
+	t.Setenv("BYTEMIND_APPROVAL_MODE", "full_access")
 	t.Setenv("BYTEMIND_AWAY_POLICY", "fail_fast")
 
 	cfg, err := Load(workspace, "")
@@ -46,7 +46,7 @@ func TestLoadUsesEnvOverrides(t *testing.T) {
 	if cfg.TokenQuota != 88000 {
 		t.Fatalf("expected token quota from env override, got %d", cfg.TokenQuota)
 	}
-	if cfg.ApprovalMode != "away" {
+	if cfg.ApprovalMode != "full_access" {
 		t.Fatalf("expected approval mode from env override, got %q", cfg.ApprovalMode)
 	}
 	if cfg.AwayPolicy != "fail_fast" {
@@ -256,7 +256,7 @@ func TestLoadMergesUserAndProjectConfigWithProjectPrecedence(t *testing.T) {
 			"api_key":  "project-key",
 		},
 		"approval_policy": "never",
-		"approval_mode":   "away",
+		"approval_mode":   "full_access",
 		"away_policy":     "fail_fast",
 		"max_iterations":  16,
 		"stream":          false,
@@ -277,7 +277,7 @@ func TestLoadMergesUserAndProjectConfigWithProjectPrecedence(t *testing.T) {
 	if cfg.ApprovalPolicy != "never" {
 		t.Fatalf("expected project approval policy precedence, got %q", cfg.ApprovalPolicy)
 	}
-	if cfg.ApprovalMode != "away" {
+	if cfg.ApprovalMode != "full_access" {
 		t.Fatalf("expected project approval mode precedence, got %q", cfg.ApprovalMode)
 	}
 	if cfg.AwayPolicy != "fail_fast" {
@@ -488,6 +488,63 @@ func TestLoadRejectsInvalidApprovalMode(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "approval_mode must be one of") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsLegacyAwayApprovalModeByDefault(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	path := projectConfigPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-5.4-mini",
+    "api_key": "test-key"
+  },
+  "approval_mode": "away"
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected legacy away approval_mode to be rejected by default")
+	}
+	if !strings.Contains(err.Error(), "approval_mode=away is blocked by default") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadAllowsLegacyAwayApprovalModeWhenCompatEnvEnabled(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	t.Setenv(EnvAllowAwayFullAccessCompat, "true")
+	path := projectConfigPath(workspace)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-5.4-mini",
+    "api_key": "test-key"
+  },
+  "approval_mode": "away"
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatalf("expected legacy away approval_mode to load with migration gate, got %v", err)
+	}
+	if cfg.ApprovalMode != "full_access" {
+		t.Fatalf("expected away compatibility mode to normalize to full_access, got %q", cfg.ApprovalMode)
 	}
 }
 
