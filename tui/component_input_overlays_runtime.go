@@ -83,7 +83,23 @@ func (m model) handleCommandPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return next, cmd
 		}
+		value := strings.TrimSpace(m.input.Value())
 		m.closeCommandPalette()
+		if selected.Name == "/commit" && value == selected.Name {
+			if m.busy {
+				m.statusNote = "This command is unavailable while a run is in progress. Use /btw <message>."
+				return m, nil
+			}
+			m.input.Reset()
+			m.clearPasteTransaction()
+			m.clearVirtualPasteParts()
+			next, cmd, err := m.executeCommand(value)
+			if err != nil {
+				m.statusNote = err.Error()
+				return m, nil
+			}
+			return next, cmd
+		}
 		if shouldExecuteFromPalette(selected) || selected.Name == "/continue" {
 			if selected.Name == "/quit" {
 				return m, tea.Quit

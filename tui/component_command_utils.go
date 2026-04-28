@@ -24,6 +24,7 @@ func (m model) helpText() string {
 		"- `/skill delete <name>`: delete the specified project skill.",
 		"- `/new`: start a fresh session.",
 		"- `/compact`: summarize long history into a compact continuation context.",
+		"- `/commit <message>`: stage all changes and create a local Git commit.",
 		"- `/btw <message>`: interject while a run is in progress.",
 		"- `/quit`: exit the TUI.",
 		"- TUI does not expose `/resume`; use `/session` then `Enter` on the selected row.",

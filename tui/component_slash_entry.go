@@ -41,6 +41,8 @@ func (m *model) handleSlashCommand(input string) error {
 		return m.newSession()
 	case "/compact":
 		return m.runCompactCommand(input)
+	case "/commit":
+		return m.runCommitCommand(input)
 	default:
 		return fmt.Errorf("unknown command: %s", fields[0])
 	}
