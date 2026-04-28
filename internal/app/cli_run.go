@@ -11,6 +11,5 @@ func RunCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		RunInstall:  RunInstall,
 		RunMCP:      RunMCP,
 		RenderUsage: RenderUsage,
-		RenderVersion: RenderVersion,
 	})
 }

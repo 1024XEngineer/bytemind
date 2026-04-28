@@ -20,7 +20,7 @@ Works with OpenAI, DeepSeek, Azure OpenAI, and any service that implements the `
     "api_key": "YOUR_API_KEY"
   },
   "approval_policy": "on-request",
-  "max_iterations": 64,
+  "max_iterations": 32,
   "stream": true
 }
 ```
@@ -55,7 +55,7 @@ bytemind chat
     "anthropic_version": "2023-06-01"
   },
   "approval_policy": "on-request",
-  "max_iterations": 64,
+  "max_iterations": 32,
   "stream": true
 }
 ```
@@ -156,7 +156,7 @@ When the limit is reached, the agent produces a progress summary and stops grace
   },
   "approval_policy": "on-request",
   "approval_mode": "interactive",
-  "max_iterations": 64,
+  "max_iterations": 32,
   "stream": true,
   "update_check": { "enabled": true },
   "context_budget": {

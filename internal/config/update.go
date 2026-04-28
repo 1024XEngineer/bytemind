@@ -88,7 +88,7 @@ func upsertProviderValues(configPath string, values map[string]string) (string, 
 		raw["away_policy"] = "auto_deny_continue"
 	}
 	if _, ok := raw["max_iterations"]; !ok {
-		raw["max_iterations"] = DefaultMaxIterations
+		raw["max_iterations"] = 32
 	}
 	if _, ok := raw["stream"]; !ok {
 		raw["stream"] = true

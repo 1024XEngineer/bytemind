@@ -59,7 +59,7 @@ func TestDefaultPolicyGatewayDecisionPriority(t *testing.T) {
 			},
 		},
 		{
-			name: "sandbox_guard_skips_web_fetch_in_windows_required_mode",
+			name: "sandbox_guard_denies_web_fetch_in_windows_required_mode",
 			in: ToolDecisionInput{
 				ToolName:             "web_fetch",
 				ApprovalPolicy:       "always",
@@ -71,13 +71,13 @@ func TestDefaultPolicyGatewayDecisionPriority(t *testing.T) {
 				SandboxRequiredCapab: true,
 			},
 			want: ToolDecision{
-				Decision:   corepkg.DecisionAllow,
-				ReasonCode: policyReasonModeDefault,
+				Decision:   corepkg.DecisionDeny,
+				ReasonCode: policyReasonSandboxGuard,
 				RiskLevel:  corepkg.RiskMedium,
 			},
 		},
 		{
-			name: "sandbox_guard_skips_web_fetch_in_unknown_required_backend",
+			name: "sandbox_guard_denies_web_fetch_in_unknown_required_backend",
 			in: ToolDecisionInput{
 				ToolName:             "web_fetch",
 				ApprovalPolicy:       "always",
@@ -89,13 +89,13 @@ func TestDefaultPolicyGatewayDecisionPriority(t *testing.T) {
 				SandboxRequiredCapab: false,
 			},
 			want: ToolDecision{
-				Decision:   corepkg.DecisionAllow,
-				ReasonCode: policyReasonModeDefault,
+				Decision:   corepkg.DecisionDeny,
+				ReasonCode: policyReasonSandboxGuard,
 				RiskLevel:  corepkg.RiskMedium,
 			},
 		},
 		{
-			name: "sandbox_guard_skips_web_fetch_in_linux_required_mode",
+			name: "sandbox_guard_denies_web_fetch_in_linux_required_mode",
 			in: ToolDecisionInput{
 				ToolName:             "web_fetch",
 				ApprovalPolicy:       "always",
@@ -107,13 +107,13 @@ func TestDefaultPolicyGatewayDecisionPriority(t *testing.T) {
 				SandboxRequiredCapab: true,
 			},
 			want: ToolDecision{
-				Decision:   corepkg.DecisionAllow,
-				ReasonCode: policyReasonModeDefault,
+				Decision:   corepkg.DecisionDeny,
+				ReasonCode: policyReasonSandboxGuard,
 				RiskLevel:  corepkg.RiskMedium,
 			},
 		},
 		{
-			name: "sandbox_guard_skips_web_search_in_darwin_required_mode",
+			name: "sandbox_guard_denies_web_search_in_darwin_required_mode",
 			in: ToolDecisionInput{
 				ToolName:             "web_search",
 				ApprovalPolicy:       "always",
@@ -125,13 +125,13 @@ func TestDefaultPolicyGatewayDecisionPriority(t *testing.T) {
 				SandboxRequiredCapab: true,
 			},
 			want: ToolDecision{
-				Decision:   corepkg.DecisionAllow,
-				ReasonCode: policyReasonModeDefault,
+				Decision:   corepkg.DecisionDeny,
+				ReasonCode: policyReasonSandboxGuard,
 				RiskLevel:  corepkg.RiskLow,
 			},
 		},
 		{
-			name: "allowlist_allows_web_search_when_sandbox_guard_skips_web_tools",
+			name: "sandbox_guard_overrides_allowlist_for_web_search",
 			in: ToolDecisionInput{
 				ToolName:             "web_search",
 				AllowedTools:         map[string]struct{}{"web_search": {}},
@@ -144,8 +144,8 @@ func TestDefaultPolicyGatewayDecisionPriority(t *testing.T) {
 				SandboxRequiredCapab: true,
 			},
 			want: ToolDecision{
-				Decision:   corepkg.DecisionAllow,
-				ReasonCode: policyReasonExplicitAllow,
+				Decision:   corepkg.DecisionDeny,
+				ReasonCode: policyReasonSandboxGuard,
 				RiskLevel:  corepkg.RiskLow,
 			},
 		},

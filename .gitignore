@@ -7,7 +7,6 @@
 bytemind.exe
 *.test
 .aicoding/
-.tmp/
 prd-provider.md
 provider-iteration-plan.md
 prd-extension.md

@@ -55,7 +55,7 @@ Create `.bytemind/config.json` with your provider settings:
     "api_key": "YOUR_API_KEY"
   },
   "approval_policy": "on-request",
-  "max_iterations": 64,
+  "max_iterations": 32,
   "stream": true
 }
 ```
@@ -74,7 +74,7 @@ Key fields at a glance:
 | `provider.api_key`     | API key (plain text)               | —                           |
 | `provider.api_key_env` | Env var name to read the key from  | `BYTEMIND_API_KEY`          |
 | `approval_policy`      | When to prompt for approval        | `on-request`                |
-| `max_iterations`       | Max tool-call rounds per task      | `64`                        |
+| `max_iterations`       | Max tool-call rounds per task      | `32`                        |
 | `stream`               | Enable streaming output            | `true`                      |
 
 See [Config Reference](/reference/config-reference) for the full field list.

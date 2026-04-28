@@ -46,7 +46,7 @@
 
 | 类型    | 默认值 |
 | ------- | ------ |
-| integer | `64`   |
+| integer | `32`   |
 
 单任务最大工具调用轮次。到达上限后 Agent 输出阶段性总结并停止。
 
@@ -123,7 +123,7 @@
   },
   "approval_policy": "on-request",
   "approval_mode": "interactive",
-  "max_iterations": 64,
+  "max_iterations": 32,
   "stream": true,
   "sandbox_enabled": false,
   "writable_roots": [],

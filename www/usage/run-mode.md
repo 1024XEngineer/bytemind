@@ -30,7 +30,7 @@ bytemind run -prompt "<task>" -config ./my.json   # custom config
 | Flag              | Description                 | Default     |
 | ----------------- | --------------------------- | ----------- |
 | `-prompt`         | Task description (required) | —           |
-| `-max-iterations` | Max tool-call rounds        | 64          |
+| `-max-iterations` | Max tool-call rounds        | 32          |
 | `-config`         | Path to config file         | auto-detect |
 
 ## Approval in Run Mode

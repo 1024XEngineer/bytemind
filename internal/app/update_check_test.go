@@ -14,27 +14,15 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/config"
 )
 
-func withUpdateCheckBuildVersion(t *testing.T, version string) {
-	t.Helper()
-	previousVersion := buildVersion
-	previousGitDescribe := gitDescribe
-	buildVersion = version
-	gitDescribe = func() string { return "" }
-	resetVersionCacheForTest()
-	t.Cleanup(func() {
-		buildVersion = previousVersion
-		gitDescribe = previousGitDescribe
-		resetVersionCacheForTest()
-	})
-}
-
 func TestMaybePrintUpdateReminderSkipsWhenDisabled(t *testing.T) {
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
 
 	cfg := config.Default(t.TempDir())
 	cfg.UpdateCheck.Enabled = false
 
-	withUpdateCheckBuildVersion(t, "v1.0.0")
+	previousVersion := buildVersion
+	buildVersion = "v1.0.0"
+	defer func() { buildVersion = previousVersion }()
 
 	previousFetcher := updateCheckFetchLatestVersion
 	calls := 0
@@ -61,7 +49,9 @@ func TestMaybePrintUpdateReminderChecksAtMostOncePerDay(t *testing.T) {
 	cfg := config.Default(t.TempDir())
 	cfg.UpdateCheck.Enabled = true
 
-	withUpdateCheckBuildVersion(t, "v1.0.0")
+	previousVersion := buildVersion
+	buildVersion = "v1.0.0"
+	defer func() { buildVersion = previousVersion }()
 
 	previousNow := updateCheckNow
 	now := time.Date(2026, 4, 19, 10, 0, 0, 0, time.UTC)
@@ -111,7 +101,9 @@ func TestMaybePrintUpdateReminderSkipsDevVersion(t *testing.T) {
 	cfg := config.Default(t.TempDir())
 	cfg.UpdateCheck.Enabled = true
 
-	withUpdateCheckBuildVersion(t, "dev")
+	previousVersion := buildVersion
+	buildVersion = "dev"
+	defer func() { buildVersion = previousVersion }()
 
 	previousFetcher := updateCheckFetchLatestVersion
 	calls := 0
@@ -137,7 +129,9 @@ func TestMaybePrintUpdateReminderSkipsWhenVersionNotNewer(t *testing.T) {
 	cfg := config.Default(t.TempDir())
 	cfg.UpdateCheck.Enabled = true
 
-	withUpdateCheckBuildVersion(t, "v1.2.0")
+	previousVersion := buildVersion
+	buildVersion = "v1.2.0"
+	defer func() { buildVersion = previousVersion }()
 
 	previousNow := updateCheckNow
 	updateCheckNow = func() time.Time { return time.Date(2026, 4, 19, 10, 0, 0, 0, time.UTC) }

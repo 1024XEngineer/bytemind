@@ -7,7 +7,7 @@
     "api_key": ""
   },
   "approval_policy": "on-request",
-  "max_iterations": 64,
+  "max_iterations": 32,
   "stream": true,
   "update_check": {
     "enabled": true

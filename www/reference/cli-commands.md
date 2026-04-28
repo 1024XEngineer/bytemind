@@ -13,7 +13,7 @@ bytemind chat [flags]
 | Flag                  | Description                   | Default     |
 | --------------------- | ----------------------------- | ----------- |
 | `-config <path>`      | Path to config file           | auto-detect |
-| `-max-iterations <n>` | Max tool-call rounds per task | 64          |
+| `-max-iterations <n>` | Max tool-call rounds per task | 32          |
 | `-v`                  | Enable verbose/debug output   | false       |
 
 **Examples:**
@@ -37,7 +37,7 @@ bytemind run -prompt "<task>" [flags]
 | --------------------- | ------------------------------- | ----------- |
 | `-prompt <text>`      | Task description **(required)** | —           |
 | `-config <path>`      | Path to config file             | auto-detect |
-| `-max-iterations <n>` | Max tool-call rounds per task   | 64          |
+| `-max-iterations <n>` | Max tool-call rounds per task   | 32          |
 | `-v`                  | Enable verbose/debug output     | false       |
 
 **Examples:**

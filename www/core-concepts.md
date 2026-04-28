@@ -83,7 +83,7 @@ See [Tools and Approval](/usage/tools-and-approval) for details.
 
 `max_iterations` caps the number of **tool-call rounds** per task, preventing runaway loops from consuming tokens:
 
-- Default: `64`
+- Default: `32`
 - When the limit is reached, the agent produces a progress summary and stops gracefully
 - Raise it for complex tasks via config or CLI flag:
 

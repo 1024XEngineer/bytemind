@@ -15,10 +15,9 @@ import (
 )
 
 const (
-	envBytemindHome      = "BYTEMIND_HOME"
-	defaultHomeDir       = ".bytemind"
-	defaultModelID       = "gpt-5.4-mini"
-	DefaultMaxIterations = 64
+	envBytemindHome = "BYTEMIND_HOME"
+	defaultHomeDir  = ".bytemind"
+	defaultModelID  = "gpt-5.4-mini"
 )
 
 const (
@@ -168,7 +167,7 @@ func Default(workspace string) Config {
 		WritableRoots:     []string{},
 		ExecAllowlist:     []ExecAllowRule{},
 		NetworkAllowlist:  []NetworkAllowRule{},
-		MaxIterations:     DefaultMaxIterations,
+		MaxIterations:     32,
 		Stream:            true,
 		UpdateCheck: UpdateCheckConfig{
 			Enabled: true,
@@ -336,7 +335,7 @@ func ensureDefaultConfigFile(home string) error {
 		WritableRoots:     []string{},
 		ExecAllowlist:     []ExecAllowRule{},
 		NetworkAllowlist:  []NetworkAllowRule{},
-		MaxIterations:     DefaultMaxIterations,
+		MaxIterations:     32,
 		Stream:            true,
 		UpdateCheck: UpdateCheckConfig{
 			Enabled: true,
@@ -635,7 +634,7 @@ func normalize(cfg *Config) error {
 		cfg.Provider.ExtraHeaders[key] = trimmedValue
 	}
 	if cfg.MaxIterations <= 0 {
-		cfg.MaxIterations = DefaultMaxIterations
+		cfg.MaxIterations = 32
 	}
 	if !isSupportedProviderType(cfg.Provider.Type) {
 		return errors.New("provider.type must be one of openai-compatible, openai, anthropic, gemini (or leave it empty with provider.auto_detect_type=true)")

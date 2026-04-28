@@ -37,8 +37,8 @@ func TestLoadUsesEnvOverrides(t *testing.T) {
 	if cfg.Stream {
 		t.Fatalf("expected stream override to disable streaming")
 	}
-	if cfg.MaxIterations != DefaultMaxIterations {
-		t.Fatalf("expected default max iterations %d, got %d", DefaultMaxIterations, cfg.MaxIterations)
+	if cfg.MaxIterations != 32 {
+		t.Fatalf("expected default max iterations 32, got %d", cfg.MaxIterations)
 	}
 	if cfg.Provider.ResolveAPIKey() != "secret" {
 		t.Fatalf("expected api key from env")

@@ -46,7 +46,7 @@ Only applies when `approval_mode` is `away`.
 
 | Type    | Default |
 | ------- | ------- |
-| integer | `64`    |
+| integer | `32`    |
 
 Maximum number of tool-call rounds per task. When reached, the agent summarizes progress and stops.
 
@@ -123,7 +123,7 @@ Controls context window management.
   },
   "approval_policy": "on-request",
   "approval_mode": "interactive",
-  "max_iterations": 64,
+  "max_iterations": 32,
   "stream": true,
   "sandbox_enabled": false,
   "writable_roots": [],

@@ -214,13 +214,15 @@ func (t *localRepoEvidenceTrace) observe(call llm.ToolCall, referencedPaths []st
 		if readPath == "" {
 			return
 		}
-		t.observeDirectFileEvidence("read_file", readPath, referencedPaths)
-	case "write_file", "replace_in_file":
-		filePath := extractPathArg(call.Function.Arguments)
-		t.observeDirectFileEvidence(name, filePath, referencedPaths)
-	case "apply_patch":
-		for _, filePath := range extractApplyPatchPaths(call.Function.Arguments) {
-			t.observeDirectFileEvidence("apply_patch", filePath, referencedPaths)
+		t.evidence.DirectConfirmations = appendUniqueEvidenceItem(t.evidence.DirectConfirmations, "read_file "+readPath)
+		for _, ref := range referencedPaths {
+			if normalizeLocalRepoPath(readPath) == normalizeLocalRepoPath(ref) {
+				t.confirmedPaths[normalizeLocalRepoPath(ref)] = true
+			}
+		}
+		if !isDocumentationPath(readPath) {
+			t.hasImplementationSignal = true
+			t.evidence.ImplementationEvidence = appendUniqueEvidenceItem(t.evidence.ImplementationEvidence, "read_file "+readPath)
 		}
 	case "run_shell":
 		command := extractRunShellCommand(call.Function.Arguments)
@@ -235,27 +237,6 @@ func (t *localRepoEvidenceTrace) observe(call llm.ToolCall, referencedPaths []st
 				t.evidence.ImplementationEvidence = appendUniqueEvidenceItem(t.evidence.ImplementationEvidence, "run_shell "+truncateRunes(command, 100))
 			}
 		}
-	}
-}
-
-func (t *localRepoEvidenceTrace) observeDirectFileEvidence(toolName, filePath string, referencedPaths []string) {
-	if t == nil {
-		return
-	}
-	filePath = normalizeLocalRepoPath(filePath)
-	if filePath == "" {
-		return
-	}
-	evidenceItem := toolName + " " + filePath
-	t.evidence.DirectConfirmations = appendUniqueEvidenceItem(t.evidence.DirectConfirmations, evidenceItem)
-	for _, ref := range referencedPaths {
-		if normalizeLocalRepoPath(filePath) == normalizeLocalRepoPath(ref) {
-			t.confirmedPaths[normalizeLocalRepoPath(ref)] = true
-		}
-	}
-	if !isDocumentationPath(filePath) {
-		t.hasImplementationSignal = true
-		t.evidence.ImplementationEvidence = appendUniqueEvidenceItem(t.evidence.ImplementationEvidence, evidenceItem)
 	}
 }
 
@@ -379,34 +360,6 @@ func extractRunShellCommand(arguments string) string {
 		return ""
 	}
 	return strings.TrimSpace(payload.Command)
-}
-
-func extractApplyPatchPaths(arguments string) []string {
-	var payload struct {
-		Patch string `json:"patch"`
-	}
-	if err := json.Unmarshal([]byte(arguments), &payload); err != nil {
-		return nil
-	}
-	patchText := strings.ReplaceAll(payload.Patch, "\r\n", "\n")
-	patchText = strings.ReplaceAll(patchText, "\r", "\n")
-	lines := strings.Split(patchText, "\n")
-	paths := make([]string, 0, 4)
-	for _, line := range lines {
-		for _, prefix := range []string{
-			"*** Add File: ",
-			"*** Update File: ",
-			"*** Delete File: ",
-			"*** Move to: ",
-		} {
-			if !strings.HasPrefix(line, prefix) {
-				continue
-			}
-			paths = appendUniqueEvidenceItem(paths, normalizeLocalRepoPath(strings.TrimPrefix(line, prefix)))
-			break
-		}
-	}
-	return paths
 }
 
 func confirmsReferencedPathByListing(referencePath, listPath string) bool {

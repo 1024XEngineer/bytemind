@@ -103,19 +103,6 @@ go run ./cmd/bytemind chat -max-iterations 64
 go run ./cmd/bytemind run -prompt "refactor this module" -max-iterations 64
 ```
 
-查看版本：
-
-```powershell
-go run ./cmd/bytemind --version
-go run ./cmd/bytemind version
-```
-
-YOLO 模式（等价于 `-approval-mode away -away-policy auto_deny_continue`）：
-
-```powershell
-go run ./cmd/bytemind --yolo
-```
-
 <a id="configuration"></a>
 
 ## ⚙️ 配置文件
@@ -131,7 +118,7 @@ go run ./cmd/bytemind --yolo
     "api_key": "your-api-key-here"
   },
   "approval_policy": "on-request",
-  "max_iterations": 64,
+  "max_iterations": 32,
   "stream": true
 }
 ```

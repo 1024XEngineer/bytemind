@@ -339,7 +339,7 @@ func TestRunPromptPolicyGatewayAskRequestsApprovalAndExecutesTool(t *testing.T) 
 	}
 }
 
-func TestRunPromptRequiredSandboxReportsWebFetchPermissionDeniedAtExecution(t *testing.T) {
+func TestRunPromptPolicyGatewaySandboxGuardDeniesWebFetchBeforeExecution(t *testing.T) {
 	testCases := []struct {
 		name            string
 		backend         string
@@ -427,7 +427,7 @@ func TestRunPromptRequiredSandboxReportsWebFetchPermissionDeniedAtExecution(t *t
 				t.Fatalf("unexpected answer: %q", answer)
 			}
 
-			deniedPayload := findToolResultPayloadByReasonCode(t, sess, reasonCodePermissionDenied)
+			deniedPayload := findToolResultPayloadByReasonCode(t, sess, policyReasonSandboxGuard)
 			if deniedPayload.SystemSandbox.Mode != "required" {
 				t.Fatalf("expected denied tool_result sandbox mode required, got %#v", deniedPayload.SystemSandbox)
 			}
@@ -443,11 +443,11 @@ func TestRunPromptRequiredSandboxReportsWebFetchPermissionDeniedAtExecution(t *t
 
 			foundPermissionDecision := false
 			foundExecuteStart := false
-			foundPermissionDeniedResult := false
+			foundDeniedResult := false
 			for _, event := range auditStore.snapshot() {
 				if event.Action == "permission_decision" && event.Metadata["tool_name"] == "web_fetch" {
-					if event.ReasonCode != policyReasonModeDefault || event.Decision != corepkg.DecisionAllow {
-						t.Fatalf("expected mode_default allow decision, got %+v", event)
+					if event.ReasonCode != policyReasonSandboxGuard || event.Decision != corepkg.DecisionDeny {
+						t.Fatalf("expected sandbox_guard deny decision, got %+v", event)
 					}
 					assertSandboxNetworkIsolationMetadataEqual(t, event.Metadata, caps.ShellNetworkIsolation, caps.WorkerNetworkIsolation)
 					foundPermissionDecision = true
@@ -455,19 +455,19 @@ func TestRunPromptRequiredSandboxReportsWebFetchPermissionDeniedAtExecution(t *t
 				if event.Action == "tool_execute_start" && event.Metadata["tool_name"] == "web_fetch" {
 					foundExecuteStart = true
 				}
-				if event.Action == "tool_execute_result" && event.Metadata["tool_name"] == "web_fetch" && event.Result == "error" {
+				if event.Action == "tool_execute_result" && event.Metadata["tool_name"] == "web_fetch" && event.Result == "denied" {
 					assertSandboxNetworkIsolationMetadataEqual(t, event.Metadata, caps.ShellNetworkIsolation, caps.WorkerNetworkIsolation)
-					foundPermissionDeniedResult = true
+					foundDeniedResult = true
 				}
 			}
 			if !foundPermissionDecision {
 				t.Fatal("expected permission_decision audit event for web_fetch")
 			}
-			if !foundExecuteStart {
-				t.Fatal("expected tool_execute_start audit event for web_fetch")
+			if foundExecuteStart {
+				t.Fatal("did not expect tool_execute_start audit event for policy-denied web_fetch")
 			}
-			if !foundPermissionDeniedResult {
-				t.Fatal("expected permission-denied tool_execute_result audit event for web_fetch")
+			if !foundDeniedResult {
+				t.Fatal("expected denied tool_execute_result audit event for web_fetch")
 			}
 		})
 	}

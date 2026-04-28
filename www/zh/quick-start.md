@@ -55,7 +55,7 @@ mkdir -p .bytemind
     "api_key": "YOUR_API_KEY"
   },
   "approval_policy": "on-request",
-  "max_iterations": 64,
+  "max_iterations": 32,
   "stream": true
 }
 ```
@@ -74,7 +74,7 @@ mkdir -p .bytemind
 | `provider.api_key`     | API 密钥（明文）                                  | —                           |
 | `provider.api_key_env` | 从环境变量读取 API 密钥的变量名                   | `BYTEMIND_API_KEY`          |
 | `approval_policy`      | 工具执行审批策略                                  | `on-request`                |
-| `max_iterations`       | 单任务最大工具调用轮次                            | `64`                        |
+| `max_iterations`       | 单任务最大工具调用轮次                            | `32`                        |
 | `stream`               | 流式输出                                          | `true`                      |
 
 完整配置字段见[配置参考](/zh/reference/config-reference)。
