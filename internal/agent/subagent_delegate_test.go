@@ -317,6 +317,9 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 	if call.Metadata["requested_timeout"] != "1m30s" {
 		t.Fatalf("expected requested_timeout metadata, got %q", call.Metadata["requested_timeout"])
 	}
+	if call.Metadata["requested_timeout_ms"] != "90000" {
+		t.Fatalf("expected requested_timeout_ms metadata, got %q", call.Metadata["requested_timeout_ms"])
+	}
 	if call.Metadata["requested_output"] != "findings" {
 		t.Fatalf("expected requested_output metadata, got %q", call.Metadata["requested_output"])
 	}

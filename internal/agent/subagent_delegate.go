@@ -131,6 +131,7 @@ func (r *Runner) delegateSubAgent(
 	}
 	if preflight.RequestedTimeout != "" {
 		metadata["requested_timeout"] = preflight.RequestedTimeout
+		metadata["requested_timeout_ms"] = strconv.FormatInt(preflight.RequestedTimeoutDuration.Milliseconds(), 10)
 	}
 	if preflight.RequestedOutput != "" {
 		metadata["requested_output"] = preflight.RequestedOutput
