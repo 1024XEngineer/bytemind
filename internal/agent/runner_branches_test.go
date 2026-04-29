@@ -496,13 +496,28 @@ func TestRenderToolFeedbackDelegateSubAgentErrorBranch(t *testing.T) {
 	runner := NewRunner(Options{})
 	var out bytes.Buffer
 
-	runner.renderToolFeedback(&out, "delegate_subagent", `{"ok":false,"invocation_id":"subagent-2","error":{"code":"subagent_task_not_eligible","message":"task is too tightly coupled"}}`)
+	runner.renderToolFeedback(&out, "delegate_subagent", `{"ok":false,"task_id":"task-42","invocation_id":"subagent-2","error":{"code":"subagent_task_not_eligible","message":"task is too tightly coupled"}}`)
 
 	got := out.String()
-	for _, want := range []string{"error", "task is too tightly coupled", "subagent_task_not_eligible", "invocation: subagent-2"} {
+	for _, want := range []string{"error", "task is too tightly coupled", "subagent_task_not_eligible", "invocation: subagent-2", "task_id: task-42"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected output to contain %q, got %q", want, got)
 		}
+	}
+}
+
+func TestRenderToolFeedbackDelegateSubAgentQueuedDoesNotDuplicateTaskID(t *testing.T) {
+	runner := NewRunner(Options{})
+	var out bytes.Buffer
+
+	runner.renderToolFeedback(&out, "delegate_subagent", `{"ok":true,"status":"queued","agent":"explorer","task_id":"task-7","invocation_id":"subagent-7","findings":[],"references":[]}`)
+
+	got := out.String()
+	if !strings.Contains(got, "task=task-7") {
+		t.Fatalf("expected queued inline task id, got %q", got)
+	}
+	if strings.Contains(got, "task_id: task-7") {
+		t.Fatalf("expected no duplicated task_id line, got %q", got)
 	}
 }
 

@@ -305,12 +305,14 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 			}
 			status := strings.ToLower(strings.TrimSpace(result.Status))
 			invocationID := strings.TrimSpace(result.Invocation)
+			taskID := strings.TrimSpace(result.TaskID)
+			taskIDShownInline := false
 			if result.OK {
 				switch status {
 				case "queued", "running", "accepted":
-					taskID := strings.TrimSpace(result.TaskID)
 					if taskID != "" {
 						fmt.Fprintf(out, "  %sdelegated%s %s (%s, task=%s)\n", ansiGreen, ansiReset, agent, status, taskID)
+						taskIDShownInline = true
 					} else {
 						fmt.Fprintf(out, "  %sdelegated%s %s (%s)\n", ansiGreen, ansiReset, agent, status)
 					}
@@ -323,6 +325,9 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 				}
 				if invocationID != "" {
 					fmt.Fprintf(out, "    invocation: %s\n", invocationID)
+				}
+				if taskID != "" && !taskIDShownInline {
+					fmt.Fprintf(out, "    task_id: %s\n", taskID)
 				}
 				fmt.Fprintf(out, "    findings: %d, references: %d\n", len(result.Findings), len(result.References))
 				previewCount := toolPreview
@@ -350,10 +355,16 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 				if invocationID != "" {
 					fmt.Fprintf(out, "    invocation: %s\n", invocationID)
 				}
+				if taskID != "" {
+					fmt.Fprintf(out, "    task_id: %s\n", taskID)
+				}
 			} else {
 				fmt.Fprintf(out, "  %serror%s subagent returned invalid result envelope\n", ansiYellow, ansiReset)
 				if invocationID != "" {
 					fmt.Fprintf(out, "    invocation: %s\n", invocationID)
+				}
+				if taskID != "" {
+					fmt.Fprintf(out, "    task_id: %s\n", taskID)
 				}
 			}
 		}
