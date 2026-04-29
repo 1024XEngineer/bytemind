@@ -370,6 +370,37 @@ review files
 	}
 }
 
+func TestGatewayPreflightNormalizesRequestedTimeoutString(t *testing.T) {
+	workspace := t.TempDir()
+	builtinDir := filepath.Join(workspace, "internal", "subagents")
+	writeSubAgentFile(t, filepath.Join(builtinDir, "review.md"), `---
+name: review
+description: reviewer
+tools: [read_file]
+---
+review files
+`)
+
+	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
+	gateway := NewGateway(manager)
+	result, err := gateway.Preflight(PreflightRequest{
+		Agent:            "review",
+		Task:             "check",
+		Mode:             planpkg.ModeBuild,
+		ParentVisible:    []string{"read_file"},
+		RequestedTimeout: "90s",
+	})
+	if err != nil {
+		t.Fatalf("unexpected preflight error: %v", err)
+	}
+	if result.RequestedTimeout != "1m30s" {
+		t.Fatalf("expected normalized timeout 1m30s, got %q", result.RequestedTimeout)
+	}
+	if result.RequestedTimeoutDuration != 90*time.Second {
+		t.Fatalf("expected timeout duration 90s, got %s", result.RequestedTimeoutDuration)
+	}
+}
+
 func TestGatewayPreflightRejectsInvalidRequestedIsolation(t *testing.T) {
 	workspace := t.TempDir()
 	builtinDir := filepath.Join(workspace, "internal", "subagents")

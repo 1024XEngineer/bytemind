@@ -127,6 +127,7 @@ func (g *Gateway) Preflight(request PreflightRequest) (PreflightResult, error) {
 			)
 		}
 		requestedTimeoutDuration = parsedTimeout
+		requestedTimeout = parsedTimeout.String()
 	}
 
 	requestedOutput := strings.TrimSpace(request.RequestedOutput)

@@ -314,7 +314,7 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 	if call.Metadata["effective_tools"] != "read_file,search_text" {
 		t.Fatalf("expected effective_tools list, got %q", call.Metadata["effective_tools"])
 	}
-	if call.Metadata["requested_timeout"] != "90s" {
+	if call.Metadata["requested_timeout"] != "1m30s" {
 		t.Fatalf("expected requested_timeout metadata, got %q", call.Metadata["requested_timeout"])
 	}
 	if call.Metadata["requested_output"] != "findings" {
