@@ -702,6 +702,9 @@ func TestNormalizeDelegateSubAgentResultDerivesStatusFromOK(t *testing.T) {
 	if result.Status != subAgentResultStatusFailed {
 		t.Fatalf("expected status %q, got %q", subAgentResultStatusFailed, result.Status)
 	}
+	if result.Error == nil || result.Error.Code != "subagent_task_failed" {
+		t.Fatalf("expected normalized error code subagent_task_failed, got %#v", result.Error)
+	}
 }
 
 func TestNormalizeDelegateSubAgentResultRejectsUnsupportedStatus(t *testing.T) {
@@ -735,6 +738,27 @@ func TestNormalizeDelegateSubAgentResultRejectsMismatchedOKStatus(t *testing.T) 
 	)
 	if err == nil || !strings.Contains(err.Error(), "must use status") {
 		t.Fatalf("expected failed/status mismatch error, got %v", err)
+	}
+}
+
+func TestNormalizeDelegateSubAgentResultNormalizesErrorCodeCase(t *testing.T) {
+	result, err := normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":false,"status":"FAILED","error":{"code":"  SUBAGENT_TASK_FAILED  ","message":" boom ","retryable":true},"findings":[],"references":[]}`),
+		"inv-1",
+		"explorer",
+		"task-1",
+	)
+	if err != nil {
+		t.Fatalf("expected normalization success, got %v", err)
+	}
+	if result.Status != subAgentResultStatusFailed {
+		t.Fatalf("expected normalized status failed, got %q", result.Status)
+	}
+	if result.Error == nil || result.Error.Code != "subagent_task_failed" {
+		t.Fatalf("expected normalized lower-case error code, got %#v", result.Error)
+	}
+	if result.Error.Message != "boom" {
+		t.Fatalf("expected trimmed error message boom, got %#v", result.Error)
 	}
 }
 

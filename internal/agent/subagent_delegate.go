@@ -344,7 +344,7 @@ func normalizeDelegateSubAgentResult(
 		if result.Error == nil {
 			return tools.DelegateSubAgentResult{}, fmt.Errorf("failed result must include error")
 		}
-		result.Error.Code = strings.TrimSpace(result.Error.Code)
+		result.Error.Code = strings.ToLower(strings.TrimSpace(result.Error.Code))
 		result.Error.Message = strings.TrimSpace(result.Error.Message)
 		if result.Error.Code == "" || result.Error.Message == "" {
 			return tools.DelegateSubAgentResult{}, fmt.Errorf("failed result must include non-empty error code/message")
