@@ -299,6 +299,45 @@ func TestDelegateSubAgentAcceptsStructuredRuntimeOutput(t *testing.T) {
 	}
 }
 
+func TestDelegateSubAgentUsesCanonicalAgentNameWhenRequestUsesAlias(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerAliasSubAgentDefinition(t, workspace)
+
+	gateway := &stubRuntimeGateway{
+		result: runtimepkg.TaskResult{
+			TaskID: "runtime-subagent-task",
+			Status: corepkg.TaskCompleted,
+			Output: []byte(`{
+				"ok": true,
+				"summary": "alias scan complete",
+				"findings": [],
+				"references": []
+			}`),
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "exp",
+		Task:  "Locate prompt assembly order",
+	}, &tools.ExecutionContext{
+		Mode: planpkg.ModeBuild,
+	})
+	if err != nil {
+		t.Fatalf("expected structured tool result without Go error, got %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("expected success result, got %#v", result)
+	}
+	if result.Agent != "explorer" {
+		t.Fatalf("expected canonical agent name explorer, got %q", result.Agent)
+	}
+}
+
 func TestDelegateSubAgentRejectsInvalidStructuredRuntimeOutput(t *testing.T) {
 	workspace := t.TempDir()
 	writeExplorerSubAgentDefinition(t, workspace)
@@ -396,6 +435,24 @@ func writeExplorerSubAgentDefinition(t *testing.T, workspace string) {
 	if err := os.WriteFile(filepath.Join(workspace, "internal", "subagents", "explorer.md"), []byte(`---
 name: explorer
 description: repo explorer
+tools: [read_file, search_text]
+mode: build
+---
+scan files
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeExplorerAliasSubAgentDefinition(t *testing.T, workspace string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(workspace, "internal", "subagents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "internal", "subagents", "explorer.md"), []byte(`---
+name: explorer
+description: repo explorer
+aliases: [exp]
 tools: [read_file, search_text]
 mode: build
 ---

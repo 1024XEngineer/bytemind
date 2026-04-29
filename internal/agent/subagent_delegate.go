@@ -173,7 +173,7 @@ func (r *Runner) delegateSubAgent(
 		normalized, normalizeErr := normalizeDelegateSubAgentResult(
 			execution.Result.Output,
 			result.InvocationID,
-			request.Agent,
+			result.Agent,
 			result.TaskID,
 		)
 		if normalizeErr != nil {
