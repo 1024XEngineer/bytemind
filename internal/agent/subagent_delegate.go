@@ -175,14 +175,11 @@ func (r *Runner) delegateSubAgent(
 		return result, nil
 	}
 	if execution.Result.Status != corepkg.TaskCompleted {
-		errorCode := strings.TrimSpace(execution.Result.ErrorCode)
-		if errorCode == "" {
-			errorCode = subAgentErrorCodeRuntimeUnavailable
-		}
+		errorCode, retryable := mapSubAgentTerminalResult(execution.Result.Status, execution.Result.ErrorCode)
 		result.Error = &tools.DelegateSubAgentError{
 			Code:      errorCode,
 			Message:   fmt.Sprintf("subagent task ended with status %s", execution.Result.Status),
-			Retryable: execution.Result.Status != corepkg.TaskKilled,
+			Retryable: retryable,
 		}
 		return result, nil
 	}
@@ -288,6 +285,22 @@ func mapDelegateSubAgentError(err error, fallbackCode string) *tools.DelegateSub
 		Message:   strings.TrimSpace(err.Error()),
 		Retryable: true,
 	}
+}
+
+func mapSubAgentTerminalResult(status corepkg.TaskStatus, errorCode string) (code string, retryable bool) {
+	code = strings.TrimSpace(errorCode)
+	if code == "" {
+		switch status {
+		case corepkg.TaskKilled:
+			code = runtimepkg.ErrorCodeTaskCancelled
+		case corepkg.TaskFailed:
+			code = runtimepkg.ErrorCodeTaskExecutionFailed
+		default:
+			code = subAgentErrorCodeRuntimeUnavailable
+		}
+	}
+	retryable = status != corepkg.TaskKilled && code != runtimepkg.ErrorCodeTaskCancelled
+	return code, retryable
 }
 
 func normalizeDelegateSubAgentResult(

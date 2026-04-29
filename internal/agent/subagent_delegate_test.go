@@ -156,6 +156,78 @@ func TestDelegateSubAgentReturnsRuntimeUnavailableWhenGatewayMissing(t *testing.
 	}
 }
 
+func TestDelegateSubAgentMapsKilledRuntimeResultWithoutErrorCode(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+
+	gateway := &stubRuntimeGateway{
+		result: runtimepkg.TaskResult{
+			TaskID: "runtime-subagent-task",
+			Status: corepkg.TaskKilled,
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "Locate prompt assembly order",
+	}, &tools.ExecutionContext{
+		Mode: planpkg.ModeBuild,
+	})
+	if err != nil {
+		t.Fatalf("expected structured tool result without Go error, got %v", err)
+	}
+	if result.OK {
+		t.Fatalf("expected failed result, got %#v", result)
+	}
+	if result.Error == nil || result.Error.Code != runtimepkg.ErrorCodeTaskCancelled {
+		t.Fatalf("expected cancelled code, got %#v", result.Error)
+	}
+	if result.Error.Retryable {
+		t.Fatalf("expected retryable=false for cancelled status, got %#v", result.Error)
+	}
+}
+
+func TestDelegateSubAgentMapsFailedRuntimeResultWithoutErrorCode(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+
+	gateway := &stubRuntimeGateway{
+		result: runtimepkg.TaskResult{
+			TaskID: "runtime-subagent-task",
+			Status: corepkg.TaskFailed,
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "Locate prompt assembly order",
+	}, &tools.ExecutionContext{
+		Mode: planpkg.ModeBuild,
+	})
+	if err != nil {
+		t.Fatalf("expected structured tool result without Go error, got %v", err)
+	}
+	if result.OK {
+		t.Fatalf("expected failed result, got %#v", result)
+	}
+	if result.Error == nil || result.Error.Code != runtimepkg.ErrorCodeTaskExecutionFailed {
+		t.Fatalf("expected task execution failed code, got %#v", result.Error)
+	}
+	if !result.Error.Retryable {
+		t.Fatalf("expected retryable=true for failed status, got %#v", result.Error)
+	}
+}
+
 func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 	workspace := t.TempDir()
 	writeExplorerSubAgentDefinition(t, workspace)
@@ -745,6 +817,17 @@ func TestValidateDelegateSubAgentOutputContract(t *testing.T) {
 	}
 	if err := validateDelegateSubAgentOutputContract(empty, subAgentRequestedOutputFindings); err == nil {
 		t.Fatal("expected findings contract error")
+	}
+}
+
+func TestMapSubAgentTerminalResultDefaults(t *testing.T) {
+	code, retryable := mapSubAgentTerminalResult(corepkg.TaskKilled, "")
+	if code != runtimepkg.ErrorCodeTaskCancelled || retryable {
+		t.Fatalf("unexpected killed mapping: code=%q retryable=%v", code, retryable)
+	}
+	code, retryable = mapSubAgentTerminalResult(corepkg.TaskFailed, "")
+	if code != runtimepkg.ErrorCodeTaskExecutionFailed || !retryable {
+		t.Fatalf("unexpected failed mapping: code=%q retryable=%v", code, retryable)
 	}
 }
 
