@@ -315,7 +315,7 @@ func (e *defaultEngine) toolSafetyClass(name string) tools.SafetyClass {
 func shouldExecuteToolDirectly(name string) bool {
 	switch strings.TrimSpace(name) {
 	case "list_files", "read_file", "search_text", "web_search", "web_fetch",
-		"write_file", "replace_in_file", "apply_patch", "update_plan":
+		"write_file", "replace_in_file", "apply_patch", "update_plan", "delegate_subagent":
 		return true
 	default:
 		return false
