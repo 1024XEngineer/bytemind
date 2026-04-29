@@ -2889,6 +2889,10 @@ func (m model) autoFollowLabel() string {
 
 func (m model) currentModelLabel() string {
 	if model := strings.TrimSpace(m.cfg.Provider.Model); model != "" {
+		lower := strings.ToLower(model)
+		if strings.HasSuffix(lower, " (bytemind)") {
+			return strings.TrimSpace(strings.TrimSuffix(lower, " (bytemind)"))
+		}
 		return model
 	}
 	return "-"

@@ -5179,7 +5179,7 @@ func TestApprovalBannerNarrowWidthFallbackKeepsAlignedHint(t *testing.T) {
 			t.Fatalf("expected banner line %d width %d under narrow layout, got %d (%q)", i, expectedWidth, got, line)
 		}
 	}
-	for _, want := range []string{"Up/Down", "Enter confirm", "Y approve once", "N/Esc", "reject"} {
+	for _, want := range []string{"Up/Down", "Enter", "confirm", "Y approve", "once", "N/Esc", "reject"} {
 		if !strings.Contains(banner, want) {
 			t.Fatalf("expected narrow-layout fallback to keep action hint token %q, got %q", want, banner)
 		}
@@ -5310,11 +5310,11 @@ func TestApprovalKeysTransitionStateAndSendDecision(t *testing.T) {
 		m := model{
 			approval: &approvalPrompt{
 				ToolName: "run_shell",
-				Command: "go test ./tui",
-				Reason:  "run focused tests",
-				Reply:   reply,
-				Kind:    approvalPromptKindTool,
-				Cursor:  0,
+				Command:  "go test ./tui",
+				Reason:   "run focused tests",
+				Reply:    reply,
+				Kind:     approvalPromptKindTool,
+				Cursor:   0,
 			},
 			phase: "approval",
 		}
