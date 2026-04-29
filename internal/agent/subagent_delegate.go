@@ -307,11 +307,20 @@ func normalizeDelegateSubAgentResult(
 	result.InvocationID = firstNonEmpty(result.InvocationID, fallbackInvocationID)
 	result.Agent = firstNonEmpty(result.Agent, fallbackAgent)
 	result.TaskID = firstNonEmpty(result.TaskID, fallbackTaskID)
+	result.Summary = strings.TrimSpace(result.Summary)
 	if result.Findings == nil {
 		result.Findings = []tools.DelegateSubAgentFinding{}
 	}
+	for i := range result.Findings {
+		result.Findings[i].Title = strings.TrimSpace(result.Findings[i].Title)
+		result.Findings[i].Body = strings.TrimSpace(result.Findings[i].Body)
+	}
 	if result.References == nil {
 		result.References = []tools.DelegateSubAgentReference{}
+	}
+	for i := range result.References {
+		result.References[i].Path = strings.TrimSpace(result.References[i].Path)
+		result.References[i].Note = strings.TrimSpace(result.References[i].Note)
 	}
 	if result.OK && result.Error != nil {
 		return tools.DelegateSubAgentResult{}, fmt.Errorf("ok result must not include error")

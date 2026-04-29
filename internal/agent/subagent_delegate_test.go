@@ -752,6 +752,33 @@ func TestNormalizeDelegateSubAgentResultAcceptsAsyncSuccessStatuses(t *testing.T
 	}
 }
 
+func TestNormalizeDelegateSubAgentResultTrimsStructuredFields(t *testing.T) {
+	result, err := normalizeDelegateSubAgentResult(
+		[]byte(`{
+			"ok": true,
+			"status": "completed",
+			"summary": "  done  ",
+			"findings": [{"title":"  t  ","body":"  b  "}],
+			"references": [{"path":"  a.go  ","line":12,"note":"  n  "}]
+		}`),
+		"inv-1",
+		"explorer",
+		"task-1",
+	)
+	if err != nil {
+		t.Fatalf("expected normalization success, got %v", err)
+	}
+	if result.Summary != "done" {
+		t.Fatalf("expected trimmed summary, got %q", result.Summary)
+	}
+	if len(result.Findings) != 1 || result.Findings[0].Title != "t" || result.Findings[0].Body != "b" {
+		t.Fatalf("expected trimmed findings, got %#v", result.Findings)
+	}
+	if len(result.References) != 1 || result.References[0].Path != "a.go" || result.References[0].Note != "n" {
+		t.Fatalf("expected trimmed references, got %#v", result.References)
+	}
+}
+
 func TestNormalizeDelegateSubAgentResultRejectsAsyncStatusWithoutTaskID(t *testing.T) {
 	for _, status := range []string{subAgentResultStatusQueued, subAgentResultStatusRunning, subAgentResultStatusAccepted} {
 		_, err := normalizeDelegateSubAgentResult(
