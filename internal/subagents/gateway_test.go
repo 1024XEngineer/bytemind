@@ -1,0 +1,187 @@
+package subagents
+
+import (
+	"path/filepath"
+	"slices"
+	"testing"
+
+	planpkg "bytemind/internal/plan"
+)
+
+func TestGatewayPreflightBuildsEffectiveToolSet(t *testing.T) {
+	workspace := t.TempDir()
+	builtinDir := filepath.Join(workspace, "internal", "subagents")
+	writeSubAgentFile(t, filepath.Join(builtinDir, "review.md"), `---
+name: review
+description: reviewer
+tools: [read_file, search_text, delegate_subagent]
+disallowed_tools: [run_shell]
+mode: build
+---
+review files
+`)
+
+	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
+	gateway := NewGateway(manager)
+	result, err := gateway.Preflight(PreflightRequest{
+		Agent:         "review",
+		Task:          "Find defects in runtime task flow",
+		Mode:          planpkg.ModeBuild,
+		ParentVisible: []string{"read_file", "search_text", "run_shell", "write_file", "delegate_subagent"},
+		ParentDenied:  map[string]struct{}{"write_file": {}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected preflight error: %v", err)
+	}
+	if !slices.Equal(result.EffectiveTools, []string{"read_file", "search_text"}) {
+		t.Fatalf("unexpected effective tools: %#v", result.EffectiveTools)
+	}
+	if _, ok := result.AllowedTools["read_file"]; !ok {
+		t.Fatalf("expected read_file in allowlist: %#v", result.AllowedTools)
+	}
+	if _, ok := result.DeniedTools["delegate_subagent"]; !ok {
+		t.Fatalf("expected delegate_subagent in denylist: %#v", result.DeniedTools)
+	}
+	if _, ok := result.DeniedTools["run_shell"]; !ok {
+		t.Fatalf("expected run_shell in denylist: %#v", result.DeniedTools)
+	}
+	if _, ok := result.DeniedTools["write_file"]; !ok {
+		t.Fatalf("expected inherited parent denylist: %#v", result.DeniedTools)
+	}
+}
+
+func TestGatewayPreflightAppliesParentAllowlistIntersection(t *testing.T) {
+	workspace := t.TempDir()
+	builtinDir := filepath.Join(workspace, "internal", "subagents")
+	writeSubAgentFile(t, filepath.Join(builtinDir, "explorer.md"), `---
+name: explorer
+description: explorer
+tools: [read_file, search_text]
+mode: build
+---
+scan files
+`)
+
+	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
+	gateway := NewGateway(manager)
+	result, err := gateway.Preflight(PreflightRequest{
+		Agent:         "explorer",
+		Task:          "Locate prompt assembly entry",
+		Mode:          planpkg.ModeBuild,
+		ParentVisible: []string{"read_file", "search_text", "list_files"},
+		ParentAllowed: map[string]struct{}{"read_file": {}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected preflight error: %v", err)
+	}
+	if !slices.Equal(result.EffectiveTools, []string{"read_file"}) {
+		t.Fatalf("unexpected effective tools: %#v", result.EffectiveTools)
+	}
+}
+
+func TestGatewayPreflightRejectsModeMismatch(t *testing.T) {
+	workspace := t.TempDir()
+	builtinDir := filepath.Join(workspace, "internal", "subagents")
+	writeSubAgentFile(t, filepath.Join(builtinDir, "review.md"), `---
+name: review
+description: reviewer
+mode: build
+---
+review files
+`)
+
+	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
+	gateway := NewGateway(manager)
+	_, err := gateway.Preflight(PreflightRequest{
+		Agent:         "review",
+		Task:          "check",
+		Mode:          planpkg.ModePlan,
+		ParentVisible: []string{"read_file"},
+	})
+	if err == nil {
+		t.Fatal("expected mode mismatch error")
+	}
+	gatewayErr, ok := err.(*GatewayError)
+	if !ok || gatewayErr.Code != ErrorCodeSubAgentModeNotAllowed {
+		t.Fatalf("unexpected error: %#v", err)
+	}
+}
+
+func TestGatewayPreflightRejectsUnknownAgent(t *testing.T) {
+	workspace := t.TempDir()
+	manager := NewManagerWithDirs(
+		workspace,
+		filepath.Join(workspace, "internal", "subagents"),
+		filepath.Join(workspace, "user"),
+		filepath.Join(workspace, "project"),
+	)
+	gateway := NewGateway(manager)
+	_, err := gateway.Preflight(PreflightRequest{
+		Agent:         "unknown",
+		Task:          "check",
+		Mode:          planpkg.ModeBuild,
+		ParentVisible: []string{"read_file"},
+	})
+	if err == nil {
+		t.Fatal("expected unknown agent error")
+	}
+	gatewayErr, ok := err.(*GatewayError)
+	if !ok || gatewayErr.Code != ErrorCodeSubAgentAgentNotFound {
+		t.Fatalf("unexpected error: %#v", err)
+	}
+}
+
+func TestGatewayPreflightRejectsWhenNoEffectiveToolsRemain(t *testing.T) {
+	workspace := t.TempDir()
+	builtinDir := filepath.Join(workspace, "internal", "subagents")
+	writeSubAgentFile(t, filepath.Join(builtinDir, "review.md"), `---
+name: review
+description: reviewer
+tools: [read_file]
+---
+review files
+`)
+
+	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
+	gateway := NewGateway(manager)
+	_, err := gateway.Preflight(PreflightRequest{
+		Agent:         "review",
+		Task:          "check",
+		Mode:          planpkg.ModeBuild,
+		ParentVisible: []string{"write_file"},
+	})
+	if err == nil {
+		t.Fatal("expected tool denied error")
+	}
+	gatewayErr, ok := err.(*GatewayError)
+	if !ok || gatewayErr.Code != ErrorCodeSubAgentToolDenied {
+		t.Fatalf("unexpected error: %#v", err)
+	}
+}
+
+func TestGatewayPreflightRejectsEmptyTask(t *testing.T) {
+	workspace := t.TempDir()
+	builtinDir := filepath.Join(workspace, "internal", "subagents")
+	writeSubAgentFile(t, filepath.Join(builtinDir, "review.md"), `---
+name: review
+description: reviewer
+---
+review files
+`)
+
+	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
+	gateway := NewGateway(manager)
+	_, err := gateway.Preflight(PreflightRequest{
+		Agent:         "review",
+		Task:          "   ",
+		Mode:          planpkg.ModeBuild,
+		ParentVisible: []string{"read_file"},
+	})
+	if err == nil {
+		t.Fatal("expected task not eligible error")
+	}
+	gatewayErr, ok := err.(*GatewayError)
+	if !ok || gatewayErr.Code != ErrorCodeSubAgentTaskNotEligible {
+		t.Fatalf("unexpected error: %#v", err)
+	}
+}
