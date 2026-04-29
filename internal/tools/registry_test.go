@@ -23,6 +23,7 @@ func TestDefaultRegistryDefinitionsAreSortedAndComplete(t *testing.T) {
 
 	want := []string{
 		"apply_patch",
+		"delegate_subagent",
 		"list_files",
 		"read_file",
 		"replace_in_file",
@@ -70,7 +71,7 @@ func TestDefaultRegistryDefinitionsForPlanModeIncludeWebTools(t *testing.T) {
 		names = append(names, def.Function.Name)
 	}
 
-	for _, allowed := range []string{"list_files", "read_file", "search_text", "web_search", "web_fetch", "update_plan", "run_shell"} {
+	for _, allowed := range []string{"list_files", "read_file", "search_text", "web_search", "web_fetch", "update_plan", "run_shell", "delegate_subagent"} {
 		if !slices.Contains(names, allowed) {
 			t.Fatalf("expected %q in plan mode definitions, got %v", allowed, names)
 		}
