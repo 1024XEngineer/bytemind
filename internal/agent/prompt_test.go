@@ -38,6 +38,9 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 		Skills: []PromptSkill{
 			{Name: "review", Description: "Review code changes for regressions.", Enabled: true},
 		},
+		SubAgents: []PromptSubAgent{
+			{Name: "explorer", Description: "Scan repository context quickly.", Mode: "build"},
+		},
 		Tools: []string{"read_file", "list_files", "read_file"},
 		ActiveSkill: &PromptActiveSkill{
 			Name:         "review",
@@ -78,6 +81,9 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	assertContains(t, prompt, "[Available Skills]")
 	assertContains(t, prompt, "Skills are reusable task profiles available in this session")
 	assertContains(t, prompt, "- review: Review code changes for regressions.")
+	assertContains(t, prompt, "[Available SubAgents]")
+	assertContains(t, prompt, "SubAgents are optional delegated workers available in this session.")
+	assertContains(t, prompt, "- explorer (build): Scan repository context quickly.")
 	assertContains(t, prompt, "[Available Tools]")
 	assertContains(t, prompt, "- list_files")
 	assertContains(t, prompt, "- read_file")
@@ -107,6 +113,8 @@ func TestSystemPromptOmitsOptionalBlocksWhenEmpty(t *testing.T) {
 
 	assertContains(t, prompt, "[Runtime Context]")
 	assertContains(t, prompt, "[Available Skills]")
+	assertContains(t, prompt, "- none")
+	assertContains(t, prompt, "[Available SubAgents]")
 	assertContains(t, prompt, "- none")
 	assertContains(t, prompt, "[Available Tools]")
 	assertContains(t, prompt, "- none")
@@ -270,6 +278,24 @@ func TestFormatSkillsKeepsSkillDescriptionsAsIs(t *testing.T) {
 	})
 
 	assertContains(t, got, "- review: Review with strict correctness focus.")
+}
+
+func TestFormatSubAgentsLimitsAndSummarizesOverflow(t *testing.T) {
+	agents := make([]PromptSubAgent, 0, maxPromptSubAgentEntries+2)
+	for i := 0; i < maxPromptSubAgentEntries+2; i++ {
+		agents = append(agents, PromptSubAgent{
+			Name:        fmt.Sprintf("agent-%02d", i),
+			Description: strings.Repeat("x", maxPromptSubAgentDescRune+20),
+			Mode:        "build",
+		})
+	}
+	got := formatSubAgents(agents)
+	if !strings.Contains(got, "- ... and 2 more subagent(s)") {
+		t.Fatalf("expected overflow summary line, got %q", got)
+	}
+	if strings.Contains(got, strings.Repeat("x", maxPromptSubAgentDescRune+10)) {
+		t.Fatalf("expected long descriptions to be trimmed, got %q", got)
+	}
 }
 
 func TestRenderActiveSkillPromptKeepsSkillFieldsAsIs(t *testing.T) {

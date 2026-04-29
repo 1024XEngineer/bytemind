@@ -17,6 +17,8 @@ import (
 const (
 	maxPromptSkillEntries         = 12
 	maxPromptSkillDescriptionRune = 140
+	maxPromptSubAgentEntries      = 12
+	maxPromptSubAgentDescRune     = 140
 )
 
 //go:embed prompts/default.md
@@ -47,6 +49,12 @@ type PromptActiveSkill struct {
 	Tools        []string
 }
 
+type PromptSubAgent struct {
+	Name        string
+	Description string
+	Mode        string
+}
+
 type PromptInput struct {
 	Workspace                    string
 	ApprovalPolicy               string
@@ -66,6 +74,7 @@ type PromptInput struct {
 	Platform                     string
 	Now                          time.Time
 	Skills                       []PromptSkill
+	SubAgents                    []PromptSubAgent
 	Tools                        []string
 	Plan                         planpkg.State
 	ActiveSkill                  *PromptActiveSkill
@@ -217,6 +226,10 @@ func renderSystemBlock(input PromptInput) string {
 		"- Skills are reusable task profiles available in this session. Only the [Active Skill] block, when present, is currently in effect.",
 		formatSkills(input.Skills),
 		"",
+		"[Available SubAgents]",
+		"- SubAgents are optional delegated workers available in this session.",
+		formatSubAgents(input.SubAgents),
+		"",
 		"[Available Tools]",
 		formatTools(input.Tools),
 	}
@@ -279,6 +292,39 @@ func formatTools(tools []string) string {
 		return "- none"
 	}
 	sort.Strings(lines)
+	return strings.Join(lines, "\n")
+}
+
+func formatSubAgents(agents []PromptSubAgent) string {
+	if len(agents) == 0 {
+		return "- none"
+	}
+	lines := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		name := strings.TrimSpace(agent.Name)
+		if name == "" {
+			continue
+		}
+		description := strings.TrimSpace(agent.Description)
+		if description == "" {
+			description = "No description provided."
+		}
+		description = trimPromptText(description, maxPromptSubAgentDescRune)
+		mode := strings.TrimSpace(agent.Mode)
+		if mode != "" {
+			lines = append(lines, fmt.Sprintf("- %s (%s): %s", name, mode, description))
+		} else {
+			lines = append(lines, fmt.Sprintf("- %s: %s", name, description))
+		}
+	}
+	if len(lines) == 0 {
+		return "- none"
+	}
+	sort.Strings(lines)
+	if len(lines) > maxPromptSubAgentEntries {
+		remaining := len(lines) - maxPromptSubAgentEntries
+		lines = append(lines[:maxPromptSubAgentEntries], fmt.Sprintf("- ... and %d more subagent(s)", remaining))
+	}
 	return strings.Join(lines, "\n")
 }
 

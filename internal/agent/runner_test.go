@@ -2398,6 +2398,9 @@ func TestRunPromptAppliesActiveSkillToolAllowlist(t *testing.T) {
 		!strings.Contains(client.requests[0].Messages[0].Content, "- review: Review changes") {
 		t.Fatalf("expected system prompt to include available skills list, got %q", client.requests[0].Messages[0].Content)
 	}
+	if !strings.Contains(client.requests[0].Messages[0].Content, "[Available SubAgents]") {
+		t.Fatalf("expected system prompt to include available subagents block, got %q", client.requests[0].Messages[0].Content)
+	}
 	names := make([]string, 0, len(client.requests[0].Tools))
 	for _, def := range client.requests[0].Tools {
 		names = append(names, def.Function.Name)
