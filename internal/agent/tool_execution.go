@@ -152,6 +152,7 @@ func (e *defaultEngine) executeToolCall(
 			Stdout:            runner.stdout,
 			AllowedTools:      allowedTools,
 			DeniedTools:       deniedTools,
+			DelegateSubAgent:  runner.delegateSubAgent,
 		})
 	}
 
