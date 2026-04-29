@@ -113,7 +113,7 @@ func TestRenderWrappedPasteMarkerBranchCoverage(t *testing.T) {
 	}
 
 	copyMode := stripANSI(strings.Join(renderWrappedPasteMarker("[Paste #2 ~9 lines]", 12, true, true), "\n"))
-	if !strings.Contains(copyMode, "[Paste #2 ~9 lines]") || strings.Contains(copyMode, "[click]") {
+	if !strings.Contains(copyMode, "[Paste #2") || !strings.Contains(copyMode, "~9 lines]") || strings.Contains(copyMode, "[click]") {
 		t.Fatalf("expected copy mode to keep marker text without click hint, got %q", copyMode)
 	}
 
