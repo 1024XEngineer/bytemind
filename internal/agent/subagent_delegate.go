@@ -136,8 +136,14 @@ func (r *Runner) delegateSubAgent(
 		},
 	})
 	if runErr != nil {
+		if execution.TaskID != "" {
+			result.TaskID = string(execution.TaskID)
+		}
 		result.Error = mapDelegateSubAgentError(runErr, subAgentErrorCodeRuntimeUnavailable)
 		return result, nil
+	}
+	if execution.TaskID != "" {
+		result.TaskID = string(execution.TaskID)
 	}
 	if execution.ExecutionError != nil {
 		result.Error = mapDelegateSubAgentError(execution.ExecutionError, subAgentErrorCodeNotImplemented)
@@ -160,6 +166,7 @@ func (r *Runner) delegateSubAgent(
 			execution.Result.Output,
 			result.InvocationID,
 			request.Agent,
+			result.TaskID,
 		)
 		if normalizeErr != nil {
 			result.Error = &tools.DelegateSubAgentError{
@@ -247,6 +254,7 @@ func normalizeDelegateSubAgentResult(
 	payload []byte,
 	fallbackInvocationID string,
 	fallbackAgent string,
+	fallbackTaskID string,
 ) (tools.DelegateSubAgentResult, error) {
 	var result tools.DelegateSubAgentResult
 	if err := json.Unmarshal(payload, &result); err != nil {
@@ -254,6 +262,7 @@ func normalizeDelegateSubAgentResult(
 	}
 	result.InvocationID = firstNonEmpty(result.InvocationID, fallbackInvocationID)
 	result.Agent = firstNonEmpty(result.Agent, fallbackAgent)
+	result.TaskID = firstNonEmpty(result.TaskID, fallbackTaskID)
 	if result.Findings == nil {
 		result.Findings = []tools.DelegateSubAgentFinding{}
 	}

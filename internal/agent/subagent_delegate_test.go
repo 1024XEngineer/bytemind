@@ -181,6 +181,9 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 	if result.Error == nil || result.Error.Code != subAgentErrorCodeNotImplemented {
 		t.Fatalf("expected not implemented code, got %#v", result.Error)
 	}
+	if result.TaskID != "runtime-subagent-task" {
+		t.Fatalf("expected runtime task id, got %q", result.TaskID)
+	}
 	if !strings.Contains(result.Error.Message, "stub pipeline placeholder") {
 		t.Fatalf("expected fallback message, got %#v", result.Error)
 	}
@@ -257,6 +260,9 @@ func TestDelegateSubAgentAcceptsStructuredRuntimeOutput(t *testing.T) {
 	if !result.OK {
 		t.Fatalf("expected success result, got %#v", result)
 	}
+	if result.TaskID != "runtime-subagent-task" {
+		t.Fatalf("expected runtime task id, got %q", result.TaskID)
+	}
 	if result.Error != nil {
 		t.Fatalf("expected nil error for success result, got %#v", result.Error)
 	}
@@ -300,6 +306,9 @@ func TestDelegateSubAgentRejectsInvalidStructuredRuntimeOutput(t *testing.T) {
 	if result.OK {
 		t.Fatalf("expected failed result, got %#v", result)
 	}
+	if result.TaskID != "runtime-subagent-task" {
+		t.Fatalf("expected runtime task id, got %q", result.TaskID)
+	}
 	if result.Error == nil || result.Error.Code != subAgentErrorCodeInvalidResult {
 		t.Fatalf("expected invalid result code, got %#v", result.Error)
 	}
@@ -339,6 +348,9 @@ func TestDelegateSubAgentNormalizesMissingArraysInStructuredRuntimeOutput(t *tes
 	}
 	if result.OK {
 		t.Fatalf("expected failed result, got %#v", result)
+	}
+	if result.TaskID != "runtime-subagent-task" {
+		t.Fatalf("expected runtime task id, got %q", result.TaskID)
 	}
 	if result.Error == nil || result.Error.Code != "subagent_task_failed" {
 		t.Fatalf("expected propagated error, got %#v", result.Error)
