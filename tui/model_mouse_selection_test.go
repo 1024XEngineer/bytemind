@@ -95,6 +95,24 @@ func TestPasteIDAtViewportPointFindsExpandedPasteBodyRows(t *testing.T) {
 	}
 }
 
+func TestPasteIDAtViewportPointHandlesOutOfRangeAndBlankBreak(t *testing.T) {
+	m := model{
+		viewportContentCache: strings.Join([]string{
+			"[Paste #1 ~12 lines] [preview]",
+			"│ line1",
+			"",
+			"plain trailing text",
+		}, "\n"),
+	}
+
+	if got := m.pasteIDAtViewportPoint(viewportSelectionPoint{Row: -1, Col: 0}); got != "" {
+		t.Fatalf("expected out-of-range row to return empty paste id, got %q", got)
+	}
+	if got := m.pasteIDAtViewportPoint(viewportSelectionPoint{Row: 3, Col: 0}); got != "" {
+		t.Fatalf("expected blank-line boundary to stop upward paste lookup, got %q", got)
+	}
+}
+
 func TestMouseSelectionScrollTickAutoScrollsWhileHoldingAtBottomEdge(t *testing.T) {
 	input := textarea.New()
 	input.Focus()

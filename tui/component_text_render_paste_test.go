@@ -61,3 +61,83 @@ func TestResolveUserBodyPastesRendersCollapsedPreviewAndFullModes(t *testing.T) 
 		}
 	}
 }
+
+func TestRenderUserPasteAwareLineHandlesPreviewSuffixAndWrappedHint(t *testing.T) {
+	line := "Before [Paste #7 ~3 lines] [preview] after"
+	got := stripANSI(strings.Join(renderUserPasteAwareLine(line, 18, false), "\n"))
+	for _, want := range []string{"Before", "[Paste #7 ~3", "lines] [preview]", "after"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected preview-suffixed paste line to contain %q, got %q", want, got)
+		}
+	}
+
+	wrapped := stripANSI(strings.Join(renderWrappedPasteMarker("[Paste #9 ~20 lines]", 10, false, true), "\n"))
+	if !strings.Contains(wrapped, "[click]") {
+		t.Fatalf("expected wrapped paste marker to retain click hint, got %q", wrapped)
+	}
+}
+
+func TestResolvePasteHelpersCoverShortAndFallbackBranches(t *testing.T) {
+	content := pastedContent{
+		ID:      "3",
+		Content: "alpha\nbeta",
+		Lines:   2,
+	}
+
+	if got := stripANSI(resolvePasteBlockPlain(content, 0)); !strings.Contains(got, "[Paste #3 ~2 lines]") {
+		t.Fatalf("expected collapsed plain paste block marker, got %q", got)
+	}
+	if got := stripANSI(resolvePasteBlockPlain(content, 2)); got != "alpha\nbeta" {
+		t.Fatalf("expected full plain paste block content, got %q", got)
+	}
+
+	preview := stripANSI(resolvePastePreviewPlain(content))
+	if strings.Contains(preview, "Ctrl+E") {
+		t.Fatalf("expected short plain preview not to render expansion hint, got %q", preview)
+	}
+
+	framedPreview := stripANSI(renderResolvedPastePreviewPlain(content, "[Paste #3 ~2 lines]"))
+	if !strings.Contains(framedPreview, "click again to show full content") {
+		t.Fatalf("expected short framed preview to render short-content hint, got %q", framedPreview)
+	}
+
+	framedCollapsed := stripANSI(renderResolvedPasteBlockPlain(content, 0))
+	if framedCollapsed != "[Paste #3 ~2 lines]" {
+		t.Fatalf("expected collapsed framed paste block to return header only, got %q", framedCollapsed)
+	}
+}
+
+func TestRenderWrappedPasteMarkerBranchCoverage(t *testing.T) {
+	if got := renderWrappedPasteMarker("", 20, false, true); got != nil {
+		t.Fatalf("expected empty marker to produce nil output, got %#v", got)
+	}
+
+	copyMode := stripANSI(strings.Join(renderWrappedPasteMarker("[Paste #2 ~9 lines]", 12, true, true), "\n"))
+	if !strings.Contains(copyMode, "[Paste #2 ~9 lines]") || strings.Contains(copyMode, "[click]") {
+		t.Fatalf("expected copy mode to keep marker text without click hint, got %q", copyMode)
+	}
+
+	noHint := stripANSI(strings.Join(renderWrappedPasteMarker("[Paste #2 ~9 lines]", 12, false, false), "\n"))
+	if strings.Contains(noHint, "[click]") {
+		t.Fatalf("expected no-hint mode to omit click hint, got %q", noHint)
+	}
+}
+
+func TestResolveUserBodyPastesFallbackBranches(t *testing.T) {
+	m := model{
+		pastedContents: map[string]pastedContent{
+			"1": {ID: "1", Content: "ok", Lines: 1},
+		},
+		pasteExpandLevel: map[string]int{"1": 2},
+	}
+
+	noID := stripANSI(m.resolveUserBodyPastes("[Paste ~12 lines]"))
+	if noID != "[Paste ~12 lines]" {
+		t.Fatalf("expected marker without id to remain unchanged, got %q", noID)
+	}
+
+	missing := stripANSI(m.resolveUserBodyPastes("x [Paste #99 ~3 lines] y"))
+	if missing != "x [Paste #99 ~3 lines] y" {
+		t.Fatalf("expected missing stored paste to keep marker text, got %q", missing)
+	}
+}
