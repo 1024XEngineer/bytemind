@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	extensionspkg "bytemind/internal/extensions"
-	toolspkg "bytemind/internal/tools"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
+	toolspkg "github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 func (r *Runner) syncExtensionTools(ctx context.Context, force bool) error {

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	skillspkg "bytemind/internal/skills"
+	skillspkg "github.com/1024XEngineer/bytemind/internal/skills"
 )
 
 func TestSkillAdapterSyncCachesSkillExtensions(t *testing.T) {

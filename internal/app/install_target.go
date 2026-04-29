@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"strings"
 
-	"bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/config"
 )
 
 func resolveInstallTarget(dirValue, nameValue string) (string, error) {

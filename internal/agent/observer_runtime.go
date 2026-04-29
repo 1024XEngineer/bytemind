@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	corepkg "bytemind/internal/core"
-	storagepkg "bytemind/internal/storage"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
 )
 
 func (r *Runner) appendAudit(ctx context.Context, event storagepkg.AuditEvent) {

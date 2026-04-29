@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"bytemind/internal/config"
-	"bytemind/internal/provider"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/provider"
 )
 
 func TestStartupIssueHint(t *testing.T) {

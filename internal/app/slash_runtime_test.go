@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"bytemind/internal/llm"
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 func TestExecuteSlashCommandHandlesResumeAndNew(t *testing.T) {

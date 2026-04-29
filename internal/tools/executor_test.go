@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 type executorTestTool struct {

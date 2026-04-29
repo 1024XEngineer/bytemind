@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"bytemind/internal/config"
-	corepkg "bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 )
 
 const (

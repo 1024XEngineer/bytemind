@@ -13,14 +13,14 @@ import (
 	"testing"
 	"time"
 
-	"bytemind/internal/agent"
-	"bytemind/internal/config"
-	"bytemind/internal/history"
-	"bytemind/internal/llm"
-	"bytemind/internal/mention"
-	planpkg "bytemind/internal/plan"
-	"bytemind/internal/session"
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/agent"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/history"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/mention"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -4999,7 +4999,7 @@ func TestFormatChatBodyHighlightsSearchToolSummaryAndMatches(t *testing.T) {
 	item := chatEntry{
 		Kind: "tool",
 		Body: "12 matches for \"func main() {\"\n" +
-			"bytemind/opencode-go/main.go:14 func main() {\n" +
+			"github.com/1024XEngineer/bytemind/opencode-go/main.go:14 func main() {\n" +
 			"cmd/bytemind/main.go:11 func main() {",
 	}
 
@@ -5008,7 +5008,7 @@ func TestFormatChatBodyHighlightsSearchToolSummaryAndMatches(t *testing.T) {
 	if !strings.Contains(got, toolSearchSummaryStyle.Render("12 matches for \"func main() {\"")) {
 		t.Fatalf("expected search summary line to be highlighted, got %q", got)
 	}
-	if strings.Contains(got, "bytemind/opencode-go/main.go:14") || strings.Contains(got, "cmd/bytemind/main.go:11") {
+	if strings.Contains(got, "github.com/1024XEngineer/bytemind/opencode-go/main.go:14") || strings.Contains(got, "cmd/bytemind/main.go:11") {
 		t.Fatalf("expected tool body to render only summary line, got %q", got)
 	}
 }
@@ -5446,6 +5446,9 @@ func TestLandingModeTabsHideAccessLabel(t *testing.T) {
 	tabs := m.renderLandingModeTabs()
 	if strings.Contains(tabs, "Access:") || strings.Contains(tabs, "Full Access") {
 		t.Fatalf("expected landing mode tabs to hide access label, got %q", tabs)
+	}
+	if !strings.Contains(stripANSI(tabs), "[ Build ]") {
+		t.Fatalf("expected active build tab to use bracket style, got %q", tabs)
 	}
 }
 

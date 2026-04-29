@@ -1,9 +1,9 @@
 package agent
 
 import (
-	"bytemind/internal/config"
-	"bytemind/internal/llm"
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 	"strings"
 )
 

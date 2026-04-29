@@ -8,16 +8,16 @@ import (
 	"sync"
 	"time"
 
-	"bytemind/internal/config"
-	extensionspkg "bytemind/internal/extensions"
-	"bytemind/internal/llm"
-	"bytemind/internal/provider"
-	runtimepkg "bytemind/internal/runtime"
-	"bytemind/internal/session"
-	"bytemind/internal/skills"
-	storagepkg "bytemind/internal/storage"
-	"bytemind/internal/tokenusage"
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/provider"
+	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/skills"
+	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
+	"github.com/1024XEngineer/bytemind/internal/tokenusage"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 const (

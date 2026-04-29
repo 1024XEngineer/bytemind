@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"bytemind/internal/session"
-	"bytemind/internal/skills"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/skills"
 )
 
 func (r *Runner) ListSkills() ([]skills.Skill, []skills.Diagnostic) {

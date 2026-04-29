@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/tools"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 const (

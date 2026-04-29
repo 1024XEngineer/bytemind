@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/config"
 )
 
 type stubRegistryClient struct {

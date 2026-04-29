@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/config"
 )
 
 func TestNewClientReturnsOpenAICompatible(t *testing.T) {

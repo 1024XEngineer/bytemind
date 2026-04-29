@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	planpkg "bytemind/internal/plan"
-	"bytemind/internal/tools"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 var destructiveApprovalTools = map[string]struct{}{

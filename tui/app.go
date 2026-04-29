@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"bytemind/internal/assets"
-	"bytemind/internal/config"
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/assets"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/session"
 	"os"
 	"runtime"
 	"strconv"
@@ -20,6 +20,7 @@ type Options struct {
 	ImageStore   assets.ImageStore
 	Config       config.Config
 	Workspace    string
+	Version      string
 	StartupGuide StartupGuide
 }
 

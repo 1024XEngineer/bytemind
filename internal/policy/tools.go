@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"bytemind/internal/skills"
+	"github.com/1024XEngineer/bytemind/internal/skills"
 )
 
 const EmptyAllowlistSentinel = "__bytemind__no_tools__"

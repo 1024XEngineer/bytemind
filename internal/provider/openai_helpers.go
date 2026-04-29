@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 func missingImageAssetFallback(assetID llm.AssetID) string {

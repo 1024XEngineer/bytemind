@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	corepkg "bytemind/internal/core"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 )
 
 func TestInMemoryTaskManagerSubmitAndCancel(t *testing.T) {
-	mgr := NewInMemoryTaskManager()
+	mgr := newBlockingTaskManager()
 	id, err := mgr.Submit(context.Background(), TaskSpec{Name: "demo"})
 	if err != nil {
 		t.Fatalf("Submit failed: %v", err)
@@ -36,10 +36,7 @@ func TestInMemoryTaskManagerSubmitAndCancel(t *testing.T) {
 }
 
 func TestInMemoryTaskManagerWaitReturnsTerminalResult(t *testing.T) {
-	mgr := NewInMemoryTaskManager(WithTaskExecutor(func(ctx context.Context, _ Task) ([]byte, error) {
-		<-ctx.Done()
-		return nil, ctx.Err()
-	}))
+	mgr := newBlockingTaskManager()
 	id, err := mgr.Submit(context.Background(), TaskSpec{Name: "demo"})
 	if err != nil {
 		t.Fatalf("Submit failed: %v", err)
@@ -195,11 +192,16 @@ func TestInMemoryTaskManagerRetryFromFailedResetsTaskForRetry(t *testing.T) {
 }
 
 func TestInMemoryTaskManagerRetryRejectsNonFailedTask(t *testing.T) {
-	mgr := NewInMemoryTaskManager()
+	mgr := newBlockingTaskManager()
 	id, err := mgr.Submit(context.Background(), TaskSpec{Name: "demo"})
 	if err != nil {
 		t.Fatalf("Submit failed: %v", err)
 	}
+	defer func() {
+		if err := mgr.Cancel(context.Background(), id, "cleanup"); err != nil && !hasErrorCode(err, ErrorCodeInvalidTransition) {
+			t.Fatalf("cleanup cancel failed: %v", err)
+		}
+	}()
 
 	_, err = mgr.Retry(context.Background(), id)
 	if err == nil {
@@ -249,7 +251,7 @@ func TestInMemoryTaskManagerRetryUnknownTaskReturnsTaskNotFound(t *testing.T) {
 }
 
 func TestInMemoryTaskManagerCancelIsIdempotent(t *testing.T) {
-	mgr := NewInMemoryTaskManager()
+	mgr := newBlockingTaskManager()
 	id, err := mgr.Submit(context.Background(), TaskSpec{Name: "demo"})
 	if err != nil {
 		t.Fatalf("Submit failed: %v", err)
@@ -261,6 +263,13 @@ func TestInMemoryTaskManagerCancelIsIdempotent(t *testing.T) {
 	if err := mgr.Cancel(context.Background(), id, "second cancel"); err != nil {
 		t.Fatalf("second cancel should be idempotent, got: %v", err)
 	}
+}
+
+func newBlockingTaskManager() *InMemoryTaskManager {
+	return NewInMemoryTaskManager(WithTaskExecutor(func(ctx context.Context, _ Task) ([]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}))
 }
 
 func TestInMemoryTaskManagerCancelRejectsCompletedTask(t *testing.T) {

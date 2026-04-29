@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	extensionspkg "bytemind/internal/extensions"
-	toolspkg "bytemind/internal/tools"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
+	toolspkg "github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 type emptyErr struct{}

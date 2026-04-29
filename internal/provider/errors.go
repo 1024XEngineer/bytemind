@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 func newError(code ErrorCode, providerID ProviderID, message string, err error, detail string) *Error {

@@ -11,8 +11,8 @@ import (
 	"time"
 	"unicode"
 
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/llm"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 type PutImageInput struct {

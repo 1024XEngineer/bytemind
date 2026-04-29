@@ -10,15 +10,15 @@ import (
 	"strings"
 	"time"
 
-	configpkg "bytemind/internal/config"
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/llm"
-	planpkg "bytemind/internal/plan"
-	runtimepkg "bytemind/internal/runtime"
-	sandboxpkg "bytemind/internal/sandbox"
-	"bytemind/internal/session"
-	storagepkg "bytemind/internal/storage"
-	"bytemind/internal/tools"
+	configpkg "github.com/1024XEngineer/bytemind/internal/config"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
+	sandboxpkg "github.com/1024XEngineer/bytemind/internal/sandbox"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 type sandboxAuditContext struct {

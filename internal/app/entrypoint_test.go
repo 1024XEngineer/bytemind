@@ -77,15 +77,15 @@ func TestBootstrapCreatesSessionInWorkspace(t *testing.T) {
 		t.Fatal("expected bootstrap to return runner, store, and session")
 	}
 	sess := runtimeBundle.Session
-	if sess.Workspace != workspace {
-		t.Fatalf("expected workspace %q, got %q", workspace, sess.Workspace)
+	if normalizeExistingPath(sess.Workspace) != normalizeExistingPath(workspace) {
+		t.Fatalf("expected workspace %q, got %q", normalizeExistingPath(workspace), normalizeExistingPath(sess.Workspace))
 	}
 	if strings.TrimSpace(sess.ID) == "" {
 		t.Fatal("expected session id to be created")
 	}
 }
 
-func TestBootstrapEntrypointRejectsBroadWorkspaceWithoutOverride(t *testing.T) {
+func TestBootstrapEntrypointAllowsBroadWorkspaceWithoutOverride(t *testing.T) {
 	workspace := t.TempDir()
 	for i := 0; i < DefaultBroadWorkspaceEntryThreshold; i++ {
 		path := filepath.Join(workspace, fmt.Sprintf("entry-%03d.tmp", i))
@@ -94,6 +94,32 @@ func TestBootstrapEntrypointRejectsBroadWorkspaceWithoutOverride(t *testing.T) {
 		}
 	}
 	t.Chdir(workspace)
+	t.Setenv("BYTEMIND_HOME", filepath.Join(workspace, ".bytemind-home"))
+
+	runtimeBundle, err := BootstrapEntrypoint(EntrypointRequest{
+		RequireAPIKey: false,
+		Stdin:         strings.NewReader(""),
+		Stdout:        &bytes.Buffer{},
+	})
+	if err != nil {
+		t.Fatalf("expected broad workspace to be allowed, got %v", err)
+	}
+	if runtimeBundle.Session == nil {
+		t.Fatal("expected session to be created")
+	}
+	if normalizeExistingPath(runtimeBundle.Session.Workspace) != normalizeExistingPath(workspace) {
+		t.Fatalf("expected workspace %q, got %q", normalizeExistingPath(workspace), normalizeExistingPath(runtimeBundle.Session.Workspace))
+	}
+}
+
+func TestBootstrapEntrypointRejectsHighRiskHomeWithoutOverride(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workspace)
+	t.Setenv("HOME", workspace)
+	t.Setenv("USERPROFILE", "")
 
 	_, err := BootstrapEntrypoint(EntrypointRequest{
 		RequireAPIKey: false,
@@ -101,7 +127,7 @@ func TestBootstrapEntrypointRejectsBroadWorkspaceWithoutOverride(t *testing.T) {
 		Stdout:        &bytes.Buffer{},
 	})
 	if err == nil {
-		t.Fatal("expected broad workspace error")
+		t.Fatal("expected high-risk workspace error")
 	}
 	if !strings.Contains(err.Error(), "too broad for default workspace") {
 		t.Fatalf("unexpected error: %v", err)

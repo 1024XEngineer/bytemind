@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 type contractTestTool struct {

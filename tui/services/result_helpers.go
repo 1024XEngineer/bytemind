@@ -3,8 +3,8 @@ package services
 import (
 	"strings"
 
-	"bytemind/tui/api"
-	tuiruntime "bytemind/tui/runtime"
+	"github.com/1024XEngineer/bytemind/tui/api"
+	tuiruntime "github.com/1024XEngineer/bytemind/tui/runtime"
 )
 
 func failResult[T any](service string, err error) api.Result[T] {

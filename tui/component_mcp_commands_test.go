@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"bytemind/internal/mcpctl"
+	"github.com/1024XEngineer/bytemind/internal/mcpctl"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

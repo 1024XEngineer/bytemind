@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 func TestBuildSessionSnapshotView(t *testing.T) {

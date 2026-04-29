@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 func TestNormalizeToolArguments(t *testing.T) {

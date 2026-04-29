@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	configpkg "bytemind/internal/config"
+	configpkg "github.com/1024XEngineer/bytemind/internal/config"
 )
 
 func TestToSandboxExecRulesCopiesConfigRules(t *testing.T) {

@@ -23,8 +23,11 @@ const (
 )
 
 var (
-	mentionIndexRefreshInterval = 10 * time.Second
-	mentionIndexDefaultMaxFiles = 6000
+	mentionIndexRefreshInterval    = 10 * time.Second
+	mentionIndexDefaultMaxFiles    = 6000
+	mentionIndexDefaultMaxVisits   = 25000
+	mentionIndexDefaultMaxDirs     = 5000
+	mentionIndexDefaultMaxDuration = 750 * time.Millisecond
 )
 
 type Token struct {
@@ -287,9 +290,15 @@ func buildMentionIndex(root string, maxFiles int, matcher mentionIgnoreMatcher) 
 	if maxFiles <= 0 {
 		maxFiles = mentionIndexDefaultMaxFiles
 	}
+	maxVisits := mentionMaxVisitsFromEnv()
+	maxDirs := mentionMaxDirsFromEnv()
+	maxDuration := mentionMaxDurationFromEnv()
+	started := time.Now()
 
 	files := make([]Candidate, 0, minInt(maxFiles, 512))
 	truncated := false
+	visits := 0
+	dirs := 0
 	_ = filepath.WalkDir(root, func(pathAbs string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if d != nil && d.IsDir() {
@@ -299,6 +308,15 @@ func buildMentionIndex(root string, maxFiles int, matcher mentionIgnoreMatcher) 
 		}
 		if pathAbs == root {
 			return nil
+		}
+		visits++
+		if visits > maxVisits {
+			truncated = true
+			return fs.SkipAll
+		}
+		if maxDuration > 0 && time.Since(started) > maxDuration {
+			truncated = true
+			return fs.SkipAll
 		}
 
 		rel, relErr := filepath.Rel(root, pathAbs)
@@ -312,6 +330,11 @@ func buildMentionIndex(root string, maxFiles int, matcher mentionIgnoreMatcher) 
 		name := d.Name()
 
 		if d.IsDir() {
+			dirs++
+			if dirs > maxDirs {
+				truncated = true
+				return fs.SkipAll
+			}
 			if shouldSkipMentionDir(name) || matcher.SkipDir(name, rel) {
 				return filepath.SkipDir
 			}
@@ -718,6 +741,42 @@ func mentionMaxFilesFromEnv() int {
 		return mentionIndexDefaultMaxFiles
 	}
 	return n
+}
+
+func mentionMaxVisitsFromEnv() int {
+	raw := strings.TrimSpace(os.Getenv("BYTEMIND_MENTION_MAX_VISITS"))
+	if raw == "" {
+		return mentionIndexDefaultMaxVisits
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return mentionIndexDefaultMaxVisits
+	}
+	return n
+}
+
+func mentionMaxDirsFromEnv() int {
+	raw := strings.TrimSpace(os.Getenv("BYTEMIND_MENTION_MAX_DIRS"))
+	if raw == "" {
+		return mentionIndexDefaultMaxDirs
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return mentionIndexDefaultMaxDirs
+	}
+	return n
+}
+
+func mentionMaxDurationFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("BYTEMIND_MENTION_MAX_DURATION_MS"))
+	if raw == "" {
+		return mentionIndexDefaultMaxDuration
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return mentionIndexDefaultMaxDuration
+	}
+	return time.Duration(n) * time.Millisecond
 }
 
 func FindActiveToken(input string) (Token, bool) {

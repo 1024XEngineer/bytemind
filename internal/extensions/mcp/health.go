@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	extensionspkg "bytemind/internal/extensions"
-	toolspkg "bytemind/internal/tools"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
+	toolspkg "github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 func newExtensionError(code extensionspkg.ErrorCode, message string, err error) error {

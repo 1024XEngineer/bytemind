@@ -286,6 +286,38 @@ func TestWorkspaceFileIndexRespectsMaxFilesLimitFromEnv(t *testing.T) {
 	}
 }
 
+func TestWorkspaceFileIndexStopsWhenVisitBudgetExceeded(t *testing.T) {
+	workspace := t.TempDir()
+	for i := 0; i < 5; i++ {
+		mustWriteMentionFile(t, filepath.Join(workspace, string(rune('a'+i))+".go"), "package main")
+	}
+	t.Setenv("BYTEMIND_MENTION_MAX_VISITS", "2")
+
+	index := NewWorkspaceFileIndex(workspace)
+	results := index.Search("", 50)
+	if len(results) != 2 {
+		t.Fatalf("expected visit-limited result count 2, got %d (%#v)", len(results), results)
+	}
+	stats := index.Stats()
+	if !stats.Truncated {
+		t.Fatalf("expected stats to mark index as truncated")
+	}
+}
+
+func TestWorkspaceFileIndexStopsWhenDirectoryBudgetExceeded(t *testing.T) {
+	workspace := t.TempDir()
+	mustWriteMentionFile(t, filepath.Join(workspace, "a", "one.go"), "package main")
+	mustWriteMentionFile(t, filepath.Join(workspace, "b", "two.go"), "package main")
+	t.Setenv("BYTEMIND_MENTION_MAX_DIRS", "1")
+
+	index := NewWorkspaceFileIndex(workspace)
+	_ = index.Search("", 50)
+	stats := index.Stats()
+	if !stats.Truncated {
+		t.Fatalf("expected directory budget to truncate index")
+	}
+}
+
 func TestWorkspaceFileIndexRebuildsAfterRefreshInterval(t *testing.T) {
 	workspace := t.TempDir()
 	mustWriteMentionFile(t, filepath.Join(workspace, "a.txt"), "a")
@@ -337,6 +369,23 @@ func TestMentionMaxFilesFromEnvFallbacks(t *testing.T) {
 	t.Setenv("BYTEMIND_MENTION_MAX_FILES", "0")
 	if got := mentionMaxFilesFromEnv(); got != mentionIndexDefaultMaxFiles {
 		t.Fatalf("expected non-positive env to use default max files, got %d", got)
+	}
+}
+
+func TestMentionBudgetEnvFallbacks(t *testing.T) {
+	t.Setenv("BYTEMIND_MENTION_MAX_VISITS", "abc")
+	if got := mentionMaxVisitsFromEnv(); got != mentionIndexDefaultMaxVisits {
+		t.Fatalf("expected invalid visit budget to use default, got %d", got)
+	}
+
+	t.Setenv("BYTEMIND_MENTION_MAX_DIRS", "0")
+	if got := mentionMaxDirsFromEnv(); got != mentionIndexDefaultMaxDirs {
+		t.Fatalf("expected non-positive dir budget to use default, got %d", got)
+	}
+
+	t.Setenv("BYTEMIND_MENTION_MAX_DURATION_MS", "-1")
+	if got := mentionMaxDurationFromEnv(); got != mentionIndexDefaultMaxDuration {
+		t.Fatalf("expected invalid duration budget to use default, got %s", got)
 	}
 }
 

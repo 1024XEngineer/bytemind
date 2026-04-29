@@ -3,8 +3,8 @@ package agent
 import (
 	"testing"
 
-	"bytemind/internal/config"
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 func TestClassifyBudgetBoundaries(t *testing.T) {

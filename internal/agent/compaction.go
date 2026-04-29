@@ -7,10 +7,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"bytemind/internal/config"
-	contextpkg "bytemind/internal/context"
-	"bytemind/internal/llm"
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	contextpkg "github.com/1024XEngineer/bytemind/internal/context"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 const (

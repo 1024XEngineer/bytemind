@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"bytemind/internal/llm"
-	planpkg "bytemind/internal/plan"
-	policypkg "bytemind/internal/policy"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	policypkg "github.com/1024XEngineer/bytemind/internal/policy"
 )
 
 type RunShellTool struct{}

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/config"
 )
 
 // ConfigRequest defines workspace config load plus CLI runtime overrides.

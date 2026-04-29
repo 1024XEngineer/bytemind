@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	planpkg "bytemind/internal/plan"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 )
 
 const (

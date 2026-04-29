@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 
-	"bytemind/internal/app"
+	"github.com/1024XEngineer/bytemind/internal/app"
 )
 
 func main() {

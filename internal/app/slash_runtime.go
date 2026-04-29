@@ -3,7 +3,7 @@ package app
 import (
 	"strings"
 
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 type SlashExecution struct {

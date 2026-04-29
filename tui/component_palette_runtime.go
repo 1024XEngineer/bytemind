@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"bytemind/internal/history"
-	"bytemind/internal/mention"
+	"github.com/1024XEngineer/bytemind/internal/history"
+	"github.com/1024XEngineer/bytemind/internal/mention"
 )
 
 func (m *model) syncCommandPalette() {

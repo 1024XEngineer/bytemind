@@ -5,13 +5,13 @@ import (
 	"strings"
 	"time"
 
-	contextpkg "bytemind/internal/context"
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/llm"
-	planpkg "bytemind/internal/plan"
-	policypkg "bytemind/internal/policy"
-	"bytemind/internal/session"
-	"bytemind/internal/tools"
+	contextpkg "github.com/1024XEngineer/bytemind/internal/context"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	policypkg "github.com/1024XEngineer/bytemind/internal/policy"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 var resolveAgentSystemSandboxRuntimeStatus = tools.ResolveSystemSandboxRuntimeStatus

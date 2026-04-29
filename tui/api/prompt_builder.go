@@ -1,8 +1,8 @@
 package api
 
 import (
-	"bytemind/internal/agent"
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/agent"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 type PromptBuildRequest struct {

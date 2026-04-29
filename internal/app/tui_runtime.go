@@ -6,10 +6,10 @@ import (
 	"io"
 	"os"
 
-	"bytemind/internal/assets"
-	"bytemind/internal/config"
-	"bytemind/internal/mcpctl"
-	"bytemind/tui"
+	"github.com/1024XEngineer/bytemind/internal/assets"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/mcpctl"
+	"github.com/1024XEngineer/bytemind/tui"
 )
 
 type TUIRequest struct {
@@ -109,6 +109,7 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 			ImageStore:   imageStore,
 			Config:       cfg,
 			Workspace:    runtimeBundle.Session.Workspace,
+			Version:      CurrentVersion(),
 			StartupGuide: guide,
 		},
 		close: runner.Close,

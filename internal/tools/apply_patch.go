@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 type ApplyPatchTool struct{}

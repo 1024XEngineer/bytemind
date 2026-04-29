@@ -6,7 +6,7 @@ import (
 	"flag"
 	"io"
 
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 func RunWorkerArgs(args []string, stdin io.Reader, stdout, stderr io.Writer) error {

@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	corepkg "bytemind/internal/core"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 )
 
 const (

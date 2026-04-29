@@ -9,10 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	itui "bytemind/tui"
+	itui "github.com/1024XEngineer/bytemind/tui"
 )
 
 func TestRunTUIBuildsOptionsAndInvokesProgram(t *testing.T) {
+	withAppVersion(t, "v7.8.9", "")
 	workspace := t.TempDir()
 	t.Chdir(workspace)
 	writeTUIRunTestConfig(t, workspace, map[string]any{
@@ -37,6 +38,9 @@ func TestRunTUIBuildsOptionsAndInvokesProgram(t *testing.T) {
 		}
 		if opts.Workspace != workspace {
 			t.Fatalf("expected workspace %q, got %q", workspace, opts.Workspace)
+		}
+		if opts.Version != "v7.8.9" {
+			t.Fatalf("expected app version to pass through, got %q", opts.Version)
 		}
 		if opts.Config.Provider.Model != "gpt-5.4" {
 			t.Fatalf("expected model override to apply, got %q", opts.Config.Provider.Model)

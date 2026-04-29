@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/session"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 // TurnRequest defines the minimum input needed to execute one agent turn.

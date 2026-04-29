@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"bytemind/internal/config"
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 func NewClient(cfg config.ProviderConfig) (llm.Client, error) {

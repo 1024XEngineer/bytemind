@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	extensionspkg "bytemind/internal/extensions"
-	"bytemind/internal/llm"
-	planpkg "bytemind/internal/plan"
-	toolspkg "bytemind/internal/tools"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	toolspkg "github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 type Option func(*adapterOptions)

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"bytemind/internal/history"
-	"bytemind/internal/mention"
-	planpkg "bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/history"
+	"github.com/1024XEngineer/bytemind/internal/mention"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"

@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	planpkg "bytemind/internal/plan"
-	"bytemind/internal/session"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 func TestUpdatePlanToolUpdatesSessionPlan(t *testing.T) {

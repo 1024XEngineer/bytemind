@@ -1,6 +1,6 @@
 package context
 
-import "bytemind/internal/llm"
+import "github.com/1024XEngineer/bytemind/internal/llm"
 
 // ChatRequestInput describes one model request assembly unit from prepared
 // turn messages and candidate tools.

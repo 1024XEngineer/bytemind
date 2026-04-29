@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/llm"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 func TestFileAssetStorePutAndGetImageByAssetID(t *testing.T) {

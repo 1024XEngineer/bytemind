@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"bytemind/internal/llm"
-	planpkg "bytemind/internal/plan"
-	storagepkg "bytemind/internal/storage"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
 )
 
 type ActiveSkill struct {

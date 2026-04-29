@@ -13,13 +13,13 @@ import (
 	"sync"
 	"time"
 
-	"bytemind/internal/assets"
-	"bytemind/internal/config"
-	"bytemind/internal/history"
-	"bytemind/internal/llm"
-	"bytemind/internal/mention"
-	planpkg "bytemind/internal/plan"
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/assets"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/history"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/mention"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/session"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -350,6 +350,7 @@ type model struct {
 	imageStore assets.ImageStore
 	cfg        config.Config
 	workspace  string
+	version    string
 
 	width  int
 	height int
@@ -524,6 +525,7 @@ func newModel(opts Options) model {
 		imageStore:           opts.ImageStore,
 		cfg:                  opts.Config,
 		workspace:            opts.Workspace,
+		version:              opts.Version,
 		async:                async,
 		viewport:             vp,
 		copyView:             copyVP,

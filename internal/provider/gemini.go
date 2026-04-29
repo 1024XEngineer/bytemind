@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 type Gemini struct {

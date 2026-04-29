@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"bytemind/internal/session"
-	"bytemind/tui/api"
-	tuiruntime "bytemind/tui/runtime"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/tui/api"
+	tuiruntime "github.com/1024XEngineer/bytemind/tui/runtime"
 )
 
 type SkillManager struct {

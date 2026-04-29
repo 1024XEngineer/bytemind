@@ -61,7 +61,7 @@ jobs:
             fi
 
             mkdir -p "${workdir}"
-            GOOS="${os}" GOARCH="${arch}" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X bytemind/internal/app.buildVersion=${VERSION}" -o "${workdir}/${binary_name}" ./cmd/bytemind
+            GOOS="${os}" GOARCH="${arch}" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/1024XEngineer/bytemind/internal/app.buildVersion=${VERSION}" -o "${workdir}/${binary_name}" ./cmd/bytemind
 
             if [[ "${os}" == "windows" ]]; then
               (
