@@ -22,6 +22,9 @@ const (
 	subAgentErrorCodeRuntimeUnavailable    = "subagent_runtime_unavailable"
 	subAgentErrorCodeBackgroundUnsupported = "subagent_background_not_supported"
 	subAgentErrorCodeInvalidResult         = "subagent_invalid_result"
+
+	subAgentResultStatusCompleted = "completed"
+	subAgentResultStatusFailed    = "failed"
 )
 
 var subAgentInvocationCounter atomic.Uint64
@@ -33,6 +36,7 @@ func (r *Runner) delegateSubAgent(
 ) (tools.DelegateSubAgentResult, error) {
 	result := tools.DelegateSubAgentResult{
 		OK:           false,
+		Status:       subAgentResultStatusFailed,
 		InvocationID: newSubAgentInvocationID(),
 		Agent:        request.Agent,
 		Findings:     []tools.DelegateSubAgentFinding{},
@@ -271,6 +275,14 @@ func normalizeDelegateSubAgentResult(
 	}
 	if result.OK && result.Error != nil {
 		return tools.DelegateSubAgentResult{}, fmt.Errorf("ok result must not include error")
+	}
+	result.Status = strings.ToLower(strings.TrimSpace(result.Status))
+	if result.Status == "" {
+		if result.OK {
+			result.Status = subAgentResultStatusCompleted
+		} else {
+			result.Status = subAgentResultStatusFailed
+		}
 	}
 	if !result.OK {
 		if result.Error == nil {

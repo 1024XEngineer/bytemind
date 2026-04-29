@@ -47,6 +47,9 @@ scan files
 	if result.OK {
 		t.Fatalf("expected failure placeholder result, got %#v", result)
 	}
+	if result.Status != subAgentResultStatusFailed {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusFailed, result.Status)
+	}
 	if result.Error == nil || result.Error.Code != subAgentErrorCodeNotImplemented {
 		t.Fatalf("expected not implemented code, got %#v", result.Error)
 	}
@@ -76,6 +79,9 @@ func TestDelegateSubAgentReturnsStructuredPreflightFailure(t *testing.T) {
 	}
 	if result.OK {
 		t.Fatalf("expected failure result, got %#v", result)
+	}
+	if result.Status != subAgentResultStatusFailed {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusFailed, result.Status)
 	}
 	if result.Error == nil || result.Error.Code != "subagent_agent_not_found" {
 		t.Fatalf("expected preflight agent_not_found code, got %#v", result.Error)
@@ -107,6 +113,9 @@ func TestDelegateSubAgentRejectsBackgroundMode(t *testing.T) {
 	if result.OK {
 		t.Fatalf("expected failure result, got %#v", result)
 	}
+	if result.Status != subAgentResultStatusFailed {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusFailed, result.Status)
+	}
 	if result.Error == nil || result.Error.Code != subAgentErrorCodeBackgroundUnsupported {
 		t.Fatalf("expected background unsupported code, got %#v", result.Error)
 	}
@@ -136,6 +145,9 @@ func TestDelegateSubAgentReturnsRuntimeUnavailableWhenGatewayMissing(t *testing.
 	}
 	if result.OK {
 		t.Fatalf("expected failure result, got %#v", result)
+	}
+	if result.Status != subAgentResultStatusFailed {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusFailed, result.Status)
 	}
 	if result.Error == nil || result.Error.Code != subAgentErrorCodeRuntimeUnavailable {
 		t.Fatalf("expected runtime unavailable code, got %#v", result.Error)
@@ -177,6 +189,9 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 	}
 	if result.OK {
 		t.Fatalf("expected failure placeholder result, got %#v", result)
+	}
+	if result.Status != subAgentResultStatusFailed {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusFailed, result.Status)
 	}
 	if result.Error == nil || result.Error.Code != subAgentErrorCodeNotImplemented {
 		t.Fatalf("expected not implemented code, got %#v", result.Error)
@@ -260,6 +275,9 @@ func TestDelegateSubAgentAcceptsStructuredRuntimeOutput(t *testing.T) {
 	if !result.OK {
 		t.Fatalf("expected success result, got %#v", result)
 	}
+	if result.Status != subAgentResultStatusCompleted {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusCompleted, result.Status)
+	}
 	if result.TaskID != "runtime-subagent-task" {
 		t.Fatalf("expected runtime task id, got %q", result.TaskID)
 	}
@@ -306,6 +324,9 @@ func TestDelegateSubAgentRejectsInvalidStructuredRuntimeOutput(t *testing.T) {
 	if result.OK {
 		t.Fatalf("expected failed result, got %#v", result)
 	}
+	if result.Status != subAgentResultStatusFailed {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusFailed, result.Status)
+	}
 	if result.TaskID != "runtime-subagent-task" {
 		t.Fatalf("expected runtime task id, got %q", result.TaskID)
 	}
@@ -349,6 +370,9 @@ func TestDelegateSubAgentNormalizesMissingArraysInStructuredRuntimeOutput(t *tes
 	if result.OK {
 		t.Fatalf("expected failed result, got %#v", result)
 	}
+	if result.Status != subAgentResultStatusFailed {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusFailed, result.Status)
+	}
 	if result.TaskID != "runtime-subagent-task" {
 		t.Fatalf("expected runtime task id, got %q", result.TaskID)
 	}
@@ -374,5 +398,33 @@ mode: build
 scan files
 `), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNormalizeDelegateSubAgentResultDerivesStatusFromOK(t *testing.T) {
+	result, err := normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":true,"summary":"done","findings":[],"references":[]}`),
+		"inv-1",
+		"explorer",
+		"task-1",
+	)
+	if err != nil {
+		t.Fatalf("expected normalization success, got %v", err)
+	}
+	if result.Status != subAgentResultStatusCompleted {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusCompleted, result.Status)
+	}
+
+	result, err = normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":false,"error":{"code":"subagent_task_failed","message":"boom","retryable":true},"findings":[],"references":[]}`),
+		"inv-2",
+		"explorer",
+		"task-2",
+	)
+	if err != nil {
+		t.Fatalf("expected normalization success, got %v", err)
+	}
+	if result.Status != subAgentResultStatusFailed {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusFailed, result.Status)
 	}
 }
