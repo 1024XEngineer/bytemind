@@ -101,10 +101,18 @@ func (g *Gateway) Preflight(request PreflightRequest) (PreflightResult, error) {
 		requestedTimeout = strings.TrimSpace(definition.Timeout)
 	}
 	if requestedTimeout != "" {
-		if _, parseErr := time.ParseDuration(requestedTimeout); parseErr != nil {
+		parsedTimeout, parseErr := time.ParseDuration(requestedTimeout)
+		if parseErr != nil {
 			return PreflightResult{}, newGatewayError(
 				ErrorCodeSubAgentInvalidRequest,
 				fmt.Sprintf("invalid timeout %q: %v", requestedTimeout, parseErr),
+				false,
+			)
+		}
+		if parsedTimeout < 0 {
+			return PreflightResult{}, newGatewayError(
+				ErrorCodeSubAgentInvalidRequest,
+				fmt.Sprintf("invalid timeout %q: must be non-negative", requestedTimeout),
 				false,
 			)
 		}

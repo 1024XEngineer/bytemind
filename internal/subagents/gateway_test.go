@@ -308,6 +308,35 @@ review files
 	}
 }
 
+func TestGatewayPreflightRejectsNegativeRequestedTimeout(t *testing.T) {
+	workspace := t.TempDir()
+	builtinDir := filepath.Join(workspace, "internal", "subagents")
+	writeSubAgentFile(t, filepath.Join(builtinDir, "review.md"), `---
+name: review
+description: reviewer
+tools: [read_file]
+---
+review files
+`)
+
+	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
+	gateway := NewGateway(manager)
+	_, err := gateway.Preflight(PreflightRequest{
+		Agent:            "review",
+		Task:             "check",
+		Mode:             planpkg.ModeBuild,
+		ParentVisible:    []string{"read_file"},
+		RequestedTimeout: "-5s",
+	})
+	if err == nil {
+		t.Fatal("expected invalid timeout error")
+	}
+	gatewayErr, ok := err.(*GatewayError)
+	if !ok || gatewayErr.Code != ErrorCodeSubAgentInvalidRequest {
+		t.Fatalf("unexpected error: %#v", err)
+	}
+}
+
 func TestGatewayPreflightRejectsInvalidRequestedIsolation(t *testing.T) {
 	workspace := t.TempDir()
 	builtinDir := filepath.Join(workspace, "internal", "subagents")
