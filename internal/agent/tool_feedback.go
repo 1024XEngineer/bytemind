@@ -278,6 +278,85 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 				fmt.Fprintf(out, "    %s %s\n", op.Type, op.Path)
 			}
 		}
+	case "delegate_subagent":
+		var result struct {
+			OK         bool   `json:"ok"`
+			Status     string `json:"status"`
+			Agent      string `json:"agent"`
+			TaskID     string `json:"task_id"`
+			Summary    string `json:"summary"`
+			Invocation string `json:"invocation_id"`
+			Findings   []struct {
+				Title string `json:"title"`
+			} `json:"findings"`
+			References []struct {
+				Path string `json:"path"`
+				Line int    `json:"line"`
+			} `json:"references"`
+			Error *struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(payload), &result); err == nil {
+			agent := strings.TrimSpace(result.Agent)
+			if agent == "" {
+				agent = "subagent"
+			}
+			status := strings.ToLower(strings.TrimSpace(result.Status))
+			invocationID := strings.TrimSpace(result.Invocation)
+			if result.OK {
+				switch status {
+				case "queued", "running", "accepted":
+					taskID := strings.TrimSpace(result.TaskID)
+					if taskID != "" {
+						fmt.Fprintf(out, "  %sdelegated%s %s (%s, task=%s)\n", ansiGreen, ansiReset, agent, status, taskID)
+					} else {
+						fmt.Fprintf(out, "  %sdelegated%s %s (%s)\n", ansiGreen, ansiReset, agent, status)
+					}
+				default:
+					summary := compactWhitespace(result.Summary, 120)
+					if summary == "" {
+						summary = "completed without summary"
+					}
+					fmt.Fprintf(out, "  %sdelegated%s %s: %s\n", ansiGreen, ansiReset, agent, summary)
+				}
+				if invocationID != "" {
+					fmt.Fprintf(out, "    invocation: %s\n", invocationID)
+				}
+				fmt.Fprintf(out, "    findings: %d, references: %d\n", len(result.Findings), len(result.References))
+				previewCount := toolPreview
+				if len(result.Findings) < previewCount {
+					previewCount = len(result.Findings)
+				}
+				for i := 0; i < previewCount; i++ {
+					title := compactWhitespace(result.Findings[i].Title, 100)
+					if title == "" {
+						title = "(untitled finding)"
+					}
+					fmt.Fprintf(out, "    - %s\n", title)
+				}
+			} else if result.Error != nil {
+				code := strings.TrimSpace(result.Error.Code)
+				message := compactWhitespace(result.Error.Message, 120)
+				if message == "" {
+					message = "subagent task failed"
+				}
+				if code != "" {
+					fmt.Fprintf(out, "  %serror%s %s (%s)\n", ansiYellow, ansiReset, message, code)
+				} else {
+					fmt.Fprintf(out, "  %serror%s %s\n", ansiYellow, ansiReset, message)
+				}
+				if invocationID != "" {
+					fmt.Fprintf(out, "    invocation: %s\n", invocationID)
+				}
+			} else {
+				fmt.Fprintf(out, "  %serror%s subagent returned invalid result envelope\n", ansiYellow, ansiReset)
+				if invocationID != "" {
+					fmt.Fprintf(out, "    invocation: %s\n", invocationID)
+				}
+			}
+		}
 	default:
 		fmt.Fprintf(out, "  %scompleted%s\n", ansiDim, ansiReset)
 	}
