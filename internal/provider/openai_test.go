@@ -422,6 +422,88 @@ func TestOpenAICompatibleChatPayloadUsesFallbackModelAndTools(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleChatPayloadUsesExplicitProviderFamilyReasoningSpec(t *testing.T) {
+	client := NewOpenAICompatible(Config{ProviderID: ProviderOpenAI, ProviderFamily: "deepseek", BaseURL: "https://api.example.com/v1", APIKey: "test-key", Model: "generic-model"})
+	payload, err := client.chatPayload(llm.ChatRequest{
+		Messages: []llm.Message{{
+			Role: llm.RoleAssistant,
+			Meta: llm.MessageMeta{
+				openAIReasoningContentKey: "provider reasoning",
+			},
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{"path":"."}`,
+				},
+			}},
+		}},
+	}, false)
+	if err != nil {
+		t.Fatalf("chat payload: %v", err)
+	}
+	messages, _ := payload["messages"].([]map[string]any)
+	if len(messages) != 1 {
+		t.Fatalf("expected one message, got %#v", payload["messages"])
+	}
+	if messages[0][openAIReasoningContentKey] != "provider reasoning" {
+		t.Fatalf("expected provider reasoning_content to be sent, got %#v", messages[0])
+	}
+}
+
+func TestOpenAICompatibleChatPayloadDoesNotUseModelNameForReasoningSpec(t *testing.T) {
+	client := NewOpenAICompatible(Config{ProviderID: ProviderOpenAI, BaseURL: "https://api.openai.com/v1", APIKey: "test-key", Model: "deepseek-v4-pro"})
+	payload, err := client.chatPayload(llm.ChatRequest{
+		Messages: []llm.Message{{
+			Role: llm.RoleAssistant,
+			Meta: llm.MessageMeta{
+				openAIReasoningContentKey: "provider reasoning",
+			},
+			Content: "done",
+		}},
+	}, false)
+	if err != nil {
+		t.Fatalf("chat payload: %v", err)
+	}
+	messages, _ := payload["messages"].([]map[string]any)
+	if len(messages) != 1 {
+		t.Fatalf("expected one message, got %#v", payload["messages"])
+	}
+	if _, ok := messages[0][openAIReasoningContentKey]; ok {
+		t.Fatalf("did not expect reasoning_content based on model name alone, got %#v", messages[0])
+	}
+}
+
+func TestOpenAIReasoningRoundTripSpecFollowsProviderFamily(t *testing.T) {
+	cases := []struct {
+		name     string
+		family   string
+		provider ProviderID
+		baseURL  string
+		want     bool
+	}{
+		{name: "deepseek explicit family", family: "deepseek", provider: ProviderOpenAI, baseURL: "https://api.example.com/v1", want: true},
+		{name: "kimi explicit family", family: "kimi", provider: ProviderOpenAI, want: true},
+		{name: "moonshot explicit family", family: "moonshot", provider: ProviderOpenAI, want: true},
+		{name: "glm explicit family", family: "glm", provider: ProviderOpenAI, want: true},
+		{name: "zhipu explicit family", family: "zhipu", provider: ProviderOpenAI, want: true},
+		{name: "zai explicit family", family: "zai", provider: ProviderOpenAI, want: true},
+		{name: "explicit openai family overrides fallback signals", family: "openai", provider: "deepseek", baseURL: "https://api.deepseek.com/v1", want: false},
+		{name: "deepseek provider id fallback", provider: "deepseek", want: true},
+		{name: "bigmodel base url fallback", provider: ProviderOpenAI, baseURL: "https://open.bigmodel.cn/api/paas/v4", want: true},
+		{name: "openai provider", provider: ProviderOpenAI, baseURL: "https://api.openai.com/v1", want: false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := openAIReasoningRoundTripSpecForProvider(tt.family, tt.provider, tt.baseURL).Enabled()
+			if got != tt.want {
+				t.Fatalf("unexpected reasoning spec enabled=%v want=%v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestOpenAIMessagesMapsThinkingAndToolResultParts(t *testing.T) {
 	messages, err := openAIMessages(llm.ChatRequest{
 		Messages: []llm.Message{
@@ -434,7 +516,7 @@ func TestOpenAIMessagesMapsThinkingAndToolResultParts(t *testing.T) {
 			},
 			llm.NewToolResultMessage("call-1", `{"ok":true}`),
 		},
-	})
+	}, openAIReasoningRoundTripSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,9 +537,8 @@ func TestOpenAIMessagesMapsThinkingAndToolResultParts(t *testing.T) {
 	}
 }
 
-func TestOpenAIMessagesRoundTripsDeepSeekReasoningWithToolCalls(t *testing.T) {
+func TestOpenAIMessagesRoundTripsProviderReasoningWithToolCalls(t *testing.T) {
 	messages, err := openAIMessages(llm.ChatRequest{
-		Model: "deepseek-v4-pro",
 		Messages: []llm.Message{
 			{
 				Role: llm.RoleAssistant,
@@ -475,7 +556,7 @@ func TestOpenAIMessagesRoundTripsDeepSeekReasoningWithToolCalls(t *testing.T) {
 			},
 			llm.NewToolResultMessage("call-1", `{"ok":true}`),
 		},
-	})
+	}, openAIReasoningRoundTripSpecForProvider("deepseek", ProviderOpenAI, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,9 +577,9 @@ func TestOpenAIMessagesRoundTripsDeepSeekReasoningWithToolCalls(t *testing.T) {
 	}
 }
 
-func TestOpenAIMessagesDoesNotSendReasoningToNonDeepSeekModel(t *testing.T) {
+func TestOpenAIMessagesDoesNotSendReasoningToProviderWithoutReasoningContent(t *testing.T) {
 	messages, err := openAIMessages(llm.ChatRequest{
-		Model: "gpt-5.4-mini",
+		Model: "deepseek-v4-pro",
 		Messages: []llm.Message{{
 			Role: llm.RoleAssistant,
 			Meta: llm.MessageMeta{
@@ -506,7 +587,7 @@ func TestOpenAIMessagesDoesNotSendReasoningToNonDeepSeekModel(t *testing.T) {
 			},
 			Content: "done",
 		}},
-	})
+	}, openAIReasoningRoundTripSpecForProvider("openai", ProviderOpenAI, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +595,7 @@ func TestOpenAIMessagesDoesNotSendReasoningToNonDeepSeekModel(t *testing.T) {
 		t.Fatalf("expected one assistant message, got %#v", messages)
 	}
 	if _, ok := messages[0][openAIReasoningContentKey]; ok {
-		t.Fatalf("did not expect reasoning_content for non-DeepSeek model, got %#v", messages[0])
+		t.Fatalf("did not expect reasoning_content for provider without reasoning_content support, got %#v", messages[0])
 	}
 	if messages[0]["content"] != "done" {
 		t.Fatalf("expected normal assistant content, got %#v", messages[0])
@@ -530,7 +611,7 @@ func TestOpenAIMessagesDegradesMissingImageAsset(t *testing.T) {
 				Image: &llm.ImagePartRef{AssetID: "asset-1"},
 			}},
 		}},
-	})
+	}, openAIReasoningRoundTripSpec{})
 	if err != nil {
 		t.Fatalf("openAIMessages: %v", err)
 	}

@@ -58,7 +58,7 @@ func (c *OpenAICompatible) postJSON(ctx context.Context, url string, payload map
 func (c *OpenAICompatible) chatPayload(req llm.ChatRequest, stream bool) (map[string]any, error) {
 	model := choose(req.Model, c.model)
 	req.Model = model
-	messages, err := openAIMessages(req)
+	messages, err := openAIMessages(req, openAIReasoningRoundTripSpecForProvider(c.family, c.providerID, c.baseURL))
 	if err != nil {
 		return nil, err
 	}
@@ -77,9 +77,9 @@ func (c *OpenAICompatible) chatPayload(req llm.ChatRequest, stream bool) (map[st
 	return payload, nil
 }
 
-func openAIMessages(req llm.ChatRequest) ([]map[string]any, error) {
+func openAIMessages(req llm.ChatRequest, reasoningSpec openAIReasoningRoundTripSpec) ([]map[string]any, error) {
 	converted := make([]map[string]any, 0, len(req.Messages))
-	roundTripReasoning := shouldRoundTripOpenAIReasoningContent(req.Model)
+	roundTripReasoning := reasoningSpec.Enabled()
 	for _, message := range req.Messages {
 		message.Normalize()
 		switch message.Role {
@@ -119,12 +119,12 @@ func openAIMessages(req llm.ChatRequest) ([]map[string]any, error) {
 				}
 			}
 			if roundTripReasoning && message.Role == llm.RoleAssistant {
-				reasoning := openAIReasoningContent(message)
+				reasoning := openAIReasoningContentForField(message, reasoningSpec.ContentField)
 				if reasoning == "" && len(reasoningParts) > 0 {
 					reasoning = strings.Join(reasoningParts, "")
 				}
 				if reasoning != "" {
-					entry[openAIReasoningContentKey] = reasoning
+					entry[reasoningSpec.ContentField] = reasoning
 				}
 			}
 			hasToolCalls := len(asToolCalls(entry["tool_calls"])) > 0

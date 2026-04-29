@@ -17,8 +17,14 @@ func NewClientFromRuntime(cfg config.ProviderRuntimeConfig, health HealthChecker
 }
 
 func newBaseClient(cfg config.ProviderConfig) (llm.Client, error) {
+	return newBaseClientWithProviderID("", cfg)
+}
+
+func newBaseClientWithProviderID(providerID ProviderID, cfg config.ProviderConfig) (llm.Client, error) {
 	typ := strings.ToLower(strings.TrimSpace(cfg.Type))
 	clientCfg := Config{
+		ProviderID:       providerID,
+		ProviderFamily:   cfg.Family,
 		Type:             typ,
 		BaseURL:          cfg.BaseURL,
 		APIPath:          cfg.APIPath,
@@ -60,13 +66,13 @@ func NewDomainClient(cfg config.ProviderConfig) (Client, error) {
 }
 
 func NewDomainClientWithID(providerID ProviderID, cfg config.ProviderConfig) (Client, error) {
-	baseClient, err := newBaseClient(cfg)
-	if err != nil {
-		return nil, err
-	}
 	id := ProviderID(strings.ToLower(strings.TrimSpace(string(providerID))))
 	if id == "" {
 		id = ProviderID("unknown")
+	}
+	baseClient, err := newBaseClientWithProviderID(id, cfg)
+	if err != nil {
+		return nil, err
 	}
 	return WrapClient(id, ModelID(strings.TrimSpace(cfg.Model)), baseClient), nil
 }

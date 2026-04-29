@@ -217,6 +217,52 @@ func argumentString(raw json.RawMessage) string {
 
 const openAIReasoningContentKey = "reasoning_content"
 
+type openAIReasoningRoundTripSpec struct {
+	ContentField string
+}
+
+func (s openAIReasoningRoundTripSpec) Enabled() bool {
+	return strings.TrimSpace(s.ContentField) != ""
+}
+
+func openAIReasoningRoundTripSpecForProvider(family string, providerID ProviderID, baseURL string) openAIReasoningRoundTripSpec {
+	if providerUsesOpenAIReasoningContent(family, providerID, baseURL) {
+		return openAIReasoningRoundTripSpec{ContentField: openAIReasoningContentKey}
+	}
+	return openAIReasoningRoundTripSpec{}
+}
+
+func providerUsesOpenAIReasoningContent(family string, providerID ProviderID, baseURL string) bool {
+	if family = strings.ToLower(strings.TrimSpace(family)); family != "" {
+		return providerFamilyUsesOpenAIReasoningContent(family)
+	}
+	provider := strings.ToLower(strings.TrimSpace(string(providerID)))
+	base := strings.ToLower(strings.TrimSpace(baseURL))
+	if providerFamilyUsesOpenAIReasoningContent(provider) {
+		return true
+	}
+	return providerFamilyUsesOpenAIReasoningContent(base)
+}
+
+func providerFamilyUsesOpenAIReasoningContent(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, marker := range []string{
+		"deepseek",
+		"kimi",
+		"moonshot",
+		"glm",
+		"zhipu",
+		"zai",
+		"z.ai",
+		"bigmodel",
+	} {
+		if strings.Contains(value, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func appendOpenAIReasoningContent(msg *llm.Message, delta string) {
 	if msg == nil || delta == "" {
 		return
@@ -236,19 +282,22 @@ func setOpenAIReasoningContent(msg *llm.Message, reasoning string) {
 }
 
 func openAIReasoningContent(msg llm.Message) string {
+	return openAIReasoningContentForField(msg, openAIReasoningContentKey)
+}
+
+func openAIReasoningContentForField(msg llm.Message, field string) string {
 	if len(msg.Meta) == 0 {
 		return ""
 	}
-	value, _ := msg.Meta[openAIReasoningContentKey].(string)
+	field = strings.TrimSpace(field)
+	if field == "" {
+		return ""
+	}
+	value, _ := msg.Meta[field].(string)
 	if strings.TrimSpace(value) == "" {
 		return ""
 	}
 	return value
-}
-
-func shouldRoundTripOpenAIReasoningContent(model string) bool {
-	model = strings.ToLower(strings.TrimSpace(model))
-	return strings.Contains(model, "deepseek")
 }
 
 func extractTextFromRaw(raw json.RawMessage, includeReasoning bool) string {

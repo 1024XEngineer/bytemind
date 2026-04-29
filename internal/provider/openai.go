@@ -21,6 +21,8 @@ const (
 )
 
 type Config struct {
+	ProviderID       ProviderID
+	ProviderFamily   string
 	Type             string
 	BaseURL          string
 	APIPath          string
@@ -33,6 +35,8 @@ type Config struct {
 }
 
 type OpenAICompatible struct {
+	providerID   ProviderID
+	family       string
 	baseURL      string
 	apiPath      string
 	apiKey       string
@@ -64,6 +68,8 @@ func NewOpenAICompatible(cfg Config) *OpenAICompatible {
 		extraHeaders[key] = value
 	}
 	return &OpenAICompatible{
+		providerID:   ProviderID(strings.ToLower(strings.TrimSpace(string(cfg.ProviderID)))),
+		family:       strings.ToLower(strings.TrimSpace(cfg.ProviderFamily)),
 		baseURL:      strings.TrimRight(cfg.BaseURL, "/"),
 		apiPath:      apiPath,
 		apiKey:       cfg.APIKey,
