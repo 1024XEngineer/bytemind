@@ -879,6 +879,7 @@ func TestRequiresTaskIDForStatus(t *testing.T) {
 func TestValidateDelegateSubAgentOutputContract(t *testing.T) {
 	okSummary := tools.DelegateSubAgentResult{
 		OK:      true,
+		Status:  subAgentResultStatusCompleted,
 		Summary: "done",
 	}
 	if err := validateDelegateSubAgentOutputContract(okSummary, subAgentRequestedOutputSummary); err != nil {
@@ -887,6 +888,7 @@ func TestValidateDelegateSubAgentOutputContract(t *testing.T) {
 
 	okFindings := tools.DelegateSubAgentResult{
 		OK:       true,
+		Status:   subAgentResultStatusCompleted,
 		Findings: []tools.DelegateSubAgentFinding{{Title: "t", Body: "b"}},
 	}
 	if err := validateDelegateSubAgentOutputContract(okFindings, subAgentRequestedOutputFindings); err != nil {
@@ -910,6 +912,10 @@ func TestValidateDelegateSubAgentOutputContract(t *testing.T) {
 	}
 	if err := validateDelegateSubAgentOutputContract(queued, subAgentRequestedOutputSummary); err != nil {
 		t.Fatalf("expected queued status to skip summary contract, got %v", err)
+	}
+
+	if err := validateDelegateSubAgentOutputContract(okSummary, "json"); err == nil {
+		t.Fatal("expected unsupported requested output error")
 	}
 }
 

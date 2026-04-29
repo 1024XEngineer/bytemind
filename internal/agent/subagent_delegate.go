@@ -400,7 +400,7 @@ func validateDelegateSubAgentOutputContract(result tools.DelegateSubAgentResult,
 		}
 		return nil
 	default:
-		return nil
+		return fmt.Errorf("unsupported requested output %q", requestedOutput)
 	}
 }
 
