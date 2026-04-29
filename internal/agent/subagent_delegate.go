@@ -31,6 +31,9 @@ const (
 	subAgentResultStatusQueued    = "queued"
 	subAgentResultStatusRunning   = "running"
 	subAgentResultStatusAccepted  = "accepted"
+
+	subAgentRequestedOutputFindings = "findings"
+	subAgentRequestedOutputSummary  = "summary"
 )
 
 var subAgentInvocationCounter atomic.Uint64
@@ -194,6 +197,14 @@ func (r *Runner) delegateSubAgent(
 			result.Error = &tools.DelegateSubAgentError{
 				Code:      subAgentErrorCodeInvalidResult,
 				Message:   fmt.Sprintf("subagent returned invalid structured result: %v", normalizeErr),
+				Retryable: true,
+			}
+			return result, nil
+		}
+		if contractErr := validateDelegateSubAgentOutputContract(normalized, preflight.RequestedOutput); contractErr != nil {
+			result.Error = &tools.DelegateSubAgentError{
+				Code:      subAgentErrorCodeInvalidResult,
+				Message:   fmt.Sprintf("subagent result violates requested output contract: %v", contractErr),
 				Retryable: true,
 			}
 			return result, nil
@@ -364,6 +375,28 @@ func isAllowedSubAgentStatus(status string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func validateDelegateSubAgentOutputContract(result tools.DelegateSubAgentResult, requestedOutput string) error {
+	if !result.OK {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(requestedOutput)) {
+	case "":
+		return nil
+	case subAgentRequestedOutputSummary:
+		if strings.TrimSpace(result.Summary) == "" {
+			return fmt.Errorf("requested output %q requires non-empty summary", subAgentRequestedOutputSummary)
+		}
+		return nil
+	case subAgentRequestedOutputFindings:
+		if strings.TrimSpace(result.Summary) == "" && len(result.Findings) == 0 {
+			return fmt.Errorf("requested output %q requires summary or findings", subAgentRequestedOutputFindings)
+		}
+		return nil
+	default:
+		return nil
 	}
 }
 

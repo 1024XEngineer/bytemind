@@ -275,8 +275,9 @@ func TestDelegateSubAgentAcceptsStructuredRuntimeOutput(t *testing.T) {
 	})
 
 	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
-		Agent: "explorer",
-		Task:  "Locate prompt assembly order",
+		Agent:  "explorer",
+		Task:   "Locate prompt assembly order",
+		Output: "findings",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
 	})
@@ -303,6 +304,49 @@ func TestDelegateSubAgentAcceptsStructuredRuntimeOutput(t *testing.T) {
 	}
 	if len(result.Findings) != 1 || len(result.References) != 1 {
 		t.Fatalf("expected findings/references from runtime result, got %#v", result)
+	}
+}
+
+func TestDelegateSubAgentRejectsSummaryOutputWithoutSummary(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+
+	gateway := &stubRuntimeGateway{
+		result: runtimepkg.TaskResult{
+			TaskID: "runtime-subagent-task",
+			Status: corepkg.TaskCompleted,
+			Output: []byte(`{
+				"ok": true,
+				"summary": " ",
+				"findings": [],
+				"references": []
+			}`),
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent:  "explorer",
+		Task:   "Locate prompt assembly order",
+		Output: "summary",
+	}, &tools.ExecutionContext{
+		Mode: planpkg.ModeBuild,
+	})
+	if err != nil {
+		t.Fatalf("expected structured tool result without Go error, got %v", err)
+	}
+	if result.OK {
+		t.Fatalf("expected failed result, got %#v", result)
+	}
+	if result.Error == nil || result.Error.Code != subAgentErrorCodeInvalidResult {
+		t.Fatalf("expected invalid result code, got %#v", result.Error)
+	}
+	if !strings.Contains(result.Error.Message, "requested output \"summary\"") {
+		t.Fatalf("expected summary contract error, got %#v", result.Error)
 	}
 }
 
@@ -675,6 +719,32 @@ func TestIsAllowedSubAgentStatus(t *testing.T) {
 	}
 	if isAllowedSubAgentStatus("unknown") {
 		t.Fatal("expected unknown status to be rejected")
+	}
+}
+
+func TestValidateDelegateSubAgentOutputContract(t *testing.T) {
+	okSummary := tools.DelegateSubAgentResult{
+		OK:      true,
+		Summary: "done",
+	}
+	if err := validateDelegateSubAgentOutputContract(okSummary, subAgentRequestedOutputSummary); err != nil {
+		t.Fatalf("expected summary contract pass, got %v", err)
+	}
+
+	okFindings := tools.DelegateSubAgentResult{
+		OK:       true,
+		Findings: []tools.DelegateSubAgentFinding{{Title: "t", Body: "b"}},
+	}
+	if err := validateDelegateSubAgentOutputContract(okFindings, subAgentRequestedOutputFindings); err != nil {
+		t.Fatalf("expected findings contract pass, got %v", err)
+	}
+
+	empty := tools.DelegateSubAgentResult{OK: true}
+	if err := validateDelegateSubAgentOutputContract(empty, subAgentRequestedOutputSummary); err == nil {
+		t.Fatal("expected summary contract error")
+	}
+	if err := validateDelegateSubAgentOutputContract(empty, subAgentRequestedOutputFindings); err == nil {
+		t.Fatal("expected findings contract error")
 	}
 }
 
