@@ -2,17 +2,23 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
+	corepkg "bytemind/internal/core"
 	planpkg "bytemind/internal/plan"
+	runtimepkg "bytemind/internal/runtime"
 	subagentspkg "bytemind/internal/subagents"
 	"bytemind/internal/tools"
 )
 
 const (
-	subAgentErrorCodeNotImplemented = "subagent_not_implemented"
+	subAgentErrorCodeNotImplemented        = "subagent_not_implemented"
+	subAgentErrorCodeRuntimeUnavailable    = "subagent_runtime_unavailable"
+	subAgentErrorCodeBackgroundUnsupported = "subagent_background_not_supported"
 )
 
 var subAgentInvocationCounter atomic.Uint64
@@ -22,7 +28,6 @@ func (r *Runner) delegateSubAgent(
 	request tools.DelegateSubAgentRequest,
 	execCtx *tools.ExecutionContext,
 ) (tools.DelegateSubAgentResult, error) {
-	_ = ctx
 	result := tools.DelegateSubAgentResult{
 		OK:           false,
 		InvocationID: newSubAgentInvocationID(),
@@ -78,12 +83,132 @@ func (r *Runner) delegateSubAgent(
 		return result, nil
 	}
 
+	if request.RunInBackground {
+		result.Error = &tools.DelegateSubAgentError{
+			Code:      subAgentErrorCodeBackgroundUnsupported,
+			Message:   "run_in_background is not wired yet for delegate_subagent",
+			Retryable: false,
+		}
+		return result, nil
+	}
+
+	if r.runtime == nil {
+		result.Error = &tools.DelegateSubAgentError{
+			Code:      subAgentErrorCodeRuntimeUnavailable,
+			Message:   "runtime gateway is unavailable for subagent execution",
+			Retryable: true,
+		}
+		return result, nil
+	}
+
+	execution, runErr := r.runtime.RunSync(ctx, RuntimeTaskRequest{
+		SessionID: sessionIDFromExecutionContext(execCtx),
+		Name:      "delegate_subagent/" + preflightResultName(request.Agent),
+		Kind:      "subagent",
+		Metadata: map[string]string{
+			"invocation_id": result.InvocationID,
+			"agent":         request.Agent,
+			"mode":          string(runMode),
+		},
+		Execute: func(taskCtx context.Context) ([]byte, error) {
+			_ = taskCtx
+			return nil, &subAgentExecutionError{
+				code:      subAgentErrorCodeNotImplemented,
+				message:   "subagent execution pipeline is not wired yet",
+				retryable: true,
+			}
+		},
+	})
+	if runErr != nil {
+		result.Error = mapDelegateSubAgentError(runErr, subAgentErrorCodeRuntimeUnavailable)
+		return result, nil
+	}
+	if execution.ExecutionError != nil {
+		result.Error = mapDelegateSubAgentError(execution.ExecutionError, subAgentErrorCodeNotImplemented)
+		return result, nil
+	}
+	if execution.Result.Status != corepkg.TaskCompleted {
+		errorCode := strings.TrimSpace(execution.Result.ErrorCode)
+		if errorCode == "" {
+			errorCode = subAgentErrorCodeRuntimeUnavailable
+		}
+		result.Error = &tools.DelegateSubAgentError{
+			Code:      errorCode,
+			Message:   fmt.Sprintf("subagent task ended with status %s", execution.Result.Status),
+			Retryable: execution.Result.Status != corepkg.TaskKilled,
+		}
+		return result, nil
+	}
+
 	result.Error = &tools.DelegateSubAgentError{
 		Code:      subAgentErrorCodeNotImplemented,
-		Message:   "delegate_subagent execution pipeline is not wired yet",
+		Message:   "subagent execution returned no structured result",
 		Retryable: true,
 	}
 	return result, nil
+}
+
+func preflightResultName(agent string) string {
+	name := strings.TrimSpace(agent)
+	if name == "" {
+		return "unknown"
+	}
+	return name
+}
+
+func sessionIDFromExecutionContext(execCtx *tools.ExecutionContext) corepkg.SessionID {
+	if execCtx == nil || execCtx.Session == nil {
+		return ""
+	}
+	return corepkg.SessionID(execCtx.Session.ID)
+}
+
+type subAgentExecutionError struct {
+	code      string
+	message   string
+	retryable bool
+}
+
+func (e *subAgentExecutionError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return strings.TrimSpace(e.message)
+}
+
+func mapDelegateSubAgentError(err error, fallbackCode string) *tools.DelegateSubAgentError {
+	if err == nil {
+		return nil
+	}
+	var executionErr *subAgentExecutionError
+	if errors.As(err, &executionErr) && executionErr != nil {
+		code := strings.TrimSpace(executionErr.code)
+		if code == "" {
+			code = fallbackCode
+		}
+		return &tools.DelegateSubAgentError{
+			Code:      code,
+			Message:   strings.TrimSpace(executionErr.message),
+			Retryable: executionErr.retryable,
+		}
+	}
+	var runtimeErr interface{ Code() string }
+	if errors.As(err, &runtimeErr) {
+		code := strings.TrimSpace(runtimeErr.Code())
+		if code == "" {
+			code = fallbackCode
+		}
+		return &tools.DelegateSubAgentError{
+			Code:      code,
+			Message:   strings.TrimSpace(err.Error()),
+			Retryable: code != runtimepkg.ErrorCodeTaskCancelled,
+		}
+	}
+	return &tools.DelegateSubAgentError{
+		Code:      fallbackCode,
+		Message:   strings.TrimSpace(err.Error()),
+		Retryable: true,
+	}
 }
 
 func execCtxGetAllowed(execCtx *tools.ExecutionContext) map[string]struct{} {
