@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 
@@ -19,6 +20,9 @@ func formatChatCopyBody(item chatEntry, width int) string {
 func formatChatBodyMode(item chatEntry, width int, copyMode bool) string {
 	text := strings.ReplaceAll(item.Body, "\r\n", "\n")
 	if item.Kind == "user" {
+		if strings.Contains(text, "[Paste #") || strings.Contains(text, "[Pasted #") {
+			return strings.TrimRight(renderUserPasteAwareBody(text, width, copyMode), "\n")
+		}
 		return strings.TrimRight(wrapPlainText(text, width), "\n")
 	}
 	if item.Kind == "tool" {
@@ -43,6 +47,86 @@ func formatChatBodyMode(item chatEntry, width int, copyMode bool) string {
 		return strings.TrimRight(renderAssistantCopyBody(text, width), "\n")
 	}
 	return strings.TrimRight(renderAssistantBody(text, width), "\n")
+}
+
+func renderUserPasteAwareBody(text string, width int, copyMode bool) string {
+	if !strings.Contains(text, "[Paste #") && !strings.Contains(text, "[Pasted #") {
+		return wrapPlainText(text, width)
+	}
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	rendered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		rendered = append(rendered, renderUserPasteAwareLine(line, width, copyMode)...)
+	}
+	return strings.Join(rendered, "\n")
+}
+
+func renderUserPasteAwareLine(line string, width int, copyMode bool) []string {
+	if strings.TrimSpace(line) == "" {
+		return []string{""}
+	}
+	matches := pastedRefPattern.FindAllStringSubmatchIndex(line, -1)
+	if len(matches) == 0 {
+		return strings.Split(wrapPlainText(line, width), "\n")
+	}
+
+	out := make([]string, 0, len(matches)+1)
+	last := 0
+	for i, idx := range matches {
+		start, end := idx[0], idx[1]
+		prefix := line[last:start]
+		if strings.TrimSpace(prefix) != "" {
+			out = append(out, strings.Split(wrapPlainText(prefix, width), "\n")...)
+		}
+		nextStart := len(line)
+		if i+1 < len(matches) {
+			nextStart = matches[i+1][0]
+		}
+		markerSuffix := line[end:nextStart]
+		if strings.HasPrefix(strings.TrimSpace(markerSuffix), "[preview]") || strings.HasPrefix(strings.TrimSpace(markerSuffix), "[full]") {
+			out = append(out, renderWrappedPasteMarker(line[start:end]+markerSuffix, width, copyMode, false)...)
+			last = nextStart
+			continue
+		}
+		out = append(out, renderWrappedPasteMarker(line[start:end], width, copyMode, true)...)
+		last = end
+	}
+	suffix := line[last:]
+	if strings.TrimSpace(suffix) != "" {
+		out = append(out, strings.Split(wrapPlainText(suffix, width), "\n")...)
+	}
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
+}
+
+func renderWrappedPasteMarker(marker string, width int, copyMode bool, showClickHint bool) []string {
+	if strings.TrimSpace(marker) == "" {
+		return nil
+	}
+	if copyMode {
+		return strings.Split(wrapPlainText(marker, width), "\n")
+	}
+	if width <= 0 {
+		width = 72
+	}
+	renderedMarker := pasteMarkerStyle.Render(marker)
+	if !showClickHint {
+		return []string{renderedMarker}
+	}
+	hintText := "[click]"
+	renderedHint := pasteExpandIconStyle.Render(hintText)
+	plainWidth := runewidth.StringWidth(marker) + 1 + runewidth.StringWidth(hintText)
+	if plainWidth <= width {
+		return []string{renderedMarker + " " + renderedHint}
+	}
+	wrapped := strings.Split(wrapPlainText(marker, width), "\n")
+	if len(wrapped) == 0 {
+		return []string{renderedMarker}
+	}
+	wrapped[len(wrapped)-1] = wrapped[len(wrapped)-1] + " " + renderedHint
+	return wrapped
 }
 
 func isHelpMarkdownText(text string) bool {
@@ -484,6 +568,7 @@ func renderSemanticAssistantLine(line string, width int) string {
 	if core == "" {
 		core = trimmed
 	}
+	intent := semanticIntent(core)
 
 	if isDocumentTitleLine(core) {
 		wrapped := strings.Split(wrapPlainText(core, width), "\n")
@@ -512,7 +597,7 @@ func renderSemanticAssistantLine(line string, width int) string {
 	}
 
 	label, rest, ok := splitSemanticLabel(core)
-	if !ok {
+	if !ok || intent == "" {
 		wrapped := strings.Split(wrapPlainText(core, max(8, width-runewidth.StringWidth(listPrefix))), "\n")
 		wrapped = applyIntentStyleToLines(core, wrapped)
 		return joinWithListPrefix(listPrefix, wrapped, isList)
@@ -957,4 +1042,123 @@ func renderMarkdownQuote(line string, width int) string {
 
 func looksLikeMarkdownTable(line string) bool {
 	return strings.Count(line, "|") >= 2
+}
+
+//
+// paste expansion rendering (in-conversation expand/collapse of compressed pastes)
+//
+
+const pastePreviewLineCount = 10
+
+func (m model) resolveUserBodyPastes(body string) string {
+	if !strings.Contains(body, "[Paste #") && !strings.Contains(body, "[Pasted #") {
+		return body
+	}
+	matches := pastedRefPattern.FindAllStringSubmatchIndex(body, -1)
+	if len(matches) == 0 {
+		return body
+	}
+
+	var out strings.Builder
+	last := 0
+	for _, idx := range matches {
+		start, end := idx[0], idx[1]
+		if start > last {
+			out.WriteString(body[last:start])
+		}
+
+		full := body[start:end]
+		pasteID := submatchString(body, idx, pasteRefGroupID)
+		if pasteID == "" {
+			out.WriteString(full)
+			last = end
+			continue
+		}
+
+		content, ok := m.pastedContents[pasteID]
+		if !ok {
+			out.WriteString(full)
+			last = end
+			continue
+		}
+
+		out.WriteString(renderResolvedPasteBlockPlain(content, m.pasteExpandLevel[pasteID]))
+		last = end
+	}
+	if last < len(body) {
+		out.WriteString(body[last:])
+	}
+	return out.String()
+}
+
+func resolvePasteBlockPlain(content pastedContent, level int) string {
+	switch level {
+	case 1:
+		return resolvePastePreviewPlain(content)
+	case 2:
+		return content.Content
+	default:
+		return fmt.Sprintf("▶ [Paste #%s ~%d lines]", content.ID, content.Lines)
+	}
+}
+
+func resolvePastePreviewPlain(content pastedContent) string {
+	lines := strings.Split(content.Content, "\n")
+	n := pastePreviewLineCount
+	if len(lines) < n {
+		n = len(lines)
+	}
+	var out strings.Builder
+	for i := 0; i < n; i++ {
+		out.WriteString(lines[i])
+		if i < n-1 {
+			out.WriteString("\n")
+		}
+	}
+	if len(lines) > pastePreviewLineCount {
+		out.WriteString(fmt.Sprintf("\n... (%d more lines, click or Ctrl+E to expand all)", len(lines)-pastePreviewLineCount))
+	}
+	return out.String()
+}
+
+func renderResolvedPasteBlockPlain(content pastedContent, level int) string {
+	header := fmt.Sprintf("[Paste #%s ~%d lines]", content.ID, content.Lines)
+	switch level {
+	case 1:
+		return renderResolvedPastePreviewPlain(content, header)
+	case 2:
+		return renderResolvedPasteExpandedPlain(content, header)
+	default:
+		return header
+	}
+}
+
+func renderResolvedPastePreviewPlain(content pastedContent, header string) string {
+	lines := strings.Split(content.Content, "\n")
+	n := pastePreviewLineCount
+	if len(lines) < n {
+		n = len(lines)
+	}
+	framed := make([]string, 0, n+2)
+	framed = append(framed, header+" [preview]")
+	for i := 0; i < n; i++ {
+		framed = append(framed, pasteExpandedFrameStyle.Render(lines[i]))
+	}
+	if len(lines) > pastePreviewLineCount {
+		framed = append(framed, pastePreviewStyle.Render(fmt.Sprintf("... (%d more lines, click again for full, Ctrl+E expand all)", len(lines)-pastePreviewLineCount)))
+	} else {
+		framed = append(framed, pastePreviewStyle.Render("click again to show full content"))
+	}
+	return strings.Join(framed, "\n")
+}
+
+func renderResolvedPasteExpandedPlain(content pastedContent, header string) string {
+	lines := strings.Split(content.Content, "\n")
+	framed := make([]string, 0, len(lines)+2)
+	framed = append(framed, header+" [full]")
+	for _, line := range lines {
+		framed = append(framed, pasteExpandedFrameStyle.Render(line))
+	}
+	framed = append(framed, pasteExpandAllHintStyle.Render("click again to collapse"))
+	return strings.Join(framed, "\n")
 }

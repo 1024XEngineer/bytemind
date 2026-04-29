@@ -76,6 +76,25 @@ func TestHandleMouseDragSelectionAutoScrollsBeyondViewport(t *testing.T) {
 	}
 }
 
+func TestPasteIDAtViewportPointFindsExpandedPasteBodyRows(t *testing.T) {
+	m := model{
+		viewportContentCache: strings.Join([]string{
+			"You",
+			"[Paste #1 ~12 lines] [preview]",
+			"│ line1",
+			"│ line2",
+			"... (10 more lines, click again for full, Ctrl+E expand all)",
+		}, "\n"),
+	}
+
+	for _, row := range []int{1, 2, 3, 4} {
+		got := m.pasteIDAtViewportPoint(viewportSelectionPoint{Row: row, Col: 2})
+		if got != "1" {
+			t.Fatalf("expected row %d to resolve to paste 1, got %q", row, got)
+		}
+	}
+}
+
 func TestMouseSelectionScrollTickAutoScrollsWhileHoldingAtBottomEdge(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
