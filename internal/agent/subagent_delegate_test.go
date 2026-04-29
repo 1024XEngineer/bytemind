@@ -811,12 +811,23 @@ func TestValidateDelegateSubAgentOutputContract(t *testing.T) {
 		t.Fatalf("expected findings contract pass, got %v", err)
 	}
 
-	empty := tools.DelegateSubAgentResult{OK: true}
+	empty := tools.DelegateSubAgentResult{
+		OK:     true,
+		Status: subAgentResultStatusCompleted,
+	}
 	if err := validateDelegateSubAgentOutputContract(empty, subAgentRequestedOutputSummary); err == nil {
 		t.Fatal("expected summary contract error")
 	}
 	if err := validateDelegateSubAgentOutputContract(empty, subAgentRequestedOutputFindings); err == nil {
 		t.Fatal("expected findings contract error")
+	}
+
+	queued := tools.DelegateSubAgentResult{
+		OK:     true,
+		Status: subAgentResultStatusQueued,
+	}
+	if err := validateDelegateSubAgentOutputContract(queued, subAgentRequestedOutputSummary); err != nil {
+		t.Fatalf("expected queued status to skip summary contract, got %v", err)
 	}
 }
 

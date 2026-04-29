@@ -395,6 +395,9 @@ func validateDelegateSubAgentOutputContract(result tools.DelegateSubAgentResult,
 	if !result.OK {
 		return nil
 	}
+	if strings.ToLower(strings.TrimSpace(result.Status)) != subAgentResultStatusCompleted {
+		return nil
+	}
 	switch strings.ToLower(strings.TrimSpace(requestedOutput)) {
 	case "":
 		return nil
