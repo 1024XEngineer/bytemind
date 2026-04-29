@@ -185,3 +185,97 @@ review files
 		t.Fatalf("unexpected error: %#v", err)
 	}
 }
+
+func TestGatewayPreflightInheritsDefinitionDefaults(t *testing.T) {
+	workspace := t.TempDir()
+	builtinDir := filepath.Join(workspace, "internal", "subagents")
+	writeSubAgentFile(t, filepath.Join(builtinDir, "review.md"), `---
+name: review
+description: reviewer
+tools: [read_file]
+timeout: 45s
+output: findings
+isolation: worktree
+---
+review files
+`)
+
+	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
+	gateway := NewGateway(manager)
+	result, err := gateway.Preflight(PreflightRequest{
+		Agent:         "review",
+		Task:          "check",
+		Mode:          planpkg.ModeBuild,
+		ParentVisible: []string{"read_file"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected preflight error: %v", err)
+	}
+	if result.RequestedTimeout != "45s" {
+		t.Fatalf("expected default timeout 45s, got %q", result.RequestedTimeout)
+	}
+	if result.RequestedOutput != "findings" {
+		t.Fatalf("expected default output findings, got %q", result.RequestedOutput)
+	}
+	if result.Isolation != isolationWorktree {
+		t.Fatalf("expected default isolation %q, got %q", isolationWorktree, result.Isolation)
+	}
+}
+
+func TestGatewayPreflightRejectsInvalidRequestedTimeout(t *testing.T) {
+	workspace := t.TempDir()
+	builtinDir := filepath.Join(workspace, "internal", "subagents")
+	writeSubAgentFile(t, filepath.Join(builtinDir, "review.md"), `---
+name: review
+description: reviewer
+tools: [read_file]
+---
+review files
+`)
+
+	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
+	gateway := NewGateway(manager)
+	_, err := gateway.Preflight(PreflightRequest{
+		Agent:            "review",
+		Task:             "check",
+		Mode:             planpkg.ModeBuild,
+		ParentVisible:    []string{"read_file"},
+		RequestedTimeout: "soon",
+	})
+	if err == nil {
+		t.Fatal("expected invalid timeout error")
+	}
+	gatewayErr, ok := err.(*GatewayError)
+	if !ok || gatewayErr.Code != ErrorCodeSubAgentInvalidRequest {
+		t.Fatalf("unexpected error: %#v", err)
+	}
+}
+
+func TestGatewayPreflightRejectsInvalidRequestedIsolation(t *testing.T) {
+	workspace := t.TempDir()
+	builtinDir := filepath.Join(workspace, "internal", "subagents")
+	writeSubAgentFile(t, filepath.Join(builtinDir, "review.md"), `---
+name: review
+description: reviewer
+tools: [read_file]
+---
+review files
+`)
+
+	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
+	gateway := NewGateway(manager)
+	_, err := gateway.Preflight(PreflightRequest{
+		Agent:              "review",
+		Task:               "check",
+		Mode:               planpkg.ModeBuild,
+		ParentVisible:      []string{"read_file"},
+		RequestedIsolation: "sandbox",
+	})
+	if err == nil {
+		t.Fatal("expected invalid isolation error")
+	}
+	gatewayErr, ok := err.(*GatewayError)
+	if !ok || gatewayErr.Code != ErrorCodeSubAgentInvalidRequest {
+		t.Fatalf("unexpected error: %#v", err)
+	}
+}

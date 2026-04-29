@@ -4,19 +4,21 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	planpkg "bytemind/internal/plan"
 )
 
 const (
-	ErrorCodeSubAgentUnavailable      = "subagent_unavailable"
-	ErrorCodeSubAgentInvalidRequest   = "subagent_invalid_request"
-	ErrorCodeSubAgentTaskNotEligible  = "subagent_task_not_eligible"
-	ErrorCodeSubAgentAgentNotFound    = "subagent_agent_not_found"
-	ErrorCodeSubAgentModeNotAllowed   = "subagent_mode_not_allowed"
-	ErrorCodeSubAgentToolDenied       = "subagent_tool_denied"
-	DelegateSubAgentToolName          = "delegate_subagent"
-	defaultRequestedIsolationFallback = "none"
+	ErrorCodeSubAgentUnavailable     = "subagent_unavailable"
+	ErrorCodeSubAgentInvalidRequest  = "subagent_invalid_request"
+	ErrorCodeSubAgentTaskNotEligible = "subagent_task_not_eligible"
+	ErrorCodeSubAgentAgentNotFound   = "subagent_agent_not_found"
+	ErrorCodeSubAgentModeNotAllowed  = "subagent_mode_not_allowed"
+	ErrorCodeSubAgentToolDenied      = "subagent_tool_denied"
+	DelegateSubAgentToolName         = "delegate_subagent"
+	isolationNone                    = "none"
+	isolationWorktree                = "worktree"
 )
 
 type GatewayError struct {
@@ -92,6 +94,25 @@ func (g *Gateway) Preflight(request PreflightRequest) (PreflightResult, error) {
 		return PreflightResult{}, newGatewayError(ErrorCodeSubAgentModeNotAllowed, fmt.Sprintf("subagent %q is not allowed in %s mode", definition.Name, planpkg.NormalizeMode(string(request.Mode))), false)
 	}
 
+	requestedTimeout := strings.TrimSpace(request.RequestedTimeout)
+	if requestedTimeout == "" {
+		requestedTimeout = strings.TrimSpace(definition.Timeout)
+	}
+	if requestedTimeout != "" {
+		if _, parseErr := time.ParseDuration(requestedTimeout); parseErr != nil {
+			return PreflightResult{}, newGatewayError(
+				ErrorCodeSubAgentInvalidRequest,
+				fmt.Sprintf("invalid timeout %q: %v", requestedTimeout, parseErr),
+				false,
+			)
+		}
+	}
+
+	requestedOutput := strings.TrimSpace(request.RequestedOutput)
+	if requestedOutput == "" {
+		requestedOutput = strings.TrimSpace(definition.Output)
+	}
+
 	visibleSet := normalizeNameSet(request.ParentVisible)
 	if len(visibleSet) == 0 {
 		return PreflightResult{}, newGatewayError(ErrorCodeSubAgentToolDenied, "no parent-visible tools available for delegation", false)
@@ -131,7 +152,15 @@ func (g *Gateway) Preflight(request PreflightRequest) (PreflightResult, error) {
 		isolation = strings.TrimSpace(definition.Isolation)
 	}
 	if isolation == "" {
-		isolation = defaultRequestedIsolationFallback
+		isolation = isolationNone
+	}
+	isolation = strings.ToLower(strings.TrimSpace(isolation))
+	if !isAllowedIsolation(isolation) {
+		return PreflightResult{}, newGatewayError(
+			ErrorCodeSubAgentInvalidRequest,
+			fmt.Sprintf("invalid isolation %q", isolation),
+			false,
+		)
 	}
 
 	return PreflightResult{
@@ -139,8 +168,8 @@ func (g *Gateway) Preflight(request PreflightRequest) (PreflightResult, error) {
 		AllowedTools:     allowedTools,
 		DeniedTools:      deniedSet,
 		EffectiveTools:   effectiveTools,
-		RequestedTimeout: strings.TrimSpace(request.RequestedTimeout),
-		RequestedOutput:  strings.TrimSpace(request.RequestedOutput),
+		RequestedTimeout: requestedTimeout,
+		RequestedOutput:  requestedOutput,
 		Isolation:        isolation,
 	}, nil
 }
@@ -211,4 +240,13 @@ func setToSortedSlice(set map[string]struct{}) []string {
 	}
 	sort.Strings(items)
 	return items
+}
+
+func isAllowedIsolation(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case isolationNone, isolationWorktree:
+		return true
+	default:
+		return false
+	}
 }
