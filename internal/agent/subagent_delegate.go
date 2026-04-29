@@ -330,6 +330,9 @@ func normalizeDelegateSubAgentResult(
 	if result.OK && result.Status == subAgentResultStatusFailed {
 		return tools.DelegateSubAgentResult{}, fmt.Errorf("ok result must not use failed status")
 	}
+	if result.OK && requiresTaskIDForStatus(result.Status) && strings.TrimSpace(result.TaskID) == "" {
+		return tools.DelegateSubAgentResult{}, fmt.Errorf("status %q requires non-empty task_id", result.Status)
+	}
 	if !result.OK && result.Status != subAgentResultStatusFailed {
 		return tools.DelegateSubAgentResult{}, fmt.Errorf("failed result must use status %q", subAgentResultStatusFailed)
 	}
@@ -389,6 +392,15 @@ func validateDelegateSubAgentOutputContract(result tools.DelegateSubAgentResult,
 		return nil
 	default:
 		return nil
+	}
+}
+
+func requiresTaskIDForStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case subAgentResultStatusQueued, subAgentResultStatusRunning, subAgentResultStatusAccepted:
+		return true
+	default:
+		return false
 	}
 }
 

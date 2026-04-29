@@ -738,7 +738,7 @@ func TestNormalizeDelegateSubAgentResultRejectsMismatchedOKStatus(t *testing.T) 
 func TestNormalizeDelegateSubAgentResultAcceptsAsyncSuccessStatuses(t *testing.T) {
 	for _, status := range []string{subAgentResultStatusQueued, subAgentResultStatusRunning, subAgentResultStatusAccepted} {
 		result, err := normalizeDelegateSubAgentResult(
-			[]byte(`{"ok":true,"status":"`+status+`","summary":"async","findings":[],"references":[]}`),
+			[]byte(`{"ok":true,"status":"`+status+`","task_id":"task-1","summary":"async","findings":[],"references":[]}`),
 			"inv-1",
 			"explorer",
 			"task-1",
@@ -748,6 +748,20 @@ func TestNormalizeDelegateSubAgentResultAcceptsAsyncSuccessStatuses(t *testing.T
 		}
 		if result.Status != status {
 			t.Fatalf("expected status %q, got %q", status, result.Status)
+		}
+	}
+}
+
+func TestNormalizeDelegateSubAgentResultRejectsAsyncStatusWithoutTaskID(t *testing.T) {
+	for _, status := range []string{subAgentResultStatusQueued, subAgentResultStatusRunning, subAgentResultStatusAccepted} {
+		_, err := normalizeDelegateSubAgentResult(
+			[]byte(`{"ok":true,"status":"`+status+`","summary":"async","findings":[],"references":[]}`),
+			"inv-1",
+			"explorer",
+			"",
+		)
+		if err == nil || !strings.Contains(err.Error(), "requires non-empty task_id") {
+			t.Fatalf("expected task_id requirement for status %q, got %v", status, err)
 		}
 	}
 }
@@ -819,6 +833,19 @@ func TestIsAllowedSubAgentStatus(t *testing.T) {
 	}
 	if isAllowedSubAgentStatus("unknown") {
 		t.Fatal("expected unknown status to be rejected")
+	}
+}
+
+func TestRequiresTaskIDForStatus(t *testing.T) {
+	for _, status := range []string{subAgentResultStatusQueued, subAgentResultStatusRunning, subAgentResultStatusAccepted} {
+		if !requiresTaskIDForStatus(status) {
+			t.Fatalf("expected status %q to require task_id", status)
+		}
+	}
+	for _, status := range []string{subAgentResultStatusCompleted, subAgentResultStatusFailed, ""} {
+		if requiresTaskIDForStatus(status) {
+			t.Fatalf("expected status %q not to require task_id", status)
+		}
 	}
 }
 
