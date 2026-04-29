@@ -234,6 +234,9 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 	if call.Metadata["effective_tool_count"] != "2" {
 		t.Fatalf("expected effective_tool_count 2, got %q", call.Metadata["effective_tool_count"])
 	}
+	if call.Metadata["effective_toolset_hash"] != "f2475c3f80104af2a4f1cf5eaaaabeb5a898b71747a09614703e99cee88b1f82" {
+		t.Fatalf("expected effective_toolset_hash, got %q", call.Metadata["effective_toolset_hash"])
+	}
 	if call.Metadata["requested_timeout"] != "90s" {
 		t.Fatalf("expected requested_timeout metadata, got %q", call.Metadata["requested_timeout"])
 	}
@@ -472,6 +475,14 @@ func TestMapDelegateSubAgentErrorFallsBackToCancelledHeuristic(t *testing.T) {
 	}
 	if mapped.Retryable {
 		t.Fatalf("expected retryable=false for cancelled code, got %#v", mapped)
+	}
+}
+
+func TestEffectiveToolsetHashStableCanonicalization(t *testing.T) {
+	got := effectiveToolsetHash([]string{"search_text", " read_file ", "", "search_text"})
+	const want = "f2475c3f80104af2a4f1cf5eaaaabeb5a898b71747a09614703e99cee88b1f82"
+	if got != want {
+		t.Fatalf("unexpected toolset hash: got %q want %q", got, want)
 	}
 }
 

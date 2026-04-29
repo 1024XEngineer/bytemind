@@ -2,9 +2,12 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -112,11 +115,12 @@ func (r *Runner) delegateSubAgent(
 	}
 
 	metadata := map[string]string{
-		"invocation_id":        result.InvocationID,
-		"agent":                result.Agent,
-		"mode":                 string(runMode),
-		"isolation":            preflight.Isolation,
-		"effective_tool_count": strconv.Itoa(len(preflight.EffectiveTools)),
+		"invocation_id":          result.InvocationID,
+		"agent":                  result.Agent,
+		"mode":                   string(runMode),
+		"isolation":              preflight.Isolation,
+		"effective_tool_count":   strconv.Itoa(len(preflight.EffectiveTools)),
+		"effective_toolset_hash": effectiveToolsetHash(preflight.EffectiveTools),
 	}
 	if preflight.RequestedTimeout != "" {
 		metadata["requested_timeout"] = preflight.RequestedTimeout
@@ -310,6 +314,31 @@ func firstNonEmpty(value, fallback string) string {
 		return trimmed
 	}
 	return strings.TrimSpace(fallback)
+}
+
+func effectiveToolsetHash(toolNames []string) string {
+	if len(toolNames) == 0 {
+		return ""
+	}
+	canonical := make([]string, 0, len(toolNames))
+	seen := make(map[string]struct{}, len(toolNames))
+	for _, name := range toolNames {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		canonical = append(canonical, trimmed)
+	}
+	if len(canonical) == 0 {
+		return ""
+	}
+	sort.Strings(canonical)
+	sum := sha256.Sum256([]byte(strings.Join(canonical, "\n")))
+	return hex.EncodeToString(sum[:])
 }
 
 func execCtxGetAllowed(execCtx *tools.ExecutionContext) map[string]struct{} {
