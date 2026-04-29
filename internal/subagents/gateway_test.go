@@ -222,6 +222,63 @@ review files
 	}
 }
 
+func TestGatewayPreflightNormalizesRequestedOutput(t *testing.T) {
+	workspace := t.TempDir()
+	builtinDir := filepath.Join(workspace, "internal", "subagents")
+	writeSubAgentFile(t, filepath.Join(builtinDir, "review.md"), `---
+name: review
+description: reviewer
+tools: [read_file]
+---
+review files
+`)
+
+	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
+	gateway := NewGateway(manager)
+	result, err := gateway.Preflight(PreflightRequest{
+		Agent:           "review",
+		Task:            "check",
+		Mode:            planpkg.ModeBuild,
+		ParentVisible:   []string{"read_file"},
+		RequestedOutput: "  SUMMARY ",
+	})
+	if err != nil {
+		t.Fatalf("unexpected preflight error: %v", err)
+	}
+	if result.RequestedOutput != outputSummary {
+		t.Fatalf("expected normalized output %q, got %q", outputSummary, result.RequestedOutput)
+	}
+}
+
+func TestGatewayPreflightRejectsInvalidRequestedOutput(t *testing.T) {
+	workspace := t.TempDir()
+	builtinDir := filepath.Join(workspace, "internal", "subagents")
+	writeSubAgentFile(t, filepath.Join(builtinDir, "review.md"), `---
+name: review
+description: reviewer
+tools: [read_file]
+---
+review files
+`)
+
+	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
+	gateway := NewGateway(manager)
+	_, err := gateway.Preflight(PreflightRequest{
+		Agent:           "review",
+		Task:            "check",
+		Mode:            planpkg.ModeBuild,
+		ParentVisible:   []string{"read_file"},
+		RequestedOutput: "json",
+	})
+	if err == nil {
+		t.Fatal("expected invalid output error")
+	}
+	gatewayErr, ok := err.(*GatewayError)
+	if !ok || gatewayErr.Code != ErrorCodeSubAgentInvalidRequest {
+		t.Fatalf("unexpected error: %#v", err)
+	}
+}
+
 func TestGatewayPreflightRejectsInvalidRequestedTimeout(t *testing.T) {
 	workspace := t.TempDir()
 	builtinDir := filepath.Join(workspace, "internal", "subagents")
