@@ -164,8 +164,10 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 	sess := session.New(workspace)
 
 	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
-		Agent: "explorer",
-		Task:  "Locate prompt assembly order",
+		Agent:   "explorer",
+		Task:    "Locate prompt assembly order",
+		Timeout: "90s",
+		Output:  "findings",
 	}, &tools.ExecutionContext{
 		Mode:    planpkg.ModeBuild,
 		Session: sess,
@@ -206,6 +208,18 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 	}
 	if call.Metadata["mode"] != string(planpkg.ModeBuild) {
 		t.Fatalf("expected mode metadata, got %q", call.Metadata["mode"])
+	}
+	if call.Metadata["isolation"] != "none" {
+		t.Fatalf("expected isolation metadata none, got %q", call.Metadata["isolation"])
+	}
+	if call.Metadata["effective_tool_count"] != "2" {
+		t.Fatalf("expected effective_tool_count 2, got %q", call.Metadata["effective_tool_count"])
+	}
+	if call.Metadata["requested_timeout"] != "90s" {
+		t.Fatalf("expected requested_timeout metadata, got %q", call.Metadata["requested_timeout"])
+	}
+	if call.Metadata["requested_output"] != "findings" {
+		t.Fatalf("expected requested_output metadata, got %q", call.Metadata["requested_output"])
 	}
 }
 

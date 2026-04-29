@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -57,7 +58,7 @@ func (r *Runner) delegateSubAgent(
 	}
 
 	gateway := subagentspkg.NewGateway(r.subAgentManager)
-	_, err := gateway.Preflight(subagentspkg.PreflightRequest{
+	preflight, err := gateway.Preflight(subagentspkg.PreflightRequest{
 		Agent:              request.Agent,
 		Task:               request.Task,
 		Mode:               runMode,
@@ -84,6 +85,9 @@ func (r *Runner) delegateSubAgent(
 		}
 		return result, nil
 	}
+	if canonical := strings.TrimSpace(preflight.Definition.Name); canonical != "" {
+		result.Agent = canonical
+	}
 
 	if request.RunInBackground {
 		result.Error = &tools.DelegateSubAgentError{
@@ -103,15 +107,25 @@ func (r *Runner) delegateSubAgent(
 		return result, nil
 	}
 
+	metadata := map[string]string{
+		"invocation_id":        result.InvocationID,
+		"agent":                result.Agent,
+		"mode":                 string(runMode),
+		"isolation":            preflight.Isolation,
+		"effective_tool_count": strconv.Itoa(len(preflight.EffectiveTools)),
+	}
+	if preflight.RequestedTimeout != "" {
+		metadata["requested_timeout"] = preflight.RequestedTimeout
+	}
+	if preflight.RequestedOutput != "" {
+		metadata["requested_output"] = preflight.RequestedOutput
+	}
+
 	execution, runErr := r.runtime.RunSync(ctx, RuntimeTaskRequest{
 		SessionID: sessionIDFromExecutionContext(execCtx),
-		Name:      "delegate_subagent/" + preflightResultName(request.Agent),
+		Name:      "delegate_subagent/" + preflightResultName(result.Agent),
 		Kind:      "subagent",
-		Metadata: map[string]string{
-			"invocation_id": result.InvocationID,
-			"agent":         request.Agent,
-			"mode":          string(runMode),
-		},
+		Metadata:  metadata,
 		Execute: func(taskCtx context.Context) ([]byte, error) {
 			_ = taskCtx
 			return nil, &subAgentExecutionError{
