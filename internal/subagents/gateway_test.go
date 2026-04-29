@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	planpkg "bytemind/internal/plan"
 )
@@ -213,6 +214,9 @@ review files
 	}
 	if result.RequestedTimeout != "45s" {
 		t.Fatalf("expected default timeout 45s, got %q", result.RequestedTimeout)
+	}
+	if result.RequestedTimeoutDuration != 45*time.Second {
+		t.Fatalf("expected default timeout duration 45s, got %s", result.RequestedTimeoutDuration)
 	}
 	if result.RequestedOutput != "findings" {
 		t.Fatalf("expected default output findings, got %q", result.RequestedOutput)

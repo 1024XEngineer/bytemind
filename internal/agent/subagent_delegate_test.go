@@ -13,6 +13,7 @@ import (
 	planpkg "bytemind/internal/plan"
 	runtimepkg "bytemind/internal/runtime"
 	"bytemind/internal/session"
+	subagentspkg "bytemind/internal/subagents"
 	"bytemind/internal/tools"
 )
 
@@ -503,6 +504,33 @@ func TestDelegateSubAgentAppliesDefinitionDefaultTimeoutToRuntimeTask(t *testing
 	}
 }
 
+func TestDelegateSubAgentRejectsInvalidRequestedTimeoutFromPreflight(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+	})
+
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent:   "explorer",
+		Task:    "Locate prompt assembly order",
+		Timeout: "soon",
+	}, &tools.ExecutionContext{
+		Mode: planpkg.ModeBuild,
+	})
+	if err != nil {
+		t.Fatalf("expected structured tool result without Go error, got %v", err)
+	}
+	if result.OK {
+		t.Fatalf("expected failed result, got %#v", result)
+	}
+	if result.Error == nil || result.Error.Code != subagentspkg.ErrorCodeSubAgentInvalidRequest {
+		t.Fatalf("expected invalid request code, got %#v", result.Error)
+	}
+}
+
 func TestDelegateSubAgentRejectsInvalidStructuredRuntimeOutput(t *testing.T) {
 	workspace := t.TempDir()
 	writeExplorerSubAgentDefinition(t, workspace)
@@ -839,26 +867,6 @@ func TestMapSubAgentTerminalResultDefaults(t *testing.T) {
 	code, retryable = mapSubAgentTerminalResult(corepkg.TaskFailed, "")
 	if code != runtimepkg.ErrorCodeTaskExecutionFailed || !retryable {
 		t.Fatalf("unexpected failed mapping: code=%q retryable=%v", code, retryable)
-	}
-}
-
-func TestDelegateSubAgentRuntimeTimeoutParsing(t *testing.T) {
-	timeout, err := delegateSubAgentRuntimeTimeout("90s")
-	if err != nil {
-		t.Fatalf("expected parse success, got %v", err)
-	}
-	if timeout != 90*time.Second {
-		t.Fatalf("expected 90s, got %s", timeout)
-	}
-	timeout, err = delegateSubAgentRuntimeTimeout("   ")
-	if err != nil {
-		t.Fatalf("expected empty timeout allowed, got %v", err)
-	}
-	if timeout != 0 {
-		t.Fatalf("expected zero timeout for empty value, got %s", timeout)
-	}
-	if _, err := delegateSubAgentRuntimeTimeout("soon"); err == nil {
-		t.Fatal("expected invalid timeout parse error")
 	}
 }
 

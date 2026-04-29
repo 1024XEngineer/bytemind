@@ -57,13 +57,14 @@ type PreflightRequest struct {
 }
 
 type PreflightResult struct {
-	Definition       Agent
-	AllowedTools     map[string]struct{}
-	DeniedTools      map[string]struct{}
-	EffectiveTools   []string
-	RequestedTimeout string
-	RequestedOutput  string
-	Isolation        string
+	Definition               Agent
+	AllowedTools             map[string]struct{}
+	DeniedTools              map[string]struct{}
+	EffectiveTools           []string
+	RequestedTimeout         string
+	RequestedTimeoutDuration time.Duration
+	RequestedOutput          string
+	Isolation                string
 }
 
 type Gateway struct {
@@ -97,6 +98,7 @@ func (g *Gateway) Preflight(request PreflightRequest) (PreflightResult, error) {
 	}
 
 	requestedTimeout := strings.TrimSpace(request.RequestedTimeout)
+	requestedTimeoutDuration := time.Duration(0)
 	if requestedTimeout == "" {
 		requestedTimeout = strings.TrimSpace(definition.Timeout)
 	}
@@ -116,6 +118,7 @@ func (g *Gateway) Preflight(request PreflightRequest) (PreflightResult, error) {
 				false,
 			)
 		}
+		requestedTimeoutDuration = parsedTimeout
 	}
 
 	requestedOutput := strings.TrimSpace(request.RequestedOutput)
@@ -182,13 +185,14 @@ func (g *Gateway) Preflight(request PreflightRequest) (PreflightResult, error) {
 	}
 
 	return PreflightResult{
-		Definition:       definition,
-		AllowedTools:     allowedTools,
-		DeniedTools:      deniedSet,
-		EffectiveTools:   effectiveTools,
-		RequestedTimeout: requestedTimeout,
-		RequestedOutput:  requestedOutput,
-		Isolation:        isolation,
+		Definition:               definition,
+		AllowedTools:             allowedTools,
+		DeniedTools:              deniedSet,
+		EffectiveTools:           effectiveTools,
+		RequestedTimeout:         requestedTimeout,
+		RequestedTimeoutDuration: requestedTimeoutDuration,
+		RequestedOutput:          requestedOutput,
+		Isolation:                isolation,
 	}, nil
 }
 

@@ -135,21 +135,12 @@ func (r *Runner) delegateSubAgent(
 	if preflight.RequestedOutput != "" {
 		metadata["requested_output"] = preflight.RequestedOutput
 	}
-	taskTimeout, timeoutErr := delegateSubAgentRuntimeTimeout(preflight.RequestedTimeout)
-	if timeoutErr != nil {
-		result.Error = &tools.DelegateSubAgentError{
-			Code:      subagentspkg.ErrorCodeSubAgentInvalidRequest,
-			Message:   timeoutErr.Error(),
-			Retryable: false,
-		}
-		return result, nil
-	}
 
 	execution, runErr := r.runtime.RunSync(ctx, RuntimeTaskRequest{
 		SessionID: sessionIDFromExecutionContext(execCtx),
 		Name:      "delegate_subagent/" + preflightResultName(result.Agent),
 		Kind:      "subagent",
-		Timeout:   taskTimeout,
+		Timeout:   preflight.RequestedTimeoutDuration,
 		Metadata:  metadata,
 		Execute: func(taskCtx context.Context) ([]byte, error) {
 			_ = taskCtx
@@ -361,21 +352,6 @@ func firstNonEmpty(value, fallback string) string {
 		return trimmed
 	}
 	return strings.TrimSpace(fallback)
-}
-
-func delegateSubAgentRuntimeTimeout(raw string) (time.Duration, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return 0, nil
-	}
-	timeout, err := time.ParseDuration(value)
-	if err != nil {
-		return 0, fmt.Errorf("invalid timeout %q: %w", value, err)
-	}
-	if timeout < 0 {
-		return 0, fmt.Errorf("invalid timeout %q: must be non-negative", value)
-	}
-	return timeout, nil
 }
 
 func isAllowedSubAgentStatus(status string) bool {
