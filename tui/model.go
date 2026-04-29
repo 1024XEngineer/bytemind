@@ -1197,6 +1197,9 @@ func (m *model) tryStartImplicitClipboardPasteFromKey(msg tea.KeyMsg) tea.Cmd {
 	if msg.Type != tea.KeyRunes || len(msg.Runes) == 0 {
 		return nil
 	}
+	if _, hasMarker := extractLeadingCompressedMarker(m.input.Value()); hasMarker {
+		return nil
+	}
 	fragment := normalizeNewlines(strings.ReplaceAll(string(msg.Runes), ctrlVMarkerRune, ""))
 	if strings.TrimSpace(fragment) == "" {
 		return nil
@@ -1412,6 +1415,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if handled, cmd := m.handleHiddenPasteProbeKey(msg); handled {
 		return m, cmd
+	}
+
+	if !msg.Paste && m.hasActivePasteSession() {
+		if _, hasMarker := extractLeadingCompressedMarker(m.input.Value()); hasMarker {
+			m.clearPasteSession()
+			m.clearPasteBurstCapture()
+		}
 	}
 
 	if cmd := m.tryStartImplicitClipboardPasteFromKey(msg); cmd != nil {
@@ -1688,7 +1698,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if markerChain, ok := extractLeadingCompressedMarker(rawValue); ok {
 			tail := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rawValue), markerChain))
 			if tail != "" {
-				if m.shouldCompressPastedText(tail, "paste-enter") {
+				if m.hasCompressedMarkerTailPasteEvidence("paste-enter") && m.shouldCompressPastedText(tail, "paste-enter") {
 					marker, content, err := m.compressPastedText(tail)
 					if err != nil {
 						m.statusNote = err.Error()
@@ -1701,7 +1711,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.statusNote = fmt.Sprintf("Detected another pasted block and compressed it as %s (%d lines). Press Enter again to send.", marker, content.Lines)
 					return m, nil
 				}
-				if len(tail) >= 24 || strings.Contains(tail, "\n") {
+				if m.hasCompressedMarkerTailPasteEvidence("paste-enter") && (len(tail) >= 24 || strings.Contains(tail, "\n")) {
 					m.setInputValue(strings.TrimSpace(markerChain))
 					m.syncInputOverlays()
 					m.statusNote = "Detected continued paste chunk after compressed marker. Kept compressed markers only; press Enter again to send."
@@ -1944,7 +1954,8 @@ func (m model) handleSuppressedPasteEnter(rawValue string) (tea.Model, bool) {
 	if markerChain, ok := extractLeadingCompressedMarker(rawValue); ok {
 		tail := strings.TrimSpace(strings.TrimPrefix(rawValue, markerChain))
 		if tail != "" {
-			if m.shouldCompressPastedText(tail, "paste-enter") || m.isLongPastedText(tail) {
+			if m.hasCompressedMarkerTailPasteEvidence("paste-enter") &&
+				(m.shouldCompressPastedText(tail, "paste-enter") || m.isLongPastedText(tail)) {
 				marker, content, err := m.compressPastedText(tail)
 				if err != nil {
 					m.statusNote = err.Error()
@@ -1957,7 +1968,7 @@ func (m model) handleSuppressedPasteEnter(rawValue string) (tea.Model, bool) {
 				m.statusNote = fmt.Sprintf("Detected another pasted block and compressed it as %s (%d lines). Press Enter again to send.", marker, content.Lines)
 				return m, true
 			}
-			if len(tail) >= 24 || strings.Contains(tail, "\n") {
+			if m.hasCompressedMarkerTailPasteEvidence("paste-enter") && (len(tail) >= 24 || strings.Contains(tail, "\n")) {
 				m.setInputValue(strings.TrimSpace(markerChain))
 				m.syncInputOverlays()
 				m.statusNote = "Detected continued paste chunk after compressed marker. Kept compressed markers only; press Enter again to send."

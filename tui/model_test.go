@@ -7033,6 +7033,60 @@ func TestCompressedPasteRequiresExplicitConfirmationBeforeSubmit(t *testing.T) {
 	}
 }
 
+func TestManualTypedTailAfterCompressedPasteSubmitsLiterally(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	longPaste := strings.Join([]string{
+		"line 1", "line 2", "line 3", "line 4", "line 5", "line 6",
+		"line 7", "line 8", "line 9", "line 10", "line 11", "line 12",
+	}, "\n")
+
+	got, _ := m.handlePastePayload(longPaste + "\n")
+	afterPaste := got.(model)
+	afterPaste.pasteBurstLastEventAt = time.Now().Add(-time.Second)
+	got, _ = afterPaste.Update(pasteBurstSettleMsg{Generation: afterPaste.pasteBurstGeneration})
+	afterPaste = got.(model)
+
+	marker := afterPaste.input.Value()
+	typedTail := " typed note from me"
+	afterTyped := afterPaste
+	for _, r := range typedTail {
+		got, _ = afterTyped.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		afterTyped = got.(model)
+	}
+
+	if afterTyped.input.Value() != marker+typedTail {
+		t.Fatalf("expected manual tail to stay literal after marker, got %q", afterTyped.input.Value())
+	}
+	if len(afterTyped.pastedContents) != 1 {
+		t.Fatalf("expected manual tail not to create extra pasted content, got %d", len(afterTyped.pastedContents))
+	}
+	if afterTyped.hasActivePasteSession() {
+		t.Fatalf("expected manual tail not to leave an active paste session")
+	}
+	if afterTyped.pasteTransaction.Active {
+		t.Fatalf("expected manual tail not to keep paste transaction active")
+	}
+
+	got, _ = afterTyped.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	afterFirstEnter := got.(model)
+	if len(afterFirstEnter.chatItems) != 0 {
+		t.Fatalf("expected first enter after typed tail not to submit, got %d chat items", len(afterFirstEnter.chatItems))
+	}
+	if afterFirstEnter.input.Value() != marker+typedTail {
+		t.Fatalf("expected first enter to keep manual tail intact, got %q", afterFirstEnter.input.Value())
+	}
+
+	got, _ = afterFirstEnter.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	afterSecondEnter := got.(model)
+	if len(afterSecondEnter.chatItems) == 0 {
+		t.Fatalf("expected second enter after typed tail to submit")
+	}
+	if body := afterSecondEnter.chatItems[0].Body; body != marker+typedTail {
+		t.Fatalf("expected submitted body to keep literal manual tail, got %q", body)
+	}
+}
+
 func TestBusyCompressedPasteConfirmationDoesNotQueueBTW(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
