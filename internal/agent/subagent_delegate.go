@@ -241,10 +241,17 @@ func mapDelegateSubAgentError(err error, fallbackCode string) *tools.DelegateSub
 		if code == "" {
 			code = fallbackCode
 		}
+		retryable := true
+		var semanticRetryable interface{ Retryable() bool }
+		if errors.As(err, &semanticRetryable) {
+			retryable = semanticRetryable.Retryable()
+		} else {
+			retryable = code != runtimepkg.ErrorCodeTaskCancelled
+		}
 		return &tools.DelegateSubAgentError{
 			Code:      code,
 			Message:   strings.TrimSpace(err.Error()),
-			Retryable: code != runtimepkg.ErrorCodeTaskCancelled,
+			Retryable: retryable,
 		}
 	}
 	return &tools.DelegateSubAgentError{

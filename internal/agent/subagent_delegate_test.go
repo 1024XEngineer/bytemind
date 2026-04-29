@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -428,3 +429,62 @@ func TestNormalizeDelegateSubAgentResultDerivesStatusFromOK(t *testing.T) {
 		t.Fatalf("expected status %q, got %q", subAgentResultStatusFailed, result.Status)
 	}
 }
+
+type semanticRuntimeErrorStub struct {
+	code      string
+	message   string
+	retryable bool
+}
+
+func (e semanticRuntimeErrorStub) Error() string   { return e.message }
+func (e semanticRuntimeErrorStub) Code() string    { return e.code }
+func (e semanticRuntimeErrorStub) Retryable() bool { return e.retryable }
+
+func TestMapDelegateSubAgentErrorUsesSemanticRetryable(t *testing.T) {
+	mapped := mapDelegateSubAgentError(
+		semanticRuntimeErrorStub{
+			code:      "quota_exceeded",
+			message:   "quota exceeded",
+			retryable: false,
+		},
+		subAgentErrorCodeRuntimeUnavailable,
+	)
+	if mapped == nil {
+		t.Fatal("expected mapped error")
+	}
+	if mapped.Code != "quota_exceeded" {
+		t.Fatalf("expected code quota_exceeded, got %q", mapped.Code)
+	}
+	if mapped.Retryable {
+		t.Fatalf("expected retryable=false, got %#v", mapped)
+	}
+}
+
+func TestMapDelegateSubAgentErrorFallsBackToCancelledHeuristic(t *testing.T) {
+	base := errors.New("cancelled")
+	wrapped := fmtErrorWithCode{err: base, code: runtimepkg.ErrorCodeTaskCancelled}
+	mapped := mapDelegateSubAgentError(wrapped, subAgentErrorCodeRuntimeUnavailable)
+	if mapped == nil {
+		t.Fatal("expected mapped error")
+	}
+	if mapped.Code != runtimepkg.ErrorCodeTaskCancelled {
+		t.Fatalf("expected cancelled code, got %q", mapped.Code)
+	}
+	if mapped.Retryable {
+		t.Fatalf("expected retryable=false for cancelled code, got %#v", mapped)
+	}
+}
+
+type fmtErrorWithCode struct {
+	err  error
+	code string
+}
+
+func (e fmtErrorWithCode) Error() string {
+	if e.err == nil {
+		return ""
+	}
+	return e.err.Error()
+}
+
+func (e fmtErrorWithCode) Code() string { return e.code }
