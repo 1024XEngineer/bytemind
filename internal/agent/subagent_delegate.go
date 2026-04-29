@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -19,6 +20,7 @@ const (
 	subAgentErrorCodeNotImplemented        = "subagent_not_implemented"
 	subAgentErrorCodeRuntimeUnavailable    = "subagent_runtime_unavailable"
 	subAgentErrorCodeBackgroundUnsupported = "subagent_background_not_supported"
+	subAgentErrorCodeInvalidResult         = "subagent_invalid_result"
 )
 
 var subAgentInvocationCounter atomic.Uint64
@@ -139,6 +141,22 @@ func (r *Runner) delegateSubAgent(
 		}
 		return result, nil
 	}
+	if len(strings.TrimSpace(string(execution.Result.Output))) > 0 {
+		normalized, normalizeErr := normalizeDelegateSubAgentResult(
+			execution.Result.Output,
+			result.InvocationID,
+			request.Agent,
+		)
+		if normalizeErr != nil {
+			result.Error = &tools.DelegateSubAgentError{
+				Code:      subAgentErrorCodeInvalidResult,
+				Message:   fmt.Sprintf("subagent returned invalid structured result: %v", normalizeErr),
+				Retryable: true,
+			}
+			return result, nil
+		}
+		return normalized, nil
+	}
 
 	result.Error = &tools.DelegateSubAgentError{
 		Code:      subAgentErrorCodeNotImplemented,
@@ -209,6 +227,47 @@ func mapDelegateSubAgentError(err error, fallbackCode string) *tools.DelegateSub
 		Message:   strings.TrimSpace(err.Error()),
 		Retryable: true,
 	}
+}
+
+func normalizeDelegateSubAgentResult(
+	payload []byte,
+	fallbackInvocationID string,
+	fallbackAgent string,
+) (tools.DelegateSubAgentResult, error) {
+	var result tools.DelegateSubAgentResult
+	if err := json.Unmarshal(payload, &result); err != nil {
+		return tools.DelegateSubAgentResult{}, err
+	}
+	result.InvocationID = firstNonEmpty(result.InvocationID, fallbackInvocationID)
+	result.Agent = firstNonEmpty(result.Agent, fallbackAgent)
+	if result.Findings == nil {
+		result.Findings = []tools.DelegateSubAgentFinding{}
+	}
+	if result.References == nil {
+		result.References = []tools.DelegateSubAgentReference{}
+	}
+	if result.OK && result.Error != nil {
+		return tools.DelegateSubAgentResult{}, fmt.Errorf("ok result must not include error")
+	}
+	if !result.OK {
+		if result.Error == nil {
+			return tools.DelegateSubAgentResult{}, fmt.Errorf("failed result must include error")
+		}
+		result.Error.Code = strings.TrimSpace(result.Error.Code)
+		result.Error.Message = strings.TrimSpace(result.Error.Message)
+		if result.Error.Code == "" || result.Error.Message == "" {
+			return tools.DelegateSubAgentResult{}, fmt.Errorf("failed result must include non-empty error code/message")
+		}
+	}
+	return result, nil
+}
+
+func firstNonEmpty(value, fallback string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed != "" {
+		return trimmed
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func execCtxGetAllowed(execCtx *tools.ExecutionContext) map[string]struct{} {
