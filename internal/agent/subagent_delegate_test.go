@@ -761,8 +761,8 @@ func TestNormalizeDelegateSubAgentResultTrimsStructuredFields(t *testing.T) {
 			"ok": true,
 			"status": "completed",
 			"summary": "  done  ",
-			"findings": [{"title":"  t  ","body":"  b  "}],
-			"references": [{"path":"  a.go  ","line":12,"note":"  n  "}]
+			"findings": [{"title":"  t  ","body":"  b  "},{"title":" ","body":" "}],
+			"references": [{"path":"  a.go  ","line":12,"note":"  n  "},{"path":" ","line":0,"note":" "}]
 		}`),
 		"inv-1",
 		"explorer",
@@ -779,6 +779,30 @@ func TestNormalizeDelegateSubAgentResultTrimsStructuredFields(t *testing.T) {
 	}
 	if len(result.References) != 1 || result.References[0].Path != "a.go" || result.References[0].Note != "n" {
 		t.Fatalf("expected trimmed references, got %#v", result.References)
+	}
+}
+
+func TestNormalizeDelegateSubAgentResultFiltersEmptyStructuredItems(t *testing.T) {
+	result, err := normalizeDelegateSubAgentResult(
+		[]byte(`{
+			"ok": true,
+			"status": "completed",
+			"summary": "",
+			"findings": [{"title":" ","body":" "}],
+			"references": [{"path":" ","line":0,"note":" "}]
+		}`),
+		"inv-1",
+		"explorer",
+		"task-1",
+	)
+	if err != nil {
+		t.Fatalf("expected normalization success, got %v", err)
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("expected empty findings after filtering, got %#v", result.Findings)
+	}
+	if len(result.References) != 0 {
+		t.Fatalf("expected empty references after filtering, got %#v", result.References)
 	}
 }
 

@@ -312,17 +312,11 @@ func normalizeDelegateSubAgentResult(
 	if result.Findings == nil {
 		result.Findings = []tools.DelegateSubAgentFinding{}
 	}
-	for i := range result.Findings {
-		result.Findings[i].Title = strings.TrimSpace(result.Findings[i].Title)
-		result.Findings[i].Body = strings.TrimSpace(result.Findings[i].Body)
-	}
+	result.Findings = normalizeDelegateSubAgentFindings(result.Findings)
 	if result.References == nil {
 		result.References = []tools.DelegateSubAgentReference{}
 	}
-	for i := range result.References {
-		result.References[i].Path = strings.TrimSpace(result.References[i].Path)
-		result.References[i].Note = strings.TrimSpace(result.References[i].Note)
-	}
+	result.References = normalizeDelegateSubAgentReferences(result.References)
 	if result.OK && result.Error != nil {
 		return tools.DelegateSubAgentResult{}, fmt.Errorf("ok result must not include error")
 	}
@@ -412,6 +406,49 @@ func requiresTaskIDForStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeDelegateSubAgentFindings(in []tools.DelegateSubAgentFinding) []tools.DelegateSubAgentFinding {
+	if len(in) == 0 {
+		return []tools.DelegateSubAgentFinding{}
+	}
+	out := make([]tools.DelegateSubAgentFinding, 0, len(in))
+	for _, finding := range in {
+		normalized := tools.DelegateSubAgentFinding{
+			Title: strings.TrimSpace(finding.Title),
+			Body:  strings.TrimSpace(finding.Body),
+		}
+		if normalized.Title == "" && normalized.Body == "" {
+			continue
+		}
+		out = append(out, normalized)
+	}
+	if len(out) == 0 {
+		return []tools.DelegateSubAgentFinding{}
+	}
+	return out
+}
+
+func normalizeDelegateSubAgentReferences(in []tools.DelegateSubAgentReference) []tools.DelegateSubAgentReference {
+	if len(in) == 0 {
+		return []tools.DelegateSubAgentReference{}
+	}
+	out := make([]tools.DelegateSubAgentReference, 0, len(in))
+	for _, reference := range in {
+		normalized := tools.DelegateSubAgentReference{
+			Path: strings.TrimSpace(reference.Path),
+			Line: reference.Line,
+			Note: strings.TrimSpace(reference.Note),
+		}
+		if normalized.Path == "" && normalized.Line <= 0 && normalized.Note == "" {
+			continue
+		}
+		out = append(out, normalized)
+	}
+	if len(out) == 0 {
+		return []tools.DelegateSubAgentReference{}
+	}
+	return out
 }
 
 func effectiveToolsetHash(toolNames []string) string {
