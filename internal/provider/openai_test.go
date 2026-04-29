@@ -270,6 +270,9 @@ func TestOpenAICompatibleCreateMessageDoesNotExposeReasoningOnlyResponse(t *test
 	if msg.Content != "" {
 		t.Fatalf("expected reasoning-only response to stay empty, got %#v", msg)
 	}
+	if got := openAIReasoningContent(msg); got != "final from reasoning" {
+		t.Fatalf("expected reasoning metadata to be preserved, got %#v", msg.Meta)
+	}
 }
 
 func TestOpenAICompatibleCreateMessageParsesLegacyFunctionCall(t *testing.T) {
@@ -321,6 +324,9 @@ func TestOpenAICompatibleStreamMessageDoesNotExposeReasoningOnlyResponse(t *test
 	}
 	if msg.Content != "" {
 		t.Fatalf("expected reasoning-only stream to stay empty, got %#v", msg)
+	}
+	if got := openAIReasoningContent(msg); got != "hello world" {
+		t.Fatalf("expected streamed reasoning metadata to be preserved, got %#v", msg.Meta)
 	}
 }
 
@@ -446,6 +452,72 @@ func TestOpenAIMessagesMapsThinkingAndToolResultParts(t *testing.T) {
 	}
 	if messages[1]["role"] != "tool" || messages[1]["tool_call_id"] != "call-1" {
 		t.Fatalf("expected tool_result mapping, got %#v", messages[1])
+	}
+}
+
+func TestOpenAIMessagesRoundTripsDeepSeekReasoningWithToolCalls(t *testing.T) {
+	messages, err := openAIMessages(llm.ChatRequest{
+		Model: "deepseek-v4-pro",
+		Messages: []llm.Message{
+			{
+				Role: llm.RoleAssistant,
+				Meta: llm.MessageMeta{
+					openAIReasoningContentKey: "need a file listing",
+				},
+				ToolCalls: []llm.ToolCall{{
+					ID:   "call-1",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "list_files",
+						Arguments: `{"path":"."}`,
+					},
+				}},
+			},
+			llm.NewToolResultMessage("call-1", `{"ok":true}`),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("expected assistant and tool_result messages, got %#v", messages)
+	}
+
+	assistant := messages[0]
+	if assistant["content"] != "" {
+		t.Fatalf("expected empty assistant content to be sent for tool call, got %#v", assistant)
+	}
+	if assistant[openAIReasoningContentKey] != "need a file listing" {
+		t.Fatalf("expected reasoning_content to round-trip, got %#v", assistant)
+	}
+	toolCalls, _ := assistant["tool_calls"].([]map[string]any)
+	if len(toolCalls) != 1 || toolCalls[0]["id"] != "call-1" {
+		t.Fatalf("expected tool call mapping, got %#v", assistant)
+	}
+}
+
+func TestOpenAIMessagesDoesNotSendReasoningToNonDeepSeekModel(t *testing.T) {
+	messages, err := openAIMessages(llm.ChatRequest{
+		Model: "gpt-5.4-mini",
+		Messages: []llm.Message{{
+			Role: llm.RoleAssistant,
+			Meta: llm.MessageMeta{
+				openAIReasoningContentKey: "provider-specific reasoning",
+			},
+			Content: "done",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected one assistant message, got %#v", messages)
+	}
+	if _, ok := messages[0][openAIReasoningContentKey]; ok {
+		t.Fatalf("did not expect reasoning_content for non-DeepSeek model, got %#v", messages[0])
+	}
+	if messages[0]["content"] != "done" {
+		t.Fatalf("expected normal assistant content, got %#v", messages[0])
 	}
 }
 

@@ -56,12 +56,14 @@ func (c *OpenAICompatible) postJSON(ctx context.Context, url string, payload map
 }
 
 func (c *OpenAICompatible) chatPayload(req llm.ChatRequest, stream bool) (map[string]any, error) {
+	model := choose(req.Model, c.model)
+	req.Model = model
 	messages, err := openAIMessages(req)
 	if err != nil {
 		return nil, err
 	}
 	payload := map[string]any{
-		"model":    choose(req.Model, c.model),
+		"model":    model,
 		"messages": messages,
 		"stream":   stream,
 	}
@@ -77,18 +79,24 @@ func (c *OpenAICompatible) chatPayload(req llm.ChatRequest, stream bool) (map[st
 
 func openAIMessages(req llm.ChatRequest) ([]map[string]any, error) {
 	converted := make([]map[string]any, 0, len(req.Messages))
+	roundTripReasoning := shouldRoundTripOpenAIReasoningContent(req.Model)
 	for _, message := range req.Messages {
 		message.Normalize()
 		switch message.Role {
 		case llm.RoleSystem, llm.RoleUser, llm.RoleAssistant:
 			entry := map[string]any{"role": string(message.Role)}
 			content := make([]map[string]any, 0)
+			reasoningParts := make([]string, 0)
 			for _, part := range message.Parts {
 				switch part.Type {
 				case llm.PartText:
 					content = append(content, map[string]any{"type": "text", "text": part.Text.Value})
 				case llm.PartThinking:
-					content = append(content, map[string]any{"type": "text", "text": part.Thinking.Value})
+					if roundTripReasoning && message.Role == llm.RoleAssistant {
+						reasoningParts = append(reasoningParts, part.Thinking.Value)
+					} else {
+						content = append(content, map[string]any{"type": "text", "text": part.Thinking.Value})
+					}
 				case llm.PartImageRef:
 					assetID := llm.AssetID("")
 					if part.Image != nil {
@@ -110,11 +118,23 @@ func openAIMessages(req llm.ChatRequest) ([]map[string]any, error) {
 					converted = append(converted, map[string]any{"role": "tool", "tool_call_id": part.ToolResult.ToolUseID, "content": part.ToolResult.Content})
 				}
 			}
+			if roundTripReasoning && message.Role == llm.RoleAssistant {
+				reasoning := openAIReasoningContent(message)
+				if reasoning == "" && len(reasoningParts) > 0 {
+					reasoning = strings.Join(reasoningParts, "")
+				}
+				if reasoning != "" {
+					entry[openAIReasoningContentKey] = reasoning
+				}
+			}
 			hasToolCalls := len(asToolCalls(entry["tool_calls"])) > 0
 			if len(content) == 1 && content[0]["type"] == "text" {
 				entry["content"] = content[0]["text"]
 			} else if len(content) > 0 {
 				entry["content"] = content
+			}
+			if _, hasContent := entry["content"]; !hasContent && hasToolCalls {
+				entry["content"] = ""
 			}
 			if _, hasContent := entry["content"]; hasContent || hasToolCalls {
 				converted = append(converted, entry)

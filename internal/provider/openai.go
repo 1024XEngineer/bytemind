@@ -186,6 +186,9 @@ func (c *OpenAICompatible) StreamMessage(ctx context.Context, req llm.ChatReques
 			if delta.Role != "" {
 				assembled.Role = delta.Role
 			}
+			if delta.Reasoning != "" {
+				appendOpenAIReasoningContent(&assembled, delta.Reasoning)
+			}
 			if delta.Content != "" {
 				assembled.Content += delta.Content
 				if onDelta != nil {
