@@ -42,6 +42,37 @@ func HandleSlashCommand(stdout io.Writer, store *session.Store, current *session
 		RenderCurrentSession(stdout, result.SessionToDisplay)
 	case "sessions":
 		RenderSessionsView(stdout, current.ID, result.Summaries, result.Warnings)
+	case "agents":
+		if strings.TrimSpace(result.UsageHint) != "" {
+			fmt.Fprintln(stdout, result.UsageHint)
+		}
+		if result.SubAgentDetail != nil {
+			RenderSubAgentDetail(stdout, *result.SubAgentDetail)
+			return SlashHandleResult{
+				NextSession: current,
+				Handled:     true,
+			}, nil
+		}
+		RenderSubAgentsView(stdout, result.SubAgents)
+		return SlashHandleResult{
+			NextSession: current,
+			Handled:     true,
+		}, nil
+	case "builtin_subagent":
+		if strings.TrimSpace(result.UsageHint) != "" {
+			fmt.Fprintln(stdout, result.UsageHint)
+			return SlashHandleResult{
+				NextSession: current,
+				Handled:     true,
+			}, nil
+		}
+		if result.SubAgentDetail != nil {
+			RenderSubAgentDetail(stdout, *result.SubAgentDetail)
+		}
+		return SlashHandleResult{
+			NextSession: current,
+			Handled:     true,
+		}, nil
 	case "resume":
 		if strings.TrimSpace(result.UsageHint) != "" {
 			fmt.Fprintln(stdout, result.UsageHint)
