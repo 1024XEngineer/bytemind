@@ -28,6 +28,9 @@ const (
 
 	subAgentResultStatusCompleted = "completed"
 	subAgentResultStatusFailed    = "failed"
+	subAgentResultStatusQueued    = "queued"
+	subAgentResultStatusRunning   = "running"
+	subAgentResultStatusAccepted  = "accepted"
 )
 
 var subAgentInvocationCounter atomic.Uint64
@@ -295,6 +298,15 @@ func normalizeDelegateSubAgentResult(
 			result.Status = subAgentResultStatusFailed
 		}
 	}
+	if !isAllowedSubAgentStatus(result.Status) {
+		return tools.DelegateSubAgentResult{}, fmt.Errorf("unsupported status %q", result.Status)
+	}
+	if result.OK && result.Status == subAgentResultStatusFailed {
+		return tools.DelegateSubAgentResult{}, fmt.Errorf("ok result must not use failed status")
+	}
+	if !result.OK && result.Status != subAgentResultStatusFailed {
+		return tools.DelegateSubAgentResult{}, fmt.Errorf("failed result must use status %q", subAgentResultStatusFailed)
+	}
 	if !result.OK {
 		if result.Error == nil {
 			return tools.DelegateSubAgentResult{}, fmt.Errorf("failed result must include error")
@@ -314,6 +326,19 @@ func firstNonEmpty(value, fallback string) string {
 		return trimmed
 	}
 	return strings.TrimSpace(fallback)
+}
+
+func isAllowedSubAgentStatus(status string) bool {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case subAgentResultStatusCompleted,
+		subAgentResultStatusFailed,
+		subAgentResultStatusQueued,
+		subAgentResultStatusRunning,
+		subAgentResultStatusAccepted:
+		return true
+	default:
+		return false
+	}
 }
 
 func effectiveToolsetHash(toolNames []string) string {

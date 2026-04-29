@@ -490,6 +490,57 @@ func TestNormalizeDelegateSubAgentResultDerivesStatusFromOK(t *testing.T) {
 	}
 }
 
+func TestNormalizeDelegateSubAgentResultRejectsUnsupportedStatus(t *testing.T) {
+	_, err := normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":true,"status":"unknown","summary":"done","findings":[],"references":[]}`),
+		"inv-1",
+		"explorer",
+		"task-1",
+	)
+	if err == nil || !strings.Contains(err.Error(), "unsupported status") {
+		t.Fatalf("expected unsupported status error, got %v", err)
+	}
+}
+
+func TestNormalizeDelegateSubAgentResultRejectsMismatchedOKStatus(t *testing.T) {
+	_, err := normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":true,"status":"failed","summary":"done","findings":[],"references":[]}`),
+		"inv-1",
+		"explorer",
+		"task-1",
+	)
+	if err == nil || !strings.Contains(err.Error(), "must not use failed status") {
+		t.Fatalf("expected ok/status mismatch error, got %v", err)
+	}
+
+	_, err = normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":false,"status":"completed","error":{"code":"subagent_task_failed","message":"boom","retryable":true},"findings":[],"references":[]}`),
+		"inv-1",
+		"explorer",
+		"task-1",
+	)
+	if err == nil || !strings.Contains(err.Error(), "must use status") {
+		t.Fatalf("expected failed/status mismatch error, got %v", err)
+	}
+}
+
+func TestNormalizeDelegateSubAgentResultAcceptsAsyncSuccessStatuses(t *testing.T) {
+	for _, status := range []string{subAgentResultStatusQueued, subAgentResultStatusRunning, subAgentResultStatusAccepted} {
+		result, err := normalizeDelegateSubAgentResult(
+			[]byte(`{"ok":true,"status":"`+status+`","summary":"async","findings":[],"references":[]}`),
+			"inv-1",
+			"explorer",
+			"task-1",
+		)
+		if err != nil {
+			t.Fatalf("expected status %q accepted, got %v", status, err)
+		}
+		if result.Status != status {
+			t.Fatalf("expected status %q, got %q", status, result.Status)
+		}
+	}
+}
+
 type semanticRuntimeErrorStub struct {
 	code      string
 	message   string
@@ -540,6 +591,23 @@ func TestEffectiveToolsetHashStableCanonicalization(t *testing.T) {
 	const want = "f2475c3f80104af2a4f1cf5eaaaabeb5a898b71747a09614703e99cee88b1f82"
 	if got != want {
 		t.Fatalf("unexpected toolset hash: got %q want %q", got, want)
+	}
+}
+
+func TestIsAllowedSubAgentStatus(t *testing.T) {
+	for _, status := range []string{
+		subAgentResultStatusCompleted,
+		subAgentResultStatusFailed,
+		subAgentResultStatusQueued,
+		subAgentResultStatusRunning,
+		subAgentResultStatusAccepted,
+	} {
+		if !isAllowedSubAgentStatus(status) {
+			t.Fatalf("expected status %q to be allowed", status)
+		}
+	}
+	if isAllowedSubAgentStatus("unknown") {
+		t.Fatal("expected unknown status to be rejected")
 	}
 }
 
