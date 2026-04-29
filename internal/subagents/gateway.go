@@ -21,6 +21,7 @@ const (
 	isolationWorktree                = "worktree"
 	outputFindings                   = "findings"
 	outputSummary                    = "summary"
+	maxRequestedTimeout              = 15 * time.Minute
 )
 
 type GatewayError struct {
@@ -115,6 +116,13 @@ func (g *Gateway) Preflight(request PreflightRequest) (PreflightResult, error) {
 			return PreflightResult{}, newGatewayError(
 				ErrorCodeSubAgentInvalidRequest,
 				fmt.Sprintf("invalid timeout %q: must be non-negative", requestedTimeout),
+				false,
+			)
+		}
+		if parsedTimeout > maxRequestedTimeout {
+			return PreflightResult{}, newGatewayError(
+				ErrorCodeSubAgentInvalidRequest,
+				fmt.Sprintf("invalid timeout %q: exceeds maximum %s", requestedTimeout, maxRequestedTimeout),
 				false,
 			)
 		}
