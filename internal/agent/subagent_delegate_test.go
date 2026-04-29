@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	corepkg "bytemind/internal/core"
 	planpkg "bytemind/internal/plan"
@@ -243,6 +244,9 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 	if call.Metadata["requested_output"] != "findings" {
 		t.Fatalf("expected requested_output metadata, got %q", call.Metadata["requested_output"])
 	}
+	if call.Timeout != 90*time.Second {
+		t.Fatalf("expected runtime timeout 90s, got %s", call.Timeout)
+	}
 }
 
 func TestDelegateSubAgentAcceptsStructuredRuntimeOutput(t *testing.T) {
@@ -335,6 +339,48 @@ func TestDelegateSubAgentUsesCanonicalAgentNameWhenRequestUsesAlias(t *testing.T
 	}
 	if result.Agent != "explorer" {
 		t.Fatalf("expected canonical agent name explorer, got %q", result.Agent)
+	}
+}
+
+func TestDelegateSubAgentAppliesDefinitionDefaultTimeoutToRuntimeTask(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerTimeoutSubAgentDefinition(t, workspace)
+
+	gateway := &stubRuntimeGateway{
+		result: runtimepkg.TaskResult{
+			TaskID: "runtime-subagent-task",
+			Status: corepkg.TaskCompleted,
+			Output: []byte(`{
+				"ok": false,
+				"error": {"code":"subagent_not_implemented","message":"stub pipeline placeholder","retryable":true},
+				"findings": [],
+				"references": []
+			}`),
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+
+	_, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "Locate prompt assembly order",
+	}, &tools.ExecutionContext{
+		Mode: planpkg.ModeBuild,
+	})
+	if err != nil {
+		t.Fatalf("expected structured tool result without Go error, got %v", err)
+	}
+
+	gateway.mu.Lock()
+	defer gateway.mu.Unlock()
+	if len(gateway.calls) != 1 {
+		t.Fatalf("expected exactly one runtime call, got %d", len(gateway.calls))
+	}
+	if gateway.calls[0].Timeout != 45*time.Second {
+		t.Fatalf("expected runtime timeout 45s from subagent default, got %s", gateway.calls[0].Timeout)
 	}
 }
 
@@ -455,6 +501,24 @@ description: repo explorer
 aliases: [exp]
 tools: [read_file, search_text]
 mode: build
+---
+scan files
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeExplorerTimeoutSubAgentDefinition(t *testing.T, workspace string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(workspace, "internal", "subagents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "internal", "subagents", "explorer.md"), []byte(`---
+name: explorer
+description: repo explorer
+tools: [read_file, search_text]
+mode: build
+timeout: 45s
 ---
 scan files
 `), 0o644); err != nil {
@@ -608,6 +672,26 @@ func TestIsAllowedSubAgentStatus(t *testing.T) {
 	}
 	if isAllowedSubAgentStatus("unknown") {
 		t.Fatal("expected unknown status to be rejected")
+	}
+}
+
+func TestDelegateSubAgentRuntimeTimeoutParsing(t *testing.T) {
+	timeout, err := delegateSubAgentRuntimeTimeout("90s")
+	if err != nil {
+		t.Fatalf("expected parse success, got %v", err)
+	}
+	if timeout != 90*time.Second {
+		t.Fatalf("expected 90s, got %s", timeout)
+	}
+	timeout, err = delegateSubAgentRuntimeTimeout("   ")
+	if err != nil {
+		t.Fatalf("expected empty timeout allowed, got %v", err)
+	}
+	if timeout != 0 {
+		t.Fatalf("expected zero timeout for empty value, got %s", timeout)
+	}
+	if _, err := delegateSubAgentRuntimeTimeout("soon"); err == nil {
+		t.Fatal("expected invalid timeout parse error")
 	}
 }
 
