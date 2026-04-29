@@ -5531,6 +5531,36 @@ func TestFullAccessConfirmationRejectKeepsInteractiveMode(t *testing.T) {
 	}
 }
 
+func TestCurrentModelLabelCompactsBytemindPSeriesName(t *testing.T) {
+	m := model{
+		cfg: config.Config{
+			Provider: config.ProviderConfig{Model: "P1 (bytemind)"},
+		},
+	}
+
+	if got := m.currentModelLabel(); got != "p1" {
+		t.Fatalf("expected compact bytemind model label, got %q", got)
+	}
+}
+
+func TestRenderStatusBarUsesCompactBytemindModelLabel(t *testing.T) {
+	m := model{
+		width: 120,
+		mode:  modeBuild,
+		cfg: config.Config{
+			Provider: config.ProviderConfig{Model: "P1 (bytemind)"},
+		},
+	}
+
+	bar := m.renderStatusBar()
+	if !strings.Contains(bar, "Model: p1") {
+		t.Fatalf("expected status bar to show compact model label, got %q", bar)
+	}
+	if strings.Contains(bar, "bytemind") {
+		t.Fatalf("expected status bar to omit verbose provider suffix, got %q", bar)
+	}
+}
+
 func TestUpdateRunFinishedMsgResetsBusyState(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		m := model{

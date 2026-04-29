@@ -99,10 +99,23 @@ func (m model) handleViewportMouseEvent(msg tea.MouseMsg) (tea.Model, tea.Cmd, b
 		}
 		return m, nil, true
 	case tea.MouseActionRelease:
-		if point, ok := m.viewportPointFromMouseWithAutoScroll(msg.X, msg.Y); ok && selectionHasRange(m.mouseSelectionStart, point) {
-			m.mouseSelectionEnd = point
-			m.mouseSelectionActive = true
-			m.statusNote = "Selection ready. Press Ctrl+C to copy."
+		if point, ok := m.viewportPointFromMouseWithAutoScroll(msg.X, msg.Y); ok {
+			if !selectionHasRange(m.mouseSelectionStart, point) {
+				if pasteID := m.pasteIDAtViewportPoint(point); pasteID != "" {
+					m.clearMouseSelection()
+					m.mouseSelecting = false
+					m.stopMouseSelectionScrollTicker()
+					m.draggingScrollbar = false
+					return m, func() tea.Msg { return togglePasteExpandMsg{PasteID: pasteID} }, true
+				}
+			}
+			if selectionHasRange(m.mouseSelectionStart, point) {
+				m.mouseSelectionEnd = point
+				m.mouseSelectionActive = true
+				m.statusNote = "Selection ready. Press Ctrl+C to copy."
+			} else {
+				m.clearMouseSelection()
+			}
 		} else {
 			m.clearMouseSelection()
 		}
@@ -879,4 +892,26 @@ func highlightVisibleLineByCells(line string, startCol, endCol int) string {
 
 func selectionHasRange(start, end viewportSelectionPoint) bool {
 	return start.Row != end.Row || start.Col != end.Col
+}
+
+func (m model) pasteIDAtViewportPoint(point viewportSelectionPoint) string {
+	lines := m.selectionSourceLines()
+	if point.Row < 0 || point.Row >= len(lines) {
+		return ""
+	}
+	for row := point.Row; row >= 0; row-- {
+		line := lines[row]
+		match := compressedPasteMarkerAnyPattern.FindString(line)
+		if match != "" {
+			details := compressedPasteMarkerDetailsPattern.FindStringSubmatch(match)
+			if len(details) >= 2 {
+				return details[1]
+			}
+			return ""
+		}
+		if row != point.Row && strings.TrimSpace(stripANSI(line)) == "" {
+			break
+		}
+	}
+	return ""
 }

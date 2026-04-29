@@ -62,3 +62,28 @@ func TestApplyLineIntentStyleColorsInfoWarningAndError(t *testing.T) {
 		t.Fatalf("expected error styling to preserve text, got %q", errText)
 	}
 }
+
+func TestRenderSemanticAssistantLineDoesNotAccentGenericColonLabels(t *testing.T) {
+	got := renderSemanticAssistantLine("- 工具调用: 读写文件、搜索、打补丁", 80)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "- 工具调用: 读写文件、搜索、打补丁") {
+		t.Fatalf("expected generic label text to be preserved, got %q", plain)
+	}
+	if got != plain {
+		t.Fatalf("expected generic colon label not to receive standalone semantic highlighting, got %q", got)
+	}
+}
+
+func TestRenderSemanticAssistantLineKeepsIntentLabelsStyled(t *testing.T) {
+	got := stripANSI(renderSemanticAssistantLine("Tip: remember this detail", 12))
+	lines := strings.Split(got, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected intent label rendering to wrap with semantic indentation, got %q", got)
+	}
+	if !strings.HasPrefix(lines[0], "Tip: ") {
+		t.Fatalf("expected first line to keep intent label prefix, got %q", got)
+	}
+	if !strings.HasPrefix(lines[1], strings.Repeat(" ", len("Tip: "))) {
+		t.Fatalf("expected wrapped intent label body to align after label prefix, got %q", got)
+	}
+}
