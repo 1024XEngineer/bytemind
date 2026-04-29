@@ -238,6 +238,9 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 	if call.Metadata["effective_toolset_hash"] != "f2475c3f80104af2a4f1cf5eaaaabeb5a898b71747a09614703e99cee88b1f82" {
 		t.Fatalf("expected effective_toolset_hash, got %q", call.Metadata["effective_toolset_hash"])
 	}
+	if call.Metadata["effective_tools"] != "read_file,search_text" {
+		t.Fatalf("expected effective_tools list, got %q", call.Metadata["effective_tools"])
+	}
 	if call.Metadata["requested_timeout"] != "90s" {
 		t.Fatalf("expected requested_timeout metadata, got %q", call.Metadata["requested_timeout"])
 	}

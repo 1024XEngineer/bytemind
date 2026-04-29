@@ -124,6 +124,7 @@ func (r *Runner) delegateSubAgent(
 		"isolation":              preflight.Isolation,
 		"effective_tool_count":   strconv.Itoa(len(preflight.EffectiveTools)),
 		"effective_toolset_hash": effectiveToolsetHash(preflight.EffectiveTools),
+		"effective_tools":        strings.Join(preflight.EffectiveTools, ","),
 	}
 	if preflight.RequestedTimeout != "" {
 		metadata["requested_timeout"] = preflight.RequestedTimeout
