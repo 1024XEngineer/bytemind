@@ -242,6 +242,20 @@ func TestRenderBytemindRunCardDoesNotCollapseSeparatedReadTools(t *testing.T) {
 	}
 }
 
+func TestRenderBytemindRunCardOmitsDividerBetweenSections(t *testing.T) {
+	view := stripANSI(renderBytemindRunCard([]chatEntry{
+		{Kind: "tool", Title: toolEntryTitle("list_files"), Body: "Read 29 files, listed 31 directories", Status: "done"},
+		{Kind: "tool", Title: "READ x 2 | read_file", Body: "Read 2 files: invalid_args: unknown argument \"limit\", README.md", Status: "error"},
+	}, 100))
+
+	if strings.Contains(view, "-----") {
+		t.Fatalf("expected run card sections to omit divider line, got %q", view)
+	}
+	if !strings.Contains(view, "LIST") || !strings.Contains(view, "READ x 2") {
+		t.Fatalf("expected both sections to render, got %q", view)
+	}
+}
+
 func TestCollapseRunSectionGroupsKeepsNonReadAndSplitsReadRuns(t *testing.T) {
 	items := []chatEntry{
 		{Kind: "assistant", Title: assistantLabel, Body: "Thinking", Status: "final"},

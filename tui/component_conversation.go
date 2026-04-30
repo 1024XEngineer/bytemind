@@ -290,10 +290,7 @@ func renderBytemindRunCard(items []chatEntry, width int) string {
 	contentWidth := max(8, width-outer.GetHorizontalFrameSize())
 	sectionGroups := collapseRunSectionGroups(items)
 	sections := make([]string, 0, len(sectionGroups))
-	for i, group := range sectionGroups {
-		if i > 0 {
-			sections = append(sections, renderRunSectionDivider(contentWidth))
-		}
+	for _, group := range sectionGroups {
 		sections = append(sections, renderRunSectionGroup(group, contentWidth))
 	}
 	return outer.Width(contentWidth).Render(strings.Join(sections, "\n"))
