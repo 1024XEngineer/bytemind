@@ -62,3 +62,63 @@ func TestApplyLineIntentStyleColorsInfoWarningAndError(t *testing.T) {
 		t.Fatalf("expected error styling to preserve text, got %q", errText)
 	}
 }
+
+func TestRenderLegacyFencedCodeBlockHandlesEmptyBlock(t *testing.T) {
+	got := renderLegacyFencedCodeBlock(nil, 24)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "╭") || !strings.Contains(plain, "╰") {
+		t.Fatalf("expected framed empty code block, got %q", plain)
+	}
+}
+
+func TestRenderLegacyFencedCodeBlockPreservesBlankLinesAndWrapsLongLines(t *testing.T) {
+	got := renderLegacyFencedCodeBlock([]string{
+		"short",
+		"",
+		"this is a very long code line that should wrap in the legacy fenced renderer",
+	}, 16)
+	plain := stripANSI(got)
+
+	if !strings.Contains(plain, "short") {
+		t.Fatalf("expected first code line, got %q", plain)
+	}
+	if !strings.Contains(plain, "very long") || !strings.Contains(plain, "legacy") || !strings.Contains(plain, "fenced") {
+		t.Fatalf("expected wrapped long line fragments, got %q", plain)
+	}
+}
+
+func TestRenderAssistantBodyLegacyRendersFencedCodeAsSingleFrame(t *testing.T) {
+	input := strings.Join([]string{
+		"before",
+		"```go",
+		"line one",
+		"",
+		"line two is very very long and should wrap",
+		"```",
+		"after",
+	}, "\n")
+	got := stripANSI(renderAssistantBodyLegacy(input, 20))
+
+	if strings.Count(got, "╭") != 1 || strings.Count(got, "╰") != 1 {
+		t.Fatalf("expected a single code frame, got %q", got)
+	}
+	if !strings.Contains(got, "before") || !strings.Contains(got, "after") {
+		t.Fatalf("expected non-code content to be preserved, got %q", got)
+	}
+}
+
+func TestRenderAssistantBodyLegacyUnclosedFenceFlushesAtEOF(t *testing.T) {
+	input := strings.Join([]string{
+		"```",
+		"alpha",
+		"beta",
+	}, "\n")
+	got := stripANSI(renderAssistantBodyLegacy(input, 24))
+
+	if !strings.Contains(got, "alpha") || !strings.Contains(got, "beta") {
+		t.Fatalf("expected unclosed fenced code content rendered, got %q", got)
+	}
+	if strings.Count(got, "╭") != 1 || strings.Count(got, "╰") != 1 {
+		t.Fatalf("expected single framed block for unclosed fence, got %q", got)
+	}
+}
