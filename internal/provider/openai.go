@@ -36,6 +36,7 @@ type Config struct {
 
 type OpenAICompatible struct {
 	providerID   ProviderID
+	providerType string
 	family       string
 	baseURL      string
 	apiPath      string
@@ -69,6 +70,7 @@ func NewOpenAICompatible(cfg Config) *OpenAICompatible {
 	}
 	return &OpenAICompatible{
 		providerID:   ProviderID(strings.ToLower(strings.TrimSpace(string(cfg.ProviderID)))),
+		providerType: normalizePolicyProviderType(cfg.Type),
 		family:       strings.ToLower(strings.TrimSpace(cfg.ProviderFamily)),
 		baseURL:      strings.TrimRight(cfg.BaseURL, "/"),
 		apiPath:      apiPath,

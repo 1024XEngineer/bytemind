@@ -217,52 +217,6 @@ func argumentString(raw json.RawMessage) string {
 
 const openAIReasoningContentKey = "reasoning_content"
 
-type openAIReasoningRoundTripSpec struct {
-	ContentField string
-}
-
-func (s openAIReasoningRoundTripSpec) Enabled() bool {
-	return strings.TrimSpace(s.ContentField) != ""
-}
-
-func openAIReasoningRoundTripSpecForProvider(family string, providerID ProviderID, baseURL string) openAIReasoningRoundTripSpec {
-	if providerUsesOpenAIReasoningContent(family, providerID, baseURL) {
-		return openAIReasoningRoundTripSpec{ContentField: openAIReasoningContentKey}
-	}
-	return openAIReasoningRoundTripSpec{}
-}
-
-func providerUsesOpenAIReasoningContent(family string, providerID ProviderID, baseURL string) bool {
-	if family = strings.ToLower(strings.TrimSpace(family)); family != "" {
-		return providerFamilyUsesOpenAIReasoningContent(family)
-	}
-	provider := strings.ToLower(strings.TrimSpace(string(providerID)))
-	base := strings.ToLower(strings.TrimSpace(baseURL))
-	if providerFamilyUsesOpenAIReasoningContent(provider) {
-		return true
-	}
-	return providerFamilyUsesOpenAIReasoningContent(base)
-}
-
-func providerFamilyUsesOpenAIReasoningContent(value string) bool {
-	value = strings.ToLower(strings.TrimSpace(value))
-	for _, marker := range []string{
-		"deepseek",
-		"kimi",
-		"moonshot",
-		"glm",
-		"zhipu",
-		"zai",
-		"z.ai",
-		"bigmodel",
-	} {
-		if strings.Contains(value, marker) {
-			return true
-		}
-	}
-	return false
-}
-
 func appendOpenAIReasoningContent(msg *llm.Message, delta string) {
 	if msg == nil || delta == "" {
 		return

@@ -422,8 +422,8 @@ func TestOpenAICompatibleChatPayloadUsesFallbackModelAndTools(t *testing.T) {
 	}
 }
 
-func TestOpenAICompatibleChatPayloadUsesExplicitProviderFamilyReasoningSpec(t *testing.T) {
-	client := NewOpenAICompatible(Config{ProviderID: ProviderOpenAI, ProviderFamily: "deepseek", BaseURL: "https://api.example.com/v1", APIKey: "test-key", Model: "generic-model"})
+func TestOpenAICompatibleChatPayloadUsesExplicitProviderFamilyPolicy(t *testing.T) {
+	client := NewOpenAICompatible(Config{ProviderID: ProviderOpenAI, Type: "openai-compatible", ProviderFamily: "deepseek", BaseURL: "https://api.example.com/v1", APIKey: "test-key", Model: "generic-model"})
 	payload, err := client.chatPayload(llm.ChatRequest{
 		Messages: []llm.Message{{
 			Role: llm.RoleAssistant,
@@ -450,10 +450,13 @@ func TestOpenAICompatibleChatPayloadUsesExplicitProviderFamilyReasoningSpec(t *t
 	if messages[0][openAIReasoningContentKey] != "provider reasoning" {
 		t.Fatalf("expected provider reasoning_content to be sent, got %#v", messages[0])
 	}
+	if messages[0]["content"] != "" {
+		t.Fatalf("expected deepseek policy to send empty assistant content for tool calls, got %#v", messages[0])
+	}
 }
 
-func TestOpenAICompatibleChatPayloadDoesNotUseModelNameForReasoningSpec(t *testing.T) {
-	client := NewOpenAICompatible(Config{ProviderID: ProviderOpenAI, BaseURL: "https://api.openai.com/v1", APIKey: "test-key", Model: "deepseek-v4-pro"})
+func TestOpenAICompatibleChatPayloadDoesNotUseModelNameForReasoningPolicy(t *testing.T) {
+	client := NewOpenAICompatible(Config{ProviderID: ProviderOpenAI, Type: "openai-compatible", BaseURL: "https://api.openai.com/v1", APIKey: "test-key", Model: "deepseek-v4-pro"})
 	payload, err := client.chatPayload(llm.ChatRequest{
 		Messages: []llm.Message{{
 			Role: llm.RoleAssistant,
@@ -475,30 +478,41 @@ func TestOpenAICompatibleChatPayloadDoesNotUseModelNameForReasoningSpec(t *testi
 	}
 }
 
-func TestOpenAIReasoningRoundTripSpecFollowsProviderFamily(t *testing.T) {
+func TestResolveModelPolicyFollowsProviderFamily(t *testing.T) {
 	cases := []struct {
-		name     string
-		family   string
-		provider ProviderID
-		baseURL  string
-		want     bool
+		name       string
+		family     string
+		provider   ProviderID
+		baseURL    string
+		wantReplay bool
+		wantFamily string
+		wantSource string
 	}{
-		{name: "deepseek explicit family", family: "deepseek", provider: ProviderOpenAI, baseURL: "https://api.example.com/v1", want: true},
-		{name: "kimi explicit family", family: "kimi", provider: ProviderOpenAI, want: true},
-		{name: "moonshot explicit family", family: "moonshot", provider: ProviderOpenAI, want: true},
-		{name: "glm explicit family", family: "glm", provider: ProviderOpenAI, want: true},
-		{name: "zhipu explicit family", family: "zhipu", provider: ProviderOpenAI, want: true},
-		{name: "zai explicit family", family: "zai", provider: ProviderOpenAI, want: true},
-		{name: "explicit openai family overrides fallback signals", family: "openai", provider: "deepseek", baseURL: "https://api.deepseek.com/v1", want: false},
-		{name: "deepseek provider id fallback", provider: "deepseek", want: true},
-		{name: "bigmodel base url fallback", provider: ProviderOpenAI, baseURL: "https://open.bigmodel.cn/api/paas/v4", want: true},
-		{name: "openai provider", provider: ProviderOpenAI, baseURL: "https://api.openai.com/v1", want: false},
+		{name: "deepseek explicit family", family: "deepseek", provider: ProviderOpenAI, baseURL: "https://api.example.com/v1", wantReplay: true, wantFamily: "deepseek", wantSource: ModelPolicySourceFamilyOverride},
+		{name: "kimi explicit family", family: "kimi", provider: ProviderOpenAI, wantReplay: true, wantFamily: "kimi", wantSource: ModelPolicySourceFamilyOverride},
+		{name: "moonshot explicit family", family: "moonshot", provider: ProviderOpenAI, wantReplay: true, wantFamily: "moonshot", wantSource: ModelPolicySourceFamilyOverride},
+		{name: "glm explicit family", family: "glm", provider: ProviderOpenAI, wantReplay: true, wantFamily: "glm", wantSource: ModelPolicySourceFamilyOverride},
+		{name: "zhipu explicit family", family: "zhipu", provider: ProviderOpenAI, wantReplay: true, wantFamily: "zhipu", wantSource: ModelPolicySourceFamilyOverride},
+		{name: "zai explicit family", family: "zai", provider: ProviderOpenAI, wantReplay: true, wantFamily: "zai", wantSource: ModelPolicySourceFamilyOverride},
+		{name: "explicit openai family overrides fallback signals", family: "openai", provider: "deepseek", baseURL: "https://api.deepseek.com/v1", wantReplay: false, wantFamily: "openai", wantSource: ModelPolicySourceFamilyOverride},
+		{name: "deepseek provider id fallback", provider: "deepseek", wantReplay: true, wantFamily: "deepseek", wantSource: ModelPolicySourceProviderID},
+		{name: "bigmodel base url fallback", provider: ProviderOpenAI, baseURL: "https://open.bigmodel.cn/api/paas/v4", wantReplay: true, wantFamily: "zai", wantSource: ModelPolicySourceBaseURL},
+		{name: "openai provider", provider: ProviderOpenAI, baseURL: "https://api.openai.com/v1", wantReplay: false, wantSource: ModelPolicySourceDefault},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			got := openAIReasoningRoundTripSpecForProvider(tt.family, tt.provider, tt.baseURL).Enabled()
-			if got != tt.want {
-				t.Fatalf("unexpected reasoning spec enabled=%v want=%v", got, tt.want)
+			got := ResolveModelPolicy(tt.provider, "openai-compatible", "test-model", tt.family, tt.baseURL)
+			if got.ReplayReasoning() != tt.wantReplay {
+				t.Fatalf("unexpected reasoning replay=%v want=%v policy=%#v", got.ReplayReasoning(), tt.wantReplay, got)
+			}
+			if got.Family != tt.wantFamily {
+				t.Fatalf("unexpected family %q want %q policy=%#v", got.Family, tt.wantFamily, got)
+			}
+			if got.Source != tt.wantSource {
+				t.Fatalf("unexpected source %q want %q policy=%#v", got.Source, tt.wantSource, got)
+			}
+			if tt.wantReplay && (got.ReasoningField != openAIReasoningContentKey || got.AssistantToolCallContentMode != AssistantToolCallContentEmptyString) {
+				t.Fatalf("expected reasoning policy fields to be set, got %#v", got)
 			}
 		})
 	}
@@ -516,7 +530,7 @@ func TestOpenAIMessagesMapsThinkingAndToolResultParts(t *testing.T) {
 			},
 			llm.NewToolResultMessage("call-1", `{"ok":true}`),
 		},
-	}, openAIReasoningRoundTripSpec{})
+	}, ResolvedModelPolicy{AssistantToolCallContentMode: AssistantToolCallContentOmit})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -525,8 +539,8 @@ func TestOpenAIMessagesMapsThinkingAndToolResultParts(t *testing.T) {
 	}
 
 	assistant := messages[0]
-	if assistant["content"] != "reasoning" {
-		t.Fatalf("expected thinking mapped as string content, got %#v", assistant)
+	if _, ok := assistant["content"]; ok {
+		t.Fatalf("did not expect assistant thinking to be exposed as content under generic policy, got %#v", assistant)
 	}
 	toolCalls, _ := assistant["tool_calls"].([]map[string]any)
 	if len(toolCalls) != 1 || toolCalls[0]["id"] != "call-1" {
@@ -556,7 +570,7 @@ func TestOpenAIMessagesRoundTripsProviderReasoningWithToolCalls(t *testing.T) {
 			},
 			llm.NewToolResultMessage("call-1", `{"ok":true}`),
 		},
-	}, openAIReasoningRoundTripSpecForProvider("deepseek", ProviderOpenAI, ""))
+	}, ResolveModelPolicy(ProviderOpenAI, "openai-compatible", "", "deepseek", ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +601,7 @@ func TestOpenAIMessagesDoesNotSendReasoningToProviderWithoutReasoningContent(t *
 			},
 			Content: "done",
 		}},
-	}, openAIReasoningRoundTripSpecForProvider("openai", ProviderOpenAI, ""))
+	}, ResolveModelPolicy(ProviderOpenAI, "openai-compatible", "deepseek-v4-pro", "openai", ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -611,7 +625,7 @@ func TestOpenAIMessagesDegradesMissingImageAsset(t *testing.T) {
 				Image: &llm.ImagePartRef{AssetID: "asset-1"},
 			}},
 		}},
-	}, openAIReasoningRoundTripSpec{})
+	}, ResolvedModelPolicy{AssistantToolCallContentMode: AssistantToolCallContentOmit})
 	if err != nil {
 		t.Fatalf("openAIMessages: %v", err)
 	}

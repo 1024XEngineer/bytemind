@@ -58,7 +58,8 @@ func (c *OpenAICompatible) postJSON(ctx context.Context, url string, payload map
 func (c *OpenAICompatible) chatPayload(req llm.ChatRequest, stream bool) (map[string]any, error) {
 	model := choose(req.Model, c.model)
 	req.Model = model
-	messages, err := openAIMessages(req, openAIReasoningRoundTripSpecForProvider(c.family, c.providerID, c.baseURL))
+	policy := ResolveModelPolicy(c.providerID, c.providerType, ModelID(model), c.family, c.baseURL)
+	messages, err := openAIMessages(req, policy)
 	if err != nil {
 		return nil, err
 	}
@@ -77,9 +78,9 @@ func (c *OpenAICompatible) chatPayload(req llm.ChatRequest, stream bool) (map[st
 	return payload, nil
 }
 
-func openAIMessages(req llm.ChatRequest, reasoningSpec openAIReasoningRoundTripSpec) ([]map[string]any, error) {
+func openAIMessages(req llm.ChatRequest, policy ResolvedModelPolicy) ([]map[string]any, error) {
 	converted := make([]map[string]any, 0, len(req.Messages))
-	roundTripReasoning := reasoningSpec.Enabled()
+	roundTripReasoning := policy.ReplayReasoning()
 	for _, message := range req.Messages {
 		message.Normalize()
 		switch message.Role {
@@ -94,7 +95,7 @@ func openAIMessages(req llm.ChatRequest, reasoningSpec openAIReasoningRoundTripS
 				case llm.PartThinking:
 					if roundTripReasoning && message.Role == llm.RoleAssistant {
 						reasoningParts = append(reasoningParts, part.Thinking.Value)
-					} else {
+					} else if message.Role != llm.RoleAssistant {
 						content = append(content, map[string]any{"type": "text", "text": part.Thinking.Value})
 					}
 				case llm.PartImageRef:
@@ -119,12 +120,12 @@ func openAIMessages(req llm.ChatRequest, reasoningSpec openAIReasoningRoundTripS
 				}
 			}
 			if roundTripReasoning && message.Role == llm.RoleAssistant {
-				reasoning := openAIReasoningContentForField(message, reasoningSpec.ContentField)
+				reasoning := openAIReasoningContentForField(message, policy.ReasoningField)
 				if reasoning == "" && len(reasoningParts) > 0 {
 					reasoning = strings.Join(reasoningParts, "")
 				}
 				if reasoning != "" {
-					entry[reasoningSpec.ContentField] = reasoning
+					entry[policy.ReasoningField] = reasoning
 				}
 			}
 			hasToolCalls := len(asToolCalls(entry["tool_calls"])) > 0
@@ -133,8 +134,8 @@ func openAIMessages(req llm.ChatRequest, reasoningSpec openAIReasoningRoundTripS
 			} else if len(content) > 0 {
 				entry["content"] = content
 			}
-			if _, hasContent := entry["content"]; !hasContent && hasToolCalls {
-				entry["content"] = ""
+			if hasToolCalls && message.Role == llm.RoleAssistant {
+				applyAssistantToolCallContentPolicy(entry, policy.AssistantToolCallContentMode)
 			}
 			if _, hasContent := entry["content"]; hasContent || hasToolCalls {
 				converted = append(converted, entry)
@@ -144,6 +145,21 @@ func openAIMessages(req llm.ChatRequest, reasoningSpec openAIReasoningRoundTripS
 		}
 	}
 	return converted, nil
+}
+
+func applyAssistantToolCallContentPolicy(entry map[string]any, mode AssistantToolCallContentMode) {
+	switch mode {
+	case AssistantToolCallContentPreserve:
+		return
+	case AssistantToolCallContentEmptyString:
+		entry["content"] = ""
+	case AssistantToolCallContentNull:
+		entry["content"] = nil
+	case AssistantToolCallContentOmit, "":
+		delete(entry, "content")
+	default:
+		delete(entry, "content")
+	}
 }
 
 func asToolCalls(value any) []map[string]any {
