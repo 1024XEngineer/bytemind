@@ -59,7 +59,7 @@ func parseCommitMessage(input string) (string, error) {
 		return "", errors.New(commitUsage)
 	}
 	message := strings.TrimSpace(strings.TrimPrefix(input, fields[0]))
-	if message == "" {
+	if message == "" || message == "<message>" {
 		return "", errors.New(commitUsage)
 	}
 	return message, nil

@@ -26,6 +26,10 @@ func TestParseCommitMessageRequiresExplicitMessage(t *testing.T) {
 	if _, err := parseCommitMessage("/commit"); err == nil || err.Error() != commitUsage {
 		t.Fatalf("expected commit usage error, got %v", err)
 	}
+
+	if _, err := parseCommitMessage("/commit <message>"); err == nil || err.Error() != commitUsage {
+		t.Fatalf("expected placeholder message usage error, got %v", err)
+	}
 }
 
 func TestGitStatusHasChangesIgnoresBranchLine(t *testing.T) {
@@ -114,6 +118,33 @@ func TestCommandPaletteExactCommitPromptsForMessage(t *testing.T) {
 	m := model{
 		input:       input,
 		commandOpen: true,
+	}
+
+	got, _ := m.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	if updated.input.Value() != "/commit " {
+		t.Fatalf("expected commit command prefix in input, got %q", updated.input.Value())
+	}
+	if updated.statusNote != "Type a commit message, then press Enter to stage all changes and commit." {
+		t.Fatalf("expected commit prompt status, got %q", updated.statusNote)
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected no command exchange before message is entered, got %#v", updated.chatItems)
+	}
+}
+
+func TestCommandPaletteCommitSelectionPromptsForMessage(t *testing.T) {
+	input := textarea.New()
+	input.SetValue("/")
+	m := model{
+		input:       input,
+		commandOpen: true,
+	}
+	for i, item := range m.filteredCommands() {
+		if item.Name == "/commit" {
+			m.commandCursor = i
+			break
+		}
 	}
 
 	got, _ := m.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})

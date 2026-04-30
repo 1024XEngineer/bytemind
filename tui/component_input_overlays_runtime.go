@@ -83,9 +83,8 @@ func (m model) handleCommandPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return next, cmd
 		}
-		value := strings.TrimSpace(m.input.Value())
 		m.closeCommandPalette()
-		if selected.Name == "/commit" && value == selected.Name {
+		if selected.Name == "/commit" {
 			m.setInputValue("/commit ")
 			m.statusNote = "Type a commit message, then press Enter to stage all changes and commit."
 			return m, nil
