@@ -712,3 +712,29 @@ func TestImagePlaceholderPatternAcceptsLegacyAndAtomicFormats(t *testing.T) {
 		t.Fatalf("expected atomic placeholder to parse, got id=%d ok=%v", atomic, atomicOK)
 	}
 }
+
+func TestExtractImagePlaceholderIDsAcceptsLegacyAndAtomicMixed(t *testing.T) {
+	ids := extractImagePlaceholderIDs("a [Image#1] b [Image #2] c [Image#1]")
+	if len(ids) != 2 {
+		t.Fatalf("expected two unique ids, got %#v", ids)
+	}
+	if ids[0] != 1 || ids[1] != 2 {
+		t.Fatalf("unexpected id order/content: %#v", ids)
+	}
+}
+
+func TestProtectImagePlaceholderDeletionRemovesOnlyTouchedAtomicPlaceholder(t *testing.T) {
+	m := newImagePipelineModel(t)
+	before := "[Image#1] and [Image#2]"
+	first := "[Image#1]"
+	cut := strings.Index(before, first) + len(first) - 1 // simulate deleting trailing ']'
+	after := before[:cut] + before[cut+1:]
+
+	updated, changed := m.protectImagePlaceholderDeletion(before, after, "backspace")
+	if !changed {
+		t.Fatal("expected atomic placeholder deletion to be applied")
+	}
+	if updated != " and [Image#2]" {
+		t.Fatalf("expected only touched placeholder removed, got %q", updated)
+	}
+}
