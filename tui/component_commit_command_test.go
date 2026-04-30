@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,28 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	"github.com/1024XEngineer/bytemind/internal/session"
 )
+
+type failingCommitSessionStore struct{}
+
+func (f failingCommitSessionStore) Save(*session.Session) error {
+	return errors.New("save failed")
+}
+
+func (f failingCommitSessionStore) Load(string) (*session.Session, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f failingCommitSessionStore) List(int) ([]session.Summary, []string, error) {
+	return nil, nil, errors.New("not implemented")
+}
+
+func (f failingCommitSessionStore) DeleteInWorkspace(string, string) error {
+	return errors.New("not implemented")
+}
+
+func (f failingCommitSessionStore) CleanupZeroMessageSessions(string, string) (session.CleanupResult, error) {
+	return session.CleanupResult{}, errors.New("not implemented")
+}
 
 func TestParseCommitMessageRequiresExplicitMessage(t *testing.T) {
 	message, err := parseCommitMessage("/commit add commit command")
@@ -29,6 +52,116 @@ func TestParseCommitMessageRequiresExplicitMessage(t *testing.T) {
 
 	if _, err := parseCommitMessage("/commit <message>"); err == nil || err.Error() != commitUsage {
 		t.Fatalf("expected placeholder message usage error, got %v", err)
+	}
+
+	if _, err := parseCommitMessage("/undo-commit"); err == nil || err.Error() != commitUsage {
+		t.Fatalf("expected non-commit command usage error, got %v", err)
+	}
+}
+
+func TestCommitCommandExchangeHandlesMissingAndFailingStores(t *testing.T) {
+	t.Run("nil model session store is ignored", func(t *testing.T) {
+		var m model
+		if err := m.recordCommandExchange("/commit x", "ok"); err != nil {
+			t.Fatalf("recordCommandExchange failed: %v", err)
+		}
+	})
+
+	t.Run("empty command exchange is ignored", func(t *testing.T) {
+		sess := session.New(t.TempDir())
+		m := model{sess: sess, store: failingCommitSessionStore{}}
+		if err := m.recordCommandExchange(" ", "ok"); err != nil {
+			t.Fatalf("recordCommandExchange should ignore empty command, got %v", err)
+		}
+		if err := m.recordCommandExchange("/commit x", " "); err != nil {
+			t.Fatalf("recordCommandExchange should ignore empty response, got %v", err)
+		}
+		if len(sess.Messages) != 0 {
+			t.Fatalf("expected no messages for ignored exchanges, got %#v", sess.Messages)
+		}
+	})
+
+	t.Run("finish reports save failure after showing command", func(t *testing.T) {
+		m := model{sess: session.New(t.TempDir()), store: failingCommitSessionStore{}}
+		if err := m.finishCommitCommand("/commit x", "ok", "done"); err != nil {
+			t.Fatalf("finishCommitCommand failed: %v", err)
+		}
+		if !strings.Contains(m.statusNote, "session save failed") {
+			t.Fatalf("expected save failure status, got %q", m.statusNote)
+		}
+		if len(m.chatItems) != 2 {
+			t.Fatalf("expected command to be shown even when save fails, got %#v", m.chatItems)
+		}
+	})
+}
+
+func TestLatestSessionCommitHashOnlyAllowsCurrentCommit(t *testing.T) {
+	hashResponse := "Commit created.\n\nHash: `abc1234`\nMessage: save work"
+	tests := []struct {
+		name string
+		sess *session.Session
+		want string
+		ok   bool
+	}{
+		{name: "nil session", sess: nil},
+		{
+			name: "commit exchange",
+			sess: sessionWithMessages(t.TempDir(),
+				llm.NewUserTextMessage("/commit save work"),
+				llm.NewAssistantTextMessage(hashResponse),
+			),
+			want: "abc1234",
+			ok:   true,
+		},
+		{
+			name: "undo already happened",
+			sess: sessionWithMessages(t.TempDir(),
+				llm.NewUserTextMessage("/commit save work"),
+				llm.NewAssistantTextMessage(hashResponse),
+				llm.NewUserTextMessage("/undo-commit"),
+			),
+		},
+		{
+			name: "malformed commit response",
+			sess: sessionWithMessages(t.TempDir(),
+				llm.NewUserTextMessage("/commit save work"),
+				llm.NewAssistantTextMessage("Commit created.\n\nMessage: save work"),
+			),
+		},
+		{
+			name: "assistant response not paired with commit command",
+			sess: sessionWithMessages(t.TempDir(),
+				llm.NewUserTextMessage("regular prompt"),
+				llm.NewAssistantTextMessage(hashResponse),
+			),
+		},
+		{
+			name: "commit was already undone",
+			sess: sessionWithMessages(t.TempDir(),
+				llm.NewUserTextMessage("/commit save work"),
+				llm.NewAssistantTextMessage(hashResponse),
+				llm.NewAssistantTextMessage("Commit undone.\n\nHash: `abc1234`"),
+			),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := model{sess: tt.sess}
+			got, ok := m.latestSessionCommitHash()
+			if got != tt.want || ok != tt.ok {
+				t.Fatalf("latestSessionCommitHash() = %q, %v; want %q, %v", got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
+func TestParseCommitHashFromResponse(t *testing.T) {
+	if got, ok := parseCommitHashFromResponse("Commit created.\nHash: `abc1234`"); !ok || got != "abc1234" {
+		t.Fatalf("expected hash from response, got %q / %v", got, ok)
+	}
+	if got, ok := parseCommitHashFromResponse("Commit created.\nMessage: x"); ok || got != "" {
+		t.Fatalf("expected missing hash to fail, got %q / %v", got, ok)
 	}
 }
 
@@ -260,6 +393,59 @@ func TestExecuteGitCommitReportsNoChanges(t *testing.T) {
 	}
 }
 
+func TestExecuteGitCommitReportsGitErrors(t *testing.T) {
+	missingRepo := filepath.Join(t.TempDir(), "missing")
+	if _, _, err := executeGitCommit(context.Background(), missingRepo, "save"); err == nil || !strings.Contains(err.Error(), "Git status failed") {
+		t.Fatalf("expected git status failure, got %v", err)
+	}
+}
+
+func TestExecuteGitUndoCommitBlocksDirtyWorkingTree(t *testing.T) {
+	repo := newCommitCommandTestRepo(t)
+	writeCommitCommandTestFile(t, repo, "file.txt", "initial\n")
+	runGitForCommitCommandTest(t, repo, "add", "-A")
+	runGitForCommitCommandTest(t, repo, "commit", "-m", "initial commit")
+	writeCommitCommandTestFile(t, repo, "file.txt", "changed\n")
+	_, _, err := executeGitCommit(context.Background(), repo, "save local work")
+	if err != nil {
+		t.Fatalf("executeGitCommit failed: %v", err)
+	}
+	hash := runGitForCommitCommandTest(t, repo, "rev-parse", "--short", "HEAD")
+	writeCommitCommandTestFile(t, repo, "other.txt", "new work\n")
+
+	_, _, err = executeGitUndoCommit(context.Background(), repo, hash)
+	if err == nil || !strings.Contains(err.Error(), "working tree has changes") {
+		t.Fatalf("expected dirty working tree block, got %v", err)
+	}
+}
+
+func TestIsHeadPushedToUpstreamHandlesNoUpstream(t *testing.T) {
+	repo := newCommitCommandTestRepo(t)
+	writeCommitCommandTestFile(t, repo, "file.txt", "initial\n")
+	runGitForCommitCommandTest(t, repo, "add", "-A")
+	runGitForCommitCommandTest(t, repo, "commit", "-m", "initial commit")
+
+	pushed, err := isHeadPushedToUpstream(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("isHeadPushedToUpstream failed: %v", err)
+	}
+	if pushed {
+		t.Fatalf("expected repo without upstream to be treated as not pushed")
+	}
+}
+
+func TestFormatGitCommandErrorFallbacks(t *testing.T) {
+	if got := formatGitCommandError("Git status", "", errors.New("boom")).Error(); got != "Git status failed: boom" {
+		t.Fatalf("expected fallback to err text, got %q", got)
+	}
+	if got := formatGitCommandError("Git status", "", nil).Error(); got != "Git status failed: unknown error" {
+		t.Fatalf("expected unknown fallback, got %q", got)
+	}
+	if got := formatCommitError("plain failure", nil).Error(); got != "Commit failed: plain failure" {
+		t.Fatalf("expected generic commit failure, got %q", got)
+	}
+}
+
 func TestFormatCommitErrorDetectsMissingIdentity(t *testing.T) {
 	err := formatCommitError("Author identity unknown\nfatal: unable to auto-detect email address", nil)
 	if err == nil || err.Error() != "Commit failed: git user.name or user.email is not configured." {
@@ -274,6 +460,12 @@ func newCommitCommandTestRepo(t *testing.T) string {
 	runGitForCommitCommandTest(t, repo, "config", "user.name", "ByteMind Test")
 	runGitForCommitCommandTest(t, repo, "config", "user.email", "bytemind-test@example.com")
 	return repo
+}
+
+func sessionWithMessages(workspace string, messages ...llm.Message) *session.Session {
+	sess := session.New(workspace)
+	sess.Messages = append(sess.Messages, messages...)
+	return sess
 }
 
 func writeCommitCommandTestFile(t *testing.T, repo, name, content string) {
