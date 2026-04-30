@@ -21,7 +21,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
-var imagePlaceholderPattern = regexp.MustCompile(`\[Image #(\d+)\]`)
+var imagePlaceholderPattern = regexp.MustCompile(`\[Image ?#(\d+)\]`)
 var imageMentionPattern = regexp.MustCompile(`(?i)@([^\s@]+?\.(?:png|jpe?g|webp|gif))`)
 var inlineWindowsImagePathPattern = regexp.MustCompile(`(?i)[a-z]:\\[^\r\n\t"'<>|]*?\.(?:png|jpe?g|webp|gif)`)
 var inlineUnixImagePathPattern = regexp.MustCompile(`(?i)/(?:[^\r\n\t"'<>|/]+/)*[^\r\n\t"'<>|/]+\.(?:png|jpe?g|webp|gif)`)
@@ -967,7 +967,7 @@ func extractImagePlaceholderIDs(text string) []int {
 }
 
 func placeholderForImageID(id int) string {
-	return fmt.Sprintf("[Image #%d]", id)
+	return fmt.Sprintf("[Image#%d]", id)
 }
 
 func imageIDFromPlaceholder(value string) (int, bool) {
@@ -1189,7 +1189,7 @@ func (m *model) protectImagePlaceholderDeletion(before, after, source string) (s
 	if len(before)-len(after) != 1 {
 		return after, false
 	}
-	if !strings.Contains(before, "[Image #") {
+	if !strings.Contains(before, "[Image#") && !strings.Contains(before, "[Image #") {
 		return after, false
 	}
 

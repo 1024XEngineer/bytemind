@@ -2589,7 +2589,7 @@ func TestAltVPastesClipboardImage(t *testing.T) {
 
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
 	updated := got.(model)
-	if updated.input.Value() != "[Image #1]" {
+	if updated.input.Value() != "[Image#1]" {
 		t.Fatalf("expected alt+v to paste clipboard image placeholder, got %q", updated.input.Value())
 	}
 	if !strings.Contains(updated.statusNote, "Attached image from clipboard") {
@@ -2608,7 +2608,7 @@ func TestCtrlVPastesClipboardImage(t *testing.T) {
 
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlV})
 	updated := got.(model)
-	if updated.input.Value() != "[Image #1]" {
+	if updated.input.Value() != "[Image#1]" {
 		t.Fatalf("expected ctrl+v to paste clipboard image placeholder, got %q", updated.input.Value())
 	}
 }
@@ -2624,7 +2624,7 @@ func TestCtrlVControlMarkerRunePastesClipboardImage(t *testing.T) {
 
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\x16'}})
 	updated := got.(model)
-	if updated.input.Value() != "[Image #1]" {
+	if updated.input.Value() != "[Image#1]" {
 		t.Fatalf("expected ctrl+v control marker to paste clipboard image placeholder, got %q", updated.input.Value())
 	}
 }
@@ -2888,7 +2888,7 @@ func TestTerminalPasteEventWithEmptyPayloadPastesClipboardImage(t *testing.T) {
 
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Paste: true})
 	updated := got.(model)
-	if updated.input.Value() != "[Image #1]" {
+	if updated.input.Value() != "[Image#1]" {
 		t.Fatalf("expected empty paste event to attach clipboard image, got %q", updated.input.Value())
 	}
 }
@@ -2905,7 +2905,7 @@ func TestTerminalPasteEventWithTextDoesNotForceClipboardImage(t *testing.T) {
 	if updated.input.Value() != "hello" {
 		t.Fatalf("expected text paste to remain text, got %q", updated.input.Value())
 	}
-	if strings.Contains(updated.input.Value(), "[Image #") {
+	if strings.Contains(updated.input.Value(), "[Image#") || strings.Contains(updated.input.Value(), "[Image #") {
 		t.Fatalf("expected no image placeholder for text paste")
 	}
 }
@@ -2924,7 +2924,7 @@ func TestRapidRuneInputForImagePathTriggersFallbackPlaceholder(t *testing.T) {
 		next := got.(model)
 		m = &next
 	}
-	if m.input.Value() != "[Image #1]" {
+	if m.input.Value() != "[Image#1]" {
 		t.Fatalf("expected rapid path input to convert to placeholder, got %q", m.input.Value())
 	}
 }

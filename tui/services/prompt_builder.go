@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	builderImagePlaceholderPattern = regexp.MustCompile(`\[Image #(\d+)\]`)
+	builderImagePlaceholderPattern = regexp.MustCompile(`\[Image ?#(\d+)\]`)
 	builderImageMentionPattern     = regexp.MustCompile(`(?i)@([^\s@]+?\.(?:png|jpe?g|webp|gif))`)
 )
 
