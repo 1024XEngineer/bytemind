@@ -64,6 +64,94 @@ func TestExecuteGitCommitCreatesCommit(t *testing.T) {
 	}
 }
 
+func TestRunUndoCommitCommandUndoesCurrentSessionCommit(t *testing.T) {
+	repo := newCommitCommandTestRepo(t)
+	writeCommitCommandTestFile(t, repo, "file.txt", "initial\n")
+	runGitForCommitCommandTest(t, repo, "add", "-A")
+	runGitForCommitCommandTest(t, repo, "commit", "-m", "initial commit")
+	writeCommitCommandTestFile(t, repo, "file.txt", "changed\n")
+
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(repo)
+	m := model{
+		workspace: repo,
+		store:     store,
+		sess:      sess,
+	}
+
+	if err := m.runCommitCommand("/commit save local work"); err != nil {
+		t.Fatalf("runCommitCommand failed: %v", err)
+	}
+	if err := m.runUndoCommitCommand("/undo-commit"); err != nil {
+		t.Fatalf("runUndoCommitCommand failed: %v", err)
+	}
+
+	subject := runGitForCommitCommandTest(t, repo, "log", "-1", "--format=%s")
+	if subject != "initial commit" {
+		t.Fatalf("expected HEAD to return to initial commit, got %q", subject)
+	}
+	status := runGitForCommitCommandTest(t, repo, "status", "--short")
+	if !strings.Contains(status, "file.txt") {
+		t.Fatalf("expected undone commit changes to remain locally, got %q", status)
+	}
+	if len(sess.Messages) != 4 || !strings.Contains(sess.Messages[3].Text(), "Commit undone.") {
+		t.Fatalf("expected undo exchange to be recorded, got %#v", sess.Messages)
+	}
+}
+
+func TestRunUndoCommitCommandRequiresSessionCommit(t *testing.T) {
+	repo := newCommitCommandTestRepo(t)
+	m := model{
+		workspace: repo,
+		sess:      session.New(repo),
+	}
+
+	if err := m.runUndoCommitCommand("/undo-commit"); err != nil {
+		t.Fatalf("runUndoCommitCommand failed: %v", err)
+	}
+	if m.statusNote != "No session commit to undo." {
+		t.Fatalf("expected no session commit status, got %q", m.statusNote)
+	}
+	if len(m.chatItems) != 2 || m.chatItems[1].Body != undoCommitUsage {
+		t.Fatalf("expected undo usage exchange, got %#v", m.chatItems)
+	}
+}
+
+func TestExecuteGitUndoCommitBlocksWhenHeadWasPushed(t *testing.T) {
+	repo := newCommitCommandTestRepo(t)
+	writeCommitCommandTestFile(t, repo, "file.txt", "initial\n")
+	runGitForCommitCommandTest(t, repo, "add", "-A")
+	runGitForCommitCommandTest(t, repo, "commit", "-m", "initial commit")
+	writeCommitCommandTestFile(t, repo, "file.txt", "changed\n")
+	_, _, err := executeGitCommit(context.Background(), repo, "save local work")
+	if err != nil {
+		t.Fatalf("executeGitCommit failed: %v", err)
+	}
+	hash := runGitForCommitCommandTest(t, repo, "rev-parse", "--short", "HEAD")
+	runGitForCommitCommandTest(t, repo, "branch", "test-upstream", "HEAD")
+	runGitForCommitCommandTest(t, repo, "branch", "--set-upstream-to", "test-upstream")
+
+	_, _, err = executeGitUndoCommit(context.Background(), repo, hash)
+	if err == nil || !strings.Contains(err.Error(), "already present on the upstream branch") {
+		t.Fatalf("expected pushed commit block, got %v", err)
+	}
+}
+
+func TestExecuteGitUndoCommitBlocksWhenHeadDoesNotMatchSessionCommit(t *testing.T) {
+	repo := newCommitCommandTestRepo(t)
+	writeCommitCommandTestFile(t, repo, "file.txt", "initial\n")
+	runGitForCommitCommandTest(t, repo, "add", "-A")
+	runGitForCommitCommandTest(t, repo, "commit", "-m", "initial commit")
+
+	_, _, err := executeGitUndoCommit(context.Background(), repo, "badcafe")
+	if err == nil || !strings.Contains(err.Error(), "current HEAD") {
+		t.Fatalf("expected head mismatch block, got %v", err)
+	}
+}
+
 func TestRunCommitCommandRecordsCommandExchange(t *testing.T) {
 	repo := newCommitCommandTestRepo(t)
 	if err := os.WriteFile(filepath.Join(repo, "file.txt"), []byte("hello\n"), 0o644); err != nil {
@@ -186,6 +274,13 @@ func newCommitCommandTestRepo(t *testing.T) string {
 	runGitForCommitCommandTest(t, repo, "config", "user.name", "ByteMind Test")
 	runGitForCommitCommandTest(t, repo, "config", "user.email", "bytemind-test@example.com")
 	return repo
+}
+
+func writeCommitCommandTestFile(t *testing.T, repo, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func runGitForCommitCommandTest(t *testing.T, repo string, args ...string) string {

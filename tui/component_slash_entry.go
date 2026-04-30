@@ -43,6 +43,8 @@ func (m *model) handleSlashCommand(input string) error {
 		return m.runCompactCommand(input)
 	case "/commit":
 		return m.runCommitCommand(input)
+	case "/undo-commit":
+		return m.runUndoCommitCommand(input)
 	default:
 		return fmt.Errorf("unknown command: %s", fields[0])
 	}
