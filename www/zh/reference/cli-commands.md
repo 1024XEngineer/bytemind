@@ -69,12 +69,34 @@ bytemind --version
 | `/new`                                        | 在当前工作区开启新会话       |
 | `/plan`                                       | 切换到 Plan 模式             |
 | `/build`                                      | 切换到 Build 模式            |
+| `/commit <message>`                           | 暂存当前全部改动并创建本地 Git commit |
+| `/undo-commit`                                | 回退当前会话里由 `/commit` 创建的最后一个本地 commit |
 | `/quit`                                       | 安全退出                     |
 | `/bug-investigation [symptom="..."]`          | 激活 Bug 排查技能            |
 | `/review [base_ref=<ref>]`                    | 激活代码审查技能             |
 | `/github-pr [pr_number=<n>] [base_ref=<ref>]` | 激活 GitHub PR 技能          |
 | `/repo-onboarding`                            | 激活仓库入门技能             |
 | `/write-rfc [path=<文件>]`                    | 激活 RFC 撰写技能            |
+
+### `/commit <message>`
+
+在 `bytemind chat` 会话里使用 `/commit`，可以让 ByteMind 把当前工作区改动保存为一个本地 Git commit。
+
+```text
+/commit fix(/commit): 调整 /commit 的反馈形式
+```
+
+从 Slash 命令面板选择 `/commit` 时，ByteMind 会先把输入框填成 `/commit `，等待你手动填写 commit message。按 Enter 后，ByteMind 会执行 `git add -A`、创建 commit，并反馈 commit hash、message 和包含的文件数量。
+
+### `/undo-commit`
+
+使用 `/undo-commit` 可以回退当前会话里最近一次由 ByteMind `/commit` 创建的 commit。
+
+```text
+/undo-commit
+```
+
+ByteMind 只会在当前 `HEAD` 仍然是这次会话提交、工作区没有更新的改动、并且 upstream 分支还不包含该提交时执行回退。它使用 `git reset --soft HEAD~1`，所以文件改动仍然会保留在本地。
 
 ## 配置加载顺序
 

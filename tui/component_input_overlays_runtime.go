@@ -84,6 +84,11 @@ func (m model) handleCommandPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return next, cmd
 		}
 		m.closeCommandPalette()
+		if selected.Name == "/commit" {
+			m.setInputValue("/commit ")
+			m.statusNote = "Type a commit message, then press Enter to stage all changes and commit."
+			return m, nil
+		}
 		if shouldExecuteFromPalette(selected) || selected.Name == "/continue" {
 			if selected.Name == "/quit" {
 				return m, tea.Quit

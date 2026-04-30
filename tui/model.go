@@ -322,6 +322,8 @@ var commandItems = []commandItem{
 	{Name: "/mcp show", Usage: "/mcp show <id>", Description: "Show one MCP server config and runtime state.", Kind: "command"},
 	{Name: "/new", Usage: "/new", Description: "Start a fresh session in this workspace.", Kind: "command"},
 	{Name: "/compact", Usage: "/compact", Description: "Compress long session history into a continuation summary.", Kind: "command"},
+	{Name: "/commit", Usage: "/commit <message>", Description: "Stage all changes and create a local Git commit.", Kind: "command"},
+	{Name: "/undo-commit", Usage: "/undo-commit", Description: "Undo the last local commit created by /commit in this session.", Kind: "command"},
 	{Name: "/btw", Usage: "/btw <message>", Description: "Interject while a run is in progress.", Kind: "command"},
 	{Name: "/quit", Usage: "/quit", Description: "Exit the current TUI window.", Kind: "command"},
 	{Name: "/skills", Usage: "/skills", Description: "List available skills and current active skill.", Kind: "command"},
@@ -2378,7 +2380,7 @@ func shouldExecuteFromPalette(item commandItem) bool {
 		return true
 	}
 	switch item.Name {
-	case "/help", "/session", "/skills", "/skill clear", "/mcp list", "/mcp help", "/new", "/compact", "/quit":
+	case "/help", "/session", "/skills", "/skill clear", "/mcp list", "/mcp help", "/new", "/compact", "/undo-commit", "/quit":
 		return true
 	default:
 		return false
