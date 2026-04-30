@@ -47,10 +47,10 @@ func TestExecuteGitCommitCreatesCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("executeGitCommit failed: %v", err)
 	}
-	if !strings.Contains(response, "Committed ") || !strings.Contains(response, "add commit command") {
+	if !strings.Contains(response, "Commit created.") || !strings.Contains(response, "Message: add commit command") || !strings.Contains(response, "Files included: 1") {
 		t.Fatalf("expected response with hash and message, got %q", response)
 	}
-	if !strings.HasPrefix(status, "Committed ") {
+	if !strings.HasPrefix(status, "Commit created: ") {
 		t.Fatalf("expected committed status, got %q", status)
 	}
 
@@ -86,7 +86,7 @@ func TestRunCommitCommandRecordsCommandExchange(t *testing.T) {
 	if sess.Messages[0].Role != llm.RoleUser || sess.Messages[0].Text() != "/commit save local work" {
 		t.Fatalf("expected user command message, got %#v", sess.Messages[0])
 	}
-	if sess.Messages[1].Role != llm.RoleAssistant || !strings.Contains(sess.Messages[1].Text(), "Committed ") {
+	if sess.Messages[1].Role != llm.RoleAssistant || !strings.Contains(sess.Messages[1].Text(), "Commit created.") {
 		t.Fatalf("expected assistant commit result, got %#v", sess.Messages[1])
 	}
 	if len(m.chatItems) != 2 {
@@ -108,7 +108,7 @@ func TestHandleSlashCommitRequiresMessage(t *testing.T) {
 	}
 }
 
-func TestCommandPaletteExactCommitShowsUsage(t *testing.T) {
+func TestCommandPaletteExactCommitPromptsForMessage(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("/commit")
 	m := model{
@@ -118,11 +118,14 @@ func TestCommandPaletteExactCommitShowsUsage(t *testing.T) {
 
 	got, _ := m.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
 	updated := got.(model)
-	if updated.statusNote != "Commit message required." {
-		t.Fatalf("expected commit usage status, got %q", updated.statusNote)
+	if updated.input.Value() != "/commit " {
+		t.Fatalf("expected commit command prefix in input, got %q", updated.input.Value())
 	}
-	if len(updated.chatItems) != 2 || updated.chatItems[1].Body != commitUsage {
-		t.Fatalf("expected usage command exchange, got %#v", updated.chatItems)
+	if updated.statusNote != "Type a commit message, then press Enter to stage all changes and commit." {
+		t.Fatalf("expected commit prompt status, got %q", updated.statusNote)
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected no command exchange before message is entered, got %#v", updated.chatItems)
 	}
 }
 

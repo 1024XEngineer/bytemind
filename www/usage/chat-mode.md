@@ -72,7 +72,16 @@ Split the HTTP handler layer into a dedicated controller package. Show me the pl
 | `/new`          | Start a new session                 |
 | `/plan`         | Switch to Plan mode                 |
 | `/build`        | Switch back to Build mode           |
+| `/commit <message>` | Stage all current changes and create a local Git commit |
 | `/quit`         | Exit safely                         |
+
+For `/commit`, choose the command from the slash palette or type it directly, then provide the commit message yourself:
+
+```text
+/commit fix(/commit): improve commit feedback
+```
+
+ByteMind stages the current workspace changes with `git add -A` before committing, then reports the commit hash, message, and file count.
 
 ## Interrupting and Resuming
 

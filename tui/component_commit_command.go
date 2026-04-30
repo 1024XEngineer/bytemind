@@ -11,7 +11,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
-const commitUsage = "usage: /commit <message>"
+const commitUsage = "Usage: /commit <message>\nExample: /commit fix(/commit): improve commit feedback"
 
 func (m *model) runCommitCommand(input string) error {
 	message, err := parseCommitMessage(input)
@@ -93,18 +93,25 @@ func executeGitCommit(ctx context.Context, workspace, message string) (response 
 		return "", "", fmt.Errorf("Commit created, but git did not return a commit hash.")
 	}
 
-	return fmt.Sprintf("Committed %s: %s", hash, message), fmt.Sprintf("Committed %s.", hash), nil
+	changedFiles := countGitStatusChanges(statusOutput)
+	response = fmt.Sprintf("Commit created.\n\nHash: `%s`\nMessage: %s\nFiles included: %d\n\nByteMind staged all current changes with `git add -A` before committing.", hash, message, changedFiles)
+	return response, fmt.Sprintf("Commit created: %s", hash), nil
 }
 
 func gitStatusHasChanges(output string) bool {
+	return countGitStatusChanges(output) > 0
+}
+
+func countGitStatusChanges(output string) int {
+	count := 0
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "##") {
 			continue
 		}
-		return true
+		count++
 	}
-	return false
+	return count
 }
 
 func runGit(ctx context.Context, workspace string, args ...string) (string, error) {
