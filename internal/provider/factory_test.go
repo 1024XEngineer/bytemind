@@ -168,6 +168,33 @@ func TestNewDomainClientWithIDUsesExplicitProviderInstanceID(t *testing.T) {
 	}
 }
 
+func TestNewDomainClientWithIDPassesProviderIDToOpenAICompatible(t *testing.T) {
+	client, err := NewDomainClientWithID("deepseek", config.ProviderConfig{
+		Type:    "openai-compatible",
+		Family:  "deepseek",
+		BaseURL: "https://api.deepseek.com/v1",
+		APIKey:  "test-key",
+		Model:   "generic-model",
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	adapter, ok := client.(*clientAdapter)
+	if !ok {
+		t.Fatalf("expected *clientAdapter, got %T", client)
+	}
+	openaiClient, ok := adapter.client.(*OpenAICompatible)
+	if !ok {
+		t.Fatalf("expected *OpenAICompatible, got %T", adapter.client)
+	}
+	if openaiClient.providerID != "deepseek" {
+		t.Fatalf("expected provider id to be passed to openai client, got %q", openaiClient.providerID)
+	}
+	if openaiClient.family != "deepseek" {
+		t.Fatalf("expected provider family to be passed to openai client, got %q", openaiClient.family)
+	}
+}
+
 func TestNewDomainClientPreservesAnthropicProviderID(t *testing.T) {
 	client, err := NewDomainClient(config.ProviderConfig{
 		Type:             "anthropic",

@@ -57,6 +57,7 @@ type UpdateCheckConfig struct {
 
 type ProviderConfig struct {
 	Type             string            `json:"type"`
+	Family           string            `json:"family"`
 	AutoDetectType   bool              `json:"auto_detect_type"`
 	BaseURL          string            `json:"base_url"`
 	APIPath          string            `json:"api_path"`
@@ -469,6 +470,9 @@ func applyEnv(cfg *Config) {
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_PROVIDER_TYPE")); value != "" {
 		cfg.Provider.Type = value
 	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_PROVIDER_FAMILY")); value != "" {
+		cfg.Provider.Family = value
+	}
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_PROVIDER_AUTO_DETECT_TYPE")); value != "" {
 		if parsed, err := strconv.ParseBool(value); err == nil {
 			cfg.Provider.AutoDetectType = parsed
@@ -525,6 +529,7 @@ func applyEnv(cfg *Config) {
 
 func normalize(cfg *Config) error {
 	cfg.Provider.Type = normalizeProviderType(cfg.Provider.Type)
+	cfg.Provider.Family = normalizeProviderFamily(cfg.Provider.Family)
 	if cfg.Provider.Type == "" {
 		if cfg.Provider.AutoDetectType {
 			cfg.Provider.Type = detectProviderType(cfg.Provider)
@@ -586,6 +591,7 @@ func normalize(cfg *Config) error {
 			return fmt.Errorf("provider_runtime.providers has duplicate provider id after normalization: %q (from %q and %q)", normalizedID, existingSource, id)
 		}
 		providerCfg.Type = normalizeProviderType(providerCfg.Type)
+		providerCfg.Family = normalizeProviderFamily(providerCfg.Family)
 		if providerCfg.Type == "" {
 			if providerCfg.AutoDetectType {
 				providerCfg.Type = detectProviderType(providerCfg)
@@ -895,6 +901,19 @@ func normalizeProviderType(value string) string {
 		return "gemini"
 	default:
 		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func normalizeProviderFamily(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "_", "-")
+	switch value {
+	case "moonshot-ai":
+		return "moonshot"
+	case "z-ai", "z.ai", "zhipu-ai":
+		return "zai"
+	default:
+		return value
 	}
 }
 

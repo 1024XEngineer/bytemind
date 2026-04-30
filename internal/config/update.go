@@ -29,7 +29,7 @@ func UpsertProviderField(configPath, field, value string) (string, error) {
 		return "", errors.New("provider field value is empty")
 	}
 	switch field {
-	case "type", "base_url", "model", "api_key", "api_key_env":
+	case "type", "family", "base_url", "model", "api_key", "api_key_env":
 	default:
 		return "", fmt.Errorf("unsupported provider field: %s", field)
 	}

@@ -21,6 +21,8 @@ const (
 )
 
 type Config struct {
+	ProviderID       ProviderID
+	ProviderFamily   string
 	Type             string
 	BaseURL          string
 	APIPath          string
@@ -33,6 +35,9 @@ type Config struct {
 }
 
 type OpenAICompatible struct {
+	providerID   ProviderID
+	providerType string
+	family       string
 	baseURL      string
 	apiPath      string
 	apiKey       string
@@ -64,6 +69,9 @@ func NewOpenAICompatible(cfg Config) *OpenAICompatible {
 		extraHeaders[key] = value
 	}
 	return &OpenAICompatible{
+		providerID:   ProviderID(strings.ToLower(strings.TrimSpace(string(cfg.ProviderID)))),
+		providerType: normalizePolicyProviderType(cfg.Type),
+		family:       strings.ToLower(strings.TrimSpace(cfg.ProviderFamily)),
 		baseURL:      strings.TrimRight(cfg.BaseURL, "/"),
 		apiPath:      apiPath,
 		apiKey:       cfg.APIKey,
@@ -185,6 +193,9 @@ func (c *OpenAICompatible) StreamMessage(ctx context.Context, req llm.ChatReques
 			}
 			if delta.Role != "" {
 				assembled.Role = delta.Role
+			}
+			if delta.Reasoning != "" {
+				appendOpenAIReasoningContent(&assembled, delta.Reasoning)
 			}
 			if delta.Content != "" {
 				assembled.Content += delta.Content
