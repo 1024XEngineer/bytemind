@@ -5,11 +5,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"bytemind/internal/config"
 	corepkg "bytemind/internal/core"
+	"bytemind/internal/llm"
 	planpkg "bytemind/internal/plan"
 	runtimepkg "bytemind/internal/runtime"
 	"bytemind/internal/session"
@@ -17,7 +20,7 @@ import (
 	"bytemind/internal/tools"
 )
 
-func TestDelegateSubAgentReturnsStructuredNotImplementedAfterPreflight(t *testing.T) {
+func TestDelegateSubAgentReturnsRuntimeUnavailableWhenClientMissing(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, "internal", "subagents"), 0o755); err != nil {
 		t.Fatal(err)
@@ -48,19 +51,177 @@ scan files
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
 	if result.OK {
-		t.Fatalf("expected failure placeholder result, got %#v", result)
+		t.Fatalf("expected failure result, got %#v", result)
 	}
 	if result.Status != subAgentResultStatusFailed {
 		t.Fatalf("expected status %q, got %q", subAgentResultStatusFailed, result.Status)
 	}
-	if result.Error == nil || result.Error.Code != subAgentErrorCodeNotImplemented {
-		t.Fatalf("expected not implemented code, got %#v", result.Error)
+	if result.Error == nil || result.Error.Code != subAgentErrorCodeRuntimeUnavailable {
+		t.Fatalf("expected runtime unavailable code, got %#v", result.Error)
 	}
 	if strings.TrimSpace(result.InvocationID) == "" {
 		t.Fatalf("expected invocation id, got %#v", result)
 	}
 	if result.Findings == nil || result.References == nil {
 		t.Fatalf("expected findings/references arrays, got %#v", result)
+	}
+}
+
+func TestDelegateSubAgentExecutesWithTemporaryChildSession(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    llm.RoleAssistant,
+			Content: "scoped scan complete",
+		},
+	}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 4,
+		},
+		Client:   client,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "Locate prompt assembly order",
+	}, &tools.ExecutionContext{
+		Mode: planpkg.ModeBuild,
+	})
+	if err != nil {
+		t.Fatalf("expected structured tool result without Go error, got %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("expected success result, got %#v", result)
+	}
+	if result.Status != subAgentResultStatusCompleted {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusCompleted, result.Status)
+	}
+	if strings.TrimSpace(result.Summary) == "" {
+		t.Fatalf("expected non-empty summary, got %#v", result)
+	}
+	if len(client.requests) == 0 {
+		t.Fatal("expected child session to issue at least one llm request")
+	}
+}
+
+func TestDelegateSubAgentChildSessionUsesNarrowedTools(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    llm.RoleAssistant,
+			Content: "done",
+		},
+	}}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 4,
+		},
+		Client:   client,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "Locate prompt assembly order",
+	}, &tools.ExecutionContext{
+		Mode: planpkg.ModeBuild,
+	})
+	if err != nil {
+		t.Fatalf("expected structured tool result without Go error, got %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("expected success result, got %#v", result)
+	}
+	if len(client.requests) == 0 {
+		t.Fatal("expected llm request from child session")
+	}
+
+	toolNames := make([]string, 0, len(client.requests[0].Tools))
+	for _, tool := range client.requests[0].Tools {
+		name := strings.TrimSpace(tool.Function.Name)
+		if name != "" {
+			toolNames = append(toolNames, name)
+		}
+	}
+	slices.Sort(toolNames)
+	if strings.Contains(strings.Join(toolNames, ","), "delegate_subagent") {
+		t.Fatalf("expected delegate_subagent to be removed from child toolset, got %v", toolNames)
+	}
+	if !slices.Contains(toolNames, "read_file") || !slices.Contains(toolNames, "search_text") {
+		t.Fatalf("expected narrowed read tools in child toolset, got %v", toolNames)
+	}
+	if slices.Contains(toolNames, "write_file") {
+		t.Fatalf("expected write_file excluded from child toolset, got %v", toolNames)
+	}
+}
+
+func TestDelegateSubAgentChildSessionDoesNotPersistTemporarySession(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := session.New(workspace)
+	parent.Messages = append(parent.Messages, llm.NewUserTextMessage("parent task"))
+	if err := store.Save(parent); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    llm.RoleAssistant,
+			Content: "child analysis complete",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 4,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+	})
+
+	beforeCount := len(parent.Messages)
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "Locate prompt assembly order",
+	}, &tools.ExecutionContext{
+		Mode:    planpkg.ModeBuild,
+		Session: parent,
+	})
+	if err != nil {
+		t.Fatalf("expected structured tool result without Go error, got %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("expected success result, got %#v", result)
+	}
+	if got := len(parent.Messages); got != beforeCount {
+		t.Fatalf("expected parent in-memory messages unchanged (%d), got %d", beforeCount, got)
+	}
+
+	summaries, _, err := store.List(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("expected exactly one persisted session (parent only), got %d", len(summaries))
+	}
+	if summaries[0].ID != parent.ID {
+		t.Fatalf("expected persisted session id %q, got %q", parent.ID, summaries[0].ID)
 	}
 }
 
