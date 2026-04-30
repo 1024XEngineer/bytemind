@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO="${BYTEMIND_REPO:-1024XEngineer/bytemind}"
 VERSION="${BYTEMIND_VERSION:-}"
-INSTALL_DIR="${BYTEMIND_INSTALL_DIR:-$HOME/.bytemind/bin}"
+INSTALL_DIR="${BYTEMIND_INSTALL_DIR:-$HOME/bin}"
 
 if [[ -n "${VERSION}" && "${VERSION}" != v* ]]; then
   VERSION="v${VERSION}"

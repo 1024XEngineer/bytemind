@@ -8,10 +8,10 @@
 
 ### 安装后没有 `bytemind` 命令，怎么办？
 
-安装脚本把二进制放入 `~/.local/bin`。确认该目录已加入 `PATH`：
+安装脚本把二进制放入 `~/bin`。确认该目录已加入 `PATH`：
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/bin:$PATH"
 ```
 
 将该行添加到 `~/.bashrc` 或 `~/.zshrc` 以永久生效。
