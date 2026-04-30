@@ -95,6 +95,8 @@ func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptI
 		AvailableSkills:              runner.promptSkills(),
 		AvailableSubAgents:           runner.promptSubAgents(),
 		AvailableTools:               availableTools,
+		SubAgentRuntime:              promptSubAgentRuntime(input.SubAgent),
+		SubAgentDefinition:           promptSubAgentDefinition(input.SubAgent),
 		InstructionText:              loadAGENTSInstruction(runner.workspace),
 		WebLookupInstruction:         promptHint.Instruction,
 		PromptTokens:                 contextpkg.EstimateRequestTokens([]llm.Message{input.UserMessage}),
@@ -151,6 +153,8 @@ func (e *defaultEngine) buildTurnMessages(sess *session.Session, setup runPrompt
 			Skills:                       setup.AvailableSkills,
 			SubAgents:                    setup.AvailableSubAgents,
 			Tools:                        setup.AvailableTools,
+			SubAgentRuntime:              setup.SubAgentRuntime,
+			SubAgentDefinition:           setup.SubAgentDefinition,
 			Plan:                         sess.Plan,
 			ActiveSkill:                  promptActiveSkill(setup.ActiveSkill),
 			Instruction:                  setup.InstructionText,
@@ -158,4 +162,36 @@ func (e *defaultEngine) buildTurnMessages(sess *session.Session, setup runPrompt
 		WebLookupInstruction: setup.WebLookupInstruction,
 		ConversationMessages: sess.Messages,
 	})
+}
+
+func promptSubAgentRuntime(input *SubAgentPromptInput) *PromptSubAgentRuntime {
+	if input == nil {
+		return nil
+	}
+	runtime := &PromptSubAgentRuntime{
+		Name:         strings.TrimSpace(input.Name),
+		Task:         strings.TrimSpace(input.Task),
+		ScopePaths:   append([]string(nil), input.ScopePaths...),
+		ScopeSymbols: append([]string(nil), input.ScopeSymbols...),
+		AllowedTools: append([]string(nil), input.AllowedTools...),
+		Isolation:    strings.TrimSpace(input.Isolation),
+		ResultPolicy: strings.TrimSpace(input.ResultPolicy),
+	}
+	if runtime.Name == "" &&
+		runtime.Task == "" &&
+		len(runtime.ScopePaths) == 0 &&
+		len(runtime.ScopeSymbols) == 0 &&
+		len(runtime.AllowedTools) == 0 &&
+		runtime.Isolation == "" &&
+		runtime.ResultPolicy == "" {
+		return nil
+	}
+	return runtime
+}
+
+func promptSubAgentDefinition(input *SubAgentPromptInput) string {
+	if input == nil {
+		return ""
+	}
+	return strings.TrimSpace(input.DefinitionBody)
 }

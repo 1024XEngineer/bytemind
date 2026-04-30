@@ -40,6 +40,8 @@ const (
 	subAgentRequestedOutputSummary  = "summary"
 
 	defaultSubAgentMaxIterations = 8
+
+	subAgentResultPolicyCompressed = "Return compressed findings only. Do not include full tool logs."
 )
 
 var subAgentInvocationCounter atomic.Uint64
@@ -257,10 +259,11 @@ func (r *Runner) executeSubAgentTask(
 		}
 	}
 
-	userInput := buildSubAgentTaskInput(request, preflight.Definition)
+	userInput := buildSubAgentTaskInput(request)
 	setup, err := childRunner.prepareRunPrompt(childSession, RunPromptInput{
 		UserMessage: llm.NewUserTextMessage(userInput),
 		DisplayText: userInput,
+		SubAgent:    buildSubAgentPromptInput(request, preflight),
 	}, string(runMode))
 	if err != nil {
 		return subAgentFailureResult(invocationID, agent, subAgentErrorCodeExecutionFailed, err.Error(), true)
@@ -323,32 +326,25 @@ func newSubAgentSession(workspace, parentSessionID, invocationID string, runMode
 	return child
 }
 
-func buildSubAgentTaskInput(request tools.DelegateSubAgentRequest, definition subagentspkg.Agent) string {
-	lines := make([]string, 0, 24)
-	lines = append(lines, "[SubAgent Task]", strings.TrimSpace(request.Task))
-	if len(request.Scope.Paths) > 0 {
-		lines = append(lines, "", "[Scope Paths]")
-		for _, path := range request.Scope.Paths {
-			path = strings.TrimSpace(path)
-			if path != "" {
-				lines = append(lines, "- "+path)
-			}
-		}
+func buildSubAgentTaskInput(request tools.DelegateSubAgentRequest) string {
+	task := strings.TrimSpace(request.Task)
+	if task == "" {
+		task = "Complete the delegated subagent task."
 	}
-	if len(request.Scope.Symbols) > 0 {
-		lines = append(lines, "", "[Scope Symbols]")
-		for _, symbol := range request.Scope.Symbols {
-			symbol = strings.TrimSpace(symbol)
-			if symbol != "" {
-				lines = append(lines, "- "+symbol)
-			}
-		}
+	return task
+}
+
+func buildSubAgentPromptInput(request tools.DelegateSubAgentRequest, preflight subagentspkg.PreflightResult) *SubAgentPromptInput {
+	return &SubAgentPromptInput{
+		Name:           strings.TrimSpace(preflight.Definition.Name),
+		Task:           strings.TrimSpace(request.Task),
+		ScopePaths:     normalizeUniqueStrings(request.Scope.Paths),
+		ScopeSymbols:   normalizeUniqueStrings(request.Scope.Symbols),
+		AllowedTools:   append([]string(nil), preflight.EffectiveTools...),
+		Isolation:      strings.TrimSpace(preflight.Isolation),
+		ResultPolicy:   subAgentResultPolicyCompressed,
+		DefinitionBody: strings.TrimSpace(preflight.Definition.Instruction),
 	}
-	if instruction := strings.TrimSpace(definition.Instruction); instruction != "" {
-		lines = append(lines, "", "[SubAgent Definition]", instruction)
-	}
-	lines = append(lines, "", "[Output Requirement]", "Return a concise final answer. Focus on summary and concrete evidence.")
-	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func applySubAgentPreflightSetup(setup *runPromptSetup, preflight subagentspkg.PreflightResult) {

@@ -108,6 +108,25 @@ func TestDelegateSubAgentExecutesWithTemporaryChildSession(t *testing.T) {
 	if len(client.requests) == 0 {
 		t.Fatal("expected child session to issue at least one llm request")
 	}
+	if len(client.requests[0].Messages) == 0 {
+		t.Fatal("expected child request to include system prompt")
+	}
+	systemPrompt := client.requests[0].Messages[0].Content
+	if !strings.Contains(systemPrompt, "[SubAgent Runtime]") {
+		t.Fatalf("expected child system prompt to include subagent runtime block, got %q", systemPrompt)
+	}
+	if !strings.Contains(systemPrompt, "name: explorer") {
+		t.Fatalf("expected child system prompt to include subagent name, got %q", systemPrompt)
+	}
+	if !strings.Contains(systemPrompt, "task: Locate prompt assembly order") {
+		t.Fatalf("expected child system prompt to include delegated task, got %q", systemPrompt)
+	}
+	if !strings.Contains(systemPrompt, "[SubAgent Definition]") {
+		t.Fatalf("expected child system prompt to include subagent definition block, got %q", systemPrompt)
+	}
+	if strings.Contains(systemPrompt, "invocation_id:") || strings.Contains(systemPrompt, "parent_session_id:") {
+		t.Fatalf("did not expect invocation/session ids in child system prompt, got %q", systemPrompt)
+	}
 }
 
 func TestDelegateSubAgentChildSessionUsesNarrowedTools(t *testing.T) {

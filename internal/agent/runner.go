@@ -67,6 +67,18 @@ type RunPromptInput struct {
 	UserMessage llm.Message
 	Assets      map[llm.AssetID]llm.ImageAsset
 	DisplayText string
+	SubAgent    *SubAgentPromptInput
+}
+
+type SubAgentPromptInput struct {
+	Name           string
+	Task           string
+	ScopePaths     []string
+	ScopeSymbols   []string
+	AllowedTools   []string
+	Isolation      string
+	ResultPolicy   string
+	DefinitionBody string
 }
 
 type Runner struct {
