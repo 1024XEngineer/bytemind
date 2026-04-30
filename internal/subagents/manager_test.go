@@ -1,10 +1,12 @@
 package subagents
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestManagerReloadAppliesScopeOverridesAndLookup(t *testing.T) {
@@ -153,6 +155,84 @@ Inspect files and summarize findings.
 	}
 	if len(diags) == 0 || !strings.Contains(diags[0].Message, "invalid max_turns") {
 		t.Fatalf("expected invalid max_turns warning, got %#v", diags)
+	}
+}
+
+func TestNewManagerDisablesUserScopeWhenHomeResolutionFails(t *testing.T) {
+	original := resolveSubAgentHomeDir
+	resolveSubAgentHomeDir = func() (string, error) {
+		return "", errors.New("home unavailable")
+	}
+	t.Cleanup(func() {
+		resolveSubAgentHomeDir = original
+	})
+
+	workspace := t.TempDir()
+	manager := NewManager(workspace)
+	if strings.TrimSpace(manager.userDir) != "" {
+		t.Fatalf("expected empty user dir when home resolution fails, got %q", manager.userDir)
+	}
+
+	catalog := manager.Reload()
+	if len(catalog.Diagnostics) == 0 {
+		t.Fatalf("expected bootstrap diagnostics, got %#v", catalog.Diagnostics)
+	}
+	if !strings.Contains(catalog.Diagnostics[0].Message, "user subagent scope disabled") {
+		t.Fatalf("unexpected first diagnostic: %#v", catalog.Diagnostics[0])
+	}
+}
+
+func TestManagerFindUsesLoadedSnapshotWithoutReload(t *testing.T) {
+	workspace := t.TempDir()
+	builtinDir := filepath.Join(workspace, "builtin")
+	writeSubAgentFile(t, filepath.Join(builtinDir, "review.md"), `---
+name: review
+description: builtin review
+aliases: [/review]
+---
+builtin review body
+`)
+
+	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
+	manager.Reload()
+	before := manager.Snapshot().LoadedAt
+
+	if err := os.Remove(filepath.Join(builtinDir, "review.md")); err != nil {
+		t.Fatalf("remove review.md: %v", err)
+	}
+
+	agent, ok := manager.Find("/review")
+	if !ok {
+		t.Fatalf("expected /review to resolve from loaded snapshot")
+	}
+	if agent.Name != "review" || agent.Scope != ScopeBuiltin {
+		t.Fatalf("unexpected agent payload: %+v", agent)
+	}
+
+	after := manager.Snapshot().LoadedAt
+	if !after.Equal(before) {
+		t.Fatalf("expected Find hit not to trigger reload; before=%s after=%s", before.Format(time.RFC3339Nano), after.Format(time.RFC3339Nano))
+	}
+}
+
+func TestManagerFindMissDoesNotReloadWhenSnapshotLoaded(t *testing.T) {
+	workspace := t.TempDir()
+	manager := NewManagerWithDirs(
+		workspace,
+		filepath.Join(workspace, "builtin"),
+		filepath.Join(workspace, "user"),
+		filepath.Join(workspace, "project"),
+	)
+	manager.Reload()
+	before := manager.Snapshot().LoadedAt
+
+	if _, ok := manager.Find("missing-agent"); ok {
+		t.Fatal("expected missing-agent lookup miss")
+	}
+
+	after := manager.Snapshot().LoadedAt
+	if !after.Equal(before) {
+		t.Fatalf("expected Find miss not to trigger reload; before=%s after=%s", before.Format(time.RFC3339Nano), after.Format(time.RFC3339Nano))
 	}
 }
 

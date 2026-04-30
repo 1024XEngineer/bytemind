@@ -15,6 +15,7 @@ import (
 )
 
 var validAgentName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)
+var resolveSubAgentHomeDir = configpkg.ResolveHomeDir
 
 type Manager struct {
 	mu sync.RWMutex
@@ -26,18 +27,42 @@ type Manager struct {
 
 	catalog       Catalog
 	lookup        map[string]string
+	byName        map[string]Agent
 	builtinLookup map[string]string
 	builtinByName map[string]Agent
+	loaded        bool
+
+	bootstrapDiagnostics []Diagnostic
 }
 
 func NewManager(workspace string) *Manager {
-	home, _ := configpkg.ResolveHomeDir()
-	return NewManagerWithDirs(
+	userDir := ""
+	bootstrapDiagnostics := make([]Diagnostic, 0, 1)
+	home, err := resolveSubAgentHomeDir()
+	if err != nil {
+		bootstrapDiagnostics = append(bootstrapDiagnostics, Diagnostic{
+			Scope:   ScopeUser,
+			Level:   "warn",
+			Message: fmt.Sprintf("user subagent scope disabled: failed to resolve home dir: %v", err),
+		})
+	} else if strings.TrimSpace(home) == "" {
+		bootstrapDiagnostics = append(bootstrapDiagnostics, Diagnostic{
+			Scope:   ScopeUser,
+			Level:   "warn",
+			Message: "user subagent scope disabled: resolved home dir is empty",
+		})
+	} else {
+		userDir = filepath.Join(home, "subagents")
+	}
+
+	manager := NewManagerWithDirs(
 		workspace,
 		filepath.Join(workspace, "internal", "subagents"),
-		filepath.Join(home, "subagents"),
+		userDir,
 		filepath.Join(workspace, ".bytemind", "subagents"),
 	)
+	manager.bootstrapDiagnostics = bootstrapDiagnostics
+	return manager
 }
 
 func NewManagerWithDirs(workspace, builtinDir, userDir, projectDir string) *Manager {
@@ -47,6 +72,7 @@ func NewManagerWithDirs(workspace, builtinDir, userDir, projectDir string) *Mana
 		userDir:       userDir,
 		projectDir:    projectDir,
 		lookup:        map[string]string{},
+		byName:        map[string]Agent{},
 		builtinLookup: map[string]string{},
 		builtinByName: map[string]Agent{},
 	}
@@ -71,7 +97,7 @@ func (m *Manager) Reload() Catalog {
 
 	loaded := map[string]Agent{}
 	builtinByName := map[string]Agent{}
-	diags := make([]Diagnostic, 0, 8)
+	diags := cloneDiagnostics(m.bootstrapDiagnostics)
 	overrides := make([]Override, 0, 4)
 
 	for _, item := range scopes {
@@ -145,6 +171,7 @@ func (m *Manager) Reload() Catalog {
 	}
 
 	m.lookup = lookup
+	m.byName = loaded
 	m.builtinLookup = builtinLookup
 	m.builtinByName = builtinByName
 	m.catalog = Catalog{
@@ -153,6 +180,7 @@ func (m *Manager) Reload() Catalog {
 		Overrides:   overrides,
 		LoadedAt:    time.Now().UTC(),
 	}
+	m.loaded = true
 	return cloneCatalog(m.catalog)
 }
 
@@ -168,30 +196,23 @@ func (m *Manager) List() ([]Agent, []Diagnostic) {
 }
 
 func (m *Manager) Find(name string) (Agent, bool) {
-	m.mu.RLock()
-	lookup := cloneLookup(m.lookup)
-	m.mu.RUnlock()
-	if len(lookup) == 0 {
-		m.Reload()
-		m.mu.RLock()
-		lookup = cloneLookup(m.lookup)
-		m.mu.RUnlock()
-	}
-
 	normalized := normalizeAlias(name)
 	if normalized == "" {
 		return Agent{}, false
 	}
-	canonical, ok := lookup[normalized]
-	if !ok {
+
+	agent, found, loaded, resolved := m.findFromSnapshot(normalized)
+	if found {
+		return agent, true
+	}
+	if loaded && !resolved {
 		return Agent{}, false
 	}
 
-	catalog := m.Reload()
-	for _, agent := range catalog.Agents {
-		if agent.Name == canonical {
-			return agent, true
-		}
+	m.Reload()
+	agent, found, _, _ = m.findFromSnapshot(normalized)
+	if found {
+		return agent, true
 	}
 	return Agent{}, false
 }
@@ -467,4 +488,26 @@ func cloneCatalog(in Catalog) Catalog {
 		Overrides:   overrides,
 		LoadedAt:    in.LoadedAt,
 	}
+}
+
+func cloneDiagnostics(in []Diagnostic) []Diagnostic {
+	if len(in) == 0 {
+		return make([]Diagnostic, 0, 4)
+	}
+	out := make([]Diagnostic, len(in))
+	copy(out, in)
+	return out
+}
+
+func (m *Manager) findFromSnapshot(normalized string) (Agent, bool, bool, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	loaded := m.loaded
+	canonical, resolved := m.lookup[normalized]
+	if !resolved {
+		return Agent{}, false, loaded, false
+	}
+	agent, found := m.byName[canonical]
+	return agent, found, loaded, true
 }
