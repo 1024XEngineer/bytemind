@@ -680,6 +680,20 @@ func TestProtectImagePlaceholderDeletionSkipsMalformedPlaceholder(t *testing.T) 
 	}
 }
 
+func TestProtectImagePlaceholderDeletionSkipsNonPlaceholderText(t *testing.T) {
+	m := newImagePipelineModel(t)
+	before := "plain text"
+	after := "plain tex"
+
+	updated, changed := m.protectImagePlaceholderDeletion(before, after, "backspace")
+	if changed {
+		t.Fatalf("expected non-placeholder deletion not to be intercepted, got %q", updated)
+	}
+	if updated != after {
+		t.Fatalf("expected non-placeholder deletion to pass through, got %q", updated)
+	}
+}
+
 func TestRemoveImagePlaceholderSpansHandlesOverlapAndEmptyInput(t *testing.T) {
 	value := "x[Image #1]y"
 	start := strings.Index(value, "[Image #1]")
