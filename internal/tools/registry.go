@@ -117,6 +117,8 @@ func DefaultRegistry() *Registry {
 	r.mustRegisterBuiltin(UpdatePlanTool{})
 	r.mustRegisterBuiltin(RunShellTool{})
 	r.mustRegisterBuiltin(DelegateSubAgentTool{})
+	r.mustRegisterBuiltin(TaskOutputTool{})
+	r.mustRegisterBuiltin(TaskStopTool{})
 	return r
 }
 

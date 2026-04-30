@@ -274,13 +274,74 @@ func TestDelegateSubAgentReturnsStructuredPreflightFailure(t *testing.T) {
 	}
 }
 
-func TestDelegateSubAgentRejectsBackgroundMode(t *testing.T) {
+func TestDelegateSubAgentLaunchesBackgroundTaskWhenLifecycleToolsAvailable(t *testing.T) {
 	workspace := t.TempDir()
 	writeExplorerSubAgentDefinition(t, workspace)
 
+	gateway := &stubRuntimeGateway{
+		result: runtimepkg.TaskResult{
+			TaskID: "runtime-subagent-task",
+		},
+	}
 	runner := NewRunner(Options{
 		Workspace: workspace,
+		Runtime:   gateway,
 		Registry:  tools.DefaultRegistry(),
+	})
+
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent:           "explorer",
+		Task:            "Locate prompt assembly order",
+		RunInBackground: true,
+	}, &tools.ExecutionContext{
+		Mode: planpkg.ModeBuild,
+	})
+	if err != nil {
+		t.Fatalf("expected structured tool result without Go error, got %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("expected success result, got %#v", result)
+	}
+	if result.Status != subAgentResultStatusAccepted {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusAccepted, result.Status)
+	}
+	if result.TaskID != "runtime-subagent-task" {
+		t.Fatalf("expected runtime task id, got %q", result.TaskID)
+	}
+	if result.ResultReadTool != subAgentTaskOutputTool {
+		t.Fatalf("expected result_read_tool %q, got %q", subAgentTaskOutputTool, result.ResultReadTool)
+	}
+	if result.StopTool != subAgentTaskStopTool {
+		t.Fatalf("expected stop_tool %q, got %q", subAgentTaskStopTool, result.StopTool)
+	}
+	if result.Error != nil {
+		t.Fatalf("expected nil error, got %#v", result.Error)
+	}
+
+	gateway.mu.Lock()
+	defer gateway.mu.Unlock()
+	if len(gateway.asyncCalls) != 1 {
+		t.Fatalf("expected exactly one async runtime call, got %d", len(gateway.asyncCalls))
+	}
+	if !gateway.asyncCalls[0].Background {
+		t.Fatalf("expected runtime task background flag true, got %#v", gateway.asyncCalls[0])
+	}
+}
+
+func TestDelegateSubAgentRejectsBackgroundWhenLifecycleToolsUnavailable(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+
+	registry := &tools.Registry{}
+	registry.Add(tools.ListFilesTool{})
+	registry.Add(tools.ReadFileTool{})
+	registry.Add(tools.SearchTextTool{})
+	registry.Add(tools.DelegateSubAgentTool{})
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Runtime:   &stubRuntimeGateway{},
+		Registry:  registry,
 	})
 
 	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
@@ -296,14 +357,36 @@ func TestDelegateSubAgentRejectsBackgroundMode(t *testing.T) {
 	if result.OK {
 		t.Fatalf("expected failure result, got %#v", result)
 	}
-	if result.Status != subAgentResultStatusFailed {
-		t.Fatalf("expected status %q, got %q", subAgentResultStatusFailed, result.Status)
+	if result.Error == nil || result.Error.Code != subAgentErrorCodeBackgroundUnavailable {
+		t.Fatalf("expected background unavailable code, got %#v", result.Error)
 	}
-	if result.Error == nil || result.Error.Code != subAgentErrorCodeBackgroundUnsupported {
-		t.Fatalf("expected background unsupported code, got %#v", result.Error)
+}
+
+func TestDelegateSubAgentRejectsBackgroundWriteToolSubAgent(t *testing.T) {
+	workspace := t.TempDir()
+	writeWriterSubAgentDefinition(t, workspace)
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Runtime:   &stubRuntimeGateway{},
+		Registry:  tools.DefaultRegistry(),
+	})
+
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent:           "writer",
+		Task:            "Modify a file",
+		RunInBackground: true,
+	}, &tools.ExecutionContext{
+		Mode: planpkg.ModeBuild,
+	})
+	if err != nil {
+		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
-	if result.Findings == nil || result.References == nil {
-		t.Fatalf("expected findings/references arrays, got %#v", result)
+	if result.OK {
+		t.Fatalf("expected failure result, got %#v", result)
+	}
+	if result.Error == nil || result.Error.Code != subAgentErrorCodeBackgroundWriteDenied {
+		t.Fatalf("expected background write denied code, got %#v", result.Error)
 	}
 }
 
@@ -851,6 +934,23 @@ mode: build
 timeout: 45s
 ---
 scan files
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeWriterSubAgentDefinition(t *testing.T, workspace string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(workspace, "internal", "subagents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "internal", "subagents", "writer.md"), []byte(`---
+name: writer
+description: repo writer
+tools: [read_file, write_file]
+mode: build
+---
+edit files
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}

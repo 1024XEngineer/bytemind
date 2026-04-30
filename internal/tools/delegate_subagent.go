@@ -43,15 +43,17 @@ type DelegateSubAgentError struct {
 }
 
 type DelegateSubAgentResult struct {
-	OK           bool                        `json:"ok"`
-	Status       string                      `json:"status,omitempty"`
-	InvocationID string                      `json:"invocation_id"`
-	Agent        string                      `json:"agent"`
-	TaskID       string                      `json:"task_id,omitempty"`
-	Summary      string                      `json:"summary,omitempty"`
-	Findings     []DelegateSubAgentFinding   `json:"findings"`
-	References   []DelegateSubAgentReference `json:"references"`
-	Error        *DelegateSubAgentError      `json:"error,omitempty"`
+	OK             bool                        `json:"ok"`
+	Status         string                      `json:"status,omitempty"`
+	InvocationID   string                      `json:"invocation_id"`
+	Agent          string                      `json:"agent"`
+	TaskID         string                      `json:"task_id,omitempty"`
+	ResultReadTool string                      `json:"result_read_tool,omitempty"`
+	StopTool       string                      `json:"stop_tool,omitempty"`
+	Summary        string                      `json:"summary,omitempty"`
+	Findings       []DelegateSubAgentFinding   `json:"findings"`
+	References     []DelegateSubAgentReference `json:"references"`
+	Error          *DelegateSubAgentError      `json:"error,omitempty"`
 }
 
 type DelegateSubAgentHandler func(context.Context, DelegateSubAgentRequest, *ExecutionContext) (DelegateSubAgentResult, error)

@@ -26,7 +26,8 @@ import (
 const (
 	subAgentErrorCodeNotImplemented        = "subagent_not_implemented"
 	subAgentErrorCodeRuntimeUnavailable    = "subagent_runtime_unavailable"
-	subAgentErrorCodeBackgroundUnsupported = "subagent_background_not_supported"
+	subAgentErrorCodeBackgroundUnavailable = "subagent_background_unavailable"
+	subAgentErrorCodeBackgroundWriteDenied = "subagent_background_write_not_allowed"
 	subAgentErrorCodeInvalidResult         = "subagent_invalid_result"
 	subAgentErrorCodeExecutionFailed       = "subagent_execution_failed"
 
@@ -42,6 +43,9 @@ const (
 	defaultSubAgentMaxIterations = 8
 
 	subAgentResultPolicyCompressed = "Return compressed findings only. Do not include full tool logs."
+
+	subAgentTaskOutputTool = "task_output"
+	subAgentTaskStopTool   = "task_stop"
 )
 
 var subAgentInvocationCounter atomic.Uint64
@@ -110,14 +114,6 @@ func (r *Runner) delegateSubAgent(
 		result.Agent = canonical
 	}
 
-	if request.RunInBackground {
-		result.Error = &tools.DelegateSubAgentError{
-			Code:      subAgentErrorCodeBackgroundUnsupported,
-			Message:   "run_in_background is not wired yet for delegate_subagent",
-			Retryable: false,
-		}
-		return result, nil
-	}
 	if r.runtime == nil {
 		result.Error = &tools.DelegateSubAgentError{
 			Code:      subAgentErrorCodeRuntimeUnavailable,
@@ -144,12 +140,13 @@ func (r *Runner) delegateSubAgent(
 		metadata["requested_output"] = preflight.RequestedOutput
 	}
 
-	execution, runErr := r.runtime.RunSync(ctx, RuntimeTaskRequest{
-		SessionID: sessionIDFromExecutionContext(execCtx),
-		Name:      "delegate_subagent/" + preflightResultName(result.Agent),
-		Kind:      "subagent",
-		Timeout:   preflight.RequestedTimeoutDuration,
-		Metadata:  metadata,
+	runtimeRequest := RuntimeTaskRequest{
+		SessionID:  sessionIDFromExecutionContext(execCtx),
+		Name:       "delegate_subagent/" + preflightResultName(result.Agent),
+		Kind:       "subagent",
+		Background: request.RunInBackground,
+		Timeout:    preflight.RequestedTimeoutDuration,
+		Metadata:   metadata,
 		Execute: func(taskCtx context.Context) ([]byte, error) {
 			subAgentResult := r.executeSubAgentTask(taskCtx, request, preflight, result.InvocationID, result.Agent, runMode, execCtx)
 			output, marshalErr := json.Marshal(subAgentResult)
@@ -162,7 +159,49 @@ func (r *Runner) delegateSubAgent(
 			}
 			return output, nil
 		},
-	})
+	}
+
+	if request.RunInBackground {
+		if !supportsBackgroundLifecycleTools(parentVisible, execCtxGetAllowed(execCtx), execCtxGetDenied(execCtx)) {
+			result.Error = &tools.DelegateSubAgentError{
+				Code:      subAgentErrorCodeBackgroundUnavailable,
+				Message:   "run_in_background requires task_output and task_stop tools",
+				Retryable: false,
+			}
+			return result, nil
+		}
+		if !r.isReadOnlySubAgentToolset(preflight.EffectiveTools) {
+			result.Error = &tools.DelegateSubAgentError{
+				Code:      subAgentErrorCodeBackgroundWriteDenied,
+				Message:   "run_in_background currently supports read-only subagents only",
+				Retryable: false,
+			}
+			return result, nil
+		}
+
+		launch, runErr := r.runtime.RunAsync(ctx, runtimeRequest)
+		if runErr != nil {
+			result.Error = mapDelegateSubAgentError(runErr, subAgentErrorCodeRuntimeUnavailable)
+			return result, nil
+		}
+		if strings.TrimSpace(string(launch.TaskID)) == "" {
+			result.Error = &tools.DelegateSubAgentError{
+				Code:      subAgentErrorCodeRuntimeUnavailable,
+				Message:   "runtime gateway returned empty task id for background subagent",
+				Retryable: true,
+			}
+			return result, nil
+		}
+		result.OK = true
+		result.Status = subAgentResultStatusAccepted
+		result.TaskID = string(launch.TaskID)
+		result.ResultReadTool = subAgentTaskOutputTool
+		result.StopTool = subAgentTaskStopTool
+		result.Summary = "SubAgent task launched in background."
+		return result, nil
+	}
+
+	execution, runErr := r.runtime.RunSync(ctx, runtimeRequest)
 	if runErr != nil {
 		if execution.TaskID != "" {
 			result.TaskID = string(execution.TaskID)
@@ -685,6 +724,52 @@ func execCtxGetDenied(execCtx *tools.ExecutionContext) map[string]struct{} {
 		return nil
 	}
 	return execCtx.DeniedTools
+}
+
+func supportsBackgroundLifecycleTools(parentVisible []string, parentAllowed map[string]struct{}, parentDenied map[string]struct{}) bool {
+	return isToolVisibleInParent(subAgentTaskOutputTool, parentVisible, parentAllowed, parentDenied) &&
+		isToolVisibleInParent(subAgentTaskStopTool, parentVisible, parentAllowed, parentDenied)
+}
+
+func isToolVisibleInParent(name string, parentVisible []string, parentAllowed map[string]struct{}, parentDenied map[string]struct{}) bool {
+	toolName := strings.TrimSpace(name)
+	if toolName == "" {
+		return false
+	}
+	if !slices.Contains(parentVisible, toolName) {
+		return false
+	}
+	if len(parentAllowed) > 0 {
+		if _, ok := parentAllowed[toolName]; !ok {
+			return false
+		}
+	}
+	if len(parentDenied) > 0 {
+		if _, denied := parentDenied[toolName]; denied {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Runner) isReadOnlySubAgentToolset(toolNames []string) bool {
+	if len(toolNames) == 0 {
+		return false
+	}
+	type toolSpecLookup interface {
+		Spec(name string) (tools.ToolSpec, bool)
+	}
+	lookup, ok := r.registry.(toolSpecLookup)
+	if !ok {
+		return false
+	}
+	for _, name := range toolNames {
+		spec, exists := lookup.Spec(strings.TrimSpace(name))
+		if !exists || !spec.ReadOnly {
+			return false
+		}
+	}
+	return true
 }
 
 func cloneToolSet(source map[string]struct{}) map[string]struct{} {
