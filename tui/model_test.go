@@ -5473,6 +5473,74 @@ func TestFullAccessConfirmationRejectKeepsInteractiveMode(t *testing.T) {
 	}
 }
 
+func TestCurrentModelLabelCompactsBytemindPSeriesName(t *testing.T) {
+	m := model{
+		cfg: config.Config{
+			Provider: config.ProviderConfig{Model: "P1 (bytemind)"},
+		},
+	}
+
+	if got := m.currentModelLabel(); got != "p1" {
+		t.Fatalf("expected compact bytemind model label, got %q", got)
+	}
+}
+
+func TestRenderStatusBarUsesCompactBytemindModelLabel(t *testing.T) {
+	m := model{
+		width: 120,
+		mode:  modeBuild,
+		cfg: config.Config{
+			Provider: config.ProviderConfig{Model: "P1 (bytemind)"},
+		},
+	}
+
+	bar := m.renderStatusBar()
+	if !strings.Contains(bar, "Model: p1") {
+		t.Fatalf("expected status bar to show compact model label, got %q", bar)
+	}
+	if strings.Contains(bar, "bytemind") {
+		t.Fatalf("expected status bar to omit verbose provider suffix, got %q", bar)
+	}
+}
+
+func TestTogglePasteExpandMessagesAndCtrlE(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		screen:           screenChat,
+		input:            input,
+		pastedOrder:      []string{"1", "2"},
+		pasteExpandLevel: map[string]int{"1": 0, "2": 2},
+	}
+
+	got, _ := m.Update(togglePasteExpandMsg{PasteID: "1"})
+	updated := got.(model)
+	if updated.pasteExpandLevel["1"] != 1 {
+		t.Fatalf("expected single paste toggle to advance to preview, got %d", updated.pasteExpandLevel["1"])
+	}
+
+	got, _ = updated.Update(togglePasteExpandAllMsg{})
+	updated = got.(model)
+	if updated.pasteExpandLevel["1"] != 2 || updated.pasteExpandLevel["2"] != 2 {
+		t.Fatalf("expected expand-all to set every paste to full, got %#v", updated.pasteExpandLevel)
+	}
+
+	got, _ = updated.Update(togglePasteExpandAllMsg{})
+	updated = got.(model)
+	if updated.pasteExpandLevel["1"] != 0 || updated.pasteExpandLevel["2"] != 0 {
+		t.Fatalf("expected second expand-all toggle to collapse every paste, got %#v", updated.pasteExpandLevel)
+	}
+
+	got, cmd := updated.handleKey(tea.KeyMsg{Type: tea.KeyCtrlE})
+	updated = got.(model)
+	if cmd == nil {
+		t.Fatal("expected Ctrl+E to emit a paste expand-all message")
+	}
+	msg := cmd()
+	if _, ok := msg.(togglePasteExpandAllMsg); !ok {
+		t.Fatalf("expected Ctrl+E command to emit togglePasteExpandAllMsg, got %T", msg)
+	}
+}
+
 func TestUpdateRunFinishedMsgResetsBusyState(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		m := model{

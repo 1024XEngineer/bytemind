@@ -691,3 +691,30 @@ func statusBadgeStyle(badgeType string) lipgloss.Style {
 func renderPillBadge(text, badgeType string) string {
 	return statusBadgeStyle(badgeType).Render(text)
 }
+
+//
+// paste expand styles (compress/expand paste markers in chat)
+//
+
+var (
+	pasteExpandIconStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#55CCFF")).
+				Bold(true)
+
+	pasteMarkerStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.AccentSoft).
+				Bold(true)
+
+	pastePreviewStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextMuted).
+				Italic(true)
+
+	pasteExpandedFrameStyle = lipgloss.NewStyle().
+				BorderLeft(true).
+				BorderStyle(lipgloss.ThickBorder()).
+				BorderForeground(semanticColors.CodeBorder).
+				PaddingLeft(2)
+
+	pasteExpandAllHintStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextMuted)
+)

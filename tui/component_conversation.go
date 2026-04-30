@@ -20,7 +20,11 @@ func (m model) renderConversation() string {
 	for i := 0; i < len(m.chatItems); {
 		item := m.chatItems[i]
 		if item.Kind == "user" {
-			blocks = append(blocks, renderChatRow(item, width))
+			resolvedItem := item
+			if strings.Contains(item.Body, "[Paste #") || strings.Contains(item.Body, "[Pasted #") {
+				resolvedItem.Body = m.resolveUserBodyPastes(item.Body)
+			}
+			blocks = append(blocks, renderChatRow(resolvedItem, width))
 			i++
 			continue
 		}

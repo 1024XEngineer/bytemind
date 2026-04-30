@@ -167,6 +167,49 @@ func TestRenderConversationKeepsProgressBlueAndFinalNeutral(t *testing.T) {
 	}
 }
 
+func TestRenderConversationRendersExpandableUserPasteBlocks(t *testing.T) {
+	m := model{
+		pastedContents: map[string]pastedContent{
+			"1": {
+				ID:      "1",
+				Content: "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12",
+				Lines:   12,
+			},
+		},
+		pastedOrder:      []string{"1"},
+		pasteExpandLevel: map[string]int{},
+	}
+	m.viewport.Width = 100
+	m.chatItems = []chatEntry{{Kind: "user", Title: "You", Body: "inspect [Paste #1 ~12 lines]"}}
+
+	collapsed := stripANSI(m.renderConversation())
+	if !strings.Contains(collapsed, "[Paste #1 ~12 lines]") {
+		t.Fatalf("expected collapsed paste marker in conversation, got %q", collapsed)
+	}
+	if !strings.Contains(collapsed, "[click]") {
+		t.Fatalf("expected collapsed paste marker hint, got %q", collapsed)
+	}
+
+	m.pasteExpandLevel["1"] = 1
+	preview := stripANSI(m.renderConversation())
+	for _, want := range []string{"[Paste #1 ~12 lines] [preview]", "line1", "line10", "... (2 more lines, click again for full, Ctrl+E expand all)"} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("expected preview conversation to contain %q, got %q", want, preview)
+		}
+	}
+	if strings.Contains(preview, "line11") || strings.Contains(preview, "line12") {
+		t.Fatalf("expected preview not to show remaining lines, got %q", preview)
+	}
+
+	m.pasteExpandLevel["1"] = 2
+	full := stripANSI(m.renderConversation())
+	for _, want := range []string{"[Paste #1 ~12 lines] [full]", "line12", "click again to collapse"} {
+		if !strings.Contains(full, want) {
+			t.Fatalf("expected full conversation to contain %q, got %q", want, full)
+		}
+	}
+}
+
 func TestRenderBytemindRunCardCollapsesConsecutiveReadTools(t *testing.T) {
 	view := stripANSI(renderBytemindRunCard([]chatEntry{
 		{Kind: "assistant", Title: thinkingLabel, Body: "Inspecting files", Status: "thinking"},
@@ -351,7 +394,7 @@ func TestRenderRunSectionDividerUsesAsciiHyphen(t *testing.T) {
 	if !strings.Contains(got, "-----") {
 		t.Fatalf("expected divider to use ascii hyphens, got %q", got)
 	}
-	if strings.Contains(got, "鈹€") {
+	if strings.Contains(got, "─") {
 		t.Fatalf("expected divider not to use box-drawing glyphs, got %q", got)
 	}
 }

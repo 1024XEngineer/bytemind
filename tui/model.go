@@ -270,6 +270,12 @@ type hiddenPasteProbeFlushMsg struct {
 	ID int
 }
 
+type togglePasteExpandMsg struct {
+	PasteID string
+}
+
+type togglePasteExpandAllMsg struct{}
+
 type mcpCommandResultMsg struct {
 	Input    string
 	Response string
@@ -435,6 +441,7 @@ type model struct {
 	pastedOrder                []string
 	nextPasteID                int
 	pastedStateLoaded          bool
+	pasteExpandLevel           map[string]int // 0=collapsed, 1=preview (first 10 lines), 2=full
 	lastCompressedPasteAt      time.Time
 	virtualPasteParts          []virtualPastePart
 	nextVirtualPastePart       int
@@ -540,6 +547,7 @@ func newModel(opts Options) model {
 		nextImageID:          nextSessionImageID(opts.Session),
 		pastedContents:       make(map[string]pastedContent, maxStoredPastedContents),
 		pastedOrder:          make([]string, 0, maxStoredPastedContents),
+		pasteExpandLevel:     make(map[string]int),
 		nextPasteID:          1,
 		virtualPasteParts:    make([]virtualPastePart, 0, maxStoredPastedContents),
 		nextVirtualPastePart: 1,
@@ -837,6 +845,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.flushHiddenPasteProbeToInput()
 		m.syncInputOverlays()
+		return m, nil
+	case togglePasteExpandMsg:
+		if m.pasteExpandLevel == nil {
+			m.pasteExpandLevel = make(map[string]int)
+		}
+		m.pasteExpandLevel[msg.PasteID] = (m.pasteExpandLevel[msg.PasteID] + 1) % 3
+		m.refreshViewport()
+		return m, nil
+	case togglePasteExpandAllMsg:
+		if m.pasteExpandLevel == nil {
+			m.pasteExpandLevel = make(map[string]int)
+		}
+		allFull := true
+		for _, id := range m.pastedOrder {
+			if m.pasteExpandLevel[id] != 2 {
+				allFull = false
+				break
+			}
+		}
+		newLevel := 2
+		if allFull {
+			newLevel = 0
+		}
+		for _, id := range m.pastedOrder {
+			m.pasteExpandLevel[id] = newLevel
+		}
+		m.refreshViewport()
 		return m, nil
 	case mouseSelectionScrollTickMsg:
 		return m.handleMouseSelectionScrollTick(msg)
@@ -1352,6 +1387,17 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.toggleApprovalMode()
 		return m, nil
+	case "ctrl+e":
+		if m.screen != screenChat {
+			return m, nil
+		}
+		if m.approval != nil || m.helpOpen || m.sessionsOpen || m.skillsOpen || m.commandOpen || m.mentionOpen || m.planActionOpen {
+			return m, nil
+		}
+		if len(m.pastedOrder) == 0 {
+			return m, nil
+		}
+		return m, func() tea.Msg { return togglePasteExpandAllMsg{} }
 	}
 
 	if m.approval != nil {
@@ -2713,6 +2759,10 @@ func (m model) autoFollowLabel() string {
 
 func (m model) currentModelLabel() string {
 	if model := strings.TrimSpace(m.cfg.Provider.Model); model != "" {
+		lower := strings.ToLower(model)
+		if strings.HasSuffix(lower, " (bytemind)") {
+			return strings.TrimSpace(strings.TrimSuffix(lower, " (bytemind)"))
+		}
 		return model
 	}
 	return "-"
