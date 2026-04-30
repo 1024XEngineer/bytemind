@@ -33,7 +33,7 @@ bytemind --version
 ```
 
 :::tip Install Location
-Defaults to `~/.local/bin` (Linux/macOS) or `%USERPROFILE%\.local\bin` (Windows). If the command is not found, make sure that directory is on your `PATH`.
+Defaults to `~/bin` (Linux/macOS) or `%USERPROFILE%\bin` (Windows). If the command is not found, make sure that directory is on your `PATH`.
 :::
 
 ## Step 2: Create a Config

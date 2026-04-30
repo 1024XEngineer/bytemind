@@ -8,10 +8,10 @@ No. ByteMind ships as a pre-compiled binary for macOS, Linux, and Windows. No Go
 
 ### The `bytemind` command is not found after installing. What do I do?
 
-The install script puts the binary in `~/.local/bin`. Make sure that directory is on your `PATH`:
+The install script puts the binary in `~/bin`. Make sure that directory is on your `PATH`:
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/bin:$PATH"
 ```
 
 Add that line to your `~/.bashrc` or `~/.zshrc` to make it permanent.

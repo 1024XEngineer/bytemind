@@ -33,7 +33,7 @@ bytemind --version
 ```
 
 :::tip 安装目录
-默认安装到 `~/.local/bin`（Linux/macOS）或 `%USERPROFILE%\.local\bin`（Windows）。如果提示找不到命令，请确认该目录已加入 `PATH`。
+默认安装到 `~/bin`（Linux/macOS）或 `%USERPROFILE%\bin`（Windows）。如果提示找不到命令，请确认该目录已加入 `PATH`。
 :::
 
 ## 第二步：创建配置

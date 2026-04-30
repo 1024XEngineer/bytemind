@@ -7,13 +7,13 @@
 **修复：** 将安装目录加入 `PATH`：
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/bin:$PATH"
 ```
 
 将该行写入 `~/.bashrc`、`~/.zshrc` 或 Shell 配置文件以永久生效。Windows 用户执行：
 
 ```powershell
-[Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\.local\bin;" + $env:Path, "User")
+[Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\bin;" + $env:Path, "User")
 ```
 
 ## Provider 鉴权失败

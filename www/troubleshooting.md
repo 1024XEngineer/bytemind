@@ -7,13 +7,13 @@ The binary is installed but not on your `PATH`.
 **Fix:** Add the install directory to your `PATH`:
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/bin:$PATH"
 ```
 
 Add this to `~/.bashrc`, `~/.zshrc`, or your shell profile to make it permanent. On Windows, use:
 
 ```powershell
-[Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\.local\bin;" + $env:Path, "User")
+[Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\bin;" + $env:Path, "User")
 ```
 
 ## Provider Authentication Failed
