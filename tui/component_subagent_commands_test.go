@@ -11,6 +11,9 @@ import (
 	"bytemind/internal/llm"
 	"bytemind/internal/session"
 	"bytemind/internal/tools"
+
+	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestCommandPaletteListsSubAgentCommands(t *testing.T) {
@@ -143,6 +146,29 @@ explore files
 	}
 	if !strings.Contains(explorerBody, "summary explorer summary") {
 		t.Fatalf("expected /exploer delegated summary content, got %q", explorerBody)
+	}
+}
+
+func TestCommandPaletteSelectExplorerPrefillsCommand(t *testing.T) {
+	input := textarea.New()
+	input.SetValue("/expl")
+	m := model{
+		screen:      screenChat,
+		commandOpen: true,
+		input:       input,
+	}
+	m.syncCommandPalette()
+
+	got, cmd := m.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("expected palette selection to prefill /explorer template instead of executing immediately")
+	}
+	updated := got.(model)
+	if updated.commandOpen {
+		t.Fatalf("expected command palette to close after selecting /explorer")
+	}
+	if updated.input.Value() != "/explorer" {
+		t.Fatalf("expected /explorer usage to be inserted, got %q", updated.input.Value())
 	}
 }
 

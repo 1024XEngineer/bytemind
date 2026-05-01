@@ -10,6 +10,7 @@ import (
 	"bytemind/internal/llm"
 	"bytemind/internal/session"
 	"bytemind/internal/skills"
+	subagentspkg "bytemind/internal/subagents"
 	"bytemind/internal/tools"
 	"bytemind/tui"
 )
@@ -117,6 +118,39 @@ func (a *tuiRunnerAdapter) CompactSession(ctx context.Context, sess *session.Ses
 		return "", false, errors.New("runner is unavailable")
 	}
 	return a.runner.CompactSession(ctx, sess)
+}
+
+func (a *tuiRunnerAdapter) ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic) {
+	if a == nil || a.runner == nil {
+		return nil, nil
+	}
+	return a.runner.ListSubAgents()
+}
+
+func (a *tuiRunnerAdapter) FindSubAgent(name string) (subagentspkg.Agent, bool) {
+	if a == nil || a.runner == nil {
+		return subagentspkg.Agent{}, false
+	}
+	return a.runner.FindSubAgent(name)
+}
+
+func (a *tuiRunnerAdapter) FindBuiltinSubAgent(name string) (subagentspkg.Agent, bool) {
+	if a == nil || a.runner == nil {
+		return subagentspkg.Agent{}, false
+	}
+	return a.runner.FindBuiltinSubAgent(name)
+}
+
+func (a *tuiRunnerAdapter) DispatchSubAgent(
+	ctx context.Context,
+	sess *session.Session,
+	mode string,
+	request tools.DelegateSubAgentRequest,
+) (tools.DelegateSubAgentResult, error) {
+	if a == nil || a.runner == nil {
+		return tools.DelegateSubAgentResult{}, errors.New("runner is unavailable")
+	}
+	return a.runner.DispatchSubAgent(ctx, sess, mode, request)
 }
 
 func mapAgentEvent(event agent.Event) tui.Event {
