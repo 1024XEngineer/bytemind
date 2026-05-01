@@ -50,7 +50,7 @@ func TestComponentCommandAndMentionPaletteRenderStates(t *testing.T) {
 	m.input.SetValue("/")
 	m.syncCommandPalette()
 	commandView := m.renderCommandPalette()
-	for _, want := range []string{"/help", "/session", "/skills-select"} {
+	for _, want := range []string{"/help", "/session", "/agents"} {
 		if !strings.Contains(commandView, want) {
 			t.Fatalf("expected command palette to contain %q, got %q", want, commandView)
 		}

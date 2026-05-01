@@ -4572,7 +4572,7 @@ func TestRenderCommandPaletteDoesNotCorruptChineseDescriptions(t *testing.T) {
 	if strings.Contains(got, string('\uFFFD')) {
 		t.Fatalf("expected command palette not to contain replacement glyphs, got %q", got)
 	}
-	for _, want := range []string{"/help", "/session", "/skills-select"} {
+	for _, want := range []string{"/help", "/session", "/agents"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected command palette to contain %q, got %q", want, got)
 		}
