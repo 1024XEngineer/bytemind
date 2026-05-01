@@ -8,6 +8,7 @@ import (
 
 	"bytemind/internal/agent"
 	"bytemind/internal/config"
+	"bytemind/internal/llm"
 	"bytemind/internal/session"
 	"bytemind/internal/tools"
 )
@@ -39,7 +40,7 @@ description: builtin reviewer
 review files
 `)
 
-	m := newSubAgentCommandModel(t, workspace)
+	m := newSubAgentCommandModel(t, workspace, nil)
 
 	if err := m.handleSlashCommand("/agents"); err != nil {
 		t.Fatalf("expected /agents to succeed, got %v", err)
@@ -74,7 +75,7 @@ review files
 	}
 }
 
-func TestHandleSlashBuiltinSubAgentIgnoresProjectOverride(t *testing.T) {
+func TestHandleSlashBuiltinSubAgentRequiresTask(t *testing.T) {
 	workspace := t.TempDir()
 	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "review.md"), `---
 name: review
@@ -82,31 +83,70 @@ description: builtin reviewer
 ---
 builtin body
 `)
-	writeSubAgentDef(t, filepath.Join(workspace, ".bytemind", "subagents", "review.md"), `---
-name: review
-description: project reviewer override
----
-project body
-`)
 
-	m := newSubAgentCommandModel(t, workspace)
+	m := newSubAgentCommandModel(t, workspace, nil)
 
 	if err := m.handleSlashCommand("/review"); err != nil {
 		t.Fatalf("expected /review to succeed, got %v", err)
 	}
 	body := m.chatItems[len(m.chatItems)-1].Body
-	if !strings.Contains(body, "scope builtin") {
-		t.Fatalf("expected /review to render builtin scope, got %q", body)
+	if !strings.Contains(body, "usage: /review <task>") {
+		t.Fatalf("expected /review to render usage hint when task is missing, got %q", body)
 	}
-	if !strings.Contains(body, "description builtin reviewer") {
-		t.Fatalf("expected /review to render builtin definition details, got %q", body)
-	}
-	if strings.Contains(body, "project reviewer override") {
-		t.Fatalf("expected /review to ignore project override, got %q", body)
+	if !strings.Contains(body, "Tip: use /agents review") {
+		t.Fatalf("expected /review to include agents tip, got %q", body)
 	}
 }
 
-func newSubAgentCommandModel(t *testing.T, workspace string) *model {
+func TestHandleSlashBuiltinSubAgentDelegatesTask(t *testing.T) {
+	workspace := t.TempDir()
+	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "review.md"), `---
+name: review
+description: builtin reviewer
+tools: [list_files, read_file, search_text]
+---
+review files
+`)
+	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "explorer.md"), `---
+name: explorer
+description: builtin explorer
+tools: [list_files, read_file, search_text]
+---
+explore files
+`)
+
+	client := &compactCommandTestClient{
+		replies: []llm.Message{
+			{Role: llm.RoleAssistant, Content: "review summary"},
+			{Role: llm.RoleAssistant, Content: "explorer summary"},
+		},
+	}
+	m := newSubAgentCommandModel(t, workspace, client)
+
+	if err := m.handleSlashCommand("/review inspect prompt assembly ordering"); err != nil {
+		t.Fatalf("expected /review <task> to succeed, got %v", err)
+	}
+	reviewBody := m.chatItems[len(m.chatItems)-1].Body
+	if !strings.Contains(reviewBody, "subagent review completed") {
+		t.Fatalf("expected /review delegated result summary, got %q", reviewBody)
+	}
+	if !strings.Contains(reviewBody, "summary review summary") {
+		t.Fatalf("expected /review delegated summary content, got %q", reviewBody)
+	}
+
+	if err := m.handleSlashCommand("/exploer locate task lifecycle codepath"); err != nil {
+		t.Fatalf("expected /exploer <task> alias to succeed, got %v", err)
+	}
+	explorerBody := m.chatItems[len(m.chatItems)-1].Body
+	if !strings.Contains(explorerBody, "subagent explorer completed") {
+		t.Fatalf("expected /exploer delegated result summary, got %q", explorerBody)
+	}
+	if !strings.Contains(explorerBody, "summary explorer summary") {
+		t.Fatalf("expected /exploer delegated summary content, got %q", explorerBody)
+	}
+}
+
+func newSubAgentCommandModel(t *testing.T, workspace string, client llm.Client) *model {
 	t.Helper()
 
 	store, err := session.NewStore(t.TempDir())
@@ -119,6 +159,7 @@ func newSubAgentCommandModel(t *testing.T, workspace string) *model {
 		Config: config.Config{
 			Provider: config.ProviderConfig{Model: "test-model"},
 		},
+		Client:   client,
 		Store:    store,
 		Registry: tools.DefaultRegistry(),
 	})

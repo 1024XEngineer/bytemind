@@ -37,7 +37,7 @@ func (m *model) handleSlashCommand(input string) error {
 		return m.runSkillCommand(input, fields)
 	case "/agents":
 		return m.runAgentsCommand(input, fields)
-	case "/explorer", "/review":
+	case "/explorer", "/exploer", "/review":
 		return m.runBuiltinSubAgentCommand(input, fields[0])
 	case "/mcp":
 		return m.runMCPCommandDispatch(input, fields)

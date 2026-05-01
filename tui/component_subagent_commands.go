@@ -1,16 +1,20 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"bytemind/internal/session"
 	subagentspkg "bytemind/internal/subagents"
+	"bytemind/internal/tools"
 )
 
 type subAgentCommandRunner interface {
 	ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic)
 	FindSubAgent(name string) (subagentspkg.Agent, bool)
 	FindBuiltinSubAgent(name string) (subagentspkg.Agent, bool)
+	DispatchSubAgent(ctx context.Context, sess *session.Session, mode string, request tools.DelegateSubAgentRequest) (tools.DelegateSubAgentResult, error)
 }
 
 func (m *model) runAgentsCommand(input string, fields []string) error {
@@ -43,14 +47,41 @@ func (m *model) runBuiltinSubAgentCommand(input, builtinName string) error {
 		return err
 	}
 
-	agent, ok := runner.FindBuiltinSubAgent(builtinName)
+	alias := strings.ToLower(strings.TrimSpace(builtinName))
+	switch alias {
+	case "/exploer":
+		alias = "/explorer"
+	}
+
+	agent, ok := runner.FindBuiltinSubAgent(alias)
 	if !ok {
 		m.appendCommandExchange(input, fmt.Sprintf("builtin subagent is unavailable: %s", builtinName))
 		m.statusNote = "Builtin subagent unavailable."
 		return nil
 	}
-	m.appendCommandExchange(input, renderSubAgentDetail(agent))
-	m.statusNote = fmt.Sprintf("Opened builtin subagent `%s`.", agent.Name)
+
+	task := extractSubAgentTaskInput(input)
+	if task == "" {
+		usage := fmt.Sprintf("usage: %s <task>\nTip: use /agents %s to inspect the definition first.", alias, agent.Name)
+		m.appendCommandExchange(input, usage)
+		m.statusNote = "Subagent task is required."
+		return nil
+	}
+
+	result, dispatchErr := runner.DispatchSubAgent(context.Background(), m.sess, string(modeBuild), tools.DelegateSubAgentRequest{
+		Agent: agent.Name,
+		Task:  task,
+	})
+	if dispatchErr != nil {
+		return dispatchErr
+	}
+
+	m.appendCommandExchange(input, renderSubAgentDispatchResult(result))
+	if result.OK {
+		m.statusNote = fmt.Sprintf("Subagent `%s` completed.", result.Agent)
+		return nil
+	}
+	m.statusNote = fmt.Sprintf("Subagent `%s` failed.", agent.Name)
 	return nil
 }
 
@@ -63,6 +94,20 @@ func (m *model) requireSubAgentRunner() (subAgentCommandRunner, error) {
 		return nil, fmt.Errorf("subagent commands are unavailable in this build")
 	}
 	return runner, nil
+}
+
+func extractSubAgentTaskInput(input string) string {
+	raw := strings.TrimSpace(input)
+	if raw == "" {
+		return ""
+	}
+	fields := strings.Fields(raw)
+	if len(fields) < 2 {
+		return ""
+	}
+	head := strings.TrimSpace(fields[0])
+	remainder := strings.TrimSpace(strings.TrimPrefix(raw, head))
+	return strings.TrimSpace(remainder)
 }
 
 func renderSubAgentsView(agents []subagentspkg.Agent) string {
@@ -107,6 +152,85 @@ func renderSubAgentDetail(agent subagentspkg.Agent) string {
 	}
 	if description := strings.TrimSpace(agent.Description); description != "" {
 		lines = append(lines, fmt.Sprintf("description %s", description))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderSubAgentDispatchResult(result tools.DelegateSubAgentResult) string {
+	lines := make([]string, 0, 12)
+	if result.OK {
+		status := strings.TrimSpace(result.Status)
+		if status == "" {
+			status = "completed"
+		}
+		lines = append(lines, fmt.Sprintf("subagent %s %s", strings.TrimSpace(result.Agent), status))
+		if taskID := strings.TrimSpace(result.TaskID); taskID != "" {
+			lines = append(lines, fmt.Sprintf("task_id %s", taskID))
+		}
+		if invocationID := strings.TrimSpace(result.InvocationID); invocationID != "" {
+			lines = append(lines, fmt.Sprintf("invocation %s", invocationID))
+		}
+		summary := strings.TrimSpace(result.Summary)
+		if summary == "" {
+			summary = "SubAgent task completed."
+		}
+		lines = append(lines, "summary "+summary)
+		if len(result.Findings) > 0 {
+			lines = append(lines, fmt.Sprintf("findings %d", len(result.Findings)))
+			for _, finding := range result.Findings {
+				title := strings.TrimSpace(finding.Title)
+				body := strings.TrimSpace(finding.Body)
+				switch {
+				case title != "" && body != "":
+					lines = append(lines, fmt.Sprintf("- %s: %s", title, body))
+				case title != "":
+					lines = append(lines, fmt.Sprintf("- %s", title))
+				case body != "":
+					lines = append(lines, fmt.Sprintf("- %s", body))
+				}
+			}
+		}
+		if len(result.References) > 0 {
+			lines = append(lines, fmt.Sprintf("references %d", len(result.References)))
+			for _, ref := range result.References {
+				path := strings.TrimSpace(ref.Path)
+				if path == "" {
+					continue
+				}
+				line := ""
+				if ref.Line > 0 {
+					line = fmt.Sprintf(":%d", ref.Line)
+				}
+				note := strings.TrimSpace(ref.Note)
+				if note != "" {
+					lines = append(lines, fmt.Sprintf("- %s%s (%s)", path, line, note))
+				} else {
+					lines = append(lines, fmt.Sprintf("- %s%s", path, line))
+				}
+			}
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	lines = append(lines, fmt.Sprintf("subagent %s failed", strings.TrimSpace(result.Agent)))
+	if invocationID := strings.TrimSpace(result.InvocationID); invocationID != "" {
+		lines = append(lines, fmt.Sprintf("invocation %s", invocationID))
+	}
+	if taskID := strings.TrimSpace(result.TaskID); taskID != "" {
+		lines = append(lines, fmt.Sprintf("task_id %s", taskID))
+	}
+	if result.Error != nil {
+		code := strings.TrimSpace(result.Error.Code)
+		message := strings.TrimSpace(result.Error.Message)
+		if code != "" {
+			lines = append(lines, "error_code "+code)
+		}
+		if message != "" {
+			lines = append(lines, "error "+message)
+		}
+	}
+	if len(lines) == 1 {
+		lines = append(lines, "error subagent execution failed")
 	}
 	return strings.Join(lines, "\n")
 }
