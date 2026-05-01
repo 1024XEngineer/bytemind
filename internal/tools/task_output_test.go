@@ -7,6 +7,7 @@ import (
 
 	corepkg "bytemind/internal/core"
 	runtimepkg "bytemind/internal/runtime"
+	"bytemind/internal/session"
 )
 
 func TestTaskOutputToolReadsIncrementalOutput(t *testing.T) {
@@ -28,6 +29,7 @@ func TestTaskOutputToolReadsIncrementalOutput(t *testing.T) {
 	tool := TaskOutputTool{}
 	out, runErr := tool.Run(context.Background(), []byte(`{"task_id":"`+string(taskID)+`","offset":0,"limit":10}`), &ExecutionContext{
 		TaskManager: manager,
+		Session:     &session.Session{ID: "sess-1"},
 	})
 	if runErr != nil {
 		t.Fatalf("task_output run failed: %v", runErr)
@@ -87,6 +89,7 @@ func TestTaskOutputToolReturnsInvalidArgsForUnknownTask(t *testing.T) {
 	tool := TaskOutputTool{}
 	_, err := tool.Run(context.Background(), []byte(`{"task_id":"missing-task"}`), &ExecutionContext{
 		TaskManager: runtimepkg.NewInMemoryTaskManager(),
+		Session:     &session.Session{ID: "sess-1"},
 	})
 	if err == nil {
 		t.Fatal("expected task not found error")
@@ -106,5 +109,35 @@ func TestTaskOutputToolRequiresTaskManager(t *testing.T) {
 	execErr, ok := err.(*ToolExecError)
 	if !ok || execErr.Code != ToolErrorPermissionDenied {
 		t.Fatalf("expected permission denied error code, got %T %#v", err, err)
+	}
+}
+
+func TestTaskOutputToolRejectsCrossSessionRead(t *testing.T) {
+	manager := runtimepkg.NewInMemoryTaskManager(runtimepkg.WithTaskExecutor(func(_ context.Context, _ runtimepkg.Task) ([]byte, error) {
+		return []byte("ok"), nil
+	}))
+	taskID, err := manager.Submit(context.Background(), runtimepkg.TaskSpec{
+		SessionID: "sess-owner",
+		Name:      "subagent",
+		Kind:      "subagent",
+	})
+	if err != nil {
+		t.Fatalf("submit task: %v", err)
+	}
+	if _, err := manager.Wait(context.Background(), taskID); err != nil {
+		t.Fatalf("wait task: %v", err)
+	}
+
+	tool := TaskOutputTool{}
+	_, runErr := tool.Run(context.Background(), []byte(`{"task_id":"`+string(taskID)+`","offset":0,"limit":10}`), &ExecutionContext{
+		TaskManager: manager,
+		Session:     &session.Session{ID: "sess-attacker"},
+	})
+	if runErr == nil {
+		t.Fatal("expected permission denied error")
+	}
+	execErr, ok := runErr.(*ToolExecError)
+	if !ok || execErr.Code != ToolErrorPermissionDenied {
+		t.Fatalf("expected permission denied error code, got %T %#v", runErr, runErr)
 	}
 }

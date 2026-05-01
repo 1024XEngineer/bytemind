@@ -1,15 +1,18 @@
 package tui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"bytemind/internal/agent"
 	"bytemind/internal/config"
 	"bytemind/internal/llm"
 	"bytemind/internal/session"
+	subagentspkg "bytemind/internal/subagents"
 	"bytemind/internal/tools"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -236,4 +239,86 @@ func writeSubAgentDef(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestRunBuiltinSubAgentCommandAsyncSnapshotsSession(t *testing.T) {
+	runner := &captureAsyncSessionRunner{
+		captured: make(chan *session.Session, 1),
+		release:  make(chan struct{}),
+	}
+	m := &model{
+		sess: &session.Session{
+			ID:        "sess-origin",
+			Workspace: "E:\\code\\bytemind",
+		},
+		async: make(chan tea.Msg, 1),
+	}
+	request := tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "inspect async snapshot",
+	}
+
+	if err := m.runBuiltinSubAgentCommandAsync("/explorer inspect async snapshot", "explorer", runner, request); err != nil {
+		t.Fatalf("expected async command start to succeed, got %v", err)
+	}
+
+	var captured *session.Session
+	select {
+	case captured = <-runner.captured:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for dispatch to capture parent session")
+	}
+	if captured == nil {
+		t.Fatal("expected captured session snapshot")
+	}
+	if captured == m.sess {
+		t.Fatal("expected async dispatch to receive session snapshot, got original pointer")
+	}
+	if captured.ID != "sess-origin" {
+		t.Fatalf("expected snapshot id %q, got %q", "sess-origin", captured.ID)
+	}
+	if captured.Workspace != "E:\\code\\bytemind" {
+		t.Fatalf("expected snapshot workspace %q, got %q", "E:\\code\\bytemind", captured.Workspace)
+	}
+
+	m.sess.ID = "sess-mutated"
+	m.sess.Workspace = "E:\\other"
+	if captured.ID != "sess-origin" || captured.Workspace != "E:\\code\\bytemind" {
+		t.Fatalf("expected captured snapshot to remain stable after parent mutation, got id=%q workspace=%q", captured.ID, captured.Workspace)
+	}
+
+	close(runner.release)
+	select {
+	case <-m.async:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for async result message")
+	}
+}
+
+type captureAsyncSessionRunner struct {
+	captured chan *session.Session
+	release  chan struct{}
+}
+
+func (r *captureAsyncSessionRunner) ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic) {
+	return nil, nil
+}
+
+func (r *captureAsyncSessionRunner) FindSubAgent(string) (subagentspkg.Agent, bool) {
+	return subagentspkg.Agent{}, false
+}
+
+func (r *captureAsyncSessionRunner) FindBuiltinSubAgent(string) (subagentspkg.Agent, bool) {
+	return subagentspkg.Agent{}, false
+}
+
+func (r *captureAsyncSessionRunner) DispatchSubAgent(_ context.Context, sess *session.Session, _ string, request tools.DelegateSubAgentRequest) (tools.DelegateSubAgentResult, error) {
+	r.captured <- sess
+	<-r.release
+	return tools.DelegateSubAgentResult{
+		OK:      true,
+		Agent:   request.Agent,
+		Status:  "completed",
+		Summary: "ok",
+	}, nil
 }

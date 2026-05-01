@@ -115,7 +115,7 @@ func (m *model) runBuiltinSubAgentCommandAsync(
 	}
 
 	commandInput := strings.TrimSpace(input)
-	parentSession := m.sess
+	parentSession := snapshotSubAgentParentSession(m.sess)
 	m.subAgentCommandPending = true
 	m.appendCommandExchange(commandInput, fmt.Sprintf("Subagent `%s` started. Running in a temporary child session...", strings.TrimSpace(agentName)))
 	m.statusNote = fmt.Sprintf("Subagent `%s` running...", strings.TrimSpace(agentName))
@@ -131,6 +131,17 @@ func (m *model) runBuiltinSubAgentCommandAsync(
 		}
 	}()
 	return nil
+}
+
+func snapshotSubAgentParentSession(source *session.Session) *session.Session {
+	if source == nil {
+		return nil
+	}
+	return &session.Session{
+		ID:        strings.TrimSpace(source.ID),
+		Workspace: strings.TrimSpace(source.Workspace),
+		Mode:      source.Mode,
+	}
 }
 
 func normalizeBuiltinSubAgentCommandInput(input string) (string, string, bool) {

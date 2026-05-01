@@ -115,14 +115,17 @@ func (TaskOutputTool) Run(ctx context.Context, raw json.RawMessage, execCtx *Exe
 		limit = *args.Limit
 	}
 
-	entries, nextOffset, hasMore, readErr := logReader.ReadIncrement(ctx, taskID, offset, limit)
-	if readErr != nil {
-		return "", normalizeTaskManagerError(readErr)
-	}
-
 	task, getErr := execCtx.TaskManager.Get(ctx, taskID)
 	if getErr != nil {
 		return "", normalizeTaskManagerError(getErr)
+	}
+	if accessErr := ensureTaskOutputSessionAccess(task, execCtx); accessErr != nil {
+		return "", accessErr
+	}
+
+	entries, nextOffset, hasMore, readErr := logReader.ReadIncrement(ctx, taskID, offset, limit)
+	if readErr != nil {
+		return "", normalizeTaskManagerError(readErr)
 	}
 
 	items := make([]taskOutputItem, 0, len(entries))
@@ -152,6 +155,24 @@ func (TaskOutputTool) Run(ctx context.Context, raw json.RawMessage, execCtx *Exe
 	}
 
 	return toJSON(result)
+}
+
+func ensureTaskOutputSessionAccess(task runtimepkg.Task, execCtx *ExecutionContext) error {
+	if execCtx == nil || execCtx.Session == nil {
+		return NewToolExecError(ToolErrorPermissionDenied, "task output is unavailable: session context is missing", false, nil)
+	}
+	currentSessionID := strings.TrimSpace(execCtx.Session.ID)
+	if currentSessionID == "" {
+		return NewToolExecError(ToolErrorPermissionDenied, "task output is unavailable: current session id is missing", false, nil)
+	}
+	taskSessionID := strings.TrimSpace(string(task.Spec.SessionID))
+	if taskSessionID == "" {
+		return NewToolExecError(ToolErrorPermissionDenied, "task output is unavailable: task session id is missing", false, nil)
+	}
+	if taskSessionID != currentSessionID {
+		return NewToolExecError(ToolErrorPermissionDenied, "task output is unavailable: task belongs to another session", false, nil)
+	}
+	return nil
 }
 
 func normalizeTaskManagerError(err error) error {
