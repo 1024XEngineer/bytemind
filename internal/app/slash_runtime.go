@@ -1,9 +1,11 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 
 	"bytemind/internal/session"
+	subagentspkg "bytemind/internal/subagents"
 )
 
 type SlashExecution struct {
@@ -17,6 +19,8 @@ type SlashExecution struct {
 	Suggestions      []string
 	Summaries        []session.Summary
 	Warnings         []string
+	SubAgents        []subagentspkg.Agent
+	SubAgentDetail   *subagentspkg.Agent
 }
 
 func ExecuteSlashCommand(store *session.Store, current *session.Session, input string, commands []SlashCommand) (SlashExecution, error) {
@@ -57,6 +61,30 @@ func ExecuteSlashCommand(store *session.Store, current *session.Session, input s
 		}
 		out.Summaries = summaries
 		out.Warnings = warnings
+		return out, nil
+	case "/agents":
+		out.Command = "agents"
+		manager := subagentspkg.NewManager(current.Workspace)
+		agents, _ := manager.List()
+		out.SubAgents = agents
+		if len(fields) > 1 {
+			agent, ok := manager.Find(fields[1])
+			if !ok {
+				out.UsageHint = fmt.Sprintf("subagent not found: %s", fields[1])
+				return out, nil
+			}
+			out.SubAgentDetail = &agent
+		}
+		return out, nil
+	case "/explorer", "/review":
+		out.Command = "builtin_subagent"
+		manager := subagentspkg.NewManager(current.Workspace)
+		agent, ok := manager.FindBuiltin(fields[0])
+		if !ok {
+			out.UsageHint = fmt.Sprintf("builtin subagent is unavailable: %s", fields[0])
+			return out, nil
+		}
+		out.SubAgentDetail = &agent
 		return out, nil
 	case "/resume":
 		out.Command = "resume"

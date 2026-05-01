@@ -41,12 +41,13 @@ type ExecutionContext struct {
 	TaskManager runtimepkg.TaskManager
 	// Extensions is an optional passthrough hook for callers that need extension context.
 	// It stays untyped here to keep tools/extension packages decoupled.
-	Extensions   any
-	Mode         planpkg.AgentMode
-	Stdin        io.Reader
-	Stdout       io.Writer
-	AllowedTools map[string]struct{}
-	DeniedTools  map[string]struct{}
+	Extensions       any
+	Mode             planpkg.AgentMode
+	Stdin            io.Reader
+	Stdout           io.Writer
+	AllowedTools     map[string]struct{}
+	DeniedTools      map[string]struct{}
+	DelegateSubAgent DelegateSubAgentHandler
 }
 
 const (
@@ -115,6 +116,7 @@ func DefaultRegistry() *Registry {
 	r.mustRegisterBuiltin(ApplyPatchTool{})
 	r.mustRegisterBuiltin(UpdatePlanTool{})
 	r.mustRegisterBuiltin(RunShellTool{})
+	r.mustRegisterBuiltin(DelegateSubAgentTool{})
 	return r
 }
 

@@ -179,6 +179,7 @@ func TestShouldExecuteToolDirectlyRoutesSynchronousBuiltins(t *testing.T) {
 		"replace_in_file",
 		"apply_patch",
 		"update_plan",
+		"delegate_subagent",
 	} {
 		if !shouldExecuteToolDirectly(name) {
 			t.Fatalf("expected %s to execute directly", name)

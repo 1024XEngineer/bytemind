@@ -26,6 +26,7 @@ type runPromptSetup struct {
 	AllowedToolNames             []string
 	DeniedToolNames              []string
 	AvailableSkills              []PromptSkill
+	AvailableSubAgents           []PromptSubAgent
 	AvailableTools               []string
 	InstructionText              string
 	WebLookupInstruction         string
