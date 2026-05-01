@@ -10,6 +10,12 @@ import (
 	"bytemind/internal/tools"
 )
 
+type subAgentCommandResultMsg struct {
+	Input  string
+	Result tools.DelegateSubAgentResult
+	Err    error
+}
+
 type subAgentCommandRunner interface {
 	ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic)
 	FindSubAgent(name string) (subagentspkg.Agent, bool)
@@ -68,10 +74,15 @@ func (m *model) runBuiltinSubAgentCommand(input, builtinName string) error {
 		return nil
 	}
 
-	result, dispatchErr := runner.DispatchSubAgent(context.Background(), m.sess, string(modeBuild), tools.DelegateSubAgentRequest{
+	request := tools.DelegateSubAgentRequest{
 		Agent: agent.Name,
 		Task:  task,
-	})
+	}
+	if m.async != nil {
+		return m.runBuiltinSubAgentCommandAsync(input, agent.Name, runner, request)
+	}
+
+	result, dispatchErr := runner.DispatchSubAgent(context.Background(), m.sess, string(modeBuild), request)
 	if dispatchErr != nil {
 		return dispatchErr
 	}
@@ -82,6 +93,40 @@ func (m *model) runBuiltinSubAgentCommand(input, builtinName string) error {
 		return nil
 	}
 	m.statusNote = fmt.Sprintf("Subagent `%s` failed.", agent.Name)
+	return nil
+}
+
+func (m *model) runBuiltinSubAgentCommandAsync(
+	input string,
+	agentName string,
+	runner subAgentCommandRunner,
+	request tools.DelegateSubAgentRequest,
+) error {
+	if m == nil {
+		return fmt.Errorf("model is unavailable")
+	}
+	if m.subAgentCommandPending {
+		return fmt.Errorf("a subagent command is already running")
+	}
+	if m.async == nil {
+		return fmt.Errorf("subagent async channel is unavailable")
+	}
+
+	m.subAgentCommandPending = true
+	m.statusNote = fmt.Sprintf("Subagent `%s` running...", strings.TrimSpace(agentName))
+
+	asyncCh := m.async
+	commandInput := strings.TrimSpace(input)
+	parentSession := m.sess
+
+	go func() {
+		result, dispatchErr := runner.DispatchSubAgent(context.Background(), parentSession, string(modeBuild), request)
+		asyncCh <- subAgentCommandResultMsg{
+			Input:  commandInput,
+			Result: result,
+			Err:    dispatchErr,
+		}
+	}()
 	return nil
 }
 

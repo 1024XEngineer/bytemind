@@ -169,6 +169,26 @@ func (m model) filteredCommands() []commandItem {
 			result = append(result, item)
 		}
 	}
+	if len(result) > 0 || !strings.Contains(query, " ") {
+		return result
+	}
+
+	// When users already typed a command plus natural-language args
+	// (for example "/explorer analyze agent module"), keep command hints visible
+	// by falling back to the first token.
+	fallback := strings.TrimSpace(strings.Fields(query)[0])
+	if fallback == "" {
+		return result
+	}
+	fallbackMatches := make([]commandItem, 0, len(items))
+	for _, item := range items {
+		if matchesCommandItem(item, fallback) {
+			fallbackMatches = append(fallbackMatches, item)
+		}
+	}
+	if len(fallbackMatches) > 0 {
+		return fallbackMatches
+	}
 	return result
 }
 

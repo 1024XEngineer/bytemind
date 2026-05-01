@@ -4110,6 +4110,24 @@ func TestCommandPaletteFiltersAsUserTypes(t *testing.T) {
 	}
 }
 
+func TestFilteredCommandsFallbackToCommandTokenWhenArgsPresent(t *testing.T) {
+	input := textarea.New()
+	input.SetValue("/explorer 分析一下agent模块的功能")
+	m := model{input: input}
+
+	items := m.filteredCommands()
+	foundExplorer := false
+	for _, item := range items {
+		if item.Name == "/explorer" {
+			foundExplorer = true
+			break
+		}
+	}
+	if !foundExplorer {
+		t.Fatalf("expected command fallback to keep /explorer visible, got %+v", items)
+	}
+}
+
 func TestEscapeClosesCommandPalette(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("/h")
@@ -4143,6 +4161,104 @@ func TestCommandPaletteEnterOnQuitReturnsQuitCmd(t *testing.T) {
 	_, cmd := m.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatalf("expected /quit from command palette to return a quit command")
+	}
+}
+
+func TestCommandPaletteEnterExecutesSlashCommandWithArgs(t *testing.T) {
+	workspace := t.TempDir()
+	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "explorer.md"), `---
+name: explorer
+description: builtin explorer
+tools: [list_files, read_file, search_text]
+---
+explore files
+`)
+	client := &compactCommandTestClient{
+		replies: []llm.Message{
+			{Role: llm.RoleAssistant, Content: "explorer run ok"},
+		},
+	}
+	base := newSubAgentCommandModel(t, workspace, client)
+	input := textarea.New()
+	input.SetValue("/explorer 分析一下agent模块功能与作用")
+	base.input = input
+	base.commandOpen = true
+	base.syncCommandPalette()
+
+	got, _ := base.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if updated.commandOpen {
+		t.Fatalf("expected command palette to close after executing slash command")
+	}
+	if len(updated.chatItems) < 2 {
+		t.Fatalf("expected slash command execution exchange, got %#v", updated.chatItems)
+	}
+	last := updated.chatItems[len(updated.chatItems)-1].Body
+	if !strings.Contains(last, "subagent explorer completed") {
+		t.Fatalf("expected delegated explorer execution result, got %q", last)
+	}
+	if !strings.Contains(last, "summary explorer run ok") {
+		t.Fatalf("expected delegated explorer summary, got %q", last)
+	}
+}
+
+func TestCommandPaletteEnterDispatchesSubAgentCommandAsync(t *testing.T) {
+	workspace := t.TempDir()
+	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "explorer.md"), `---
+name: explorer
+description: builtin explorer
+tools: [list_files, read_file, search_text]
+---
+explore files
+`)
+	client := &compactCommandTestClient{
+		replies: []llm.Message{
+			{Role: llm.RoleAssistant, Content: "explorer async ok"},
+		},
+	}
+	base := newSubAgentCommandModel(t, workspace, client)
+	base.async = make(chan tea.Msg, 8)
+	input := textarea.New()
+	input.SetValue("/explorer 分析一下agent模块功能和作用")
+	base.input = input
+	base.commandOpen = true
+	base.syncCommandPalette()
+
+	got, _ := base.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if updated.commandOpen {
+		t.Fatalf("expected command palette to close after slash execution")
+	}
+	if !updated.subAgentCommandPending {
+		t.Fatalf("expected subagent command to dispatch asynchronously")
+	}
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected no immediate command exchange before async completion, got %#v", updated.chatItems)
+	}
+
+	var asyncMsg tea.Msg
+	select {
+	case asyncMsg = <-updated.async:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for async subagent result")
+	}
+
+	gotAfter, _ := updated.Update(asyncMsg)
+	after := gotAfter.(model)
+	if after.subAgentCommandPending {
+		t.Fatalf("expected async subagent pending flag to clear after result")
+	}
+	if len(after.chatItems) < 2 {
+		t.Fatalf("expected async subagent command exchange in chat, got %#v", after.chatItems)
+	}
+	last := after.chatItems[len(after.chatItems)-1].Body
+	if !strings.Contains(last, "subagent explorer completed") {
+		t.Fatalf("expected delegated explorer completion, got %q", last)
+	}
+	if !strings.Contains(last, "summary explorer async ok") {
+		t.Fatalf("expected delegated explorer summary, got %q", last)
 	}
 }
 
