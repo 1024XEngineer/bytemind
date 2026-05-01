@@ -149,6 +149,36 @@ explore files
 	}
 }
 
+func TestHandleSlashBuiltinSubAgentDelegatesTaskWithoutWhitespace(t *testing.T) {
+	workspace := t.TempDir()
+	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "explorer.md"), `---
+name: explorer
+description: builtin explorer
+tools: [list_files, read_file, search_text]
+---
+explore files
+`)
+
+	client := &compactCommandTestClient{
+		replies: []llm.Message{
+			{Role: llm.RoleAssistant, Content: "explorer compact summary"},
+		},
+	}
+	m := newSubAgentCommandModel(t, workspace, client)
+
+	if err := m.handleSlashCommand("/explorer分析一下agent模块功能和作用"); err != nil {
+		t.Fatalf("expected compact /explorer command to succeed, got %v", err)
+	}
+
+	body := m.chatItems[len(m.chatItems)-1].Body
+	if !strings.Contains(body, "subagent explorer completed") {
+		t.Fatalf("expected compact /explorer delegated completion, got %q", body)
+	}
+	if !strings.Contains(body, "summary explorer compact summary") {
+		t.Fatalf("expected compact /explorer delegated summary, got %q", body)
+	}
+}
+
 func TestCommandPaletteSelectExplorerPrefillsCommand(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("/expl")

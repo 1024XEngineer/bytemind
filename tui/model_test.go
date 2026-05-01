@@ -4234,8 +4234,12 @@ explore files
 	if !updated.subAgentCommandPending {
 		t.Fatalf("expected subagent command to dispatch asynchronously")
 	}
-	if len(updated.chatItems) != 0 {
-		t.Fatalf("expected no immediate command exchange before async completion, got %#v", updated.chatItems)
+	if len(updated.chatItems) < 2 {
+		t.Fatalf("expected immediate command exchange before async completion, got %#v", updated.chatItems)
+	}
+	started := updated.chatItems[len(updated.chatItems)-1].Body
+	if !strings.Contains(started, "Subagent `explorer` started.") {
+		t.Fatalf("expected immediate async start feedback, got %q", started)
 	}
 
 	var asyncMsg tea.Msg
@@ -4250,7 +4254,7 @@ explore files
 	if after.subAgentCommandPending {
 		t.Fatalf("expected async subagent pending flag to clear after result")
 	}
-	if len(after.chatItems) < 2 {
+	if len(after.chatItems) < 3 {
 		t.Fatalf("expected async subagent command exchange in chat, got %#v", after.chatItems)
 	}
 	last := after.chatItems[len(after.chatItems)-1].Body

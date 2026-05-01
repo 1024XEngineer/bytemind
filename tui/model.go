@@ -808,7 +808,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusNote = msg.Err.Error()
 			return m, waitForAsync(m.async)
 		}
-		m.appendCommandExchange(msg.Input, renderSubAgentDispatchResult(msg.Result))
+		m.appendAssistantCommandResponse(renderSubAgentDispatchResult(msg.Result))
 		if msg.Result.OK {
 			m.statusNote = fmt.Sprintf("Subagent `%s` completed.", msg.Result.Agent)
 		} else {

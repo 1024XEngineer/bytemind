@@ -9,7 +9,12 @@ import (
 )
 
 func (m *model) handleSlashCommand(input string) error {
-	fields := strings.Fields(input)
+	raw := strings.TrimSpace(input)
+	if normalized, builtinName, ok := normalizeBuiltinSubAgentCommandInput(raw); ok {
+		return m.runBuiltinSubAgentCommand(normalized, builtinName)
+	}
+
+	fields := strings.Fields(raw)
 	if len(fields) == 0 {
 		return nil
 	}

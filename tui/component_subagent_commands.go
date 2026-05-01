@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"bytemind/internal/session"
 	subagentspkg "bytemind/internal/subagents"
@@ -112,12 +114,13 @@ func (m *model) runBuiltinSubAgentCommandAsync(
 		return fmt.Errorf("subagent async channel is unavailable")
 	}
 
+	commandInput := strings.TrimSpace(input)
+	parentSession := m.sess
 	m.subAgentCommandPending = true
+	m.appendCommandExchange(commandInput, fmt.Sprintf("Subagent `%s` started. Running in a temporary child session...", strings.TrimSpace(agentName)))
 	m.statusNote = fmt.Sprintf("Subagent `%s` running...", strings.TrimSpace(agentName))
 
 	asyncCh := m.async
-	commandInput := strings.TrimSpace(input)
-	parentSession := m.sess
 
 	go func() {
 		result, dispatchErr := runner.DispatchSubAgent(context.Background(), parentSession, string(modeBuild), request)
@@ -128,6 +131,50 @@ func (m *model) runBuiltinSubAgentCommandAsync(
 		}
 	}()
 	return nil
+}
+
+func normalizeBuiltinSubAgentCommandInput(input string) (string, string, bool) {
+	raw := strings.TrimSpace(input)
+	if raw == "" {
+		return "", "", false
+	}
+	lower := strings.ToLower(raw)
+	commands := []string{"/explorer", "/exploer", "/review"}
+	for _, command := range commands {
+		if !strings.HasPrefix(lower, command) {
+			continue
+		}
+		if len(raw) == len(command) {
+			return raw, command, true
+		}
+		suffix := raw[len(command):]
+		if suffix == "" {
+			return raw, command, true
+		}
+		r, _ := utf8.DecodeRuneInString(suffix)
+		if unicode.IsSpace(r) {
+			return raw, command, true
+		}
+		if !isSlashCommandIdentifierRune(r) {
+			return command + " " + strings.TrimSpace(suffix), command, true
+		}
+	}
+	return "", "", false
+}
+
+func isSlashCommandIdentifierRune(r rune) bool {
+	if r == utf8.RuneError {
+		return false
+	}
+	if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+		return true
+	}
+	switch r {
+	case '-', '_', '.', ':':
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *model) requireSubAgentRunner() (subAgentCommandRunner, error) {
