@@ -1,5 +1,4 @@
-module bytemind
-
+module github.com/1024XEngineer/bytemind
 go 1.25.0
 
 require (

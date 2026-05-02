@@ -3,7 +3,7 @@ package tokenusage
 import (
 	"strings"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 // ApproximateTokens uses a conservative fallback estimator (~4 chars/token).

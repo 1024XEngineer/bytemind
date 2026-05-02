@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 func TestApplyUsageEarlyReturnWhenPayloadHasNoTokens(t *testing.T) {

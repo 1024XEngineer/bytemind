@@ -3,7 +3,7 @@ package context
 import (
 	"testing"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 func TestBuildPairAwareCompactedMessagesMovesBoundaryPastPairWindow(t *testing.T) {

@@ -1,6 +1,6 @@
 package skills
 
-import frontmatterpkg "bytemind/internal/frontmatter"
+import frontmatterpkg "github.com/1024XEngineer/bytemind/internal/frontmatter"
 
 func parseFrontmatterMarkdown(content string) (map[string]string, string) {
 	return frontmatterpkg.ParseMarkdown(content, frontmatterpkg.ParseOptions{})

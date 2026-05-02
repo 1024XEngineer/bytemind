@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 func (m *model) runCompactCommand(input string) error {

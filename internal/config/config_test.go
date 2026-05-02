@@ -16,6 +16,7 @@ func TestLoadUsesEnvOverrides(t *testing.T) {
 	t.Setenv("BYTEMIND_API_KEY", "secret")
 	t.Setenv("BYTEMIND_TOKEN_QUOTA", "88000")
 	t.Setenv("BYTEMIND_PROVIDER_TYPE", "anthropic")
+	t.Setenv("BYTEMIND_PROVIDER_FAMILY", "DeepSeek")
 	t.Setenv("BYTEMIND_PROVIDER_AUTO_DETECT_TYPE", "true")
 	t.Setenv("BYTEMIND_STREAM", "false")
 	t.Setenv("BYTEMIND_APPROVAL_MODE", "full_access")
@@ -36,6 +37,9 @@ func TestLoadUsesEnvOverrides(t *testing.T) {
 	}
 	if cfg.Provider.Type != "anthropic" {
 		t.Fatalf("expected anthropic provider, got %q", cfg.Provider.Type)
+	}
+	if cfg.Provider.Family != "deepseek" {
+		t.Fatalf("expected provider family from env override, got %q", cfg.Provider.Family)
 	}
 	if !cfg.Provider.AutoDetectType {
 		t.Fatalf("expected auto detect provider type from env")
@@ -500,6 +504,46 @@ func TestLoadDefaultsModelFromProviderEndpointWhenMissing(t *testing.T) {
 	}
 }
 
+func TestLoadNormalizesProviderFamily(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"family":   " Z.AI ",
+			"base_url": "https://open.bigmodel.cn/api/paas/v4",
+			"model":    "glm-4.6",
+			"api_key":  "test-key",
+		},
+		"provider_runtime": map[string]any{
+			"default_provider": "moonshot",
+			"default_model":    "kimi-k2",
+			"providers": map[string]any{
+				"moonshot": map[string]any{
+					"type":     "openai-compatible",
+					"family":   "Moonshot-AI",
+					"base_url": "https://api.moonshot.cn/v1",
+					"model":    "kimi-k2",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Family != "zai" {
+		t.Fatalf("expected top-level provider family zai, got %q", cfg.Provider.Family)
+	}
+	runtimeProvider := cfg.ProviderRuntime.Providers["moonshot"]
+	if runtimeProvider.Family != "moonshot" {
+		t.Fatalf("expected runtime provider family moonshot, got %q", runtimeProvider.Family)
+	}
+}
+
 func TestLoadSupportsGeminiProviderDefaults(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", t.TempDir())
@@ -858,7 +902,7 @@ func TestUpsertProviderAPIKeyCreatesConfigWhenMissing(t *testing.T) {
 	}
 }
 
-func TestUpsertProviderFieldUpdatesModelAndBaseURL(t *testing.T) {
+func TestUpsertProviderFieldUpdatesModelBaseURLAndFamily(t *testing.T) {
 	workspace := t.TempDir()
 	configPath := filepath.Join(workspace, "config.json")
 	if err := os.WriteFile(configPath, []byte(`{
@@ -878,6 +922,9 @@ func TestUpsertProviderFieldUpdatesModelAndBaseURL(t *testing.T) {
 	if _, err := UpsertProviderField(configPath, "base_url", "https://api.deepseek.com"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := UpsertProviderField(configPath, "family", "Moonshot_AI"); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg, err := Load(workspace, configPath)
 	if err != nil {
@@ -888,6 +935,9 @@ func TestUpsertProviderFieldUpdatesModelAndBaseURL(t *testing.T) {
 	}
 	if cfg.Provider.BaseURL != "https://api.deepseek.com" {
 		t.Fatalf("expected updated base url, got %q", cfg.Provider.BaseURL)
+	}
+	if cfg.Provider.Family != "moonshot" {
+		t.Fatalf("expected normalized provider family, got %q", cfg.Provider.Family)
 	}
 }
 

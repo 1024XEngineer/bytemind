@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 var errPromptTooLong = errors.New("prompt too long")

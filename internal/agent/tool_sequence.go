@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 const DefaultRepeatedToolSequenceThreshold = 3

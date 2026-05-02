@@ -20,7 +20,11 @@ func (m model) renderConversation() string {
 	for i := 0; i < len(m.chatItems); {
 		item := m.chatItems[i]
 		if item.Kind == "user" {
-			blocks = append(blocks, renderChatRow(item, width))
+			resolvedItem := item
+			if strings.Contains(item.Body, "[Paste #") || strings.Contains(item.Body, "[Pasted #") {
+				resolvedItem.Body = m.resolveUserBodyPastes(item.Body)
+			}
+			blocks = append(blocks, renderChatRow(resolvedItem, width))
 			i++
 			continue
 		}
@@ -286,10 +290,7 @@ func renderBytemindRunCard(items []chatEntry, width int) string {
 	contentWidth := max(8, width-outer.GetHorizontalFrameSize())
 	sectionGroups := collapseRunSectionGroups(items)
 	sections := make([]string, 0, len(sectionGroups))
-	for i, group := range sectionGroups {
-		if i > 0 {
-			sections = append(sections, renderRunSectionDivider(contentWidth))
-		}
+	for _, group := range sectionGroups {
 		sections = append(sections, renderRunSectionGroup(group, contentWidth))
 	}
 	return outer.Width(contentWidth).Render(strings.Join(sections, "\n"))

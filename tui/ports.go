@@ -4,12 +4,12 @@ import (
 	"context"
 	"io"
 
-	"bytemind/internal/config"
-	"bytemind/internal/llm"
-	"bytemind/internal/mcpctl"
-	planpkg "bytemind/internal/plan"
-	"bytemind/internal/session"
-	"bytemind/internal/skills"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/mcpctl"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/skills"
 )
 
 type EventType string

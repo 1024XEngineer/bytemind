@@ -9,7 +9,7 @@ Passed to the install script to control how the binary is downloaded.
 | Variable               | Description                            | Default                  |
 | ---------------------- | -------------------------------------- | ------------------------ |
 | `BYTEMIND_VERSION`     | Release tag to install (e.g. `v0.3.0`) | latest                   |
-| `BYTEMIND_INSTALL_DIR` | Directory to install the binary into   | `~/.local/bin`           |
+| `BYTEMIND_INSTALL_DIR` | Directory to install the binary into   | `~/bin`                  |
 | `BYTEMIND_REPO`        | GitHub repository to download from     | `1024XEngineer/bytemind` |
 
 **Example:**

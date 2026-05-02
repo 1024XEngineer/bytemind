@@ -15,13 +15,13 @@ import (
 	"time"
 	"unicode"
 
-	"bytemind/internal/config"
-	contextpkg "bytemind/internal/context"
-	"bytemind/internal/llm"
-	planpkg "bytemind/internal/plan"
-	"bytemind/internal/session"
-	"bytemind/internal/tokenusage"
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	contextpkg "github.com/1024XEngineer/bytemind/internal/context"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/tokenusage"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 type fakeClient struct {

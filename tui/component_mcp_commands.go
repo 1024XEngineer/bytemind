@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"bytemind/internal/mcpctl"
+	"github.com/1024XEngineer/bytemind/internal/mcpctl"
 )
 
 const (

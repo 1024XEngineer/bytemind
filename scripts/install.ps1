@@ -77,7 +77,7 @@ if ([string]::IsNullOrWhiteSpace($version)) {
     $version = Get-LatestReleaseTag -Repo $repo
 }
 
-$installDir = if ($env:BYTEMIND_INSTALL_DIR) { $env:BYTEMIND_INSTALL_DIR } else { Join-Path $HOME ".bytemind\bin" }
+$installDir = if ($env:BYTEMIND_INSTALL_DIR) { $env:BYTEMIND_INSTALL_DIR } else { Join-Path $HOME "bin" }
 $archName = Resolve-Architecture
 $assetName = "bytemind_${version}_windows_${archName}.zip"
 $baseUrl = "https://github.com/$repo/releases/download/$version"

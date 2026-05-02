@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	corepkg "bytemind/internal/core"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 )
 
 func TestFileLockerSameKeyContentionTimeout(t *testing.T) {

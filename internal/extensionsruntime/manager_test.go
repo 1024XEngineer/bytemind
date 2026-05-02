@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	configpkg "bytemind/internal/config"
-	extensionspkg "bytemind/internal/extensions"
-	"bytemind/internal/llm"
-	toolspkg "bytemind/internal/tools"
+	configpkg "github.com/1024XEngineer/bytemind/internal/config"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	toolspkg "github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 func TestManagerListIncludesConfiguredMCPServer(t *testing.T) {

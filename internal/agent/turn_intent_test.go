@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 func TestParseAssistantTurnIntentFromTag(t *testing.T) {

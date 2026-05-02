@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"bytemind/internal/provider"
-	runtimepkg "bytemind/internal/runtime"
+	"github.com/1024XEngineer/bytemind/internal/provider"
+	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
 )
 
 func TestBootstrapRuntimeFacadeClientCreateMessageReturnsContent(t *testing.T) {
@@ -181,7 +181,7 @@ func TestBootstrapPersistsRuntimeTasksOnlyToUnifiedTaskLog(t *testing.T) {
 		t.Fatalf("Bootstrap failed: %v", err)
 	}
 
-	taskID, err := rt.TaskManager.Submit(context.Background(), runtimepkg.TaskSpec{Name: "persist"})
+	taskID, err := rt.TaskManager.Submit(context.Background(), blockingRuntimeTaskSpec(t, rt.TaskManager, "persist"))
 	if err != nil {
 		t.Fatalf("Submit failed: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestBootstrapFallsBackToLegacyRuntimeTaskStoreWhenUnifiedInitFails(t *testi
 		t.Fatalf("Bootstrap failed: %v", err)
 	}
 
-	taskID, err := rt.TaskManager.Submit(context.Background(), runtimepkg.TaskSpec{Name: "legacy-fallback"})
+	taskID, err := rt.TaskManager.Submit(context.Background(), blockingRuntimeTaskSpec(t, rt.TaskManager, "legacy-fallback"))
 	if err != nil {
 		t.Fatalf("Submit failed: %v", err)
 	}
@@ -286,5 +286,27 @@ func TestBootstrapFallsBackToLegacyRuntimeTaskStoreWhenUnifiedInitFails(t *testi
 	}
 	if len(legacyLogFiles) == 0 {
 		t.Fatal("expected legacy runtime log files when unified init fails")
+	}
+}
+
+func blockingRuntimeTaskSpec(t *testing.T, taskManager runtimepkg.TaskManager, name string) runtimepkg.TaskSpec {
+	t.Helper()
+
+	manager, ok := taskManager.(*runtimepkg.InMemoryTaskManager)
+	if !ok {
+		t.Fatalf("expected *runtime.InMemoryTaskManager, got %T", taskManager)
+	}
+
+	token := "test-" + name
+	manager.RegisterExecution(token, func(ctx context.Context, _ runtimepkg.Task) ([]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	return runtimepkg.TaskSpec{
+		Name: name,
+		Metadata: map[string]string{
+			runtimepkg.TaskExecutionTokenMetadataKey: token,
+		},
 	}
 }

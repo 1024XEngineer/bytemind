@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 type SlashHandleResult struct {

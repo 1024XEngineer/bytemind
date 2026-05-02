@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	skillspkg "bytemind/internal/skills"
+	skillspkg "github.com/1024XEngineer/bytemind/internal/skills"
 )
 
 type extensionManager struct {

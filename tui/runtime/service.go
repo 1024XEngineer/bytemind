@@ -5,10 +5,10 @@ import (
 	"errors"
 	"io"
 
-	"bytemind/internal/agent"
-	"bytemind/internal/assets"
-	"bytemind/internal/history"
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/agent"
+	"github.com/1024XEngineer/bytemind/internal/assets"
+	"github.com/1024XEngineer/bytemind/internal/history"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 var (

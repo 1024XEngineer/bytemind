@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"bytemind/internal/llm"
-	"bytemind/internal/session"
-	subagentspkg "bytemind/internal/subagents"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
 )
 
 func TestExecuteSlashCommandHandlesResumeAndNew(t *testing.T) {

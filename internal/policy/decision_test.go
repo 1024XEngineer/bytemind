@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	planpkg "bytemind/internal/plan"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 )
 
 func TestEvaluatePromptHintInjected(t *testing.T) {

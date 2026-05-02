@@ -72,7 +72,19 @@ bytemind chat -config ./my.json       # 使用自定义配置文件
 | `/new`          | 开启新会话             |
 | `/plan`         | 切换到 Plan 模式       |
 | `/build`        | 切换回 Build 模式      |
+| `/commit <message>` | 暂存当前全部改动并创建本地 Git commit |
+| `/undo-commit` | 回退当前会话里由 `/commit` 创建的最后一个本地 commit |
 | `/quit`         | 安全退出               |
+
+使用 `/commit` 时，可以从 Slash 命令面板选择，也可以直接输入，但需要自己填写 commit message：
+
+```text
+/commit fix(/commit): 调整 /commit 的反馈形式
+```
+
+ByteMind 会先用 `git add -A` 暂存当前工作区改动，再创建 commit，并反馈 commit hash、message 和文件数量。
+
+`/undo-commit` 只用于回退同一会话里刚由 `/commit` 创建的上一个 commit。如果该 commit 已经进入 upstream 分支、当前在另一个会话里、或工作区已有更新改动会和回退结果混在一起，ByteMind 会阻止执行。
 
 ## 中途中断与恢复
 

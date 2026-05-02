@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"bytemind/internal/config"
-	"bytemind/internal/provider"
-	"bytemind/tui"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/provider"
+	"github.com/1024XEngineer/bytemind/tui"
 )
 
 func StartupIssueHint(check provider.Availability) string {

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func loadInstallPSScript(t *testing.T) string {
+func loadInstallScript(t *testing.T, name string) string {
 	t.Helper()
 
 	_, currentFile, _, ok := runtime.Caller(0)
@@ -17,18 +17,18 @@ func loadInstallPSScript(t *testing.T) string {
 	}
 
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
-	scriptPath := filepath.Join(repoRoot, "scripts", "install.ps1")
+	scriptPath := filepath.Join(repoRoot, "scripts", name)
 
 	content, err := os.ReadFile(scriptPath)
 	if err != nil {
-		t.Fatalf("read install.ps1: %v", err)
+		t.Fatalf("read %s: %v", name, err)
 	}
 
 	return string(content)
 }
 
 func TestInstallPSScript_ArchitectureFallbackForLegacyPowerShell(t *testing.T) {
-	script := loadInstallPSScript(t)
+	script := loadInstallScript(t, "install.ps1")
 
 	requiredSnippets := []string{
 		`GetProperty("OSArchitecture")`,
@@ -42,5 +42,17 @@ func TestInstallPSScript_ArchitectureFallbackForLegacyPowerShell(t *testing.T) {
 		if !strings.Contains(script, snippet) {
 			t.Fatalf("install.ps1 missing legacy-compat architecture logic snippet: %q", snippet)
 		}
+	}
+}
+
+func TestInstallScriptsDefaultToUserHomeBin(t *testing.T) {
+	shellScript := loadInstallScript(t, "install.sh")
+	if !strings.Contains(shellScript, `INSTALL_DIR="${BYTEMIND_INSTALL_DIR:-$HOME/bin}"`) {
+		t.Fatal("install.sh should default BYTEMIND_INSTALL_DIR to $HOME/bin")
+	}
+
+	powerShellScript := loadInstallScript(t, "install.ps1")
+	if !strings.Contains(powerShellScript, `$installDir = if ($env:BYTEMIND_INSTALL_DIR) { $env:BYTEMIND_INSTALL_DIR } else { Join-Path $HOME "bin" }`) {
+		t.Fatal("install.ps1 should default BYTEMIND_INSTALL_DIR to $HOME\\bin")
 	}
 }

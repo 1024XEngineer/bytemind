@@ -8,12 +8,12 @@ import (
 	"strings"
 	"testing"
 
-	"bytemind/internal/config"
-	"bytemind/internal/llm"
-	policypkg "bytemind/internal/policy"
-	"bytemind/internal/provider"
-	"bytemind/internal/session"
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	policypkg "github.com/1024XEngineer/bytemind/internal/policy"
+	"github.com/1024XEngineer/bytemind/internal/provider"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 type streamFallbackClient struct {

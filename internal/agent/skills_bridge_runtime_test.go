@@ -11,10 +11,10 @@ import (
 	"sync"
 	"testing"
 
-	"bytemind/internal/llm"
-	"bytemind/internal/session"
-	"bytemind/internal/skills"
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/skills"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 type runtimeBridgeTool struct {

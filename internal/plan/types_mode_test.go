@@ -3,7 +3,7 @@ package plan
 import (
 	"testing"
 
-	corepkg "bytemind/internal/core"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 )
 
 func TestNormalizeModeMapsLegacyLabelsToBuild(t *testing.T) {

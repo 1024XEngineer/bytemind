@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	extensionspkg "bytemind/internal/extensions"
-	"bytemind/internal/llm"
-	toolspkg "bytemind/internal/tools"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	toolspkg "github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 type runtimeSyncStubManager struct {

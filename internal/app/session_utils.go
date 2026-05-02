@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 const DefaultSessionListLimit = 8
@@ -50,15 +50,19 @@ func ParseSessionListLimit(raw string) (int, error) {
 }
 
 func SameWorkspace(a, b string) bool {
-	left, err := filepath.Abs(a)
+	return strings.EqualFold(normalizeWorkspacePath(a), normalizeWorkspacePath(b))
+}
+
+func normalizeWorkspacePath(path string) string {
+	normalized, err := filepath.Abs(path)
 	if err != nil {
-		left = a
+		normalized = path
 	}
-	right, err := filepath.Abs(b)
-	if err != nil {
-		right = b
+	normalized = filepath.Clean(normalized)
+	if resolved, err := filepath.EvalSymlinks(normalized); err == nil {
+		normalized = filepath.Clean(resolved)
 	}
-	return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
+	return normalized
 }
 
 func CreateSession(store *session.Store, workspace string) (*session.Session, error) {

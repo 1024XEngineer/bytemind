@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	corepkg "bytemind/internal/core"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 )
 
 var ErrTaskNotImplemented = newRuntimeError(ErrorCodeNotImplemented, "runtime task manager is not wired", false, nil)

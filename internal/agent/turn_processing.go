@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
-	contextpkg "bytemind/internal/context"
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/llm"
-	planpkg "bytemind/internal/plan"
-	"bytemind/internal/session"
-	"bytemind/internal/tokenusage"
-	"bytemind/internal/tools"
+	contextpkg "github.com/1024XEngineer/bytemind/internal/context"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/tokenusage"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 type turnProcessParams struct {

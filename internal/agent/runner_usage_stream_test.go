@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"bytemind/internal/config"
-	"bytemind/internal/llm"
-	"bytemind/internal/session"
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 type observingStreamClient struct {

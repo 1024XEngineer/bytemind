@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	extensionspkg "bytemind/internal/extensions"
-	toolspkg "bytemind/internal/tools"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
+	toolspkg "github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 func TestWithClientOptionHandlesNilOptions(t *testing.T) {

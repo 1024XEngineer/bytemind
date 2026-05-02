@@ -5,14 +5,14 @@ import (
 	"errors"
 	"io"
 
-	"bytemind/internal/agent"
-	"bytemind/internal/config"
-	"bytemind/internal/llm"
-	"bytemind/internal/session"
-	"bytemind/internal/skills"
-	subagentspkg "bytemind/internal/subagents"
-	"bytemind/internal/tools"
-	"bytemind/tui"
+	"github.com/1024XEngineer/bytemind/internal/agent"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/skills"
+	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
+	"github.com/1024XEngineer/bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/tui"
 )
 
 type tuiRunnerAdapter struct {

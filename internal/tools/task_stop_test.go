@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	corepkg "bytemind/internal/core"
-	runtimepkg "bytemind/internal/runtime"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
 )
 
 func TestTaskStopToolStopsRunningTask(t *testing.T) {

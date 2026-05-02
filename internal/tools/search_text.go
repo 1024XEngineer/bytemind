@@ -12,8 +12,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 type SearchTextTool struct{}
@@ -42,6 +43,8 @@ type searchTextScanStats struct {
 
 var searchTextLookPath = exec.LookPath
 var searchTextCommand = exec.CommandContext
+
+const defaultSearchTextRipgrepTimeout = 5 * time.Second
 
 func (SearchTextTool) Definition() llm.ToolDefinition {
 	return llm.ToolDefinition{
@@ -151,7 +154,7 @@ func searchTextWithRipgrep(ctx context.Context, args searchTextArgs, workspace, 
 		searchBase = filepath.Dir(root)
 	}
 
-	rgCtx, cancel := context.WithCancel(ctx)
+	rgCtx, cancel := context.WithTimeout(ctx, searchTextRipgrepTimeout())
 	defer cancel()
 
 	commandArgs := []string{
@@ -238,11 +241,14 @@ func searchTextWithRipgrep(ctx context.Context, args searchTextArgs, workspace, 
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, false, "", true, ctxErr
 	}
-	if scanErr != nil {
-		return nil, false, "", false, nil
-	}
 	if truncated {
 		return matches, true, reason, true, nil
+	}
+	if errors.Is(rgCtx.Err(), context.DeadlineExceeded) {
+		return matches, true, "timeout", true, nil
+	}
+	if scanErr != nil {
+		return nil, false, "", false, nil
 	}
 	if waitErr != nil {
 		var exitErr *exec.ExitError
@@ -359,6 +365,11 @@ func searchTextCanUseRipgrepBudgets() bool {
 		maxSearchTextFiles() == defaultSearchTextMaxFiles &&
 		maxSearchTextBytes() == defaultSearchTextMaxBytes &&
 		maxSearchTextFileBytes() == defaultSearchTextMaxFileBytes
+}
+
+func searchTextRipgrepTimeout() time.Duration {
+	timeoutMS := positiveEnvInt("BYTEMIND_SEARCH_RG_TIMEOUT_MS", int(defaultSearchTextRipgrepTimeout/time.Millisecond))
+	return time.Duration(timeoutMS) * time.Millisecond
 }
 
 func normalizeRipgrepPath(workspace, base, raw string) string {

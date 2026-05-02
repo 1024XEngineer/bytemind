@@ -13,15 +13,15 @@ import (
 	"testing"
 	"time"
 
-	"bytemind/internal/agent"
-	"bytemind/internal/config"
-	"bytemind/internal/history"
-	"bytemind/internal/llm"
-	"bytemind/internal/mention"
-	notifypkg "bytemind/internal/notify"
-	planpkg "bytemind/internal/plan"
-	"bytemind/internal/session"
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/agent"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/history"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/mention"
+	notifypkg "github.com/1024XEngineer/bytemind/internal/notify"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -2603,7 +2603,7 @@ func TestAltVPastesClipboardImage(t *testing.T) {
 
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
 	updated := got.(model)
-	if updated.input.Value() != "[Image #1]" {
+	if updated.input.Value() != "[Image#1]" {
 		t.Fatalf("expected alt+v to paste clipboard image placeholder, got %q", updated.input.Value())
 	}
 	if !strings.Contains(updated.statusNote, "Attached image from clipboard") {
@@ -2622,7 +2622,7 @@ func TestCtrlVPastesClipboardImage(t *testing.T) {
 
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlV})
 	updated := got.(model)
-	if updated.input.Value() != "[Image #1]" {
+	if updated.input.Value() != "[Image#1]" {
 		t.Fatalf("expected ctrl+v to paste clipboard image placeholder, got %q", updated.input.Value())
 	}
 }
@@ -2638,7 +2638,7 @@ func TestCtrlVControlMarkerRunePastesClipboardImage(t *testing.T) {
 
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\x16'}})
 	updated := got.(model)
-	if updated.input.Value() != "[Image #1]" {
+	if updated.input.Value() != "[Image#1]" {
 		t.Fatalf("expected ctrl+v control marker to paste clipboard image placeholder, got %q", updated.input.Value())
 	}
 }
@@ -2902,7 +2902,7 @@ func TestTerminalPasteEventWithEmptyPayloadPastesClipboardImage(t *testing.T) {
 
 	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Paste: true})
 	updated := got.(model)
-	if updated.input.Value() != "[Image #1]" {
+	if updated.input.Value() != "[Image#1]" {
 		t.Fatalf("expected empty paste event to attach clipboard image, got %q", updated.input.Value())
 	}
 }
@@ -2919,7 +2919,7 @@ func TestTerminalPasteEventWithTextDoesNotForceClipboardImage(t *testing.T) {
 	if updated.input.Value() != "hello" {
 		t.Fatalf("expected text paste to remain text, got %q", updated.input.Value())
 	}
-	if strings.Contains(updated.input.Value(), "[Image #") {
+	if strings.Contains(updated.input.Value(), "[Image#") || strings.Contains(updated.input.Value(), "[Image #") {
 		t.Fatalf("expected no image placeholder for text paste")
 	}
 }
@@ -2938,7 +2938,7 @@ func TestRapidRuneInputForImagePathTriggersFallbackPlaceholder(t *testing.T) {
 		next := got.(model)
 		m = &next
 	}
-	if m.input.Value() != "[Image #1]" {
+	if m.input.Value() != "[Image#1]" {
 		t.Fatalf("expected rapid path input to convert to placeholder, got %q", m.input.Value())
 	}
 }
@@ -3659,7 +3659,7 @@ func TestFilteredCommandsShowsRootSelectorGroups(t *testing.T) {
 		usages = append(usages, item.Usage)
 	}
 
-	for _, want := range []string{"/help", "/session", "/skills-select", "/new", "/compact", "/quit"} {
+	for _, want := range []string{"/help", "/session", "/skills-select", "/new", "/compact", "/commit <message>", "/undo-commit", "/quit"} {
 		if !containsString(usages, want) {
 			t.Fatalf("expected root selector to contain %q, got %v", want, usages)
 		}
@@ -5125,7 +5125,7 @@ func TestFormatChatBodyHighlightsSearchToolSummaryAndMatches(t *testing.T) {
 	item := chatEntry{
 		Kind: "tool",
 		Body: "12 matches for \"func main() {\"\n" +
-			"bytemind/opencode-go/main.go:14 func main() {\n" +
+			"github.com/1024XEngineer/bytemind/opencode-go/main.go:14 func main() {\n" +
 			"cmd/bytemind/main.go:11 func main() {",
 	}
 
@@ -5134,7 +5134,7 @@ func TestFormatChatBodyHighlightsSearchToolSummaryAndMatches(t *testing.T) {
 	if !strings.Contains(got, toolSearchSummaryStyle.Render("12 matches for \"func main() {\"")) {
 		t.Fatalf("expected search summary line to be highlighted, got %q", got)
 	}
-	if strings.Contains(got, "bytemind/opencode-go/main.go:14") || strings.Contains(got, "cmd/bytemind/main.go:11") {
+	if strings.Contains(got, "github.com/1024XEngineer/bytemind/opencode-go/main.go:14") || strings.Contains(got, "cmd/bytemind/main.go:11") {
 		t.Fatalf("expected tool body to render only summary line, got %q", got)
 	}
 }
@@ -5579,6 +5579,9 @@ func TestLandingModeTabsHideAccessLabel(t *testing.T) {
 	if strings.Contains(tabs, "Access:") || strings.Contains(tabs, "Full Access") {
 		t.Fatalf("expected landing mode tabs to hide access label, got %q", tabs)
 	}
+	if !strings.Contains(stripANSI(tabs), "[ Build ]") {
+		t.Fatalf("expected active build tab to use bracket style, got %q", tabs)
+	}
 }
 
 func TestApprovalBannerForFullAccessConfirmation(t *testing.T) {
@@ -5661,6 +5664,74 @@ func TestFullAccessConfirmationRejectKeepsInteractiveMode(t *testing.T) {
 	}
 	if updated.statusNote != "Full access request canceled." {
 		t.Fatalf("expected canceled status note, got %q", updated.statusNote)
+	}
+}
+
+func TestCurrentModelLabelCompactsBytemindPSeriesName(t *testing.T) {
+	m := model{
+		cfg: config.Config{
+			Provider: config.ProviderConfig{Model: "P1 (bytemind)"},
+		},
+	}
+
+	if got := m.currentModelLabel(); got != "p1" {
+		t.Fatalf("expected compact bytemind model label, got %q", got)
+	}
+}
+
+func TestRenderStatusBarUsesCompactBytemindModelLabel(t *testing.T) {
+	m := model{
+		width: 120,
+		mode:  modeBuild,
+		cfg: config.Config{
+			Provider: config.ProviderConfig{Model: "P1 (bytemind)"},
+		},
+	}
+
+	bar := m.renderStatusBar()
+	if !strings.Contains(bar, "Model: p1") {
+		t.Fatalf("expected status bar to show compact model label, got %q", bar)
+	}
+	if strings.Contains(bar, "bytemind") {
+		t.Fatalf("expected status bar to omit verbose provider suffix, got %q", bar)
+	}
+}
+
+func TestTogglePasteExpandMessagesAndCtrlE(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		screen:           screenChat,
+		input:            input,
+		pastedOrder:      []string{"1", "2"},
+		pasteExpandLevel: map[string]int{"1": 0, "2": 2},
+	}
+
+	got, _ := m.Update(togglePasteExpandMsg{PasteID: "1"})
+	updated := got.(model)
+	if updated.pasteExpandLevel["1"] != 1 {
+		t.Fatalf("expected single paste toggle to advance to preview, got %d", updated.pasteExpandLevel["1"])
+	}
+
+	got, _ = updated.Update(togglePasteExpandAllMsg{})
+	updated = got.(model)
+	if updated.pasteExpandLevel["1"] != 2 || updated.pasteExpandLevel["2"] != 2 {
+		t.Fatalf("expected expand-all to set every paste to full, got %#v", updated.pasteExpandLevel)
+	}
+
+	got, _ = updated.Update(togglePasteExpandAllMsg{})
+	updated = got.(model)
+	if updated.pasteExpandLevel["1"] != 0 || updated.pasteExpandLevel["2"] != 0 {
+		t.Fatalf("expected second expand-all toggle to collapse every paste, got %#v", updated.pasteExpandLevel)
+	}
+
+	got, cmd := updated.handleKey(tea.KeyMsg{Type: tea.KeyCtrlE})
+	updated = got.(model)
+	if cmd == nil {
+		t.Fatal("expected Ctrl+E to emit a paste expand-all message")
+	}
+	msg := cmd()
+	if _, ok := msg.(togglePasteExpandAllMsg); !ok {
+		t.Fatalf("expected Ctrl+E command to emit togglePasteExpandAllMsg, got %T", msg)
 	}
 }
 

@@ -3,7 +3,7 @@ package policy
 import (
 	"strings"
 
-	corepkg "bytemind/internal/core"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 )
 
 type ToolAccessInput struct {

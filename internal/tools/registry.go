@@ -9,12 +9,12 @@ import (
 	"strings"
 	"sync"
 
-	configpkg "bytemind/internal/config"
-	"bytemind/internal/llm"
-	planpkg "bytemind/internal/plan"
-	runtimepkg "bytemind/internal/runtime"
-	sandboxpkg "bytemind/internal/sandbox"
-	"bytemind/internal/session"
+	configpkg "github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
+	sandboxpkg "github.com/1024XEngineer/bytemind/internal/sandbox"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 type ExecutionContext struct {

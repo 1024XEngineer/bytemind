@@ -4,9 +4,9 @@ import (
 	"errors"
 	"strings"
 
-	extensionspkg "bytemind/internal/extensions"
-	"bytemind/internal/session"
-	toolspkg "bytemind/internal/tools"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	toolspkg "github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 var nonBridgedBuiltinTools = map[string]struct{}{

@@ -11,9 +11,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	corepkg "bytemind/internal/core"
-	planpkg "bytemind/internal/plan"
-	policypkg "bytemind/internal/policy"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	policypkg "github.com/1024XEngineer/bytemind/internal/policy"
 )
 
 type ExecuteRequest struct {

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"bytemind/internal/llm"
-	skillspkg "bytemind/internal/skills"
-	toolspkg "bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	skillspkg "github.com/1024XEngineer/bytemind/internal/skills"
+	toolspkg "github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 func TestStableToolKeyNormalizesSegments(t *testing.T) {

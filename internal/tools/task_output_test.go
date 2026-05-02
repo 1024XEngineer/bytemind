@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	corepkg "bytemind/internal/core"
-	runtimepkg "bytemind/internal/runtime"
-	"bytemind/internal/session"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 func TestTaskOutputToolReadsIncrementalOutput(t *testing.T) {

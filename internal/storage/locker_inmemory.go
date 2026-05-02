@@ -8,7 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	corepkg "bytemind/internal/core"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 )
 
 type inMemoryLockEntry struct {

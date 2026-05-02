@@ -7,15 +7,15 @@ import (
 	"strconv"
 	"strings"
 
-	"bytemind/internal/agent"
-	"bytemind/internal/llm"
-	"bytemind/internal/session"
-	tuiapi "bytemind/tui/api"
-	tuiruntime "bytemind/tui/runtime"
+	"github.com/1024XEngineer/bytemind/internal/agent"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	tuiapi "github.com/1024XEngineer/bytemind/tui/api"
+	tuiruntime "github.com/1024XEngineer/bytemind/tui/runtime"
 )
 
 var (
-	builderImagePlaceholderPattern = regexp.MustCompile(`\[Image #(\d+)\]`)
+	builderImagePlaceholderPattern = regexp.MustCompile(`\[Image ?#(\d+)\]`)
 	builderImageMentionPattern     = regexp.MustCompile(`(?i)@([^\s@]+?\.(?:png|jpe?g|webp|gif))`)
 )
 

@@ -6,7 +6,7 @@ import (
 	"io/fs"
 	"path/filepath"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 type ListFilesTool struct{}

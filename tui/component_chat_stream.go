@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	planpkg "bytemind/internal/plan"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 )
 
 var streamTurnIntentTagPattern = regexp.MustCompile(`(?is)<turn_intent>\s*[a-z_]*\s*</turn_intent>|</?turn_intent>\s*`)

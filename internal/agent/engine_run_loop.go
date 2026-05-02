@@ -7,11 +7,11 @@ import (
 	"strconv"
 	"strings"
 
-	contextpkg "bytemind/internal/context"
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/llm"
-	"bytemind/internal/session"
-	storagepkg "bytemind/internal/storage"
+	contextpkg "github.com/1024XEngineer/bytemind/internal/context"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
 )
 
 func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Session, setup runPromptSetup, out io.Writer) (string, error) {

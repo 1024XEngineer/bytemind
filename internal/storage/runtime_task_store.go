@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"bytemind/internal/config"
-	corepkg "bytemind/internal/core"
-	runtimepkg "bytemind/internal/runtime"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
 )
 
 const unknownTaskID = "unknown"

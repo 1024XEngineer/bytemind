@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/config"
 )
 
 const (
@@ -126,7 +126,7 @@ func fetchLatestVersionFromGitHub(currentVersion string) (string, error) {
 	if userAgentVersion == "" {
 		userAgentVersion = "dev"
 	}
-	req.Header.Set("User-Agent", "bytemind/"+userAgentVersion)
+	req.Header.Set("User-Agent", "github.com/1024XEngineer/bytemind/"+userAgentVersion)
 
 	resp, err := updateCheckHTTPClient.Do(req)
 	if err != nil {

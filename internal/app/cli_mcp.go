@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"bytemind/internal/mcpctl"
+	"github.com/1024XEngineer/bytemind/internal/mcpctl"
 )
 
 func RunMCP(args []string, stdin io.Reader, stdout, stderr io.Writer) error {

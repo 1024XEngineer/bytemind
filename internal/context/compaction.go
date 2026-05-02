@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 type pairWindow struct {

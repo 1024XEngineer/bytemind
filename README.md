@@ -205,4 +205,4 @@ See [docs/environment-variables.md](docs/environment-variables.md) for runtime T
 
 ## 📄 License
 
-MIT License
+This project is licensed under the [MIT License](LICENSE).

@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/llm"
-	planpkg "bytemind/internal/plan"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 )
 
 const (

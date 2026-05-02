@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	planpkg "bytemind/internal/plan"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 )
 
 func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {

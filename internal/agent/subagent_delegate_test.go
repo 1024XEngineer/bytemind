@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"bytemind/internal/config"
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/llm"
-	planpkg "bytemind/internal/plan"
-	runtimepkg "bytemind/internal/runtime"
-	"bytemind/internal/session"
-	subagentspkg "bytemind/internal/subagents"
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 func TestDelegateSubAgentReturnsRuntimeUnavailableWhenClientMissing(t *testing.T) {

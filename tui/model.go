@@ -13,14 +13,14 @@ import (
 	"sync"
 	"time"
 
-	"bytemind/internal/assets"
-	"bytemind/internal/config"
-	"bytemind/internal/history"
-	"bytemind/internal/llm"
-	"bytemind/internal/mention"
-	notifypkg "bytemind/internal/notify"
-	planpkg "bytemind/internal/plan"
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/assets"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/history"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/mention"
+	notifypkg "github.com/1024XEngineer/bytemind/internal/notify"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/session"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -271,6 +271,12 @@ type hiddenPasteProbeFlushMsg struct {
 	ID int
 }
 
+type togglePasteExpandMsg struct {
+	PasteID string
+}
+
+type togglePasteExpandAllMsg struct{}
+
 type mcpCommandResultMsg struct {
 	Input    string
 	Response string
@@ -326,6 +332,8 @@ var commandItems = []commandItem{
 	{Name: "/mcp show", Usage: "/mcp show <id>", Description: "Show one MCP server config and runtime state.", Kind: "command"},
 	{Name: "/new", Usage: "/new", Description: "Start a fresh session in this workspace.", Kind: "command"},
 	{Name: "/compact", Usage: "/compact", Description: "Compress long session history into a continuation summary.", Kind: "command"},
+	{Name: "/commit", Usage: "/commit <message>", Description: "Stage all changes and create a local Git commit.", Kind: "command"},
+	{Name: "/undo-commit", Usage: "/undo-commit", Description: "Undo the last local commit created by /commit in this session.", Kind: "command"},
 	{Name: "/btw", Usage: "/btw <message>", Description: "Interject while a run is in progress.", Kind: "command"},
 	{Name: "/quit", Usage: "/quit", Description: "Exit the current TUI window.", Kind: "command"},
 	{Name: "/skills", Usage: "/skills", Description: "List available skills and current active skill.", Kind: "command"},
@@ -341,6 +349,7 @@ type model struct {
 	cfg        config.Config
 	workspace  string
 	notifier   notifypkg.Notifier
+	version    string
 
 	width  int
 	height int
@@ -437,6 +446,7 @@ type model struct {
 	pastedOrder                []string
 	nextPasteID                int
 	pastedStateLoaded          bool
+	pasteExpandLevel           map[string]int // 0=collapsed, 1=preview (first 10 lines), 2=full
 	lastCompressedPasteAt      time.Time
 	virtualPasteParts          []virtualPastePart
 	nextVirtualPastePart       int
@@ -518,6 +528,7 @@ func newModel(opts Options) model {
 		cfg:                  opts.Config,
 		workspace:            opts.Workspace,
 		notifier:             notifier,
+		version:              opts.Version,
 		async:                async,
 		viewport:             vp,
 		copyView:             copyVP,
@@ -547,6 +558,7 @@ func newModel(opts Options) model {
 		nextImageID:          nextSessionImageID(opts.Session),
 		pastedContents:       make(map[string]pastedContent, maxStoredPastedContents),
 		pastedOrder:          make([]string, 0, maxStoredPastedContents),
+		pasteExpandLevel:     make(map[string]int),
 		nextPasteID:          1,
 		virtualPasteParts:    make([]virtualPastePart, 0, maxStoredPastedContents),
 		nextVirtualPastePart: 1,
@@ -848,6 +860,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.flushHiddenPasteProbeToInput()
 		m.syncInputOverlays()
+		return m, nil
+	case togglePasteExpandMsg:
+		if m.pasteExpandLevel == nil {
+			m.pasteExpandLevel = make(map[string]int)
+		}
+		m.pasteExpandLevel[msg.PasteID] = (m.pasteExpandLevel[msg.PasteID] + 1) % 3
+		m.refreshViewport()
+		return m, nil
+	case togglePasteExpandAllMsg:
+		if m.pasteExpandLevel == nil {
+			m.pasteExpandLevel = make(map[string]int)
+		}
+		allFull := true
+		for _, id := range m.pastedOrder {
+			if m.pasteExpandLevel[id] != 2 {
+				allFull = false
+				break
+			}
+		}
+		newLevel := 2
+		if allFull {
+			newLevel = 0
+		}
+		for _, id := range m.pastedOrder {
+			m.pasteExpandLevel[id] = newLevel
+		}
+		m.refreshViewport()
 		return m, nil
 	case mouseSelectionScrollTickMsg:
 		return m.handleMouseSelectionScrollTick(msg)
@@ -1363,6 +1402,17 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.toggleApprovalMode()
 		return m, nil
+	case "ctrl+e":
+		if m.screen != screenChat {
+			return m, nil
+		}
+		if m.approval != nil || m.helpOpen || m.sessionsOpen || m.skillsOpen || m.commandOpen || m.mentionOpen || m.planActionOpen {
+			return m, nil
+		}
+		if len(m.pastedOrder) == 0 {
+			return m, nil
+		}
+		return m, func() tea.Msg { return togglePasteExpandAllMsg{} }
 	}
 
 	if m.approval != nil {
@@ -2391,7 +2441,7 @@ func shouldExecuteFromPalette(item commandItem) bool {
 		return true
 	}
 	switch item.Name {
-	case "/help", "/session", "/agents", "/skills", "/skill clear", "/mcp list", "/mcp help", "/new", "/compact", "/quit":
+	case "/help", "/session", "/agents", "/skills", "/skill clear", "/mcp list", "/mcp help", "/new", "/compact", "/undo-commit", "/quit":
 		return true
 	default:
 		return false
@@ -2724,6 +2774,10 @@ func (m model) autoFollowLabel() string {
 
 func (m model) currentModelLabel() string {
 	if model := strings.TrimSpace(m.cfg.Provider.Model); model != "" {
+		lower := strings.ToLower(model)
+		if strings.HasSuffix(lower, " (bytemind)") {
+			return strings.TrimSpace(strings.TrimSuffix(lower, " (bytemind)"))
+		}
 		return model
 	}
 	return "-"

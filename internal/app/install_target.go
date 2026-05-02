@@ -8,18 +8,16 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"bytemind/internal/config"
 )
 
 func resolveInstallTarget(dirValue, nameValue string) (string, error) {
 	dir := strings.TrimSpace(dirValue)
 	if dir == "" {
-		home, err := config.ResolveHomeDir()
+		defaultDir, err := defaultInstallDir()
 		if err != nil {
 			return "", err
 		}
-		dir = filepath.Join(home, "bin")
+		dir = defaultDir
 	} else {
 		abs, err := filepath.Abs(dir)
 		if err != nil {
@@ -37,6 +35,14 @@ func resolveInstallTarget(dirValue, nameValue string) (string, error) {
 	}
 
 	return filepath.Join(dir, name), nil
+}
+
+func defaultInstallDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "bin"), nil
 }
 
 func defaultBinaryName(goos string) string {

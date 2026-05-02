@@ -4,10 +4,10 @@ import (
 	"context"
 	"strings"
 
-	planpkg "bytemind/internal/plan"
-	"bytemind/internal/session"
-	subagentspkg "bytemind/internal/subagents"
-	"bytemind/internal/tools"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 func (r *Runner) ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic) {

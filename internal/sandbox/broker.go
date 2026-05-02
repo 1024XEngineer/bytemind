@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	configpkg "bytemind/internal/config"
+	configpkg "github.com/1024XEngineer/bytemind/internal/config"
 )
 
 const (

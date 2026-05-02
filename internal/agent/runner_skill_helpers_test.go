@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"bytemind/internal/session"
-	"bytemind/internal/skills"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/skills"
 )
 
 func TestRunnerListSkillsAndGetActiveSkillBranches(t *testing.T) {

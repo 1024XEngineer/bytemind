@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	corepkg "bytemind/internal/core"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 )
 
 const defaultRecentToolLimit = 4

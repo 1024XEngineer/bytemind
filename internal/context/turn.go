@@ -3,7 +3,7 @@ package context
 import (
 	"strings"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 // TurnMessagesRequest defines one model turn message assembly contract.

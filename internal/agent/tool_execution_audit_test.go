@@ -9,13 +9,13 @@ import (
 	"sync"
 	"testing"
 
-	"bytemind/internal/config"
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/llm"
-	runtimepkg "bytemind/internal/runtime"
-	"bytemind/internal/session"
-	storagepkg "bytemind/internal/storage"
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 type toolExecutionAuditStore struct {

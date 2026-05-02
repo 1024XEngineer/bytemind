@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -31,9 +32,10 @@ func TestDefaultBinaryName(t *testing.T) {
 	}
 }
 
-func TestResolveInstallTargetUsesBytemindHomeByDefault(t *testing.T) {
-	home := filepath.Join(t.TempDir(), ".bytemind-home")
-	t.Setenv("BYTEMIND_HOME", home)
+func TestResolveInstallTargetUsesUserHomeBinByDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", filepath.Join(t.TempDir(), ".bytemind-home"))
+	setUserHomeEnv(t, home)
 
 	target, err := resolveInstallTarget("", "custom-bin")
 	if err != nil {
@@ -74,8 +76,8 @@ func TestInstallBinaryCopiesExecutableFile(t *testing.T) {
 }
 
 func TestPathContainsDirForOS(t *testing.T) {
-	pathEnv := strings.Join([]string{"C:/Tools", "C:/Users/Wheat/.bytemind/bin"}, ";")
-	if !pathContainsDirForOS(pathEnv, `c:\users\wheat\.bytemind\bin`, true) {
+	pathEnv := strings.Join([]string{"C:/Tools", "C:/Users/Wheat/bin"}, ";")
+	if !pathContainsDirForOS(pathEnv, `c:\users\wheat\bin`, true) {
 		t.Fatal("expected windows path lookup to be case-insensitive and slash-insensitive")
 	}
 	if pathContainsDirForOS(pathEnv, `C:\missing`, true) {
@@ -84,8 +86,8 @@ func TestPathContainsDirForOS(t *testing.T) {
 }
 
 func TestAppendPathEntryAvoidsDuplicates(t *testing.T) {
-	current := strings.Join([]string{`C:\Tools`, `C:\Users\wheat\.bytemind\bin`}, ";")
-	next, changed := appendPathEntry(current, `c:\users\wheat\.bytemind\bin`, true)
+	current := strings.Join([]string{`C:\Tools`, `C:\Users\wheat\bin`}, ";")
+	next, changed := appendPathEntry(current, `c:\users\wheat\bin`, true)
 	if changed {
 		t.Fatalf("expected duplicate path to be ignored, got changed=true next=%q", next)
 	}
@@ -96,11 +98,11 @@ func TestAppendPathEntryAvoidsDuplicates(t *testing.T) {
 
 func TestAppendPathEntryAddsMissingEntry(t *testing.T) {
 	current := `C:\Tools`
-	next, changed := appendPathEntry(current, `C:\Users\wheat\.bytemind\bin`, true)
+	next, changed := appendPathEntry(current, `C:\Users\wheat\bin`, true)
 	if !changed {
 		t.Fatal("expected missing path entry to be appended")
 	}
-	if !strings.Contains(next, `C:\Users\wheat\.bytemind\bin`) {
+	if !strings.Contains(next, `C:\Users\wheat\bin`) {
 		t.Fatalf("expected appended path entry, got %q", next)
 	}
 }
@@ -122,14 +124,14 @@ func TestAddToWindowsUserPathUsesGetterAndSetter(t *testing.T) {
 		return nil
 	}
 
-	changed, err := addToWindowsUserPath(`C:\Users\wheat\.bytemind\bin`)
+	changed, err := addToWindowsUserPath(`C:\Users\wheat\bin`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !changed {
 		t.Fatal("expected user path to change")
 	}
-	if !strings.Contains(captured, `C:\Users\wheat\.bytemind\bin`) {
+	if !strings.Contains(captured, `C:\Users\wheat\bin`) {
 		t.Fatalf("expected setter to receive appended path, got %q", captured)
 	}
 }
@@ -190,6 +192,17 @@ func TestResolveWindowsPowerShellExecutableFallbacksToPowerShellLiteral(t *testi
 
 func sameInstallPath(a, b string) bool {
 	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}
+
+func setUserHomeEnv(t *testing.T, home string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+		t.Setenv("HOMEDRIVE", "")
+		t.Setenv("HOMEPATH", "")
+		return
+	}
+	t.Setenv("HOME", home)
 }
 
 type stubInstallFileInfo struct{}

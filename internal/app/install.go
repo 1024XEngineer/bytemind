@@ -12,7 +12,7 @@ import (
 func RunInstall(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	installDir := fs.String("to", "", "Install directory. Defaults to BYTEMIND_HOME/bin (or ~/.bytemind/bin).")
+	installDir := fs.String("to", "", "Install directory. Defaults to ~/bin.")
 	binaryName := fs.String("name", "", "Binary name. Defaults to bytemind (bytemind.exe on Windows).")
 	addToPath := fs.Bool("add-to-path", true, "Automatically add install directory to user PATH when possible.")
 	if err := fs.Parse(args); err != nil {
