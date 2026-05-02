@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,11 +12,63 @@ import (
 	"bytemind/internal/config"
 	"bytemind/internal/llm"
 	"bytemind/internal/session"
+	"bytemind/internal/skills"
+	subagentspkg "bytemind/internal/subagents"
 	"bytemind/internal/tools"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+type subAgentCommandRunnerStub struct {
+	builtinAgent subagentspkg.Agent
+	builtinOK    bool
+}
+
+func (s *subAgentCommandRunnerStub) RunPromptWithInput(context.Context, *session.Session, RunPromptInput, string, io.Writer) (string, error) {
+	return "", nil
+}
+
+func (s *subAgentCommandRunnerStub) SetObserver(Observer) {}
+
+func (s *subAgentCommandRunnerStub) SetApprovalHandler(ApprovalHandler) {}
+
+func (s *subAgentCommandRunnerStub) UpdateProvider(config.ProviderConfig, llm.Client) {}
+
+func (s *subAgentCommandRunnerStub) ListSkills() ([]skills.Skill, []skills.Diagnostic) {
+	return nil, nil
+}
+
+func (s *subAgentCommandRunnerStub) GetActiveSkill(*session.Session) (skills.Skill, bool) {
+	return skills.Skill{}, false
+}
+
+func (s *subAgentCommandRunnerStub) ActivateSkill(*session.Session, string, map[string]string) (skills.Skill, error) {
+	return skills.Skill{}, nil
+}
+
+func (s *subAgentCommandRunnerStub) ClearActiveSkill(*session.Session) error {
+	return nil
+}
+
+func (s *subAgentCommandRunnerStub) ClearSkill(string) (skills.ClearResult, error) {
+	return skills.ClearResult{}, nil
+}
+
+func (s *subAgentCommandRunnerStub) ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic) {
+	return nil, nil
+}
+
+func (s *subAgentCommandRunnerStub) FindSubAgent(string) (subagentspkg.Agent, bool) {
+	return subagentspkg.Agent{}, false
+}
+
+func (s *subAgentCommandRunnerStub) FindBuiltinSubAgent(string) (subagentspkg.Agent, bool) {
+	if s.builtinOK {
+		return s.builtinAgent, true
+	}
+	return subagentspkg.Agent{}, false
+}
 
 func TestCommandPaletteListsSubAgentCommands(t *testing.T) {
 	required := map[string]bool{
@@ -31,6 +85,17 @@ func TestCommandPaletteListsSubAgentCommands(t *testing.T) {
 		if !found {
 			t.Fatalf("expected command palette to include %s", name)
 		}
+	}
+}
+
+func TestHandleSlashAgentsRequiresSubAgentRunner(t *testing.T) {
+	m := &model{}
+	err := m.handleSlashCommand("/agents")
+	if err == nil {
+		t.Fatal("expected /agents to fail when runner is unavailable")
+	}
+	if !strings.Contains(err.Error(), "runner is unavailable") {
+		t.Fatalf("expected runner unavailable error, got %v", err)
 	}
 }
 
@@ -98,6 +163,27 @@ builtin body
 	}
 	if !strings.Contains(body, "Tip: use /agents review") {
 		t.Fatalf("expected /review to include agents tip, got %q", body)
+	}
+}
+
+func TestHandleSlashBuiltinSubAgentUnavailable(t *testing.T) {
+	m := &model{
+		runner: &subAgentCommandRunnerStub{},
+		screen: screenChat,
+	}
+
+	if err := m.handleSlashCommand("/review inspect code changes"); err != nil {
+		t.Fatalf("expected /review to render unavailable hint, got %v", err)
+	}
+	if len(m.chatItems) < 2 {
+		t.Fatalf("expected /review command exchange in chat, got %#v", m.chatItems)
+	}
+	body := m.chatItems[len(m.chatItems)-1].Body
+	if !strings.Contains(body, "builtin subagent is unavailable") {
+		t.Fatalf("expected unavailable response, got %q", body)
+	}
+	if !strings.Contains(m.statusNote, "unavailable") {
+		t.Fatalf("expected unavailable status note, got %q", m.statusNote)
 	}
 }
 
@@ -183,6 +269,36 @@ explore files
 	}
 	if !containsChatEntryWithPrefix(m.chatItems, "user", "/explorer ") {
 		t.Fatalf("expected compact /explorer command to normalize with whitespace, got %#v", m.chatItems)
+	}
+}
+
+func TestSubmitBuiltinSubAgentPreferenceSynthesizesDisplayInput(t *testing.T) {
+	workspace := t.TempDir()
+	client := &compactCommandTestClient{
+		replies: []llm.Message{
+			{Role: llm.RoleAssistant, Content: "delegated"},
+		},
+	}
+	m := newSubAgentCommandModel(t, workspace, client)
+
+	if err := m.submitBuiltinSubAgentPreference("", "explorer", "locate runtime prompt"); err != nil {
+		t.Fatalf("expected synthesized display input submission to succeed, got %v", err)
+	}
+	if m.pendingCommandCmd == nil {
+		t.Fatal("expected synthesized submission to queue a run command")
+	}
+	if !containsChatEntry(m.chatItems, "user", "/explorer locate runtime prompt") {
+		t.Fatalf("expected synthesized slash input in chat history, got %#v", m.chatItems)
+	}
+}
+
+func TestBuildBuiltinSubAgentPreferencePromptFallsBackForEmptyTask(t *testing.T) {
+	prompt := buildBuiltinSubAgentPreferencePrompt("explorer", " ")
+	if !strings.Contains(prompt, "Please complete the requested task.") {
+		t.Fatalf("expected fallback task text in prompt, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "delegate_subagent") {
+		t.Fatalf("expected delegation guidance in prompt, got %q", prompt)
 	}
 }
 
