@@ -1,0 +1,35 @@
+package notify
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestBuildApprovalRequiredMessageIncludesReasonAndCommand(t *testing.T) {
+	msg := BuildApprovalRequiredMessage("go test ./...", "run focused tests")
+	if msg.Event != EventApprovalRequired {
+		t.Fatalf("expected approval_required event, got %q", msg.Event)
+	}
+	if msg.Title != titleApprovalRequired {
+		t.Fatalf("unexpected title: %q", msg.Title)
+	}
+	if !strings.Contains(msg.Body, "原因:") || !strings.Contains(msg.Body, "命令:") {
+		t.Fatalf("expected reason and command in body, got %q", msg.Body)
+	}
+	if !strings.Contains(msg.Key, "approval_required|") {
+		t.Fatalf("expected stable dedupe key, got %q", msg.Key)
+	}
+}
+
+func TestBuildRunFailedMessageRedactsDetail(t *testing.T) {
+	msg := BuildRunFailedMessage(7, "authorization: bearer secret-token")
+	if msg.Event != EventRunFailed {
+		t.Fatalf("expected run_failed event, got %q", msg.Event)
+	}
+	if strings.Contains(strings.ToLower(msg.Body), "secret-token") {
+		t.Fatalf("expected body to be sanitized, got %q", msg.Body)
+	}
+	if msg.Key != "run_failed|id=7" {
+		t.Fatalf("expected run_failed key, got %q", msg.Key)
+	}
+}
