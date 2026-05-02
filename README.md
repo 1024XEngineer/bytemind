@@ -118,6 +118,16 @@ go run ./cmd/bytemind run -prompt "refactor this module" -max-iterations 64
     "api_key": "your-api-key-here"
   },
   "approval_policy": "on-request",
+  "notifications": {
+    "desktop": {
+      "enabled": true,
+      "on_approval_required": true,
+      "on_run_completed": true,
+      "on_run_failed": true,
+      "on_run_canceled": false,
+      "cooldown_seconds": 3
+    }
+  },
   "max_iterations": 32,
   "stream": true
 }
@@ -186,6 +196,12 @@ See [docs/environment-variables.md](docs/environment-variables.md) for runtime T
 - `BYTEMIND_ENABLE_MOUSE`
 - `BYTEMIND_WINDOWS_INPUT_TTY`
 - `BYTEMIND_MOUSE_Y_OFFSET`
+- `BYTEMIND_DESKTOP_NOTIFY`
+- `BYTEMIND_NOTIFY_APPROVAL`
+- `BYTEMIND_NOTIFY_RUN_COMPLETED`
+- `BYTEMIND_NOTIFY_RUN_FAILED`
+- `BYTEMIND_NOTIFY_RUN_CANCELED`
+- `BYTEMIND_NOTIFY_COOLDOWN_SECONDS`
 
 ## 📄 License
 
