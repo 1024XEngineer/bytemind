@@ -21,6 +21,19 @@ func TestBuildApprovalRequiredMessageIncludesReasonAndCommand(t *testing.T) {
 	}
 }
 
+func TestBuildApprovalRequiredMessageKeyUsesFullSanitizedText(t *testing.T) {
+	longPrefix := strings.Repeat("segment-", 30)
+	commandOne := "run " + longPrefix + "one"
+	commandTwo := "run " + longPrefix + "two"
+
+	msgOne := BuildApprovalRequiredMessage(commandOne, "same reason")
+	msgTwo := BuildApprovalRequiredMessage(commandTwo, "same reason")
+
+	if msgOne.Key == msgTwo.Key {
+		t.Fatalf("expected different keys for different long commands, got same key %q", msgOne.Key)
+	}
+}
+
 func TestBuildRunFailedMessageRedactsDetail(t *testing.T) {
 	msg := BuildRunFailedMessage(7, "authorization: bearer secret-token")
 	if msg.Event != EventRunFailed {

@@ -13,15 +13,17 @@ const (
 )
 
 func BuildApprovalRequiredMessage(command, reason string) Message {
-	reason = truncate(sanitizeNotificationText(reason), 100)
-	command = truncate(sanitizeNotificationText(command), 120)
+	sanitizedReason := sanitizeNotificationText(reason)
+	sanitizedCommand := sanitizeNotificationText(command)
+	displayReason := truncate(sanitizedReason, 100)
+	displayCommand := truncate(sanitizedCommand, 120)
 
 	parts := make([]string, 0, 2)
-	if reason != "" {
-		parts = append(parts, "原因: "+reason)
+	if displayReason != "" {
+		parts = append(parts, "原因: "+displayReason)
 	}
-	if command != "" {
-		parts = append(parts, "命令: "+command)
+	if displayCommand != "" {
+		parts = append(parts, "命令: "+displayCommand)
 	}
 
 	body := "有新的权限审批请求，请回到终端处理。"
@@ -36,8 +38,8 @@ func BuildApprovalRequiredMessage(command, reason string) Message {
 		Body:  body,
 		Key: fmt.Sprintf(
 			"approval_required|cmd=%s|reason=%s",
-			normalizeForKey(command),
-			normalizeForKey(reason),
+			normalizeForKey(sanitizedCommand),
+			normalizeForKey(sanitizedReason),
 		),
 	}
 }
