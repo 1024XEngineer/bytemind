@@ -121,20 +121,30 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 			Workspace:    runtimeBundle.Session.Workspace,
 			StartupGuide: guide,
 		},
-		close: func() error {
-			runnerErr := runner.Close()
+		close: chainTUIRuntimeClose(runner.Close, notifier),
+	}, nil
+}
+
+func chainTUIRuntimeClose(runnerClose func() error, notifier notifypkg.Notifier) func() error {
+	return func() error {
+		runnerErr := error(nil)
+		if runnerClose != nil {
+			runnerErr = runnerClose()
+		}
+		notifierErr := error(nil)
+		if notifier != nil {
 			closeCtx, cancel := context.WithTimeout(context.Background(), tuiRuntimeNotifierCloseTimeout)
 			defer cancel()
-			notifierErr := notifier.Close(closeCtx)
-			if runnerErr != nil {
-				return runnerErr
-			}
-			if notifierErr != nil {
-				return notifierErr
-			}
-			return nil
-		},
-	}, nil
+			notifierErr = notifier.Close(closeCtx)
+		}
+		if runnerErr != nil {
+			return runnerErr
+		}
+		if notifierErr != nil {
+			return notifierErr
+		}
+		return nil
+	}
 }
 
 func resolveTUIStartupPolicy(interactive bool) (tui.StartupGuide, bool) {

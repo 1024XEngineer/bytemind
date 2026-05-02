@@ -10,6 +10,12 @@ ByteMind TUI supports the following runtime environment variables:
 | `BYTEMIND_APPROVAL_MODE` | `interactive` | Runtime approval mode override. Supported values: `interactive`, `full_access`. Legacy `away` is blocked by default to prevent silent privilege escalation. |
 | `BYTEMIND_ALLOW_AWAY_FULL_ACCESS` | `false` | Temporary migration gate. Set to `true` to allow legacy `approval_mode=away` to map to `full_access`. |
 | `BYTEMIND_AWAY_POLICY` | `auto_deny_continue` | Deprecated compatibility field. Still validated (`auto_deny_continue`, `fail_fast`) but no longer changes runtime approval behavior. |
+| `BYTEMIND_DESKTOP_NOTIFY` | `true` | Enable/disable desktop notifications globally. |
+| `BYTEMIND_NOTIFY_APPROVAL` | `true` | Enable/disable desktop notifications for approval requests. |
+| `BYTEMIND_NOTIFY_RUN_COMPLETED` | `true` | Enable/disable desktop notifications for successful run completion. |
+| `BYTEMIND_NOTIFY_RUN_FAILED` | `true` | Enable/disable desktop notifications for failed runs. |
+| `BYTEMIND_NOTIFY_RUN_CANCELED` | `false` | Enable/disable desktop notifications for canceled runs. |
+| `BYTEMIND_NOTIFY_COOLDOWN_SECONDS` | `3` | Cooldown window in seconds for identical notification keys. `0` disables cooldown dedupe. |
 | `BYTEMIND_SANDBOX_ENABLED` | `false` | Enables lease-based sandbox policy checks and worker-path enforcement for shell/file tools. |
 | `BYTEMIND_SYSTEM_SANDBOX_MODE` | `off` | System sandbox execution mode for shell tools. Supported values: `off`, `best_effort`, `required`. `required` fail-closes when backend is unavailable; `best_effort` falls back without system sandbox and logs a startup warning. |
 | `BYTEMIND_WRITABLE_ROOTS` | empty | Additional writable roots. Use the OS path-list separator (`;` on Windows, `:` on Linux/macOS). |
