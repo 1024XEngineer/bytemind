@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"bytemind/internal/agent"
 	"bytemind/internal/config"
@@ -23,6 +24,18 @@ import (
 type subAgentCommandRunnerStub struct {
 	builtinAgent subagentspkg.Agent
 	builtinOK    bool
+}
+
+type captureRunInputRunnerStub struct {
+	subAgentCommandRunnerStub
+	captured chan RunPromptInput
+}
+
+func (s *captureRunInputRunnerStub) RunPromptWithInput(_ context.Context, _ *session.Session, input RunPromptInput, _ string, _ io.Writer) (string, error) {
+	if s != nil && s.captured != nil {
+		s.captured <- input
+	}
+	return "", nil
 }
 
 func (s *subAgentCommandRunnerStub) RunPromptWithInput(context.Context, *session.Session, RunPromptInput, string, io.Writer) (string, error) {
@@ -289,6 +302,57 @@ func TestSubmitBuiltinSubAgentPreferenceSynthesizesDisplayInput(t *testing.T) {
 	}
 	if !containsChatEntry(m.chatItems, "user", "/explorer locate runtime prompt") {
 		t.Fatalf("expected synthesized slash input in chat history, got %#v", m.chatItems)
+	}
+}
+
+func TestSubmitBuiltinSubAgentPreferencePersistsDisplayTextInSessionHistory(t *testing.T) {
+	runner := &captureRunInputRunnerStub{
+		subAgentCommandRunnerStub: subAgentCommandRunnerStub{
+			builtinAgent: subagentspkg.Agent{Name: "review"},
+			builtinOK:    true,
+		},
+		captured: make(chan RunPromptInput, 1),
+	}
+	input := textarea.New()
+	input.Focus()
+	m := &model{
+		runner: runner,
+		sess:   session.New(t.TempDir()),
+		async:  make(chan tea.Msg, 8),
+		input:  input,
+		screen: screenChat,
+	}
+
+	if err := m.submitBuiltinSubAgentPreference("/review inspect changed files", "review", "inspect changed files"); err != nil {
+		t.Fatalf("expected slash preference submission to succeed, got %v", err)
+	}
+	if m.pendingCommandCmd == nil {
+		t.Fatal("expected slash preference to queue a run command")
+	}
+
+	msg := m.pendingCommandCmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok || len(batch) == 0 {
+		t.Fatalf("expected queued command batch, got %#v", msg)
+	}
+	if batch[0] == nil {
+		t.Fatalf("expected first queued command to be executable, got %#v", batch)
+	}
+	batch[0]()
+
+	select {
+	case captured := <-runner.captured:
+		if !captured.PersistDisplayTextAsUserMessage {
+			t.Fatalf("expected slash preference run input to persist display text as session user message, got %#v", captured)
+		}
+		if captured.DisplayText != "/review inspect changed files" {
+			t.Fatalf("expected display text to preserve slash command input, got %q", captured.DisplayText)
+		}
+		if !strings.Contains(captured.UserMessage.Text(), "delegate_subagent") {
+			t.Fatalf("expected model-side prompt to preserve delegation hint, got %q", captured.UserMessage.Text())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for queued slash preference run input")
 	}
 }
 

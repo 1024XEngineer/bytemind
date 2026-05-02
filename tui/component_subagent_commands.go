@@ -82,8 +82,9 @@ func (m *model) submitBuiltinSubAgentPreference(input, agentName, task string) e
 	}
 	prompt := buildBuiltinSubAgentPreferencePrompt(agentName, task)
 	next, cmd := m.submitPreparedPrompt(RunPromptInput{
-		UserMessage: llm.NewUserTextMessage(prompt),
-		DisplayText: normalizedInput,
+		UserMessage:                     llm.NewUserTextMessage(prompt),
+		DisplayText:                     normalizedInput,
+		PersistDisplayTextAsUserMessage: true,
 	}, normalizedInput)
 	updated, ok := next.(model)
 	if !ok {

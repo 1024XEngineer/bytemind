@@ -12,6 +12,7 @@ import (
 type runPromptSetup struct {
 	Input                        RunPromptInput
 	UserInput                    string
+	PersistedUserMessageIndex    int
 	RunMode                      planpkg.AgentMode
 	Mode                         string
 	SystemSandboxBackend         string

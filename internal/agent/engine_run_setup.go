@@ -24,6 +24,10 @@ func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptI
 
 	input = normalizeRunPromptInput(input)
 	userInput := input.DisplayText
+	persistedUserMessage := input.UserMessage
+	if input.PersistDisplayTextAsUserMessage && strings.TrimSpace(userInput) != "" {
+		persistedUserMessage = llm.NewUserTextMessage(userInput)
+	}
 	runMode := resolveRunMode(sess, mode)
 	mode = string(runMode)
 	if sess.Mode != runMode {
@@ -31,7 +35,8 @@ func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptI
 	}
 	planpkg.SeedForRun(&sess.Plan, runMode, userInput, input.UserMessage.Text())
 
-	if err := e.beginRunSession(sess, input.UserMessage, userInput); err != nil {
+	persistedUserMessageIndex := len(sess.Messages)
+	if err := e.beginRunSession(sess, persistedUserMessage, userInput); err != nil {
 		return runPromptSetup{}, err
 	}
 
@@ -78,6 +83,7 @@ func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptI
 	return runPromptSetup{
 		Input:                        input,
 		UserInput:                    userInput,
+		PersistedUserMessageIndex:    persistedUserMessageIndex,
 		RunMode:                      runMode,
 		Mode:                         mode,
 		SystemSandboxBackend:         systemSandboxBackend,
@@ -133,6 +139,8 @@ func (e *defaultEngine) buildTurnMessages(sess *session.Session, setup runPrompt
 	}
 	runner := e.runner
 
+	conversationMessages := conversationMessagesForTurn(sess.Messages, setup.Input, setup.PersistedUserMessageIndex)
+
 	return contextpkg.BuildTurnMessages(contextpkg.TurnMessagesRequest{
 		SystemPrompt: systemPrompt(PromptInput{
 			Workspace:                    runner.workspace,
@@ -160,8 +168,25 @@ func (e *defaultEngine) buildTurnMessages(sess *session.Session, setup runPrompt
 			Instruction:                  setup.InstructionText,
 		}),
 		WebLookupInstruction: setup.WebLookupInstruction,
-		ConversationMessages: sess.Messages,
+		ConversationMessages: conversationMessages,
 	})
+}
+
+func conversationMessagesForTurn(messages []llm.Message, input RunPromptInput, persistedUserMessageIndex int) []llm.Message {
+	if !input.PersistDisplayTextAsUserMessage {
+		return messages
+	}
+	if persistedUserMessageIndex < 0 || persistedUserMessageIndex >= len(messages) {
+		return messages
+	}
+	override := input.UserMessage
+	override.Normalize()
+	if override.Role != llm.RoleUser {
+		return messages
+	}
+	overridden := append([]llm.Message(nil), messages...)
+	overridden[persistedUserMessageIndex] = override
+	return overridden
 }
 
 func promptSubAgentRuntime(input *SubAgentPromptInput) *PromptSubAgentRuntime {

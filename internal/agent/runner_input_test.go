@@ -140,6 +140,62 @@ func TestRunPromptWithInputFallsBackToDisplayTextWhenUserMessageEmpty(t *testing
 	}
 }
 
+func TestRunPromptWithInputPersistsDisplayTextButSendsDelegationHintToModel(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+
+	client := &fakeClient{
+		replies: []llm.Message{
+			llm.NewAssistantTextMessage("done"),
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "gpt-4o"},
+			MaxIterations: 2,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	displayInput := "/review 分析一下最近提交的代码"
+	delegationHint := "User explicitly invoked slash command preference for subagent `review`.\nTreat this as a strong delegation hint."
+	answer, err := runner.RunPromptWithInput(context.Background(), sess, RunPromptInput{
+		UserMessage:                     llm.NewUserTextMessage(delegationHint),
+		DisplayText:                     displayInput,
+		PersistDisplayTextAsUserMessage: true,
+	}, "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "done" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+
+	if len(sess.Messages) == 0 {
+		t.Fatalf("expected session user message to persist")
+	}
+	if got := sess.Messages[0].Text(); got != displayInput {
+		t.Fatalf("expected session to keep original slash input, got %q", got)
+	}
+
+	if len(client.requests) == 0 {
+		t.Fatal("expected request to be sent")
+	}
+	if got := latestUserText(client.requests[0].Messages); got != delegationHint {
+		t.Fatalf("expected model request to keep delegation hint prompt, got %q", got)
+	}
+}
+
 func TestRunPromptWithInputPlanModeSetsGoalFromUserMessageWhenDisplayTextBlank(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
@@ -214,4 +270,13 @@ func TestRunPromptWithInputPlanModeSetsGoalFromUserMessageWhenDisplayTextBlank(t
 	if sess.Mode != "plan" {
 		t.Fatalf("expected session mode to be plan, got %q", sess.Mode)
 	}
+}
+
+func latestUserText(messages []llm.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == llm.RoleUser {
+			return messages[i].Text()
+		}
+	}
+	return ""
 }

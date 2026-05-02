@@ -31,9 +31,10 @@ func (a *tuiRunnerAdapter) RunPromptWithInput(ctx context.Context, sess *session
 		return "", errors.New("runner is unavailable")
 	}
 	return a.runner.RunPromptWithInput(ctx, sess, agent.RunPromptInput{
-		UserMessage: input.UserMessage,
-		Assets:      input.Assets,
-		DisplayText: input.DisplayText,
+		UserMessage:                     input.UserMessage,
+		Assets:                          input.Assets,
+		DisplayText:                     input.DisplayText,
+		PersistDisplayTextAsUserMessage: input.PersistDisplayTextAsUserMessage,
 	}, mode, out)
 }
 

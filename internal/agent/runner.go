@@ -64,10 +64,11 @@ type Options struct {
 }
 
 type RunPromptInput struct {
-	UserMessage llm.Message
-	Assets      map[llm.AssetID]llm.ImageAsset
-	DisplayText string
-	SubAgent    *SubAgentPromptInput
+	UserMessage                     llm.Message
+	Assets                          map[llm.AssetID]llm.ImageAsset
+	DisplayText                     string
+	PersistDisplayTextAsUserMessage bool
+	SubAgent                        *SubAgentPromptInput
 }
 
 type SubAgentPromptInput struct {

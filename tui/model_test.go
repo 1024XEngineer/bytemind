@@ -89,9 +89,10 @@ func wrapTestRunner(r *agent.Runner) Runner {
 
 func (a testRunnerAdapter) RunPromptWithInput(ctx context.Context, sess *session.Session, input RunPromptInput, mode string, out io.Writer) (string, error) {
 	return a.Runner.RunPromptWithInput(ctx, sess, agent.RunPromptInput{
-		UserMessage: input.UserMessage,
-		Assets:      input.Assets,
-		DisplayText: input.DisplayText,
+		UserMessage:                     input.UserMessage,
+		Assets:                          input.Assets,
+		DisplayText:                     input.DisplayText,
+		PersistDisplayTextAsUserMessage: input.PersistDisplayTextAsUserMessage,
 	}, mode, out)
 }
 
