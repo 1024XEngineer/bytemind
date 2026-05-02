@@ -18,6 +18,7 @@ import (
 	"bytemind/internal/history"
 	"bytemind/internal/llm"
 	"bytemind/internal/mention"
+	notifypkg "bytemind/internal/notify"
 	planpkg "bytemind/internal/plan"
 	"bytemind/internal/session"
 
@@ -336,6 +337,7 @@ type model struct {
 	imageStore assets.ImageStore
 	cfg        config.Config
 	workspace  string
+	notifier   notifypkg.Notifier
 
 	width  int
 	height int
@@ -460,6 +462,10 @@ type model struct {
 func newModel(opts Options) model {
 	ensureZoneManager()
 	async := make(chan tea.Msg, 128)
+	notifier := opts.Notifier
+	if notifier == nil {
+		notifier = notifypkg.NewNoopNotifier()
+	}
 
 	input := textarea.New()
 	input.Placeholder = "Ask Bytemind to inspect, change, or verify this workspace..."
@@ -507,6 +513,7 @@ func newModel(opts Options) model {
 		imageStore:           opts.ImageStore,
 		cfg:                  opts.Config,
 		workspace:            opts.Workspace,
+		notifier:             notifier,
 		async:                async,
 		viewport:             vp,
 		copyView:             copyVP,
@@ -711,6 +718,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.closePlanActionPicker()
 				m.statusNote = "Ready."
 			}
+			m.notifyRunCompleted(msg.RunID)
 		case runFinishReasonCanceled:
 			m.lastRunDuration = elapsed
 			m.runIndicatorState = runIndicatorCanceled
@@ -719,6 +727,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusNote = "Run canceled."
 			m.phase = "idle"
 			m.llmConnected = true
+			m.notifyRunCanceled(msg.RunID)
 		case runFinishReasonFailed:
 			m.lastRunDuration = elapsed
 			m.runIndicatorState = runIndicatorFailed
@@ -728,6 +737,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.phase = "error"
 			m.llmConnected = false
 			m.failLatestAssistant(msg.Err.Error())
+			m.notifyRunFailed(msg.RunID, msg.Err)
 		default:
 			m.lastRunDuration = 0
 			m.runIndicatorState = runIndicatorReady
@@ -748,6 +758,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.statusNote = "Approval required."
 		m.phase = "approval"
+		m.notifyApprovalRequired(msg.Request)
 		return m, waitForAsync(m.async)
 	case sessionsLoadedMsg:
 		if msg.Err == nil {
@@ -2798,6 +2809,45 @@ func (m *model) resolveApprovalDecision(approved bool) {
 		}
 	}
 	m.approval = nil
+}
+
+func (m *model) desktopNotificationEnabled() bool {
+	if m == nil || m.notifier == nil {
+		return false
+	}
+	return m.cfg.Notifications.Desktop.Enabled
+}
+
+func (m *model) notifyApprovalRequired(req ApprovalRequest) {
+	if !m.desktopNotificationEnabled() || !m.cfg.Notifications.Desktop.OnApprovalRequired {
+		return
+	}
+	m.notifier.Notify(notifypkg.BuildApprovalRequiredMessage(req.Command, req.Reason))
+}
+
+func (m *model) notifyRunCompleted(runID int) {
+	if !m.desktopNotificationEnabled() || !m.cfg.Notifications.Desktop.OnRunCompleted {
+		return
+	}
+	m.notifier.Notify(notifypkg.BuildRunCompletedMessage(runID))
+}
+
+func (m *model) notifyRunFailed(runID int, err error) {
+	if !m.desktopNotificationEnabled() || !m.cfg.Notifications.Desktop.OnRunFailed {
+		return
+	}
+	detail := ""
+	if err != nil {
+		detail = err.Error()
+	}
+	m.notifier.Notify(notifypkg.BuildRunFailedMessage(runID, detail))
+}
+
+func (m *model) notifyRunCanceled(runID int) {
+	if !m.desktopNotificationEnabled() || !m.cfg.Notifications.Desktop.OnRunCanceled {
+		return
+	}
+	m.notifier.Notify(notifypkg.BuildRunCanceledMessage(runID))
 }
 
 func (m *model) setApprovalMode(mode string) {

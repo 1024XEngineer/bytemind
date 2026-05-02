@@ -1,14 +1,17 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"io"
 	"os"
+	"time"
 
 	"bytemind/internal/assets"
 	"bytemind/internal/config"
 	"bytemind/internal/mcpctl"
+	notifypkg "bytemind/internal/notify"
 	"bytemind/tui"
 )
 
@@ -23,6 +26,8 @@ type TUIRuntime struct {
 	Options tui.Options
 	close   func() error
 }
+
+const tuiRuntimeNotifierCloseTimeout = 2 * time.Second
 
 func (r TUIRuntime) Close() error {
 	if r.close == nil {
@@ -99,6 +104,10 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 	if err != nil {
 		return TUIRuntime{}, err
 	}
+	notifier := notifypkg.NewDesktopNotifier(notifypkg.DesktopConfig{
+		Enabled:         cfg.Notifications.Desktop.Enabled,
+		CooldownSeconds: cfg.Notifications.Desktop.CooldownSeconds,
+	})
 
 	return TUIRuntime{
 		Options: tui.Options{
@@ -107,11 +116,24 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 			MCPService:   mcpctl.NewService(workspace, *configPath, runtimeBundle.Extensions),
 			Session:      runtimeBundle.Session,
 			ImageStore:   imageStore,
+			Notifier:     notifier,
 			Config:       cfg,
 			Workspace:    runtimeBundle.Session.Workspace,
 			StartupGuide: guide,
 		},
-		close: runner.Close,
+		close: func() error {
+			runnerErr := runner.Close()
+			closeCtx, cancel := context.WithTimeout(context.Background(), tuiRuntimeNotifierCloseTimeout)
+			defer cancel()
+			notifierErr := notifier.Close(closeCtx)
+			if runnerErr != nil {
+				return runnerErr
+			}
+			if notifierErr != nil {
+				return notifierErr
+			}
+			return nil
+		},
 	}, nil
 }
 
