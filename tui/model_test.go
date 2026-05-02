@@ -4180,30 +4180,47 @@ explore files
 	}
 	base := newSubAgentCommandModel(t, workspace, client)
 	input := textarea.New()
-	input.SetValue("/explorer 分析一下agent模块功能与作用")
+	input.SetValue("/explorer analyze agent module capabilities")
 	base.input = input
 	base.commandOpen = true
 	base.syncCommandPalette()
 
-	got, _ := base.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got, cmd := base.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
 	updated := got.(model)
 
 	if updated.commandOpen {
 		t.Fatalf("expected command palette to close after executing slash command")
 	}
-	if len(updated.chatItems) < 2 {
-		t.Fatalf("expected slash command execution exchange, got %#v", updated.chatItems)
+	if cmd == nil {
+		t.Fatalf("expected slash command execution to return run command batch")
 	}
-	last := updated.chatItems[len(updated.chatItems)-1].Body
-	if !strings.Contains(last, "subagent explorer completed") {
-		t.Fatalf("expected delegated explorer execution result, got %q", last)
+	if !updated.busy {
+		t.Fatalf("expected slash command execution to enter busy run state")
 	}
-	if !strings.Contains(last, "summary explorer run ok") {
-		t.Fatalf("expected delegated explorer summary, got %q", last)
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected slash command to append user entry into chat")
+	}
+	foundSlashUserEntry := false
+	for _, item := range updated.chatItems {
+		if item.Kind != "user" {
+			continue
+		}
+		if strings.Contains(item.Body, "/explorer analyze agent module capabilities") {
+			foundSlashUserEntry = true
+			break
+		}
+	}
+	if !foundSlashUserEntry {
+		t.Fatalf("expected slash input to remain visible in user chat entry, got %#v", updated.chatItems)
+	}
+	for _, item := range updated.chatItems {
+		if strings.Contains(strings.ToLower(item.Body), "subagent explorer completed") {
+			t.Fatalf("expected no direct subagent dispatch summary in slash path, got %#v", updated.chatItems)
+		}
 	}
 }
 
-func TestCommandPaletteEnterDispatchesSubAgentCommandAsync(t *testing.T) {
+func TestCommandPaletteEnterExplorerDoesNotUseDirectSubAgentAsyncPath(t *testing.T) {
 	workspace := t.TempDir()
 	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "explorer.md"), `---
 name: explorer
@@ -4220,49 +4237,29 @@ explore files
 	base := newSubAgentCommandModel(t, workspace, client)
 	base.async = make(chan tea.Msg, 8)
 	input := textarea.New()
-	input.SetValue("/explorer 分析一下agent模块功能和作用")
+	input.SetValue("/explorer analyze agent module behavior")
 	base.input = input
 	base.commandOpen = true
 	base.syncCommandPalette()
 
-	got, _ := base.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
+	got, cmd := base.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
 	updated := got.(model)
 
 	if updated.commandOpen {
 		t.Fatalf("expected command palette to close after slash execution")
 	}
-	if !updated.subAgentCommandPending {
-		t.Fatalf("expected subagent command to dispatch asynchronously")
+	if cmd == nil {
+		t.Fatalf("expected slash command execution to return a run command batch")
 	}
-	if len(updated.chatItems) < 2 {
-		t.Fatalf("expected immediate command exchange before async completion, got %#v", updated.chatItems)
+	if !updated.busy {
+		t.Fatalf("expected slash command execution to enter busy run state")
 	}
-	started := updated.chatItems[len(updated.chatItems)-1].Body
-	if !strings.Contains(started, "Subagent `explorer` started.") {
-		t.Fatalf("expected immediate async start feedback, got %q", started)
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected slash command to append user entry")
 	}
-
-	var asyncMsg tea.Msg
-	select {
-	case asyncMsg = <-updated.async:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("timed out waiting for async subagent result")
-	}
-
-	gotAfter, _ := updated.Update(asyncMsg)
-	after := gotAfter.(model)
-	if after.subAgentCommandPending {
-		t.Fatalf("expected async subagent pending flag to clear after result")
-	}
-	if len(after.chatItems) < 3 {
-		t.Fatalf("expected async subagent command exchange in chat, got %#v", after.chatItems)
-	}
-	last := after.chatItems[len(after.chatItems)-1].Body
-	if !strings.Contains(last, "subagent explorer completed") {
-		t.Fatalf("expected delegated explorer completion, got %q", last)
-	}
-	if !strings.Contains(last, "summary explorer async ok") {
-		t.Fatalf("expected delegated explorer summary, got %q", last)
+	last := updated.chatItems[len(updated.chatItems)-1].Body
+	if strings.Contains(last, "Subagent `explorer` started.") {
+		t.Fatalf("expected slash path to avoid direct subagent async start banner, got %q", last)
 	}
 }
 

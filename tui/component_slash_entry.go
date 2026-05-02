@@ -60,6 +60,12 @@ func (m model) executeCommand(input string) (tea.Model, tea.Cmd, error) {
 	if err := m.handleSlashCommand(input); err != nil {
 		return m, nil, err
 	}
+	commandRunCmd := m.pendingCommandCmd
+	m.pendingCommandCmd = nil
 	m.refreshViewport()
-	return m, tea.Batch(m.loadSessionsCmd(), m.startLandingGlowOnTransition(previousScreen)), nil
+	cmds := []tea.Cmd{m.loadSessionsCmd(), m.startLandingGlowOnTransition(previousScreen)}
+	if commandRunCmd != nil {
+		cmds = append(cmds, commandRunCmd)
+	}
+	return m, tea.Batch(cmds...), nil
 }

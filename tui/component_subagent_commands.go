@@ -1,28 +1,20 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
-	"bytemind/internal/session"
+	"bytemind/internal/llm"
 	subagentspkg "bytemind/internal/subagents"
 	"bytemind/internal/tools"
 )
-
-type subAgentCommandResultMsg struct {
-	Input  string
-	Result tools.DelegateSubAgentResult
-	Err    error
-}
 
 type subAgentCommandRunner interface {
 	ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic)
 	FindSubAgent(name string) (subagentspkg.Agent, bool)
 	FindBuiltinSubAgent(name string) (subagentspkg.Agent, bool)
-	DispatchSubAgent(ctx context.Context, sess *session.Session, mode string, request tools.DelegateSubAgentRequest) (tools.DelegateSubAgentResult, error)
 }
 
 func (m *model) runAgentsCommand(input string, fields []string) error {
@@ -76,72 +68,48 @@ func (m *model) runBuiltinSubAgentCommand(input, builtinName string) error {
 		return nil
 	}
 
-	request := tools.DelegateSubAgentRequest{
-		Agent: agent.Name,
-		Task:  task,
-	}
-	if m.async != nil {
-		return m.runBuiltinSubAgentCommandAsync(input, agent.Name, runner, request)
-	}
-
-	result, dispatchErr := runner.DispatchSubAgent(context.Background(), m.sess, string(modeBuild), request)
-	if dispatchErr != nil {
-		return dispatchErr
-	}
-
-	m.appendCommandExchange(input, renderSubAgentDispatchResult(result))
-	if result.OK {
-		m.statusNote = fmt.Sprintf("Subagent `%s` completed.", result.Agent)
-		return nil
-	}
-	m.statusNote = fmt.Sprintf("Subagent `%s` failed.", agent.Name)
-	return nil
+	return m.submitBuiltinSubAgentPreference(input, agent.Name, task)
 }
 
-func (m *model) runBuiltinSubAgentCommandAsync(
-	input string,
-	agentName string,
-	runner subAgentCommandRunner,
-	request tools.DelegateSubAgentRequest,
-) error {
+func (m *model) submitBuiltinSubAgentPreference(input, agentName, task string) error {
 	if m == nil {
 		return fmt.Errorf("model is unavailable")
 	}
-	if m.subAgentCommandPending {
-		return fmt.Errorf("a subagent command is already running")
+
+	normalizedInput := strings.TrimSpace(input)
+	if normalizedInput == "" {
+		normalizedInput = fmt.Sprintf("/%s %s", strings.TrimSpace(agentName), strings.TrimSpace(task))
 	}
-	if m.async == nil {
-		return fmt.Errorf("subagent async channel is unavailable")
+	prompt := buildBuiltinSubAgentPreferencePrompt(agentName, task)
+	next, cmd := m.submitPreparedPrompt(RunPromptInput{
+		UserMessage: llm.NewUserTextMessage(prompt),
+		DisplayText: normalizedInput,
+	}, normalizedInput)
+	updated, ok := next.(model)
+	if !ok {
+		return fmt.Errorf("internal error: failed to submit slash command prompt")
 	}
-
-	commandInput := strings.TrimSpace(input)
-	parentSession := snapshotSubAgentParentSession(m.sess)
-	m.subAgentCommandPending = true
-	m.appendCommandExchange(commandInput, fmt.Sprintf("Subagent `%s` started. Running in a temporary child session...", strings.TrimSpace(agentName)))
-	m.statusNote = fmt.Sprintf("Subagent `%s` running...", strings.TrimSpace(agentName))
-
-	asyncCh := m.async
-
-	go func() {
-		result, dispatchErr := runner.DispatchSubAgent(context.Background(), parentSession, string(modeBuild), request)
-		asyncCh <- subAgentCommandResultMsg{
-			Input:  commandInput,
-			Result: result,
-			Err:    dispatchErr,
-		}
-	}()
+	*m = updated
+	m.pendingCommandCmd = cmd
 	return nil
 }
 
-func snapshotSubAgentParentSession(source *session.Session) *session.Session {
-	if source == nil {
-		return nil
+func buildBuiltinSubAgentPreferencePrompt(agentName, task string) string {
+	agentName = strings.TrimSpace(agentName)
+	task = strings.TrimSpace(task)
+	if task == "" {
+		task = "Please complete the requested task."
 	}
-	return &session.Session{
-		ID:        strings.TrimSpace(source.ID),
-		Workspace: strings.TrimSpace(source.Workspace),
-		Mode:      source.Mode,
+	lines := []string{
+		fmt.Sprintf("User explicitly invoked slash command preference for subagent `%s`.", agentName),
+		"Treat this as a strong delegation hint, not a hard requirement.",
+		fmt.Sprintf("If `%s` is a good fit, call `delegate_subagent`.", agentName),
+		"If delegation is not appropriate, continue in the parent agent and briefly explain why.",
+		"",
+		"Requested task:",
+		task,
 	}
+	return strings.Join(lines, "\n")
 }
 
 func normalizeBuiltinSubAgentCommandInput(input string) (string, string, bool) {

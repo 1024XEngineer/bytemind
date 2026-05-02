@@ -371,7 +371,6 @@ type model struct {
 	mentionOpen                bool
 	promptSearchOpen           bool
 	mcpCommandPending          bool
-	subAgentCommandPending     bool
 	busy                       bool
 	runStartedAt               time.Time
 	lastRunDuration            time.Duration
@@ -451,6 +450,7 @@ type model struct {
 	clipboardRead              clipboardTextReader
 	clipboardText              clipboardTextWriter
 	runCancel                  context.CancelFunc
+	pendingCommandCmd          tea.Cmd
 	pendingBTW                 []string
 	interrupting               bool
 	interruptSafe              bool
@@ -799,20 +799,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.appendCommandExchange(msg.Input, msg.Response)
 		if strings.TrimSpace(msg.Status) != "" {
 			m.statusNote = msg.Status
-		}
-		m.refreshViewport()
-		return m, waitForAsync(m.async)
-	case subAgentCommandResultMsg:
-		m.subAgentCommandPending = false
-		if msg.Err != nil {
-			m.statusNote = msg.Err.Error()
-			return m, waitForAsync(m.async)
-		}
-		m.appendAssistantCommandResponse(renderSubAgentDispatchResult(msg.Result))
-		if msg.Result.OK {
-			m.statusNote = fmt.Sprintf("Subagent `%s` completed.", msg.Result.Agent)
-		} else {
-			m.statusNote = fmt.Sprintf("Subagent `%s` failed.", strings.TrimSpace(msg.Result.Agent))
 		}
 		m.refreshViewport()
 		return m, waitForAsync(m.async)

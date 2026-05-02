@@ -1,18 +1,15 @@
 package tui
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"bytemind/internal/agent"
 	"bytemind/internal/config"
 	"bytemind/internal/llm"
 	"bytemind/internal/session"
-	subagentspkg "bytemind/internal/subagents"
 	"bytemind/internal/tools"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -124,7 +121,6 @@ explore files
 	client := &compactCommandTestClient{
 		replies: []llm.Message{
 			{Role: llm.RoleAssistant, Content: "review summary"},
-			{Role: llm.RoleAssistant, Content: "explorer summary"},
 		},
 	}
 	m := newSubAgentCommandModel(t, workspace, client)
@@ -132,23 +128,29 @@ explore files
 	if err := m.handleSlashCommand("/review inspect prompt assembly ordering"); err != nil {
 		t.Fatalf("expected /review <task> to succeed, got %v", err)
 	}
-	reviewBody := m.chatItems[len(m.chatItems)-1].Body
-	if !strings.Contains(reviewBody, "subagent review completed") {
-		t.Fatalf("expected /review delegated result summary, got %q", reviewBody)
+
+	if m.pendingCommandCmd == nil {
+		t.Fatalf("expected /review to queue a main-agent run command")
 	}
-	if !strings.Contains(reviewBody, "summary review summary") {
-		t.Fatalf("expected /review delegated summary content, got %q", reviewBody)
+	if !m.busy {
+		t.Fatalf("expected /review to mark model busy while the command run is queued")
+	}
+	if len(m.chatItems) == 0 {
+		t.Fatalf("expected /review to append user slash input to chat")
+	}
+	if !containsChatEntry(m.chatItems, "user", "/review inspect prompt assembly ordering") {
+		t.Fatalf("expected /review command text to appear in user chat entry, got %#v", m.chatItems)
 	}
 
 	if err := m.handleSlashCommand("/exploer locate task lifecycle codepath"); err != nil {
 		t.Fatalf("expected /exploer <task> alias to succeed, got %v", err)
 	}
-	explorerBody := m.chatItems[len(m.chatItems)-1].Body
-	if !strings.Contains(explorerBody, "subagent explorer completed") {
-		t.Fatalf("expected /exploer delegated result summary, got %q", explorerBody)
+	if len(m.chatItems) == 0 {
+		t.Fatalf("expected /exploer to append user slash input to chat")
 	}
-	if !strings.Contains(explorerBody, "summary explorer summary") {
-		t.Fatalf("expected /exploer delegated summary content, got %q", explorerBody)
+	if !containsChatEntry(m.chatItems, "user", "/exploer locate task lifecycle codepath") &&
+		!containsChatEntry(m.chatItems, "user", "/explorer locate task lifecycle codepath") {
+		t.Fatalf("expected /exploer alias command text to be preserved in user chat entry, got %#v", m.chatItems)
 	}
 }
 
@@ -173,12 +175,14 @@ explore files
 		t.Fatalf("expected compact /explorer command to succeed, got %v", err)
 	}
 
-	body := m.chatItems[len(m.chatItems)-1].Body
-	if !strings.Contains(body, "subagent explorer completed") {
-		t.Fatalf("expected compact /explorer delegated completion, got %q", body)
+	if m.pendingCommandCmd == nil {
+		t.Fatalf("expected compact /explorer command to queue a main-agent run")
 	}
-	if !strings.Contains(body, "summary explorer compact summary") {
-		t.Fatalf("expected compact /explorer delegated summary, got %q", body)
+	if len(m.chatItems) == 0 {
+		t.Fatalf("expected compact /explorer command to append user slash input to chat")
+	}
+	if !containsChatEntryWithPrefix(m.chatItems, "user", "/explorer ") {
+		t.Fatalf("expected compact /explorer command to normalize with whitespace, got %#v", m.chatItems)
 	}
 }
 
@@ -222,10 +226,14 @@ func newSubAgentCommandModel(t *testing.T, workspace string, client llm.Client) 
 		Store:    store,
 		Registry: tools.DefaultRegistry(),
 	})
+	input := textarea.New()
+	input.Focus()
 	return &model{
 		runner:    wrapTestRunner(runner),
 		store:     store,
 		sess:      sess,
+		async:     make(chan tea.Msg, 8),
+		input:     input,
 		workspace: workspace,
 		screen:    screenChat,
 	}
@@ -241,84 +249,36 @@ func writeSubAgentDef(t *testing.T, path, content string) {
 	}
 }
 
-func TestRunBuiltinSubAgentCommandAsyncSnapshotsSession(t *testing.T) {
-	runner := &captureAsyncSessionRunner{
-		captured: make(chan *session.Session, 1),
-		release:  make(chan struct{}),
+func containsChatEntry(items []chatEntry, kind, needle string) bool {
+	kind = strings.TrimSpace(kind)
+	needle = strings.TrimSpace(needle)
+	if needle == "" {
+		return false
 	}
-	m := &model{
-		sess: &session.Session{
-			ID:        "sess-origin",
-			Workspace: "E:\\code\\bytemind",
-		},
-		async: make(chan tea.Msg, 1),
+	for _, item := range items {
+		if kind != "" && item.Kind != kind {
+			continue
+		}
+		if strings.Contains(item.Body, needle) {
+			return true
+		}
 	}
-	request := tools.DelegateSubAgentRequest{
-		Agent: "explorer",
-		Task:  "inspect async snapshot",
-	}
-
-	if err := m.runBuiltinSubAgentCommandAsync("/explorer inspect async snapshot", "explorer", runner, request); err != nil {
-		t.Fatalf("expected async command start to succeed, got %v", err)
-	}
-
-	var captured *session.Session
-	select {
-	case captured = <-runner.captured:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for dispatch to capture parent session")
-	}
-	if captured == nil {
-		t.Fatal("expected captured session snapshot")
-	}
-	if captured == m.sess {
-		t.Fatal("expected async dispatch to receive session snapshot, got original pointer")
-	}
-	if captured.ID != "sess-origin" {
-		t.Fatalf("expected snapshot id %q, got %q", "sess-origin", captured.ID)
-	}
-	if captured.Workspace != "E:\\code\\bytemind" {
-		t.Fatalf("expected snapshot workspace %q, got %q", "E:\\code\\bytemind", captured.Workspace)
-	}
-
-	m.sess.ID = "sess-mutated"
-	m.sess.Workspace = "E:\\other"
-	if captured.ID != "sess-origin" || captured.Workspace != "E:\\code\\bytemind" {
-		t.Fatalf("expected captured snapshot to remain stable after parent mutation, got id=%q workspace=%q", captured.ID, captured.Workspace)
-	}
-
-	close(runner.release)
-	select {
-	case <-m.async:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for async result message")
-	}
+	return false
 }
 
-type captureAsyncSessionRunner struct {
-	captured chan *session.Session
-	release  chan struct{}
-}
-
-func (r *captureAsyncSessionRunner) ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic) {
-	return nil, nil
-}
-
-func (r *captureAsyncSessionRunner) FindSubAgent(string) (subagentspkg.Agent, bool) {
-	return subagentspkg.Agent{}, false
-}
-
-func (r *captureAsyncSessionRunner) FindBuiltinSubAgent(string) (subagentspkg.Agent, bool) {
-	return subagentspkg.Agent{}, false
-}
-
-func (r *captureAsyncSessionRunner) DispatchSubAgent(_ context.Context, sess *session.Session, _ string, request tools.DelegateSubAgentRequest) (tools.DelegateSubAgentResult, error) {
-	r.captured <- sess
-	<-r.release
-	return tools.DelegateSubAgentResult{
-		OK:      true,
-		Agent:   request.Agent,
-		Status:  "completed",
-		Summary: "ok",
-	}, nil
+func containsChatEntryWithPrefix(items []chatEntry, kind, prefix string) bool {
+	kind = strings.TrimSpace(kind)
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return false
+	}
+	for _, item := range items {
+		if kind != "" && item.Kind != kind {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(item.Body), prefix) {
+			return true
+		}
+	}
+	return false
 }
