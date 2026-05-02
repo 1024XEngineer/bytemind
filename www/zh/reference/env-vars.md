@@ -26,7 +26,8 @@ curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts
 | 变量                       | 覆盖字段           | 说明                                           |
 | -------------------------- | ------------------ | ---------------------------------------------- |
 | `BYTEMIND_API_KEY`         | `provider.api_key` | 未设置 `api_key_env` 时的默认 API 密钥         |
-| `BYTEMIND_APPROVAL_MODE`   | `approval_mode`    | 覆盖审批模式（`interactive` 或 `away`）        |
+| `BYTEMIND_APPROVAL_MODE`   | `approval_mode`    | 覆盖审批模式（`interactive` 或 `full_access`；旧值 `away` 默认被阻止） |
+| `BYTEMIND_ALLOW_AWAY_FULL_ACCESS` | n/a | 迁移闸门：设置为 `true` 时，允许将旧值 `approval_mode=away` 临时映射到 `full_access` |
 | `BYTEMIND_SANDBOX_ENABLED` | `sandbox_enabled`  | 设为 `true` 开启沙箱模式                       |
 | `BYTEMIND_WRITABLE_ROOTS`  | `writable_roots`   | 英文冒号分隔的可写目录列表                     |
 | `BYTEMIND_HOME`            | —                  | 覆盖 `.bytemind/` 基础目录路径                 |
@@ -37,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts
 
 ```bash
 export OPENAI_API_KEY="sk-..."
-export BYTEMIND_APPROVAL_MODE="away"
+export BYTEMIND_APPROVAL_MODE="full_access"
 export BYTEMIND_SANDBOX_ENABLED="true"
 export BYTEMIND_WRITABLE_ROOTS="./src:./docs"
 

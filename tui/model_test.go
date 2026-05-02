@@ -18,6 +18,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/history"
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	"github.com/1024XEngineer/bytemind/internal/mention"
+	notifypkg "github.com/1024XEngineer/bytemind/internal/notify"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	"github.com/1024XEngineer/bytemind/internal/tools"
@@ -32,6 +33,18 @@ type fakeClipboardTextWriter struct {
 	last       string
 	err        error
 	waitForCtx bool
+}
+
+type fakeNotifier struct {
+	messages []notifypkg.Message
+}
+
+func (f *fakeNotifier) Notify(msg notifypkg.Message) {
+	f.messages = append(f.messages, msg)
+}
+
+func (*fakeNotifier) Close(context.Context) error {
+	return nil
 }
 
 func (f *fakeClipboardTextWriter) WriteText(ctx context.Context, text string) error {
@@ -89,9 +102,10 @@ func wrapTestRunner(r *agent.Runner) Runner {
 
 func (a testRunnerAdapter) RunPromptWithInput(ctx context.Context, sess *session.Session, input RunPromptInput, mode string, out io.Writer) (string, error) {
 	return a.Runner.RunPromptWithInput(ctx, sess, agent.RunPromptInput{
-		UserMessage: input.UserMessage,
-		Assets:      input.Assets,
-		DisplayText: input.DisplayText,
+		UserMessage:                     input.UserMessage,
+		Assets:                          input.Assets,
+		DisplayText:                     input.DisplayText,
+		PersistDisplayTextAsUserMessage: input.PersistDisplayTextAsUserMessage,
 	}, mode, out)
 }
 
@@ -4110,6 +4124,24 @@ func TestCommandPaletteFiltersAsUserTypes(t *testing.T) {
 	}
 }
 
+func TestFilteredCommandsFallbackToCommandTokenWhenArgsPresent(t *testing.T) {
+	input := textarea.New()
+	input.SetValue("/explorer 分析一下agent模块的功能")
+	m := model{input: input}
+
+	items := m.filteredCommands()
+	foundExplorer := false
+	for _, item := range items {
+		if item.Name == "/explorer" {
+			foundExplorer = true
+			break
+		}
+	}
+	if !foundExplorer {
+		t.Fatalf("expected command fallback to keep /explorer visible, got %+v", items)
+	}
+}
+
 func TestEscapeClosesCommandPalette(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("/h")
@@ -4143,6 +4175,105 @@ func TestCommandPaletteEnterOnQuitReturnsQuitCmd(t *testing.T) {
 	_, cmd := m.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatalf("expected /quit from command palette to return a quit command")
+	}
+}
+
+func TestCommandPaletteEnterExecutesSlashCommandWithArgs(t *testing.T) {
+	workspace := t.TempDir()
+	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "explorer.md"), `---
+name: explorer
+description: builtin explorer
+tools: [list_files, read_file, search_text]
+---
+explore files
+`)
+	client := &compactCommandTestClient{
+		replies: []llm.Message{
+			{Role: llm.RoleAssistant, Content: "explorer run ok"},
+		},
+	}
+	base := newSubAgentCommandModel(t, workspace, client)
+	input := textarea.New()
+	input.SetValue("/explorer analyze agent module capabilities")
+	base.input = input
+	base.commandOpen = true
+	base.syncCommandPalette()
+
+	got, cmd := base.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if updated.commandOpen {
+		t.Fatalf("expected command palette to close after executing slash command")
+	}
+	if cmd == nil {
+		t.Fatalf("expected slash command execution to return run command batch")
+	}
+	if !updated.busy {
+		t.Fatalf("expected slash command execution to enter busy run state")
+	}
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected slash command to append user entry into chat")
+	}
+	foundSlashUserEntry := false
+	for _, item := range updated.chatItems {
+		if item.Kind != "user" {
+			continue
+		}
+		if strings.Contains(item.Body, "/explorer analyze agent module capabilities") {
+			foundSlashUserEntry = true
+			break
+		}
+	}
+	if !foundSlashUserEntry {
+		t.Fatalf("expected slash input to remain visible in user chat entry, got %#v", updated.chatItems)
+	}
+	for _, item := range updated.chatItems {
+		if strings.Contains(strings.ToLower(item.Body), "subagent explorer completed") {
+			t.Fatalf("expected no direct subagent dispatch summary in slash path, got %#v", updated.chatItems)
+		}
+	}
+}
+
+func TestCommandPaletteEnterExplorerDoesNotUseDirectSubAgentAsyncPath(t *testing.T) {
+	workspace := t.TempDir()
+	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "explorer.md"), `---
+name: explorer
+description: builtin explorer
+tools: [list_files, read_file, search_text]
+---
+explore files
+`)
+	client := &compactCommandTestClient{
+		replies: []llm.Message{
+			{Role: llm.RoleAssistant, Content: "explorer async ok"},
+		},
+	}
+	base := newSubAgentCommandModel(t, workspace, client)
+	base.async = make(chan tea.Msg, 8)
+	input := textarea.New()
+	input.SetValue("/explorer analyze agent module behavior")
+	base.input = input
+	base.commandOpen = true
+	base.syncCommandPalette()
+
+	got, cmd := base.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if updated.commandOpen {
+		t.Fatalf("expected command palette to close after slash execution")
+	}
+	if cmd == nil {
+		t.Fatalf("expected slash command execution to return a run command batch")
+	}
+	if !updated.busy {
+		t.Fatalf("expected slash command execution to enter busy run state")
+	}
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected slash command to append user entry")
+	}
+	last := updated.chatItems[len(updated.chatItems)-1].Body
+	if strings.Contains(last, "Subagent `explorer` started.") {
+		t.Fatalf("expected slash path to avoid direct subagent async start banner, got %q", last)
 	}
 }
 
@@ -4572,7 +4703,7 @@ func TestRenderCommandPaletteDoesNotCorruptChineseDescriptions(t *testing.T) {
 	if strings.Contains(got, string('\uFFFD')) {
 		t.Fatalf("expected command palette not to contain replacement glyphs, got %q", got)
 	}
-	for _, want := range []string{"/help", "/session", "/skills-select"} {
+	for _, want := range []string{"/help", "/session", "/agents"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected command palette to contain %q, got %q", want, got)
 		}
@@ -5236,6 +5367,69 @@ func TestUpdateApprovalRequestMsgSetsApprovalPhase(t *testing.T) {
 	}
 }
 
+func TestUpdateApprovalRequestMsgSendsDesktopNotification(t *testing.T) {
+	reply := make(chan approvalDecision, 1)
+	notifier := &fakeNotifier{}
+	m := model{
+		async:    make(chan tea.Msg, 1),
+		notifier: notifier,
+		cfg: config.Config{
+			Notifications: config.NotificationsConfig{
+				Desktop: config.DesktopNotificationConfig{
+					Enabled:            true,
+					OnApprovalRequired: true,
+				},
+			},
+		},
+	}
+
+	got, _ := m.Update(approvalRequestMsg{
+		Request: ApprovalRequest{
+			Command: "go test ./tui",
+			Reason:  "run focused tests",
+		},
+		Reply: reply,
+	})
+	_ = got.(model)
+
+	if len(notifier.messages) != 1 {
+		t.Fatalf("expected one desktop notification, got %d", len(notifier.messages))
+	}
+	if notifier.messages[0].Event != notifypkg.EventApprovalRequired {
+		t.Fatalf("expected approval_required event, got %q", notifier.messages[0].Event)
+	}
+}
+
+func TestUpdateApprovalRequestMsgSkipsDesktopNotificationWhenDisabled(t *testing.T) {
+	reply := make(chan approvalDecision, 1)
+	notifier := &fakeNotifier{}
+	m := model{
+		async:    make(chan tea.Msg, 1),
+		notifier: notifier,
+		cfg: config.Config{
+			Notifications: config.NotificationsConfig{
+				Desktop: config.DesktopNotificationConfig{
+					Enabled:            false,
+					OnApprovalRequired: true,
+				},
+			},
+		},
+	}
+
+	got, _ := m.Update(approvalRequestMsg{
+		Request: ApprovalRequest{
+			Command: "go test ./tui",
+			Reason:  "run focused tests",
+		},
+		Reply: reply,
+	})
+	_ = got.(model)
+
+	if len(notifier.messages) != 0 {
+		t.Fatalf("expected no desktop notification when disabled, got %d", len(notifier.messages))
+	}
+}
+
 func TestApprovalKeysTransitionStateAndSendDecision(t *testing.T) {
 	t.Run("approve", func(t *testing.T) {
 		reply := make(chan approvalDecision, 1)
@@ -5603,6 +5797,175 @@ func TestUpdateRunFinishedMsgResetsBusyState(t *testing.T) {
 			t.Fatalf("expected latest assistant card to show failure, got %+v", last)
 		}
 	})
+}
+
+func TestRunFinishedDesktopNotifications(t *testing.T) {
+	t.Run("completed", func(t *testing.T) {
+		notifier := &fakeNotifier{}
+		m := model{
+			async:       make(chan tea.Msg, 1),
+			notifier:    notifier,
+			busy:        true,
+			activeRunID: 3,
+			cfg: config.Config{
+				Notifications: config.NotificationsConfig{
+					Desktop: config.DesktopNotificationConfig{
+						Enabled:        true,
+						OnRunCompleted: true,
+					},
+				},
+			},
+		}
+
+		got, _ := m.Update(runFinishedMsg{RunID: 3})
+		_ = got.(model)
+
+		if len(notifier.messages) != 1 {
+			t.Fatalf("expected one notification, got %d", len(notifier.messages))
+		}
+		if notifier.messages[0].Event != notifypkg.EventRunCompleted {
+			t.Fatalf("expected run_completed event, got %q", notifier.messages[0].Event)
+		}
+	})
+
+	t.Run("failed", func(t *testing.T) {
+		notifier := &fakeNotifier{}
+		m := model{
+			async:       make(chan tea.Msg, 1),
+			notifier:    notifier,
+			busy:        true,
+			activeRunID: 8,
+			cfg: config.Config{
+				Notifications: config.NotificationsConfig{
+					Desktop: config.DesktopNotificationConfig{
+						Enabled:       true,
+						OnRunFailed:   true,
+						OnRunCanceled: false,
+					},
+				},
+			},
+		}
+
+		got, _ := m.Update(runFinishedMsg{RunID: 8, Err: errors.New("provider unavailable")})
+		_ = got.(model)
+
+		if len(notifier.messages) != 1 {
+			t.Fatalf("expected one notification, got %d", len(notifier.messages))
+		}
+		if notifier.messages[0].Event != notifypkg.EventRunFailed {
+			t.Fatalf("expected run_failed event, got %q", notifier.messages[0].Event)
+		}
+	})
+
+	t.Run("canceled", func(t *testing.T) {
+		notifier := &fakeNotifier{}
+		m := model{
+			async:       make(chan tea.Msg, 1),
+			notifier:    notifier,
+			busy:        true,
+			activeRunID: 9,
+			cfg: config.Config{
+				Notifications: config.NotificationsConfig{
+					Desktop: config.DesktopNotificationConfig{
+						Enabled:       true,
+						OnRunCanceled: true,
+					},
+				},
+			},
+		}
+
+		got, _ := m.Update(runFinishedMsg{RunID: 9, Err: context.Canceled})
+		_ = got.(model)
+
+		if len(notifier.messages) != 1 {
+			t.Fatalf("expected one notification, got %d", len(notifier.messages))
+		}
+		if notifier.messages[0].Event != notifypkg.EventRunCanceled {
+			t.Fatalf("expected run_canceled event, got %q", notifier.messages[0].Event)
+		}
+	})
+}
+
+func TestRunFinishedDesktopNotificationsSkipBTWRestartAndStaleRun(t *testing.T) {
+	t.Run("btw restart", func(t *testing.T) {
+		notifier := &fakeNotifier{}
+		m := model{
+			async:        make(chan tea.Msg, 1),
+			notifier:     notifier,
+			busy:         true,
+			activeRunID:  10,
+			interrupting: true,
+			pendingBTW:   []string{"new direction"},
+			cfg: config.Config{
+				Notifications: config.NotificationsConfig{
+					Desktop: config.DesktopNotificationConfig{
+						Enabled:        true,
+						OnRunCompleted: true,
+						OnRunFailed:    true,
+						OnRunCanceled:  true,
+					},
+				},
+			},
+		}
+
+		got, _ := m.Update(runFinishedMsg{RunID: 10})
+		_ = got.(model)
+		if len(notifier.messages) != 0 {
+			t.Fatalf("expected no notification for btw restart, got %d", len(notifier.messages))
+		}
+	})
+
+	t.Run("stale run", func(t *testing.T) {
+		notifier := &fakeNotifier{}
+		m := model{
+			async:       make(chan tea.Msg, 1),
+			notifier:    notifier,
+			busy:        true,
+			activeRunID: 11,
+			cfg: config.Config{
+				Notifications: config.NotificationsConfig{
+					Desktop: config.DesktopNotificationConfig{
+						Enabled:        true,
+						OnRunCompleted: true,
+						OnRunFailed:    true,
+						OnRunCanceled:  true,
+					},
+				},
+			},
+		}
+
+		got, _ := m.Update(runFinishedMsg{RunID: 12})
+		_ = got.(model)
+		if len(notifier.messages) != 0 {
+			t.Fatalf("expected no notification for stale run, got %d", len(notifier.messages))
+		}
+	})
+}
+
+func TestRunFinishedDesktopNotificationsDisabledSkipsSend(t *testing.T) {
+	notifier := &fakeNotifier{}
+	m := model{
+		async:       make(chan tea.Msg, 1),
+		notifier:    notifier,
+		busy:        true,
+		activeRunID: 21,
+		cfg: config.Config{
+			Notifications: config.NotificationsConfig{
+				Desktop: config.DesktopNotificationConfig{
+					Enabled:        false,
+					OnRunCompleted: true,
+					OnRunFailed:    true,
+					OnRunCanceled:  true,
+				},
+			},
+		},
+	}
+
+	got, _ := m.Update(runFinishedMsg{RunID: 21})
+	_ = got.(model)
+	if len(notifier.messages) != 0 {
+		t.Fatalf("expected no notification when desktop notifications are disabled, got %d", len(notifier.messages))
+	}
 }
 
 func TestRunFinishedKeepsStreamingSlotForLateAssistantMessage(t *testing.T) {
@@ -6221,6 +6584,28 @@ func TestUpdateIgnoresStaleRunFinishedMsg(t *testing.T) {
 	}
 	if updated.statusNote != "Running..." {
 		t.Fatalf("expected stale run message not to rewrite status, got %q", updated.statusNote)
+	}
+}
+
+func TestUpdateTreatsZeroRunIDAsStaleWhenActiveRunExists(t *testing.T) {
+	m := model{
+		async:       make(chan tea.Msg, 1),
+		busy:        true,
+		activeRunID: 7,
+		statusNote:  "Running...",
+		phase:       "responding",
+	}
+
+	got, cmd := m.Update(runFinishedMsg{})
+	updated := got.(model)
+	if cmd == nil {
+		t.Fatalf("expected stale run finished to keep waiting for async events")
+	}
+	if !updated.busy {
+		t.Fatalf("expected zero RunID to be treated as stale while active run exists")
+	}
+	if updated.activeRunID != 7 {
+		t.Fatalf("expected activeRunID to remain unchanged, got %d", updated.activeRunID)
 	}
 }
 

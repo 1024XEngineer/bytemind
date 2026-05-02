@@ -18,6 +18,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/history"
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	"github.com/1024XEngineer/bytemind/internal/mention"
+	notifypkg "github.com/1024XEngineer/bytemind/internal/notify"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 	"github.com/1024XEngineer/bytemind/internal/session"
 
@@ -322,6 +323,9 @@ type hiddenPasteProbeState struct {
 var commandItems = []commandItem{
 	{Name: "/help", Usage: "/help", Description: "Show usage and supported commands.", Kind: "command"},
 	{Name: "/session", Usage: "/session", Description: "Open the recent session list.", Kind: "command"},
+	{Name: "/agents", Usage: "/agents [name]", Description: "List available subagents or show one definition.", Kind: "command"},
+	{Name: "/review", Usage: "/review", Description: "Delegate a focused code review task to the builtin review subagent.", Kind: "command"},
+	{Name: "/explorer", Usage: "/explorer", Description: "Delegate a focused repository exploration task to the builtin explorer subagent.", Kind: "command"},
 	{Name: "/skills-select", Usage: "/skills-select", Description: "Open the loaded skills picker.", Kind: "command"},
 	{Name: "/mcp list", Usage: "/mcp list", Description: "List configured MCP servers and current status.", Kind: "command"},
 	{Name: "/mcp help", Usage: "/mcp help", Description: "Show MCP command help.", Kind: "command"},
@@ -344,6 +348,7 @@ type model struct {
 	imageStore assets.ImageStore
 	cfg        config.Config
 	workspace  string
+	notifier   notifypkg.Notifier
 	version    string
 
 	width  int
@@ -457,6 +462,7 @@ type model struct {
 	clipboardRead              clipboardTextReader
 	clipboardText              clipboardTextWriter
 	runCancel                  context.CancelFunc
+	pendingCommandCmd          tea.Cmd
 	pendingBTW                 []string
 	interrupting               bool
 	interruptSafe              bool
@@ -470,6 +476,10 @@ type model struct {
 func newModel(opts Options) model {
 	ensureZoneManager()
 	async := make(chan tea.Msg, 128)
+	notifier := opts.Notifier
+	if notifier == nil {
+		notifier = notifypkg.NewNoopNotifier()
+	}
 
 	input := textarea.New()
 	input.Placeholder = "Ask Bytemind to inspect, change, or verify this workspace..."
@@ -517,6 +527,7 @@ func newModel(opts Options) model {
 		imageStore:           opts.ImageStore,
 		cfg:                  opts.Config,
 		workspace:            opts.Workspace,
+		notifier:             notifier,
 		version:              opts.Version,
 		async:                async,
 		viewport:             vp,
@@ -665,7 +676,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, waitForAsync(m.async)
 	case runFinishedMsg:
-		if msg.RunID > 0 && msg.RunID != m.activeRunID {
+		if m.activeRunID > 0 && msg.RunID != m.activeRunID {
 			return m, waitForAsync(m.async)
 		}
 		elapsed := time.Duration(0)
@@ -723,6 +734,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.closePlanActionPicker()
 				m.statusNote = "Ready."
 			}
+			m.notifyRunCompleted(msg.RunID)
 		case runFinishReasonCanceled:
 			m.lastRunDuration = elapsed
 			m.runIndicatorState = runIndicatorCanceled
@@ -731,6 +743,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusNote = "Run canceled."
 			m.phase = "idle"
 			m.llmConnected = true
+			m.notifyRunCanceled(msg.RunID)
 		case runFinishReasonFailed:
 			m.lastRunDuration = elapsed
 			m.runIndicatorState = runIndicatorFailed
@@ -740,6 +753,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.phase = "error"
 			m.llmConnected = false
 			m.failLatestAssistant(msg.Err.Error())
+			m.notifyRunFailed(msg.RunID, msg.Err)
 		default:
 			m.lastRunDuration = 0
 			m.runIndicatorState = runIndicatorReady
@@ -760,6 +774,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.statusNote = "Approval required."
 		m.phase = "approval"
+		m.notifyApprovalRequired(msg.Request)
 		return m, waitForAsync(m.async)
 	case sessionsLoadedMsg:
 		if msg.Err == nil {
@@ -2426,7 +2441,7 @@ func shouldExecuteFromPalette(item commandItem) bool {
 		return true
 	}
 	switch item.Name {
-	case "/help", "/session", "/skills", "/skill clear", "/mcp list", "/mcp help", "/new", "/compact", "/undo-commit", "/quit":
+	case "/help", "/session", "/agents", "/skills", "/skill clear", "/mcp list", "/mcp help", "/new", "/compact", "/undo-commit", "/quit":
 		return true
 	default:
 		return false
@@ -2780,8 +2795,11 @@ func (m model) currentSkillLabel() string {
 }
 
 func (m model) fullAccessEnabled() bool {
-	mode := strings.TrimSpace(m.cfg.ApprovalMode)
-	return strings.EqualFold(mode, "full_access") || strings.EqualFold(mode, "away")
+	mode, err := config.NormalizeApprovalMode(m.cfg.ApprovalMode)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(mode, "full_access")
 }
 
 func (m model) approvalModeStatusLabel() string {
@@ -2849,6 +2867,45 @@ func (m *model) resolveApprovalDecision(approved bool) {
 		}
 	}
 	m.approval = nil
+}
+
+func (m *model) desktopNotificationEnabled() bool {
+	if m == nil || m.notifier == nil {
+		return false
+	}
+	return m.cfg.Notifications.Desktop.Enabled
+}
+
+func (m *model) notifyApprovalRequired(req ApprovalRequest) {
+	if !m.desktopNotificationEnabled() || !m.cfg.Notifications.Desktop.OnApprovalRequired {
+		return
+	}
+	m.notifier.Notify(notifypkg.BuildApprovalRequiredMessage(req.Command, req.Reason))
+}
+
+func (m *model) notifyRunCompleted(runID int) {
+	if !m.desktopNotificationEnabled() || !m.cfg.Notifications.Desktop.OnRunCompleted {
+		return
+	}
+	m.notifier.Notify(notifypkg.BuildRunCompletedMessage(runID))
+}
+
+func (m *model) notifyRunFailed(runID int, err error) {
+	if !m.desktopNotificationEnabled() || !m.cfg.Notifications.Desktop.OnRunFailed {
+		return
+	}
+	detail := ""
+	if err != nil {
+		detail = err.Error()
+	}
+	m.notifier.Notify(notifypkg.BuildRunFailedMessage(runID, detail))
+}
+
+func (m *model) notifyRunCanceled(runID int) {
+	if !m.desktopNotificationEnabled() || !m.cfg.Notifications.Desktop.OnRunCanceled {
+		return
+	}
+	m.notifier.Notify(notifypkg.BuildRunCanceledMessage(runID))
 }
 
 func (m *model) setApprovalMode(mode string) {

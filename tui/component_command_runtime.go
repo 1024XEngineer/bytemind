@@ -99,6 +99,16 @@ func (m *model) appendCommandExchange(command, response string) {
 	})
 }
 
+func (m *model) appendAssistantCommandResponse(response string) {
+	m.screen = screenChat
+	m.appendChat(chatEntry{
+		Kind:   "assistant",
+		Title:  assistantLabel,
+		Body:   response,
+		Status: "final",
+	})
+}
+
 func (m *model) activateSkillCommand(input, name string, args map[string]string) error {
 	if m.runner == nil {
 		return fmt.Errorf("runner is unavailable")

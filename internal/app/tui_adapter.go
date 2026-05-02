@@ -10,6 +10,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	"github.com/1024XEngineer/bytemind/internal/skills"
+	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
 	"github.com/1024XEngineer/bytemind/internal/tools"
 	"github.com/1024XEngineer/bytemind/tui"
 )
@@ -30,9 +31,10 @@ func (a *tuiRunnerAdapter) RunPromptWithInput(ctx context.Context, sess *session
 		return "", errors.New("runner is unavailable")
 	}
 	return a.runner.RunPromptWithInput(ctx, sess, agent.RunPromptInput{
-		UserMessage: input.UserMessage,
-		Assets:      input.Assets,
-		DisplayText: input.DisplayText,
+		UserMessage:                     input.UserMessage,
+		Assets:                          input.Assets,
+		DisplayText:                     input.DisplayText,
+		PersistDisplayTextAsUserMessage: input.PersistDisplayTextAsUserMessage,
 	}, mode, out)
 }
 
@@ -117,6 +119,39 @@ func (a *tuiRunnerAdapter) CompactSession(ctx context.Context, sess *session.Ses
 		return "", false, errors.New("runner is unavailable")
 	}
 	return a.runner.CompactSession(ctx, sess)
+}
+
+func (a *tuiRunnerAdapter) ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic) {
+	if a == nil || a.runner == nil {
+		return nil, nil
+	}
+	return a.runner.ListSubAgents()
+}
+
+func (a *tuiRunnerAdapter) FindSubAgent(name string) (subagentspkg.Agent, bool) {
+	if a == nil || a.runner == nil {
+		return subagentspkg.Agent{}, false
+	}
+	return a.runner.FindSubAgent(name)
+}
+
+func (a *tuiRunnerAdapter) FindBuiltinSubAgent(name string) (subagentspkg.Agent, bool) {
+	if a == nil || a.runner == nil {
+		return subagentspkg.Agent{}, false
+	}
+	return a.runner.FindBuiltinSubAgent(name)
+}
+
+func (a *tuiRunnerAdapter) DispatchSubAgent(
+	ctx context.Context,
+	sess *session.Session,
+	mode string,
+	request tools.DelegateSubAgentRequest,
+) (tools.DelegateSubAgentResult, error) {
+	if a == nil || a.runner == nil {
+		return tools.DelegateSubAgentResult{}, errors.New("runner is unavailable")
+	}
+	return a.runner.DispatchSubAgent(ctx, sess, mode, request)
 }
 
 func mapAgentEvent(event agent.Event) tui.Event {

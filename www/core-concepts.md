@@ -75,7 +75,8 @@ High-risk tools (`write_file`, `replace_in_file`, `apply_patch`, `run_shell`) tr
 The approval policy controls how the agent handles high-risk operations:
 
 - **`on-request` (default)**: waits for your explicit confirmation before each high-risk tool call
-- **Away mode**: in unattended scenarios, automatically denies or aborts based on `away_policy`
+- **`full_access`**: in unattended scenarios, automatically approves approval-required actions with no prompt
+- **Migration gate**: legacy `approval_mode: away` is blocked by default; set `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` only for temporary migration
 
 See [Tools and Approval](/usage/tools-and-approval) for details.
 

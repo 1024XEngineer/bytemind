@@ -13,7 +13,7 @@ Model provider configuration.
 | `type`              | string | `openai-compatible`, `anthropic`, or `gemini` | `openai-compatible`       |
 | `base_url`          | string | API endpoint URL                            | `https://api.openai.com/v1` |
 | `model`             | string | Model ID to use                             | `gpt-5.4-mini`              |
-| `api_key`           | string | API key (plain text — prefer `api_key_env`) | —                           |
+| `api_key`           | string | API key (plain text - prefer `api_key_env`) | -                           |
 | `api_key_env`       | string | Env var name to read the key from           | `BYTEMIND_API_KEY`          |
 | `anthropic_version` | string | Anthropic API version header                | `2023-06-01`                |
 | `auth_header`       | string | Custom auth header name                     | `Authorization`             |
@@ -31,16 +31,29 @@ Model provider configuration.
 | Value                   | Behavior                                             |
 | ----------------------- | ---------------------------------------------------- |
 | `interactive` (default) | Prompt for approval on each operation                |
-| `away`                  | Unattended — use `away_policy` to determine behavior |
+| `full_access`           | Auto-approve approval-required actions with no prompt |
 
 ## `away_policy`
 
-Only applies when `approval_mode` is `away`.
+Deprecated compatibility field. Legacy `approval_mode: away` is blocked by default to prevent silent privilege escalation. Temporarily set `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` only when migrating old configs; `away_policy` remains compatibility-only.
 
 | Value                          | Behavior                                             |
 | ------------------------------ | ---------------------------------------------------- |
-| `auto_deny_continue` (default) | Deny high-risk operations automatically and continue |
-| `fail_fast`                    | Abort the task on first operation requiring approval |
+| `auto_deny_continue` (default) | Accepted for compatibility; no runtime behavior change |
+| `fail_fast`                    | Accepted for compatibility; no runtime behavior change |
+
+## `notifications.desktop`
+
+Desktop notification preferences.
+
+| Field                  | Type | Default | Description |
+| ---------------------- | ---- | ------- | ----------- |
+| `enabled`              | bool | `true`  | Master switch for desktop notifications. |
+| `on_approval_required` | bool | `true`  | Notify when an approval prompt is raised. |
+| `on_run_completed`     | bool | `true`  | Notify when a run completes successfully. |
+| `on_run_failed`        | bool | `true`  | Notify when a run fails. |
+| `on_run_canceled`      | bool | `false` | Notify when a run is canceled. |
+| `cooldown_seconds`     | int  | `3`     | Cooldown window for duplicate notification keys. `0` disables cooldown dedupe. |
 
 ## `max_iterations`
 
@@ -123,6 +136,16 @@ Controls context window management.
   },
   "approval_policy": "on-request",
   "approval_mode": "interactive",
+  "notifications": {
+    "desktop": {
+      "enabled": true,
+      "on_approval_required": true,
+      "on_run_completed": true,
+      "on_run_failed": true,
+      "on_run_canceled": false,
+      "cooldown_seconds": 3
+    }
+  },
   "max_iterations": 32,
   "stream": true,
   "sandbox_enabled": false,

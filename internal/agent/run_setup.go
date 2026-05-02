@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/1024XEngineer/bytemind/internal/llm"
@@ -11,6 +12,7 @@ import (
 type runPromptSetup struct {
 	Input                        RunPromptInput
 	UserInput                    string
+	PersistedUserMessageIndex    int
 	RunMode                      planpkg.AgentMode
 	Mode                         string
 	SystemSandboxBackend         string
@@ -26,7 +28,10 @@ type runPromptSetup struct {
 	AllowedToolNames             []string
 	DeniedToolNames              []string
 	AvailableSkills              []PromptSkill
+	AvailableSubAgents           []PromptSubAgent
 	AvailableTools               []string
+	SubAgentRuntime              *PromptSubAgentRuntime
+	SubAgentDefinition           string
 	InstructionText              string
 	WebLookupInstruction         string
 	PromptTokens                 int
@@ -45,7 +50,65 @@ func normalizeRunPromptInput(input RunPromptInput) RunPromptInput {
 	if strings.TrimSpace(input.DisplayText) == "" {
 		input.DisplayText = input.UserMessage.Text()
 	}
+	input.SubAgent = normalizeSubAgentPromptInput(input.SubAgent)
 	return input
+}
+
+func normalizeSubAgentPromptInput(input *SubAgentPromptInput) *SubAgentPromptInput {
+	if input == nil {
+		return nil
+	}
+	normalized := &SubAgentPromptInput{
+		Name:           strings.TrimSpace(input.Name),
+		Task:           strings.TrimSpace(input.Task),
+		Isolation:      strings.TrimSpace(input.Isolation),
+		ResultPolicy:   strings.TrimSpace(input.ResultPolicy),
+		DefinitionBody: strings.TrimSpace(input.DefinitionBody),
+	}
+	if len(input.ScopePaths) > 0 {
+		normalized.ScopePaths = normalizeUniqueStrings(input.ScopePaths)
+	}
+	if len(input.ScopeSymbols) > 0 {
+		normalized.ScopeSymbols = normalizeUniqueStrings(input.ScopeSymbols)
+	}
+	if len(input.AllowedTools) > 0 {
+		normalized.AllowedTools = normalizeUniqueStrings(input.AllowedTools)
+	}
+	if normalized.Name == "" &&
+		normalized.Task == "" &&
+		len(normalized.ScopePaths) == 0 &&
+		len(normalized.ScopeSymbols) == 0 &&
+		len(normalized.AllowedTools) == 0 &&
+		normalized.Isolation == "" &&
+		normalized.ResultPolicy == "" &&
+		normalized.DefinitionBody == "" {
+		return nil
+	}
+	return normalized
+}
+
+func normalizeUniqueStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
 }
 
 func resolveRunMode(sess *session.Session, mode string) planpkg.AgentMode {

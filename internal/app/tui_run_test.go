@@ -36,6 +36,9 @@ func TestRunTUIBuildsOptionsAndInvokesProgram(t *testing.T) {
 		if opts.ImageStore == nil {
 			t.Fatalf("expected image store to be initialized")
 		}
+		if opts.Notifier == nil {
+			t.Fatalf("expected notifier to be initialized")
+		}
 		if opts.Workspace != workspace {
 			t.Fatalf("expected workspace %q, got %q", workspace, opts.Workspace)
 		}
@@ -51,7 +54,7 @@ func TestRunTUIBuildsOptionsAndInvokesProgram(t *testing.T) {
 		if opts.Config.MaxIterations != 9 {
 			t.Fatalf("expected max-iterations override to apply, got %d", opts.Config.MaxIterations)
 		}
-		if opts.Config.ApprovalMode != "away" {
+		if opts.Config.ApprovalMode != "full_access" {
 			t.Fatalf("expected approval mode override to apply, got %q", opts.Config.ApprovalMode)
 		}
 		if opts.Config.AwayPolicy != "fail_fast" {
@@ -67,7 +70,7 @@ func TestRunTUIBuildsOptionsAndInvokesProgram(t *testing.T) {
 			"-workspace", workspace,
 			"-model", "gpt-5.4",
 			"-stream", "true",
-			"-approval-mode", "away",
+			"-approval-mode", "full_access",
 			"-away-policy", "fail_fast",
 			"-max-iterations", "9",
 		},

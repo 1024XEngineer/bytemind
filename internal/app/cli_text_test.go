@@ -23,7 +23,7 @@ func TestDefaultUsageLinesIncludeInstall(t *testing.T) {
 	if !strings.Contains(joined, "install without Go (macOS/Linux)") {
 		t.Fatalf("expected usage to include no-go install tip, got %q", joined)
 	}
-	if !strings.Contains(joined, "-approval-mode interactive|away") {
+	if !strings.Contains(joined, "-approval-mode interactive|full_access") {
 		t.Fatalf("expected usage to include approval-mode flag, got %q", joined)
 	}
 	if !strings.Contains(joined, "-away-policy auto_deny_continue|fail_fast") {

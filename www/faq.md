@@ -59,7 +59,7 @@ bytemind chat -max-iterations 64
 
 ### Can I use ByteMind in CI without manual approvals?
 
-Yes. Set `approval_mode` to `away` with `away_policy: auto_deny_continue`. High-risk operations will be automatically denied (skipped), allowing the pipeline to continue without blocking.
+Yes. Set `approval_mode` to `full_access`. Approval-required operations are auto-approved without blocking prompts, so CI pipelines can run unattended. Legacy `away` is blocked by default unless you explicitly set `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` for migration.
 
 ### How do I resume a previous session?
 

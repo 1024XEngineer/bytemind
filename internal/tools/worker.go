@@ -822,8 +822,8 @@ func escalateWorkerApproval(toolName string, decision sandboxpkg.DecisionResult,
 	if execCtx == nil {
 		return NewToolExecError(ToolErrorPermissionDenied, formatBrokerDeniedMessage(toolName, decision), false, nil)
 	}
-	if execCtx.isAwayMode() {
-		return NewToolExecError(ToolErrorPermissionDenied, formatBrokerDeniedMessage(toolName, decision), false, nil)
+	if execCtx.isFullAccessMode() {
+		return nil
 	}
 	if execCtx.Approval == nil {
 		if execCtx.Stdin == nil {

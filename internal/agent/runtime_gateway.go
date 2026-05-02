@@ -18,6 +18,7 @@ const (
 
 type RuntimeGateway interface {
 	RunSync(ctx context.Context, request RuntimeTaskRequest) (RuntimeTaskExecution, error)
+	RunAsync(ctx context.Context, request RuntimeTaskRequest) (RuntimeTaskLaunch, error)
 }
 
 type RuntimeTaskRequest struct {
@@ -26,6 +27,7 @@ type RuntimeTaskRequest struct {
 	Name               string
 	Kind               string
 	ParentTaskID       corepkg.TaskID
+	Background         bool
 	Timeout            time.Duration
 	Metadata           map[string]string
 	Execute            func(context.Context) ([]byte, error)
@@ -36,6 +38,10 @@ type RuntimeTaskExecution struct {
 	TaskID         corepkg.TaskID
 	Result         runtimepkg.TaskResult
 	ExecutionError error
+}
+
+type RuntimeTaskLaunch struct {
+	TaskID corepkg.TaskID
 }
 
 type defaultRuntimeGateway struct {
@@ -81,38 +87,11 @@ func (g *defaultRuntimeGateway) RunSync(ctx context.Context, request RuntimeTask
 		return output, err
 	}
 
-	spec := runtimepkg.TaskSpec{
-		SessionID:    request.SessionID,
-		TraceID:      request.TraceID,
-		Name:         request.Name,
-		Kind:         request.Kind,
-		ParentTaskID: request.ParentTaskID,
-		Timeout:      request.Timeout,
-		Metadata:     copyTaskMetadata(request.Metadata),
-	}
-
-	registry, ok := g.taskManager.(runtimepkg.TaskExecutionRegistry)
-	if !ok {
-		return RuntimeTaskExecution{}, fmt.Errorf("runtime task manager must implement TaskExecutionRegistry")
-	}
-	token := g.buildExecutionToken(spec)
-	if spec.Metadata == nil {
-		spec.Metadata = make(map[string]string, 1)
-	}
-	spec.Metadata[runtimepkg.TaskExecutionTokenMetadataKey] = token
-	registry.RegisterExecution(token, executor)
-	defer registry.UnregisterExecution(token)
-
-	taskID, submitErr := g.taskManager.Submit(ctx, spec)
+	taskID, unregister, submitErr := g.submitTask(ctx, request, executor)
 	if submitErr != nil {
 		return RuntimeTaskExecution{}, submitErr
 	}
-
-	if request.OnTaskStateChanged != nil {
-		if snapshot, err := g.taskManager.Get(context.Background(), taskID); err == nil {
-			request.OnTaskStateChanged(snapshot)
-		}
-	}
+	defer unregister()
 
 	result, waitErr := g.taskManager.Wait(ctx, taskID)
 	if waitErr == nil {
@@ -166,6 +145,100 @@ func (g *defaultRuntimeGateway) RunSync(ctx context.Context, request RuntimeTask
 	}
 
 	return execution, waitErr
+}
+
+func (g *defaultRuntimeGateway) RunAsync(ctx context.Context, request RuntimeTaskRequest) (RuntimeTaskLaunch, error) {
+	if g == nil || g.taskManager == nil {
+		return RuntimeTaskLaunch{}, fmt.Errorf("runtime task manager is unavailable")
+	}
+	if request.Execute == nil {
+		return RuntimeTaskLaunch{}, fmt.Errorf("runtime task executor is unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	executor := func(execCtx context.Context, task runtimepkg.Task) ([]byte, error) {
+		if request.OnTaskStateChanged != nil {
+			request.OnTaskStateChanged(task)
+		}
+		return request.Execute(execCtx)
+	}
+
+	taskID, unregister, submitErr := g.submitTask(ctx, request, executor)
+	if submitErr != nil {
+		return RuntimeTaskLaunch{}, submitErr
+	}
+
+	go func() {
+		defer unregister()
+		_, _ = g.taskManager.Wait(context.Background(), taskID)
+		if request.OnTaskStateChanged != nil {
+			if snapshot, err := g.taskManager.Get(context.Background(), taskID); err == nil {
+				request.OnTaskStateChanged(snapshot)
+			}
+		}
+	}()
+
+	return RuntimeTaskLaunch{TaskID: taskID}, nil
+}
+
+func (g *defaultRuntimeGateway) submitTask(
+	ctx context.Context,
+	request RuntimeTaskRequest,
+	executor runtimepkg.TaskExecutorFunc,
+) (corepkg.TaskID, func(), error) {
+	if g == nil || g.taskManager == nil {
+		return "", nil, fmt.Errorf("runtime task manager is unavailable")
+	}
+	if executor == nil {
+		return "", nil, fmt.Errorf("runtime task executor is unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	spec := runtimepkg.TaskSpec{
+		SessionID:    request.SessionID,
+		TraceID:      request.TraceID,
+		Name:         request.Name,
+		Kind:         request.Kind,
+		ParentTaskID: request.ParentTaskID,
+		Background:   request.Background,
+		Timeout:      request.Timeout,
+		Metadata:     copyTaskMetadata(request.Metadata),
+	}
+
+	registry, ok := g.taskManager.(runtimepkg.TaskExecutionRegistry)
+	if !ok {
+		return "", nil, fmt.Errorf("runtime task manager must implement TaskExecutionRegistry")
+	}
+	token := g.buildExecutionToken(spec)
+	if spec.Metadata == nil {
+		spec.Metadata = make(map[string]string, 1)
+	}
+	spec.Metadata[runtimepkg.TaskExecutionTokenMetadataKey] = token
+	registry.RegisterExecution(token, executor)
+	var unregisterOnce sync.Once
+	unregister := func() {
+		unregisterOnce.Do(func() {
+			registry.UnregisterExecution(token)
+		})
+	}
+
+	taskID, submitErr := g.taskManager.Submit(ctx, spec)
+	if submitErr != nil {
+		unregister()
+		return "", nil, submitErr
+	}
+
+	if request.OnTaskStateChanged != nil {
+		if snapshot, err := g.taskManager.Get(context.Background(), taskID); err == nil {
+			request.OnTaskStateChanged(snapshot)
+		}
+	}
+
+	return taskID, unregister, nil
 }
 
 func (g *defaultRuntimeGateway) buildExecutionToken(spec runtimepkg.TaskSpec) string {

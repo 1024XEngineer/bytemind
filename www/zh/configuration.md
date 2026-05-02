@@ -92,17 +92,19 @@ bytemind chat
 | 值                    | 行为                                      |
 | --------------------- | ----------------------------------------- |
 | `interactive`（默认） | 交互式审批，每次操作弹出确认              |
-| `away`                | 无人值守模式，根据 `away_policy` 自动处理 |
+| `full_access`         | 全部权限模式，审批请求自动通过且不中断任务 |
 
-`away_policy`（仅在 `approval_mode: away` 时生效）：
+兼容说明：为避免静默提权，`approval_mode: away` 默认被阻止。仅在迁移旧配置时，显式设置 `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` 才会临时映射到 `full_access`。
+
+`away_policy`（已弃用，仅兼容保留）：
 
 | 值                           | 行为                         |
 | ---------------------------- | ---------------------------- |
-| `auto_deny_continue`（默认） | 自动拒绝高风险操作并继续执行 |
-| `fail_fast`                  | 遇到需审批的操作立即终止任务 |
+| `auto_deny_continue`（默认） | 仅用于兼容旧配置，不再影响运行时行为 |
+| `fail_fast`                  | 仅用于兼容旧配置，不再影响运行时行为 |
 
-:::warning Away 模式注意事项
-Away 模式下 Agent 将自动拒绝所有需要审批的操作。确保你的任务提示词不依赖 Shell 执行或文件写入，或在 `exec_allowlist` 中明确允许相关命令。
+:::warning Full Access 使用注意事项
+`full_access` 会自动同意审批请求，不会弹窗打断。请确保沙箱与权限边界配置正确；危险命令硬拦截、sandbox/network/lease 约束仍会继续生效。
 :::
 
 ## 沙箱

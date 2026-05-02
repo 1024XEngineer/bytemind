@@ -457,7 +457,7 @@ func TestRenderToolFeedbackSkippedDependencyBranch(t *testing.T) {
 	runner := NewRunner(Options{})
 	var out bytes.Buffer
 
-	runner.renderToolFeedback(&out, "read_file", `{"ok":false,"error":"denied_dependency: tool \"read_file\" was skipped because a prior approval-required action was denied in away mode","status":"skipped","reason_code":"denied_dependency"}`)
+	runner.renderToolFeedback(&out, "read_file", `{"ok":false,"error":"denied_dependency: tool \"read_file\" was skipped because a prior approval-required action was denied earlier in the run","status":"skipped","reason_code":"denied_dependency"}`)
 
 	got := out.String()
 	for _, want := range []string{"skipped", "read_file", "prior approval-required action was denied"} {
@@ -481,13 +481,43 @@ func TestRenderToolFeedbackAdditionalBranches(t *testing.T) {
 	runner.renderToolFeedback(&out, "web_search", `{"query":"go release","results":[{"title":"Go Release Notes","url":"https://go.dev/doc/devel/release"}]}`)
 	runner.renderToolFeedback(&out, "web_fetch", `{"url":"https://go.dev/doc/devel/release","status_code":200,"title":"Release Notes","content":"Go 1.x details","truncated":false}`)
 	runner.renderToolFeedback(&out, "apply_patch", `{"operations":[{"type":"update","path":"a.go"}]}`)
+	runner.renderToolFeedback(&out, "delegate_subagent", `{"ok":true,"agent":"explorer","summary":"scan complete","invocation_id":"subagent-1","findings":[{"title":"Prompt order"}],"references":[{"path":"internal/agent/prompt.go","line":42}]}`)
 	runner.renderToolFeedback(&out, "unknown_tool", `{}`)
 
 	got := out.String()
-	for _, want := range []string{"listed", "dir  dir1", "read", "wrote", "updated", "searched", "fetched", "patch", "completed"} {
+	for _, want := range []string{"listed", "dir  dir1", "read", "wrote", "updated", "searched", "fetched", "patch", "delegated", "invocation: subagent-1", "findings: 1, references: 1", "completed"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected output to contain %q, got %q", want, got)
 		}
+	}
+}
+
+func TestRenderToolFeedbackDelegateSubAgentErrorBranch(t *testing.T) {
+	runner := NewRunner(Options{})
+	var out bytes.Buffer
+
+	runner.renderToolFeedback(&out, "delegate_subagent", `{"ok":false,"task_id":"task-42","invocation_id":"subagent-2","error":{"code":"subagent_task_not_eligible","message":"task is too tightly coupled"}}`)
+
+	got := out.String()
+	for _, want := range []string{"error", "task is too tightly coupled", "subagent_task_not_eligible", "invocation: subagent-2", "task_id: task-42"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected output to contain %q, got %q", want, got)
+		}
+	}
+}
+
+func TestRenderToolFeedbackDelegateSubAgentQueuedDoesNotDuplicateTaskID(t *testing.T) {
+	runner := NewRunner(Options{})
+	var out bytes.Buffer
+
+	runner.renderToolFeedback(&out, "delegate_subagent", `{"ok":true,"status":"queued","agent":"explorer","task_id":"task-7","invocation_id":"subagent-7","findings":[],"references":[]}`)
+
+	got := out.String()
+	if !strings.Contains(got, "task=task-7") {
+		t.Fatalf("expected queued inline task id, got %q", got)
+	}
+	if strings.Contains(got, "task_id: task-7") {
+		t.Fatalf("expected no duplicated task_id line, got %q", got)
 	}
 }
 

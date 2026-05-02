@@ -10,12 +10,15 @@ import (
 	"strings"
 	"time"
 
+	configpkg "github.com/1024XEngineer/bytemind/internal/config"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 )
 
 const (
 	maxPromptSkillEntries         = 12
 	maxPromptSkillDescriptionRune = 140
+	maxPromptSubAgentEntries      = 12
+	maxPromptSubAgentDescRune     = 140
 )
 
 //go:embed prompts/default.md
@@ -46,6 +49,22 @@ type PromptActiveSkill struct {
 	Tools        []string
 }
 
+type PromptSubAgent struct {
+	Name        string
+	Description string
+	Mode        string
+}
+
+type PromptSubAgentRuntime struct {
+	Name         string
+	Task         string
+	ScopePaths   []string
+	ScopeSymbols []string
+	AllowedTools []string
+	Isolation    string
+	ResultPolicy string
+}
+
 type PromptInput struct {
 	Workspace                    string
 	ApprovalPolicy               string
@@ -65,7 +84,10 @@ type PromptInput struct {
 	Platform                     string
 	Now                          time.Time
 	Skills                       []PromptSkill
+	SubAgents                    []PromptSubAgent
 	Tools                        []string
+	SubAgentRuntime              *PromptSubAgentRuntime
+	SubAgentDefinition           string
 	Plan                         planpkg.State
 	ActiveSkill                  *PromptActiveSkill
 	Instruction                  string
@@ -145,8 +167,8 @@ func renderSystemBlock(input PromptInput) string {
 	if approval == "" {
 		approval = "on-request"
 	}
-	approvalMode := strings.TrimSpace(input.ApprovalMode)
-	if approvalMode == "" {
+	approvalMode, err := configpkg.NormalizeApprovalMode(input.ApprovalMode)
+	if err != nil {
 		approvalMode = "interactive"
 	}
 	awayPolicy := strings.TrimSpace(input.AwayPolicy)
@@ -216,8 +238,18 @@ func renderSystemBlock(input PromptInput) string {
 		"- Skills are reusable task profiles available in this session. Only the [Active Skill] block, when present, is currently in effect.",
 		formatSkills(input.Skills),
 		"",
+		"[Available SubAgents]",
+		"- SubAgents are optional delegated workers available in this session.",
+		formatSubAgents(input.SubAgents),
+		"",
 		"[Available Tools]",
 		formatTools(input.Tools),
+	}
+	if subAgentRuntime := formatSubAgentRuntime(input.SubAgentRuntime); subAgentRuntime != "" {
+		lines = append(lines, "", subAgentRuntime)
+	}
+	if subAgentDefinition := formatSubAgentDefinition(input.SubAgentDefinition); subAgentDefinition != "" {
+		lines = append(lines, "", subAgentDefinition)
 	}
 	if planState := strings.TrimSpace(planpkg.RenderPromptStateBlock(input.Plan)); planState != "" {
 		lines = append(lines, "", "[Current Plan State]", planState)
@@ -279,6 +311,93 @@ func formatTools(tools []string) string {
 	}
 	sort.Strings(lines)
 	return strings.Join(lines, "\n")
+}
+
+func formatSubAgents(agents []PromptSubAgent) string {
+	if len(agents) == 0 {
+		return "- none"
+	}
+	lines := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		name := strings.TrimSpace(agent.Name)
+		if name == "" {
+			continue
+		}
+		description := strings.TrimSpace(agent.Description)
+		if description == "" {
+			description = "No description provided."
+		}
+		description = trimPromptText(description, maxPromptSubAgentDescRune)
+		mode := strings.TrimSpace(agent.Mode)
+		if mode != "" {
+			lines = append(lines, fmt.Sprintf("- %s (%s): %s", name, mode, description))
+		} else {
+			lines = append(lines, fmt.Sprintf("- %s: %s", name, description))
+		}
+	}
+	if len(lines) == 0 {
+		return "- none"
+	}
+	sort.Strings(lines)
+	if len(lines) > maxPromptSubAgentEntries {
+		remaining := len(lines) - maxPromptSubAgentEntries
+		lines = append(lines[:maxPromptSubAgentEntries], fmt.Sprintf("- ... and %d more subagent(s)", remaining))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatSubAgentRuntime(runtime *PromptSubAgentRuntime) string {
+	if runtime == nil {
+		return ""
+	}
+	lines := []string{"[SubAgent Runtime]"}
+	if name := strings.TrimSpace(runtime.Name); name != "" {
+		lines = append(lines, "name: "+name)
+	}
+	if task := strings.TrimSpace(runtime.Task); task != "" {
+		lines = append(lines, "task: "+task)
+	}
+	if len(runtime.ScopePaths) > 0 {
+		lines = append(lines, "scope_paths:")
+		for _, path := range runtime.ScopePaths {
+			path = strings.TrimSpace(path)
+			if path == "" {
+				continue
+			}
+			lines = append(lines, "- "+path)
+		}
+	}
+	if len(runtime.ScopeSymbols) > 0 {
+		lines = append(lines, "scope_symbols:")
+		for _, symbol := range runtime.ScopeSymbols {
+			symbol = strings.TrimSpace(symbol)
+			if symbol == "" {
+				continue
+			}
+			lines = append(lines, "- "+symbol)
+		}
+	}
+	if len(runtime.AllowedTools) > 0 {
+		lines = append(lines, "allowed_tools: "+strings.Join(runtime.AllowedTools, ", "))
+	}
+	if isolation := strings.TrimSpace(runtime.Isolation); isolation != "" {
+		lines = append(lines, "isolation: "+isolation)
+	}
+	if resultPolicy := strings.TrimSpace(runtime.ResultPolicy); resultPolicy != "" {
+		lines = append(lines, "result_policy: "+resultPolicy)
+	}
+	if len(lines) == 1 {
+		return ""
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatSubAgentDefinition(definition string) string {
+	definition = strings.TrimSpace(definition)
+	if definition == "" {
+		return ""
+	}
+	return "[SubAgent Definition]\n" + definition
 }
 
 func renderActiveSkillPrompt(skill *PromptActiveSkill) string {

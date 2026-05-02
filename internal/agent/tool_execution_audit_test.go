@@ -143,9 +143,10 @@ func TestRunPromptRecordsTaskStateChangedAuditForRuntimeBackedTool(t *testing.T)
 }
 
 type stubRuntimeGateway struct {
-	mu     sync.Mutex
-	calls  []RuntimeTaskRequest
-	result runtimepkg.TaskResult
+	mu         sync.Mutex
+	calls      []RuntimeTaskRequest
+	asyncCalls []RuntimeTaskRequest
+	result     runtimepkg.TaskResult
 }
 
 func (g *stubRuntimeGateway) RunSync(_ context.Context, request RuntimeTaskRequest) (RuntimeTaskExecution, error) {
@@ -168,6 +169,17 @@ func (g *stubRuntimeGateway) RunSync(_ context.Context, request RuntimeTaskReque
 	}, nil
 }
 
+func (g *stubRuntimeGateway) RunAsync(_ context.Context, request RuntimeTaskRequest) (RuntimeTaskLaunch, error) {
+	g.mu.Lock()
+	g.asyncCalls = append(g.asyncCalls, request)
+	g.mu.Unlock()
+	taskID := g.result.TaskID
+	if taskID == "" {
+		taskID = "runtime-task-1"
+	}
+	return RuntimeTaskLaunch{TaskID: taskID}, nil
+}
+
 func TestShouldExecuteToolDirectlyRoutesSynchronousBuiltins(t *testing.T) {
 	for _, name := range []string{
 		"list_files",
@@ -179,6 +191,9 @@ func TestShouldExecuteToolDirectlyRoutesSynchronousBuiltins(t *testing.T) {
 		"replace_in_file",
 		"apply_patch",
 		"update_plan",
+		"delegate_subagent",
+		"task_output",
+		"task_stop",
 	} {
 		if !shouldExecuteToolDirectly(name) {
 			t.Fatalf("expected %s to execute directly", name)

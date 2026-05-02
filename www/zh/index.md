@@ -31,5 +31,5 @@ features:
     details: 一条斜杠命令激活专项工作流——Bug 排查、代码审查、RFC 撰写等开箱即用。
   - title: 安全自动化
     icon: 🔒
-    details: Away 模式与沙箱策略支持无人值守的流水线，可精确限制可写目录范围。
+    details: Full Access 模式与沙箱策略支持无人值守流水线，审批不弹窗打断，同时可精确限制可写目录范围。
 ---

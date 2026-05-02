@@ -21,7 +21,7 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	prompt := systemPrompt(PromptInput{
 		Workspace:                    workspace,
 		ApprovalPolicy:               "on-request",
-		ApprovalMode:                 "away",
+		ApprovalMode:                 "full_access",
 		AwayPolicy:                   "fail_fast",
 		SandboxEnabled:               true,
 		SystemSandbox:                "best_effort",
@@ -37,6 +37,9 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 		Now:                          time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
 		Skills: []PromptSkill{
 			{Name: "review", Description: "Review code changes for regressions.", Enabled: true},
+		},
+		SubAgents: []PromptSubAgent{
+			{Name: "explorer", Description: "Scan repository context quickly.", Mode: "build"},
 		},
 		Tools: []string{"read_file", "list_files", "read_file"},
 		ActiveSkill: &PromptActiveSkill{
@@ -64,7 +67,7 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	assertContains(t, prompt, "model: gpt-5.4-mini")
 	assertContains(t, prompt, "mode: plan")
 	assertContains(t, prompt, "approval_policy: on-request")
-	assertContains(t, prompt, "approval_mode: away")
+	assertContains(t, prompt, "approval_mode: full_access")
 	assertContains(t, prompt, "away_policy: fail_fast")
 	assertContains(t, prompt, "sandbox_enabled: true")
 	assertContains(t, prompt, "system_sandbox_mode: best_effort")
@@ -78,6 +81,9 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	assertContains(t, prompt, "[Available Skills]")
 	assertContains(t, prompt, "Skills are reusable task profiles available in this session")
 	assertContains(t, prompt, "- review: Review code changes for regressions.")
+	assertContains(t, prompt, "[Available SubAgents]")
+	assertContains(t, prompt, "SubAgents are optional delegated workers available in this session.")
+	assertContains(t, prompt, "- explorer (build): Scan repository context quickly.")
 	assertContains(t, prompt, "[Available Tools]")
 	assertContains(t, prompt, "- list_files")
 	assertContains(t, prompt, "- read_file")
@@ -108,6 +114,8 @@ func TestSystemPromptOmitsOptionalBlocksWhenEmpty(t *testing.T) {
 	assertContains(t, prompt, "[Runtime Context]")
 	assertContains(t, prompt, "[Available Skills]")
 	assertContains(t, prompt, "- none")
+	assertContains(t, prompt, "[Available SubAgents]")
+	assertContains(t, prompt, "- none")
 	assertContains(t, prompt, "[Available Tools]")
 	assertContains(t, prompt, "- none")
 	assertContains(t, prompt, "approval_mode: interactive")
@@ -127,6 +135,47 @@ func TestSystemPromptOmitsOptionalBlocksWhenEmpty(t *testing.T) {
 		t.Fatalf("did not expect active skill block in prompt: %q", prompt)
 	}
 	assertNoTemplateMarkers(t, prompt)
+}
+
+func TestSystemPromptRendersSubAgentRuntimeAndDefinitionBlocks(t *testing.T) {
+	prompt := systemPrompt(PromptInput{
+		Workspace:      "/tmp/workspace",
+		ApprovalPolicy: "never",
+		Model:          "deepseek-chat",
+		Mode:           "build",
+		Platform:       "darwin/arm64",
+		Now:            time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
+		SubAgentRuntime: &PromptSubAgentRuntime{
+			Name:         "explorer",
+			Task:         "Locate prompt assembly order and summarize.",
+			ScopePaths:   []string{"internal/agent", "internal/subagents"},
+			ScopeSymbols: []string{"systemPrompt", "buildTurnMessages"},
+			AllowedTools: []string{"list_files", "read_file", "search_text"},
+			Isolation:    "none",
+			ResultPolicy: "Return compressed findings only. Do not include full tool logs.",
+		},
+		SubAgentDefinition: "You are a focused repository explorer.\nReturn concise findings with references.",
+	})
+
+	assertContains(t, prompt, "[SubAgent Runtime]")
+	assertContains(t, prompt, "name: explorer")
+	assertContains(t, prompt, "task: Locate prompt assembly order and summarize.")
+	assertContains(t, prompt, "scope_paths:")
+	assertContains(t, prompt, "- internal/agent")
+	assertContains(t, prompt, "- internal/subagents")
+	assertContains(t, prompt, "scope_symbols:")
+	assertContains(t, prompt, "- systemPrompt")
+	assertContains(t, prompt, "- buildTurnMessages")
+	assertContains(t, prompt, "allowed_tools: list_files, read_file, search_text")
+	assertContains(t, prompt, "isolation: none")
+	assertContains(t, prompt, "result_policy: Return compressed findings only. Do not include full tool logs.")
+
+	assertContains(t, prompt, "[SubAgent Definition]")
+	assertContains(t, prompt, "You are a focused repository explorer.")
+	assertContains(t, prompt, "Return concise findings with references.")
+
+	assertNotContains(t, prompt, "invocation_id:")
+	assertNotContains(t, prompt, "parent_session_id:")
 }
 
 func TestSystemPromptIncludesCurrentPlanStateWhenPresent(t *testing.T) {
@@ -270,6 +319,24 @@ func TestFormatSkillsKeepsSkillDescriptionsAsIs(t *testing.T) {
 	})
 
 	assertContains(t, got, "- review: Review with strict correctness focus.")
+}
+
+func TestFormatSubAgentsLimitsAndSummarizesOverflow(t *testing.T) {
+	agents := make([]PromptSubAgent, 0, maxPromptSubAgentEntries+2)
+	for i := 0; i < maxPromptSubAgentEntries+2; i++ {
+		agents = append(agents, PromptSubAgent{
+			Name:        fmt.Sprintf("agent-%02d", i),
+			Description: strings.Repeat("x", maxPromptSubAgentDescRune+20),
+			Mode:        "build",
+		})
+	}
+	got := formatSubAgents(agents)
+	if !strings.Contains(got, "- ... and 2 more subagent(s)") {
+		t.Fatalf("expected overflow summary line, got %q", got)
+	}
+	if strings.Contains(got, strings.Repeat("x", maxPromptSubAgentDescRune+10)) {
+		t.Fatalf("expected long descriptions to be trimmed, got %q", got)
+	}
 }
 
 func TestRenderActiveSkillPromptKeepsSkillFieldsAsIs(t *testing.T) {

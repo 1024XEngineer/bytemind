@@ -31,16 +31,31 @@
 | 值                    | 行为                                  |
 | --------------------- | ------------------------------------- |
 | `interactive`（默认） | 交互式审批，每次操作弹出确认          |
-| `away`                | 无人值守模式，根据 `away_policy` 处理 |
+| `full_access`         | 全部权限模式，审批请求自动通过且不中断任务 |
+
+兼容说明：为避免静默提权，`approval_mode: away` 默认被阻止。仅在迁移旧配置时，显式设置 `BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true` 才会临时映射到 `full_access`。
 
 ## `away_policy`
 
-仅在 `approval_mode` 为 `away` 时生效。
+已弃用兼容字段。保留用于兼容旧配置形状，不再影响运行时行为。
 
 | 值                           | 行为                         |
 | ---------------------------- | ---------------------------- |
-| `auto_deny_continue`（默认） | 自动拒绝高风险操作并继续执行 |
-| `fail_fast`                  | 遇到需审批的操作立即终止任务 |
+| `auto_deny_continue`（默认） | 仅用于兼容旧配置，不再影响运行时行为 |
+| `fail_fast`                  | 仅用于兼容旧配置，不再影响运行时行为 |
+
+## `notifications.desktop`
+
+桌面通知偏好设置。
+
+| 字段                    | 类型 | 默认值 | 说明 |
+| ----------------------- | ---- | ------ | ---- |
+| `enabled`               | bool | `true` | 桌面通知总开关。 |
+| `on_approval_required`  | bool | `true` | 出现审批请求时发送通知。 |
+| `on_run_completed`      | bool | `true` | 任务成功完成时发送通知。 |
+| `on_run_failed`         | bool | `true` | 任务失败时发送通知。 |
+| `on_run_canceled`       | bool | `false` | 任务取消时发送通知。 |
+| `cooldown_seconds`      | int  | `3` | 同一通知 key 的去重窗口。`0` 表示关闭 cooldown 去重。 |
 
 ## `max_iterations`
 
@@ -123,6 +138,16 @@
   },
   "approval_policy": "on-request",
   "approval_mode": "interactive",
+  "notifications": {
+    "desktop": {
+      "enabled": true,
+      "on_approval_required": true,
+      "on_run_completed": true,
+      "on_run_failed": true,
+      "on_run_canceled": false,
+      "cooldown_seconds": 3
+    }
+  },
   "max_iterations": 32,
   "stream": true,
   "sandbox_enabled": false,

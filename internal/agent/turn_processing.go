@@ -400,7 +400,7 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 	if streamedText && p.Out != nil {
 		_, _ = io.WriteString(p.Out, "\n")
 	}
-	for index, call := range reply.ToolCalls {
+	for _, call := range reply.ToolCalls {
 		*p.ExecutedTools = append(*p.ExecutedTools, call.Function.Name)
 		if p.TaskReport != nil {
 			p.TaskReport.RecordExecuted(call.Function.Name)
@@ -425,39 +425,6 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 		if ok && p.TaskReport != nil && envelope.Status == statusDenied {
 			p.TaskReport.RecordDenied(call.Function.Name)
 		}
-		if !isAwayPermissionDenied(envelope, runner.config.ApprovalMode) {
-			continue
-		}
-
-		if p.TaskReport != nil {
-			p.TaskReport.RecordDenied(call.Function.Name)
-		}
-
-		remaining := reply.ToolCalls[index+1:]
-		failFast := normalizeAwayPolicy(runner.config.AwayPolicy) == awayPolicyFailFast
-		for _, skippedCall := range remaining {
-			if p.TaskReport != nil {
-				p.TaskReport.RecordSkippedDueToDeniedDependency(skippedCall.Function.Name)
-			}
-			if failFast {
-				continue
-			}
-			if err := e.appendSkippedDependencyResult(ctx, p.Session, skippedCall, p.Out, p.SandboxAudit); err != nil {
-				return "", false, err
-			}
-			if p.TaskReport == nil {
-				continue
-			}
-			if skippedEnvelope, ok := latestToolResultEnvelope(p.Session); ok {
-				if note := systemSandboxFallbackReportEntry(skippedCall.Function.Name, skippedEnvelope); note != "" {
-					p.TaskReport.RecordSystemSandboxFallback(note)
-				}
-			}
-		}
-		if failFast {
-			return "", false, fmt.Errorf("away_policy=fail_fast stopped run after permission denial")
-		}
-		break
 	}
 	return "", false, nil
 }
@@ -470,13 +437,7 @@ func (r *Runner) processTurn(ctx context.Context, p turnProcessParams) (string, 
 const (
 	statusError                = "error"
 	statusDenied               = "denied"
-	statusSkipped              = "skipped"
 	reasonCodePermissionDenied = "permission_denied"
-	reasonCodeDeniedDependency = "denied_dependency"
-	approvalModeInteractive    = "interactive"
-	approvalModeAway           = "away"
-	awayPolicyAutoDenyContinue = "auto_deny_continue"
-	awayPolicyFailFast         = "fail_fast"
 )
 
 type toolResultEnvelope struct {
@@ -514,29 +475,6 @@ func latestToolResultEnvelope(sess *session.Session) (toolResultEnvelope, bool) 
 	return envelope, true
 }
 
-func isAwayPermissionDenied(envelope toolResultEnvelope, approvalMode string) bool {
-	if normalizeApprovalMode(approvalMode) != approvalModeAway {
-		return false
-	}
-	return envelope.Status == statusDenied && envelope.ReasonCode == reasonCodePermissionDenied
-}
-
-func normalizeApprovalMode(mode string) string {
-	mode = strings.ToLower(strings.TrimSpace(mode))
-	if mode == "" {
-		return approvalModeInteractive
-	}
-	return mode
-}
-
-func normalizeAwayPolicy(policy string) string {
-	policy = strings.ToLower(strings.TrimSpace(policy))
-	if policy == "" {
-		return awayPolicyAutoDenyContinue
-	}
-	return policy
-}
-
 func systemSandboxFallbackReportEntry(toolName string, envelope toolResultEnvelope) string {
 	if !envelope.SystemSandbox.Fallback {
 		return ""
@@ -568,61 +506,4 @@ func systemSandboxFallbackReportEntry(toolName string, envelope toolResultEnvelo
 		return toolName
 	}
 	return toolName + " (" + strings.Join(parts, ", ") + ")"
-}
-
-func (e *defaultEngine) appendSkippedDependencyResult(
-	ctx context.Context,
-	sess *session.Session,
-	call llm.ToolCall,
-	out io.Writer,
-	sandboxAudit sandboxAuditContext,
-) error {
-	if e == nil || e.runner == nil {
-		return fmt.Errorf("agent engine is unavailable")
-	}
-	runner := e.runner
-
-	errText := fmt.Sprintf("%s: tool %q was skipped because a prior approval-required action was denied in away mode", reasonCodeDeniedDependency, call.Function.Name)
-	payload := map[string]any{
-		"ok":          false,
-		"error":       errText,
-		"status":      statusSkipped,
-		"reason_code": reasonCodeDeniedDependency,
-	}
-	if systemSandbox := systemSandboxResultPayload(sandboxAudit); len(systemSandbox) != 0 {
-		payload["system_sandbox"] = systemSandbox
-	}
-	result := marshalToolResult(payload)
-	if out != nil {
-		runner.renderToolFeedback(out, call.Function.Name, result)
-	}
-
-	runner.emit(Event{
-		Type:       EventToolCallCompleted,
-		SessionID:  corepkg.SessionID(sess.ID),
-		ToolName:   call.Function.Name,
-		ToolResult: result,
-		Error:      errText,
-	})
-	emitTurnEvent(ctx, TurnEvent{
-		Type: TurnEventToolResult,
-		Payload: map[string]any{
-			"tool_name":    call.Function.Name,
-			"tool_call_id": call.ID,
-			"tool_result":  result,
-			"error":        errText,
-		},
-	})
-
-	toolMessage := llm.NewToolResultMessage(call.ID, result)
-	if err := llm.ValidateMessage(toolMessage); err != nil {
-		return err
-	}
-	sess.Messages = append(sess.Messages, toolMessage)
-	if runner.store != nil {
-		if err := runner.store.Save(sess); err != nil {
-			return err
-		}
-	}
-	return nil
 }

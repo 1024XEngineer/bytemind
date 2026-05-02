@@ -29,11 +29,11 @@ func TestShouldUseSubprocessWorker(t *testing.T) {
 	if shouldUseSubprocessWorker(nil) {
 		t.Fatal("nil execution context should not use subprocess worker")
 	}
-	if shouldUseSubprocessWorker(&ExecutionContext{SandboxEnabled: false, ApprovalMode: "away"}) {
+	if shouldUseSubprocessWorker(&ExecutionContext{SandboxEnabled: false, ApprovalMode: "full_access"}) {
 		t.Fatal("sandbox disabled should not use subprocess worker")
 	}
-	if !shouldUseSubprocessWorker(&ExecutionContext{SandboxEnabled: true, ApprovalMode: "away"}) {
-		t.Fatal("away mode with sandbox enabled should use subprocess worker")
+	if !shouldUseSubprocessWorker(&ExecutionContext{SandboxEnabled: true, ApprovalMode: "full_access"}) {
+		t.Fatal("full_access mode with sandbox enabled should use subprocess worker")
 	}
 	if !shouldUseSubprocessWorker(&ExecutionContext{SandboxEnabled: true, ApprovalMode: "interactive", ApprovalPolicy: "never"}) {
 		t.Fatal("approval_policy=never with sandbox enabled should use subprocess worker")
@@ -92,7 +92,7 @@ func TestSubprocessWorkerFailsClosedWhenSandboxEnabledAndInvokerMissing(t *testi
 		RawArgs:  json.RawMessage(`{"command":"git status"}`),
 		Execution: &ExecutionContext{
 			SandboxEnabled: true,
-			ApprovalMode:   "away",
+			ApprovalMode:   "full_access",
 			ApprovalPolicy: "on-request",
 			ExecAllowlist: []sandboxpkg.ExecRule{
 				{Command: "git status"},
@@ -128,7 +128,7 @@ func TestSubprocessWorkerUsesInvokerWhenEligible(t *testing.T) {
 		RawArgs:  json.RawMessage(`{"command":"git status"}`),
 		Execution: &ExecutionContext{
 			SandboxEnabled: true,
-			ApprovalMode:   "away",
+			ApprovalMode:   "full_access",
 			ApprovalPolicy: "on-request",
 			Workspace:      "C:\\workspace",
 			ExecAllowlist: []sandboxpkg.ExecRule{
@@ -170,7 +170,7 @@ func TestSubprocessWorkerPropagatesWorkerError(t *testing.T) {
 		RawArgs:  json.RawMessage(`{"command":"git status"}`),
 		Execution: &ExecutionContext{
 			SandboxEnabled: true,
-			ApprovalMode:   "away",
+			ApprovalMode:   "full_access",
 			ExecAllowlist: []sandboxpkg.ExecRule{
 				{Command: "git status"},
 			},
@@ -319,7 +319,7 @@ func TestSubprocessWorkerPreApprovesInteractiveShellRiskOnce(t *testing.T) {
 	}
 }
 
-func TestSubprocessWorkerAwayModeDeniesShellRiskBeforeInvoke(t *testing.T) {
+func TestSubprocessWorkerFullAccessAutoApprovesShellRiskBeforeInvoke(t *testing.T) {
 	invoker := &fakeWorkerInvoker{
 		resp: workerRPCResponse{Output: `{"ok":true}`},
 	}
@@ -328,12 +328,12 @@ func TestSubprocessWorkerAwayModeDeniesShellRiskBeforeInvoke(t *testing.T) {
 		invoker:  invoker,
 	}
 
-	_, err := worker.Run(context.Background(), workerRunRequest{
+	output, err := worker.Run(context.Background(), workerRunRequest{
 		ToolName: "run_shell",
 		RawArgs:  json.RawMessage(`{"command":"go test ./..."}`),
 		Execution: &ExecutionContext{
 			SandboxEnabled: true,
-			ApprovalMode:   "away",
+			ApprovalMode:   "full_access",
 			AwayPolicy:     "auto_deny_continue",
 			ApprovalPolicy: "on-request",
 			ExecAllowlist: []sandboxpkg.ExecRule{
@@ -341,21 +341,14 @@ func TestSubprocessWorkerAwayModeDeniesShellRiskBeforeInvoke(t *testing.T) {
 			},
 		},
 	})
-	if err == nil {
-		t.Fatal("expected away mode to deny approval-required shell command before subprocess invoke")
+	if err != nil {
+		t.Fatalf("expected full_access to auto-approve shell command before subprocess invoke, got %v", err)
 	}
-	if invoker.called {
-		t.Fatal("expected subprocess invoker to be skipped on away-mode denial")
+	if output != `{"ok":true}` {
+		t.Fatalf("unexpected output: %q", output)
 	}
-	execErr, ok := AsToolExecError(err)
-	if !ok {
-		t.Fatalf("expected ToolExecError, got %T", err)
-	}
-	if execErr.Code != ToolErrorPermissionDenied {
-		t.Fatalf("unexpected error code: %s", execErr.Code)
-	}
-	if !strings.Contains(strings.ToLower(execErr.Message), "away mode") {
-		t.Fatalf("unexpected away denial message: %q", execErr.Message)
+	if !invoker.called {
+		t.Fatal("expected subprocess invoker to run after full_access auto-approval")
 	}
 }
 

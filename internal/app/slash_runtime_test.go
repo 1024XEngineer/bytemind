@@ -2,10 +2,13 @@ package app
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	"github.com/1024XEngineer/bytemind/internal/session"
+	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
 )
 
 func TestExecuteSlashCommandHandlesResumeAndNew(t *testing.T) {
@@ -289,5 +292,107 @@ func TestExecuteSlashCommandReturnsListErrorForSessions(t *testing.T) {
 
 	if _, err := ExecuteSlashCommand(store, current, "/sessions", DefaultSlashCommands()); err == nil {
 		t.Fatal("expected /sessions to return list error when store root is missing")
+	}
+}
+
+func TestExecuteSlashCommandAgentsListAndDetail(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	current := session.New(workspace)
+	current.ID = "current"
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(workspace, "internal", "subagents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "internal", "subagents", "review.md"), []byte(`---
+name: review
+description: builtin reviewer
+---
+review files
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	listOut, err := ExecuteSlashCommand(store, current, "/agents", DefaultSlashCommands())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !listOut.Handled || listOut.Command != "agents" {
+		t.Fatalf("expected /agents list branch, got %#v", listOut)
+	}
+	if len(listOut.SubAgents) != 1 || listOut.SubAgents[0].Name != "review" {
+		t.Fatalf("expected one review subagent, got %#v", listOut.SubAgents)
+	}
+
+	detailOut, err := ExecuteSlashCommand(store, current, "/agents review", DefaultSlashCommands())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detailOut.SubAgentDetail == nil || detailOut.SubAgentDetail.Name != "review" {
+		t.Fatalf("expected detail for review subagent, got %#v", detailOut)
+	}
+
+	missingOut, err := ExecuteSlashCommand(store, current, "/agents missing", DefaultSlashCommands())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(missingOut.UsageHint, "subagent not found") {
+		t.Fatalf("expected not-found usage hint, got %#v", missingOut)
+	}
+}
+
+func TestExecuteSlashCommandBuiltinSubAgentRoutesIgnoreOverrides(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	current := session.New(workspace)
+	current.ID = "current"
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(workspace, "internal", "subagents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "internal", "subagents", "review.md"), []byte(`---
+name: review
+description: builtin reviewer
+---
+builtin body
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspace, ".bytemind", "subagents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".bytemind", "subagents", "review.md"), []byte(`---
+name: review
+description: project reviewer override
+---
+project body
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := ExecuteSlashCommand(store, current, "/review", DefaultSlashCommands())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Command != "builtin_subagent" || out.SubAgentDetail == nil {
+		t.Fatalf("expected builtin_subagent response, got %#v", out)
+	}
+	if out.SubAgentDetail.Scope != subagentspkg.ScopeBuiltin {
+		t.Fatalf("expected builtin scope, got %#v", out.SubAgentDetail)
+	}
+	if out.SubAgentDetail.Description != "builtin reviewer" {
+		t.Fatalf("expected builtin definition to win for /review, got %#v", out.SubAgentDetail)
 	}
 }

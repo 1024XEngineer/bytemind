@@ -16,6 +16,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/session"
 	"github.com/1024XEngineer/bytemind/internal/skills"
 	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
+	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
 	"github.com/1024XEngineer/bytemind/internal/tokenusage"
 	"github.com/1024XEngineer/bytemind/internal/tools"
 )
@@ -40,53 +41,68 @@ const (
 )
 
 type Options struct {
-	Workspace     string
-	Config        config.Config
-	Client        llm.Client
-	Store         SessionStore
-	Registry      ToolRegistry
-	Executor      ToolExecutor
-	PolicyGateway PolicyGateway
-	Engine        Engine
-	TaskManager   runtimepkg.TaskManager
-	Runtime       RuntimeGateway
-	Extensions    extensionspkg.Manager
-	SkillManager  *skills.Manager
-	TokenManager  *tokenusage.TokenUsageManager
-	AuditStore    storagepkg.AuditStore
-	PromptStore   storagepkg.PromptHistoryWriter
-	Observer      Observer
-	Approval      tools.ApprovalHandler
-	Stdin         io.Reader
-	Stdout        io.Writer
+	Workspace       string
+	Config          config.Config
+	Client          llm.Client
+	Store           SessionStore
+	Registry        ToolRegistry
+	Executor        ToolExecutor
+	PolicyGateway   PolicyGateway
+	Engine          Engine
+	TaskManager     runtimepkg.TaskManager
+	Runtime         RuntimeGateway
+	Extensions      extensionspkg.Manager
+	SkillManager    *skills.Manager
+	SubAgentManager *subagentspkg.Manager
+	TokenManager    *tokenusage.TokenUsageManager
+	AuditStore      storagepkg.AuditStore
+	PromptStore     storagepkg.PromptHistoryWriter
+	Observer        Observer
+	Approval        tools.ApprovalHandler
+	Stdin           io.Reader
+	Stdout          io.Writer
 }
 
 type RunPromptInput struct {
-	UserMessage llm.Message
-	Assets      map[llm.AssetID]llm.ImageAsset
-	DisplayText string
+	UserMessage                     llm.Message
+	Assets                          map[llm.AssetID]llm.ImageAsset
+	DisplayText                     string
+	PersistDisplayTextAsUserMessage bool
+	SubAgent                        *SubAgentPromptInput
+}
+
+type SubAgentPromptInput struct {
+	Name           string
+	Task           string
+	ScopePaths     []string
+	ScopeSymbols   []string
+	AllowedTools   []string
+	Isolation      string
+	ResultPolicy   string
+	DefinitionBody string
 }
 
 type Runner struct {
-	workspace     string
-	config        config.Config
-	client        llm.Client
-	store         SessionStore
-	registry      ToolRegistry
-	executor      ToolExecutor
-	policyGateway PolicyGateway
-	engine        Engine
-	taskManager   runtimepkg.TaskManager
-	runtime       RuntimeGateway
-	extensions    extensionspkg.Manager
-	skillManager  *skills.Manager
-	tokenManager  *tokenusage.TokenUsageManager
-	auditStore    storagepkg.AuditStore
-	promptStore   storagepkg.PromptHistoryWriter
-	observer      Observer
-	approval      tools.ApprovalHandler
-	stdin         io.Reader
-	stdout        io.Writer
+	workspace       string
+	config          config.Config
+	client          llm.Client
+	store           SessionStore
+	registry        ToolRegistry
+	executor        ToolExecutor
+	policyGateway   PolicyGateway
+	engine          Engine
+	taskManager     runtimepkg.TaskManager
+	runtime         RuntimeGateway
+	extensions      extensionspkg.Manager
+	skillManager    *skills.Manager
+	subAgentManager *subagentspkg.Manager
+	tokenManager    *tokenusage.TokenUsageManager
+	auditStore      storagepkg.AuditStore
+	promptStore     storagepkg.PromptHistoryWriter
+	observer        Observer
+	approval        tools.ApprovalHandler
+	stdin           io.Reader
+	stdout          io.Writer
 
 	bridgeMu            sync.Mutex
 	bridgeSessions      map[string]bridgeSessionState
@@ -110,6 +126,10 @@ func NewRunner(opts Options) *Runner {
 	manager := opts.SkillManager
 	if manager == nil {
 		manager = skills.NewManager(opts.Workspace)
+	}
+	subAgentManager := opts.SubAgentManager
+	if subAgentManager == nil {
+		subAgentManager = subagentspkg.NewManager(opts.Workspace)
 	}
 	registry := opts.Registry
 	if registry == nil {
@@ -154,24 +174,25 @@ func NewRunner(opts Options) *Runner {
 		client = routeAwareClient{base: client}
 	}
 	runner := &Runner{
-		workspace:     opts.Workspace,
-		config:        cfg,
-		client:        client,
-		store:         opts.Store,
-		registry:      registry,
-		executor:      executor,
-		policyGateway: policyGateway,
-		taskManager:   taskManager,
-		runtime:       runtimeGateway,
-		extensions:    extensions,
-		skillManager:  manager,
-		tokenManager:  opts.TokenManager,
-		auditStore:    auditStore,
-		promptStore:   promptStore,
-		observer:      opts.Observer,
-		approval:      opts.Approval,
-		stdin:         opts.Stdin,
-		stdout:        opts.Stdout,
+		workspace:       opts.Workspace,
+		config:          cfg,
+		client:          client,
+		store:           opts.Store,
+		registry:        registry,
+		executor:        executor,
+		policyGateway:   policyGateway,
+		taskManager:     taskManager,
+		runtime:         runtimeGateway,
+		extensions:      extensions,
+		skillManager:    manager,
+		subAgentManager: subAgentManager,
+		tokenManager:    opts.TokenManager,
+		auditStore:      auditStore,
+		promptStore:     promptStore,
+		observer:        opts.Observer,
+		approval:        opts.Approval,
+		stdin:           opts.Stdin,
+		stdout:          opts.Stdout,
 
 		extensionSyncTTL:   extensionSyncTTL,
 		extensionSyncDirty: true,

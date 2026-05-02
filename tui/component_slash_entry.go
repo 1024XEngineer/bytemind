@@ -9,7 +9,12 @@ import (
 )
 
 func (m *model) handleSlashCommand(input string) error {
-	fields := strings.Fields(input)
+	raw := strings.TrimSpace(input)
+	if normalized, builtinName, ok := normalizeBuiltinSubAgentCommandInput(raw); ok {
+		return m.runBuiltinSubAgentCommand(normalized, builtinName)
+	}
+
+	fields := strings.Fields(raw)
 	if len(fields) == 0 {
 		return nil
 	}
@@ -35,6 +40,10 @@ func (m *model) handleSlashCommand(input string) error {
 		return m.runSkillsListCommand(input)
 	case "/skill":
 		return m.runSkillCommand(input, fields)
+	case "/agents":
+		return m.runAgentsCommand(input, fields)
+	case "/explorer", "/exploer", "/review":
+		return m.runBuiltinSubAgentCommand(input, fields[0])
 	case "/mcp":
 		return m.runMCPCommandDispatch(input, fields)
 	case "/new":
@@ -55,6 +64,12 @@ func (m model) executeCommand(input string) (tea.Model, tea.Cmd, error) {
 	if err := m.handleSlashCommand(input); err != nil {
 		return m, nil, err
 	}
+	commandRunCmd := m.pendingCommandCmd
+	m.pendingCommandCmd = nil
 	m.refreshViewport()
-	return m, tea.Batch(m.loadSessionsCmd(), m.startLandingGlowOnTransition(previousScreen)), nil
+	cmds := []tea.Cmd{m.loadSessionsCmd(), m.startLandingGlowOnTransition(previousScreen)}
+	if commandRunCmd != nil {
+		cmds = append(cmds, commandRunCmd)
+	}
+	return m, tea.Batch(cmds...), nil
 }

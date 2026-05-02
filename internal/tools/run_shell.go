@@ -218,8 +218,8 @@ func isPlanSafeCommand(command string) bool {
 }
 
 func promptForApproval(command, reason string, execCtx *ExecutionContext) error {
-	if execCtx != nil && execCtx.isAwayMode() {
-		return awayModeApprovalDeniedError("shell command", command, execCtx)
+	if execCtx != nil && execCtx.isFullAccessMode() {
+		return nil
 	}
 	if execCtx == nil {
 		return approvalChannelUnavailableError("shell command", command)

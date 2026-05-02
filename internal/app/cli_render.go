@@ -3,8 +3,10 @@ package app
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/1024XEngineer/bytemind/internal/session"
+	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
 )
 
 const (
@@ -59,5 +61,47 @@ func RenderCommandSuggestions(w io.Writer, input string, suggestions []string) {
 	fmt.Fprintf(w, "%smatches%s for %s:\n", ansiDim, ansiReset, input)
 	for _, suggestion := range suggestions {
 		fmt.Fprintf(w, "  %s\n", suggestion)
+	}
+}
+
+func RenderSubAgentsView(w io.Writer, agents []subagentspkg.Agent) {
+	if len(agents) == 0 {
+		fmt.Fprintln(w, "No subagents available.")
+		return
+	}
+	fmt.Fprintf(w, "%savailable subagents%s\n", ansiBold, ansiReset)
+	for _, agent := range agents {
+		description := strings.TrimSpace(agent.Description)
+		if description == "" {
+			description = "No description provided."
+		}
+		fmt.Fprintf(w, "- %s [%s]: %s\n", agent.Name, agent.Scope, description)
+	}
+}
+
+func RenderSubAgentDetail(w io.Writer, agent subagentspkg.Agent) {
+	fmt.Fprintf(w, "%ssubagent%s %s\n", ansiDim, ansiReset, agent.Name)
+	fmt.Fprintf(w, "%sscope%s %s\n", ansiDim, ansiReset, agent.Scope)
+	fmt.Fprintf(w, "%sentry%s %s\n", ansiDim, ansiReset, agent.Entry)
+	if strings.TrimSpace(agent.Mode) != "" {
+		fmt.Fprintf(w, "%smode%s %s\n", ansiDim, ansiReset, agent.Mode)
+	}
+	if strings.TrimSpace(agent.Output) != "" {
+		fmt.Fprintf(w, "%soutput%s %s\n", ansiDim, ansiReset, agent.Output)
+	}
+	if strings.TrimSpace(agent.Isolation) != "" {
+		fmt.Fprintf(w, "%sisolation%s %s\n", ansiDim, ansiReset, agent.Isolation)
+	}
+	if len(agent.Tools) > 0 {
+		fmt.Fprintf(w, "%stools%s %s\n", ansiDim, ansiReset, strings.Join(agent.Tools, ", "))
+	}
+	if len(agent.DisallowedTools) > 0 {
+		fmt.Fprintf(w, "%sdisallowed%s %s\n", ansiDim, ansiReset, strings.Join(agent.DisallowedTools, ", "))
+	}
+	if source := strings.TrimSpace(agent.SourcePath); source != "" {
+		fmt.Fprintf(w, "%ssource%s %s\n", ansiDim, ansiReset, source)
+	}
+	if description := strings.TrimSpace(agent.Description); description != "" {
+		fmt.Fprintf(w, "%sdescription%s %s\n", ansiDim, ansiReset, description)
 	}
 }

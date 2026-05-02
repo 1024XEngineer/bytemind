@@ -37,7 +37,7 @@ bytemind run -prompt "\
 - name: 重新生成 API 文档
   env:
     OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-    BYTEMIND_APPROVAL_MODE: away
+    BYTEMIND_APPROVAL_MODE: full_access
   run: |
     bytemind run -prompt "根据 internal/api/ 中的当前源码重新生成 docs/api-reference.md"
 ```

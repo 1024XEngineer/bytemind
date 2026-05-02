@@ -48,9 +48,10 @@ type ApprovalHandler func(ApprovalRequest) (bool, error)
 type Observer func(Event)
 
 type RunPromptInput struct {
-	UserMessage llm.Message
-	Assets      map[llm.AssetID]llm.ImageAsset
-	DisplayText string
+	UserMessage                     llm.Message
+	Assets                          map[llm.AssetID]llm.ImageAsset
+	DisplayText                     string
+	PersistDisplayTextAsUserMessage bool
 }
 
 type Runner interface {

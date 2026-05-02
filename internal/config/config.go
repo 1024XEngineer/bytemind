@@ -18,6 +18,9 @@ const (
 	envBytemindHome = "BYTEMIND_HOME"
 	defaultHomeDir  = ".bytemind"
 	defaultModelID  = "gpt-5.4-mini"
+	// EnvAllowAwayFullAccessCompat is a temporary migration gate that permits
+	// approval_mode=away to map to full_access.
+	EnvAllowAwayFullAccessCompat = "BYTEMIND_ALLOW_AWAY_FULL_ACCESS"
 )
 
 const (
@@ -42,6 +45,7 @@ type Config struct {
 	WritableRoots     []string              `json:"writable_roots"`
 	ExecAllowlist     []ExecAllowRule       `json:"exec_allowlist"`
 	NetworkAllowlist  []NetworkAllowRule    `json:"network_allowlist"`
+	Notifications     NotificationsConfig   `json:"notifications"`
 	MaxIterations     int                   `json:"max_iterations"`
 	Stream            bool                  `json:"stream"`
 	UpdateCheck       UpdateCheckConfig     `json:"update_check"`
@@ -97,6 +101,19 @@ type NetworkAllowRule struct {
 	Host   string `json:"host"`
 	Port   int    `json:"port"`
 	Scheme string `json:"scheme"`
+}
+
+type NotificationsConfig struct {
+	Desktop DesktopNotificationConfig `json:"desktop"`
+}
+
+type DesktopNotificationConfig struct {
+	Enabled            bool `json:"enabled"`
+	OnApprovalRequired bool `json:"on_approval_required"`
+	OnRunCompleted     bool `json:"on_run_completed"`
+	OnRunFailed        bool `json:"on_run_failed"`
+	OnRunCanceled      bool `json:"on_run_canceled"`
+	CooldownSeconds    int  `json:"cooldown_seconds"`
 }
 
 type MCPConfig struct {
@@ -168,8 +185,18 @@ func Default(workspace string) Config {
 		WritableRoots:     []string{},
 		ExecAllowlist:     []ExecAllowRule{},
 		NetworkAllowlist:  []NetworkAllowRule{},
-		MaxIterations:     32,
-		Stream:            true,
+		Notifications: NotificationsConfig{
+			Desktop: DesktopNotificationConfig{
+				Enabled:            true,
+				OnApprovalRequired: true,
+				OnRunCompleted:     true,
+				OnRunFailed:        true,
+				OnRunCanceled:      false,
+				CooldownSeconds:    3,
+			},
+		},
+		MaxIterations: 32,
+		Stream:        true,
 		UpdateCheck: UpdateCheckConfig{
 			Enabled: true,
 		},
@@ -336,8 +363,18 @@ func ensureDefaultConfigFile(home string) error {
 		WritableRoots:     []string{},
 		ExecAllowlist:     []ExecAllowRule{},
 		NetworkAllowlist:  []NetworkAllowRule{},
-		MaxIterations:     32,
-		Stream:            true,
+		Notifications: NotificationsConfig{
+			Desktop: DesktopNotificationConfig{
+				Enabled:            true,
+				OnApprovalRequired: true,
+				OnRunCompleted:     true,
+				OnRunFailed:        true,
+				OnRunCanceled:      false,
+				CooldownSeconds:    3,
+			},
+		},
+		MaxIterations: 32,
+		Stream:        true,
 		UpdateCheck: UpdateCheckConfig{
 			Enabled: true,
 		},
@@ -525,6 +562,68 @@ func applyEnv(cfg *Config) {
 			cfg.TokenQuota = parsed
 		}
 	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_DESKTOP_NOTIFY")); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			cfg.Notifications.Desktop.Enabled = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_NOTIFY_APPROVAL")); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			cfg.Notifications.Desktop.OnApprovalRequired = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_NOTIFY_RUN_COMPLETED")); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			cfg.Notifications.Desktop.OnRunCompleted = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_NOTIFY_RUN_FAILED")); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			cfg.Notifications.Desktop.OnRunFailed = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_NOTIFY_RUN_CANCELED")); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			cfg.Notifications.Desktop.OnRunCanceled = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_NOTIFY_COOLDOWN_SECONDS")); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			cfg.Notifications.Desktop.CooldownSeconds = parsed
+		}
+	}
+}
+
+// NormalizeApprovalMode validates and normalizes approval_mode values.
+// By default, legacy away mode is blocked to prevent silent privilege
+// escalation to full_access. Operators can temporarily enable migration by
+// setting BYTEMIND_ALLOW_AWAY_FULL_ACCESS=true.
+func NormalizeApprovalMode(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "interactive":
+		return "interactive", nil
+	case "full_access":
+		return "full_access", nil
+	case "away":
+		if allowAwayFullAccessCompat() {
+			return "full_access", nil
+		}
+		return "", fmt.Errorf("approval_mode=away is blocked by default to prevent silent privilege escalation; migrate to approval_mode=interactive or approval_mode=full_access, or set %s=true for temporary migration", EnvAllowAwayFullAccessCompat)
+	default:
+		return "", errors.New("approval_mode must be one of interactive, full_access")
+	}
+}
+
+func allowAwayFullAccessCompat() bool {
+	raw := strings.TrimSpace(os.Getenv(EnvAllowAwayFullAccessCompat))
+	if raw == "" {
+		return false
+	}
+	enabled, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false
+	}
+	return enabled
 }
 
 func normalize(cfg *Config) error {
@@ -652,13 +751,11 @@ func normalize(cfg *Config) error {
 	default:
 		return errors.New("approval_policy must be one of always, on-request, never")
 	}
-	switch strings.TrimSpace(cfg.ApprovalMode) {
-	case "", "interactive":
-		cfg.ApprovalMode = "interactive"
-	case "away":
-	default:
-		return errors.New("approval_mode must be one of interactive, away")
+	normalizedApprovalMode, err := NormalizeApprovalMode(cfg.ApprovalMode)
+	if err != nil {
+		return err
 	}
+	cfg.ApprovalMode = normalizedApprovalMode
 	switch strings.TrimSpace(cfg.AwayPolicy) {
 	case "", "auto_deny_continue":
 		cfg.AwayPolicy = "auto_deny_continue"
@@ -684,6 +781,9 @@ func normalize(cfg *Config) error {
 	}
 	if cfg.TokenQuota < 1 {
 		cfg.TokenQuota = DefaultTokenQuota
+	}
+	if cfg.Notifications.Desktop.CooldownSeconds < 0 {
+		return errors.New("notifications.desktop.cooldown_seconds must be >= 0")
 	}
 	if strings.TrimSpace(cfg.TokenUsage.StorageType) == "" {
 		cfg.TokenUsage.StorageType = "file"

@@ -7,9 +7,9 @@ type HelpLine struct {
 
 func DefaultUsageLines() []string {
 	return []string{
-		"bytemind chat [-config path] [-model name] [-session id] [-stream true|false] [-sandbox-enabled true|false] [-system-sandbox-mode off|best_effort|required] [-approval-mode interactive|away] [-away-policy auto_deny_continue|fail_fast] [-workspace path] [-max-iterations n]",
-		"bytemind tui [-config path] [-model name] [-session id] [-stream true|false] [-sandbox-enabled true|false] [-system-sandbox-mode off|best_effort|required] [-approval-mode interactive|away] [-away-policy auto_deny_continue|fail_fast] [-workspace path] [-max-iterations n]",
-		`bytemind run -prompt "task" [-config path] [-model name] [-session id] [-stream true|false] [-sandbox-enabled true|false] [-system-sandbox-mode off|best_effort|required] [-approval-mode interactive|away] [-away-policy auto_deny_continue|fail_fast] [-max-iterations n]`,
+		"bytemind chat [-config path] [-model name] [-session id] [-stream true|false] [-sandbox-enabled true|false] [-system-sandbox-mode off|best_effort|required] [-approval-mode interactive|full_access] [-away-policy auto_deny_continue|fail_fast] [-workspace path] [-max-iterations n]",
+		"bytemind tui [-config path] [-model name] [-session id] [-stream true|false] [-sandbox-enabled true|false] [-system-sandbox-mode off|best_effort|required] [-approval-mode interactive|full_access] [-away-policy auto_deny_continue|fail_fast] [-workspace path] [-max-iterations n]",
+		`bytemind run -prompt "task" [-config path] [-model name] [-session id] [-stream true|false] [-sandbox-enabled true|false] [-system-sandbox-mode off|best_effort|required] [-approval-mode interactive|full_access] [-away-policy auto_deny_continue|fail_fast] [-max-iterations n]`,
 		"bytemind --version",
 		"bytemind --yolo [tui flags]",
 		"bytemind install [-to dir] [-name binary-name]",
