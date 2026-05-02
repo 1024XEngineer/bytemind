@@ -189,3 +189,76 @@ func TestDesktopNotifierCloseHonorsContextTimeout(t *testing.T) {
 		t.Fatalf("expected notifier to close after unblock, got %v", err)
 	}
 }
+
+func TestDesktopNotifierPrunesExpiredRecentKeys(t *testing.T) {
+	now := time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC)
+	sender := &stubSender{}
+	notifier := newDesktopNotifierWithSender(
+		DesktopConfig{Enabled: true, CooldownSeconds: 3, QueueSize: 8, SendTimeoutMs: 1000},
+		sender,
+		func() time.Time { return now },
+	)
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := notifier.Close(closeCtx); err != nil {
+			t.Fatalf("close notifier: %v", err)
+		}
+	}()
+
+	notifier.Notify(Message{Event: EventApprovalRequired, Title: "first", Body: "body", Key: "k1"})
+	notifier.Notify(Message{Event: EventApprovalRequired, Title: "second", Body: "body", Key: "k2"})
+
+	notifier.mu.Lock()
+	initialRecentCount := len(notifier.recent)
+	notifier.mu.Unlock()
+	if initialRecentCount != 2 {
+		t.Fatalf("expected 2 recent keys, got %d", initialRecentCount)
+	}
+
+	now = now.Add(4 * time.Second)
+	notifier.Notify(Message{Event: EventApprovalRequired, Title: "third", Body: "body", Key: "k3"})
+
+	notifier.mu.Lock()
+	prunedRecentCount := len(notifier.recent)
+	_, k1Exists := notifier.recent["k1"]
+	_, k2Exists := notifier.recent["k2"]
+	_, k3Exists := notifier.recent["k3"]
+	notifier.mu.Unlock()
+
+	if prunedRecentCount != 1 {
+		t.Fatalf("expected 1 recent key after pruning, got %d", prunedRecentCount)
+	}
+	if k1Exists || k2Exists {
+		t.Fatalf("expected expired keys to be pruned")
+	}
+	if !k3Exists {
+		t.Fatalf("expected newest key to remain in recent set")
+	}
+}
+
+func TestDesktopNotifierDoesNotTrackRecentWhenCooldownDisabled(t *testing.T) {
+	sender := &stubSender{}
+	notifier := newDesktopNotifierWithSender(
+		DesktopConfig{Enabled: true, CooldownSeconds: 0, QueueSize: 8, SendTimeoutMs: 1000},
+		sender,
+		time.Now,
+	)
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := notifier.Close(closeCtx); err != nil {
+			t.Fatalf("close notifier: %v", err)
+		}
+	}()
+
+	notifier.Notify(Message{Event: EventApprovalRequired, Title: "first", Body: "body", Key: "k1"})
+	notifier.Notify(Message{Event: EventApprovalRequired, Title: "second", Body: "body", Key: "k2"})
+
+	notifier.mu.Lock()
+	recentCount := len(notifier.recent)
+	notifier.mu.Unlock()
+	if recentCount != 0 {
+		t.Fatalf("expected no recent key tracking when cooldown is disabled, got %d", recentCount)
+	}
+}

@@ -82,13 +82,16 @@ func (n *desktopNotifier) Notify(msg Message) {
 	if n.closed {
 		return
 	}
-	if n.cooldown > 0 && msg.Key != "" {
-		if last, ok := n.recent[msg.Key]; ok && now.Sub(last) < n.cooldown {
-			return
+	if n.cooldown > 0 {
+		n.pruneRecentLocked(now)
+		if msg.Key != "" {
+			if last, ok := n.recent[msg.Key]; ok && now.Sub(last) < n.cooldown {
+				return
+			}
 		}
 	}
 	n.enqueueLocked(msg)
-	if msg.Key != "" {
+	if n.cooldown > 0 && msg.Key != "" {
 		n.recent[msg.Key] = now
 	}
 }
@@ -138,6 +141,18 @@ func (n *desktopNotifier) enqueueLocked(msg Message) {
 	case n.queue <- msg:
 	default:
 		atomic.AddInt64(&n.drop, 1)
+	}
+}
+
+func (n *desktopNotifier) pruneRecentLocked(now time.Time) {
+	if n.cooldown <= 0 || len(n.recent) == 0 {
+		return
+	}
+	cutoff := now.Add(-n.cooldown)
+	for key, last := range n.recent {
+		if !last.After(cutoff) {
+			delete(n.recent, key)
+		}
 	}
 }
 
