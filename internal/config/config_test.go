@@ -20,6 +20,12 @@ func TestLoadUsesEnvOverrides(t *testing.T) {
 	t.Setenv("BYTEMIND_STREAM", "false")
 	t.Setenv("BYTEMIND_APPROVAL_MODE", "full_access")
 	t.Setenv("BYTEMIND_AWAY_POLICY", "fail_fast")
+	t.Setenv("BYTEMIND_DESKTOP_NOTIFY", "true")
+	t.Setenv("BYTEMIND_NOTIFY_APPROVAL", "false")
+	t.Setenv("BYTEMIND_NOTIFY_RUN_COMPLETED", "false")
+	t.Setenv("BYTEMIND_NOTIFY_RUN_FAILED", "false")
+	t.Setenv("BYTEMIND_NOTIFY_RUN_CANCELED", "true")
+	t.Setenv("BYTEMIND_NOTIFY_COOLDOWN_SECONDS", "9")
 
 	cfg, err := Load(workspace, "")
 	if err != nil {
@@ -52,6 +58,24 @@ func TestLoadUsesEnvOverrides(t *testing.T) {
 	if cfg.AwayPolicy != "fail_fast" {
 		t.Fatalf("expected away policy from env override, got %q", cfg.AwayPolicy)
 	}
+	if !cfg.Notifications.Desktop.Enabled {
+		t.Fatalf("expected desktop notify enabled from env override")
+	}
+	if cfg.Notifications.Desktop.OnApprovalRequired {
+		t.Fatalf("expected notify approval disabled from env override")
+	}
+	if cfg.Notifications.Desktop.OnRunCompleted {
+		t.Fatalf("expected run completed notify disabled from env override")
+	}
+	if cfg.Notifications.Desktop.OnRunFailed {
+		t.Fatalf("expected run failed notify disabled from env override")
+	}
+	if !cfg.Notifications.Desktop.OnRunCanceled {
+		t.Fatalf("expected run canceled notify enabled from env override")
+	}
+	if cfg.Notifications.Desktop.CooldownSeconds != 9 {
+		t.Fatalf("expected notify cooldown from env override, got %d", cfg.Notifications.Desktop.CooldownSeconds)
+	}
 }
 
 func TestLoadIgnoresInvalidTokenQuotaEnv(t *testing.T) {
@@ -70,6 +94,22 @@ func TestLoadIgnoresInvalidTokenQuotaEnv(t *testing.T) {
 	}
 }
 
+func TestLoadIgnoresInvalidNotifyCooldownEnv(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "secret")
+	t.Setenv("BYTEMIND_NOTIFY_COOLDOWN_SECONDS", "invalid")
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Notifications.Desktop.CooldownSeconds != 3 {
+		t.Fatalf("expected invalid notify cooldown env to keep default 3, got %d", cfg.Notifications.Desktop.CooldownSeconds)
+	}
+}
+
 func TestLoadDefaultsUpdateCheckEnabled(t *testing.T) {
 	workspace := t.TempDir()
 	home := t.TempDir()
@@ -82,6 +122,65 @@ func TestLoadDefaultsUpdateCheckEnabled(t *testing.T) {
 	}
 	if !cfg.UpdateCheck.Enabled {
 		t.Fatalf("expected update_check.enabled default true")
+	}
+}
+
+func TestLoadDefaultsDesktopNotifications(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "secret")
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Notifications.Desktop.Enabled {
+		t.Fatalf("expected desktop notifications enabled by default")
+	}
+	if !cfg.Notifications.Desktop.OnApprovalRequired {
+		t.Fatalf("expected approval notifications enabled by default")
+	}
+	if !cfg.Notifications.Desktop.OnRunCompleted {
+		t.Fatalf("expected run completed notifications enabled by default")
+	}
+	if !cfg.Notifications.Desktop.OnRunFailed {
+		t.Fatalf("expected run failed notifications enabled by default")
+	}
+	if cfg.Notifications.Desktop.OnRunCanceled {
+		t.Fatalf("expected run canceled notifications disabled by default")
+	}
+	if cfg.Notifications.Desktop.CooldownSeconds != 3 {
+		t.Fatalf("expected default cooldown 3, got %d", cfg.Notifications.Desktop.CooldownSeconds)
+	}
+}
+
+func TestLoadAllowsDisabledDesktopNotifyWithEnabledSubSwitches(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+		"notifications": map[string]any{
+			"desktop": map[string]any{
+				"enabled":              false,
+				"on_approval_required": true,
+				"on_run_completed":     true,
+				"on_run_failed":        true,
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Notifications.Desktop.Enabled {
+		t.Fatalf("expected desktop notify to stay disabled")
+	}
+	if !cfg.Notifications.Desktop.OnApprovalRequired || !cfg.Notifications.Desktop.OnRunCompleted || !cfg.Notifications.Desktop.OnRunFailed {
+		t.Fatalf("expected sub-switches to remain configured when desktop notify is disabled: %#v", cfg.Notifications.Desktop)
 	}
 }
 
@@ -205,6 +304,29 @@ func TestLoadRejectsNegativeMaxReactiveRetry(t *testing.T) {
 		t.Fatal("expected negative max_reactive_retry to fail")
 	}
 	if !strings.Contains(err.Error(), "context_budget.max_reactive_retry") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsNegativeNotificationCooldown(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": minimalProviderConfigDoc("gpt-5.4-mini", "test-key"),
+		"notifications": map[string]any{
+			"desktop": map[string]any{
+				"cooldown_seconds": -1,
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(workspace, "")
+	if err == nil {
+		t.Fatal("expected negative notifications.desktop.cooldown_seconds to fail")
+	}
+	if !strings.Contains(err.Error(), "notifications.desktop.cooldown_seconds") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -643,6 +765,24 @@ func TestEnsureHomeLayoutCreatesStandardDirectories(t *testing.T) {
 	}
 	if !cfg.UpdateCheck.Enabled {
 		t.Fatalf("expected default update_check.enabled=true in generated config")
+	}
+	if !cfg.Notifications.Desktop.Enabled {
+		t.Fatalf("expected default notifications.desktop.enabled=true in generated config")
+	}
+	if !cfg.Notifications.Desktop.OnApprovalRequired {
+		t.Fatalf("expected default notifications.desktop.on_approval_required=true in generated config")
+	}
+	if !cfg.Notifications.Desktop.OnRunCompleted {
+		t.Fatalf("expected default notifications.desktop.on_run_completed=true in generated config")
+	}
+	if !cfg.Notifications.Desktop.OnRunFailed {
+		t.Fatalf("expected default notifications.desktop.on_run_failed=true in generated config")
+	}
+	if cfg.Notifications.Desktop.OnRunCanceled {
+		t.Fatalf("expected default notifications.desktop.on_run_canceled=false in generated config")
+	}
+	if cfg.Notifications.Desktop.CooldownSeconds != 3 {
+		t.Fatalf("expected default notifications.desktop.cooldown_seconds=3 in generated config, got %d", cfg.Notifications.Desktop.CooldownSeconds)
 	}
 }
 
