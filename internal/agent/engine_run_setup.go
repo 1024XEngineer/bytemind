@@ -24,6 +24,10 @@ func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptI
 
 	input = normalizeRunPromptInput(input)
 	userInput := input.DisplayText
+	persistedUserMessage := input.UserMessage
+	if input.PersistDisplayTextAsUserMessage && strings.TrimSpace(userInput) != "" {
+		persistedUserMessage = llm.NewUserTextMessage(userInput)
+	}
 	runMode := resolveRunMode(sess, mode)
 	mode = string(runMode)
 	if sess.Mode != runMode {
@@ -31,7 +35,8 @@ func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptI
 	}
 	planpkg.SeedForRun(&sess.Plan, runMode, userInput, input.UserMessage.Text())
 
-	if err := e.beginRunSession(sess, input.UserMessage, userInput); err != nil {
+	persistedUserMessageIndex := len(sess.Messages)
+	if err := e.beginRunSession(sess, persistedUserMessage, userInput); err != nil {
 		return runPromptSetup{}, err
 	}
 
@@ -78,6 +83,7 @@ func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptI
 	return runPromptSetup{
 		Input:                        input,
 		UserInput:                    userInput,
+		PersistedUserMessageIndex:    persistedUserMessageIndex,
 		RunMode:                      runMode,
 		Mode:                         mode,
 		SystemSandboxBackend:         systemSandboxBackend,
@@ -95,6 +101,8 @@ func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptI
 		AvailableSkills:              runner.promptSkills(),
 		AvailableSubAgents:           runner.promptSubAgents(),
 		AvailableTools:               availableTools,
+		SubAgentRuntime:              promptSubAgentRuntime(input.SubAgent),
+		SubAgentDefinition:           promptSubAgentDefinition(input.SubAgent),
 		InstructionText:              loadAGENTSInstruction(runner.workspace),
 		WebLookupInstruction:         promptHint.Instruction,
 		PromptTokens:                 contextpkg.EstimateRequestTokens([]llm.Message{input.UserMessage}),
@@ -131,6 +139,8 @@ func (e *defaultEngine) buildTurnMessages(sess *session.Session, setup runPrompt
 	}
 	runner := e.runner
 
+	conversationMessages := conversationMessagesForTurn(sess.Messages, setup.Input, setup.PersistedUserMessageIndex)
+
 	return contextpkg.BuildTurnMessages(contextpkg.TurnMessagesRequest{
 		SystemPrompt: systemPrompt(PromptInput{
 			Workspace:                    runner.workspace,
@@ -151,11 +161,62 @@ func (e *defaultEngine) buildTurnMessages(sess *session.Session, setup runPrompt
 			Skills:                       setup.AvailableSkills,
 			SubAgents:                    setup.AvailableSubAgents,
 			Tools:                        setup.AvailableTools,
+			SubAgentRuntime:              setup.SubAgentRuntime,
+			SubAgentDefinition:           setup.SubAgentDefinition,
 			Plan:                         sess.Plan,
 			ActiveSkill:                  promptActiveSkill(setup.ActiveSkill),
 			Instruction:                  setup.InstructionText,
 		}),
 		WebLookupInstruction: setup.WebLookupInstruction,
-		ConversationMessages: sess.Messages,
+		ConversationMessages: conversationMessages,
 	})
+}
+
+func conversationMessagesForTurn(messages []llm.Message, input RunPromptInput, persistedUserMessageIndex int) []llm.Message {
+	if !input.PersistDisplayTextAsUserMessage {
+		return messages
+	}
+	if persistedUserMessageIndex < 0 || persistedUserMessageIndex >= len(messages) {
+		return messages
+	}
+	override := input.UserMessage
+	override.Normalize()
+	if override.Role != llm.RoleUser {
+		return messages
+	}
+	overridden := append([]llm.Message(nil), messages...)
+	overridden[persistedUserMessageIndex] = override
+	return overridden
+}
+
+func promptSubAgentRuntime(input *SubAgentPromptInput) *PromptSubAgentRuntime {
+	if input == nil {
+		return nil
+	}
+	runtime := &PromptSubAgentRuntime{
+		Name:         strings.TrimSpace(input.Name),
+		Task:         strings.TrimSpace(input.Task),
+		ScopePaths:   append([]string(nil), input.ScopePaths...),
+		ScopeSymbols: append([]string(nil), input.ScopeSymbols...),
+		AllowedTools: append([]string(nil), input.AllowedTools...),
+		Isolation:    strings.TrimSpace(input.Isolation),
+		ResultPolicy: strings.TrimSpace(input.ResultPolicy),
+	}
+	if runtime.Name == "" &&
+		runtime.Task == "" &&
+		len(runtime.ScopePaths) == 0 &&
+		len(runtime.ScopeSymbols) == 0 &&
+		len(runtime.AllowedTools) == 0 &&
+		runtime.Isolation == "" &&
+		runtime.ResultPolicy == "" {
+		return nil
+	}
+	return runtime
+}
+
+func promptSubAgentDefinition(input *SubAgentPromptInput) string {
+	if input == nil {
+		return ""
+	}
+	return strings.TrimSpace(input.DefinitionBody)
 }

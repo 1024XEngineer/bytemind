@@ -55,6 +55,16 @@ type PromptSubAgent struct {
 	Mode        string
 }
 
+type PromptSubAgentRuntime struct {
+	Name         string
+	Task         string
+	ScopePaths   []string
+	ScopeSymbols []string
+	AllowedTools []string
+	Isolation    string
+	ResultPolicy string
+}
+
 type PromptInput struct {
 	Workspace                    string
 	ApprovalPolicy               string
@@ -76,6 +86,8 @@ type PromptInput struct {
 	Skills                       []PromptSkill
 	SubAgents                    []PromptSubAgent
 	Tools                        []string
+	SubAgentRuntime              *PromptSubAgentRuntime
+	SubAgentDefinition           string
 	Plan                         planpkg.State
 	ActiveSkill                  *PromptActiveSkill
 	Instruction                  string
@@ -233,6 +245,12 @@ func renderSystemBlock(input PromptInput) string {
 		"[Available Tools]",
 		formatTools(input.Tools),
 	}
+	if subAgentRuntime := formatSubAgentRuntime(input.SubAgentRuntime); subAgentRuntime != "" {
+		lines = append(lines, "", subAgentRuntime)
+	}
+	if subAgentDefinition := formatSubAgentDefinition(input.SubAgentDefinition); subAgentDefinition != "" {
+		lines = append(lines, "", subAgentDefinition)
+	}
 	if planState := strings.TrimSpace(planpkg.RenderPromptStateBlock(input.Plan)); planState != "" {
 		lines = append(lines, "", "[Current Plan State]", planState)
 	}
@@ -326,6 +344,60 @@ func formatSubAgents(agents []PromptSubAgent) string {
 		lines = append(lines[:maxPromptSubAgentEntries], fmt.Sprintf("- ... and %d more subagent(s)", remaining))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func formatSubAgentRuntime(runtime *PromptSubAgentRuntime) string {
+	if runtime == nil {
+		return ""
+	}
+	lines := []string{"[SubAgent Runtime]"}
+	if name := strings.TrimSpace(runtime.Name); name != "" {
+		lines = append(lines, "name: "+name)
+	}
+	if task := strings.TrimSpace(runtime.Task); task != "" {
+		lines = append(lines, "task: "+task)
+	}
+	if len(runtime.ScopePaths) > 0 {
+		lines = append(lines, "scope_paths:")
+		for _, path := range runtime.ScopePaths {
+			path = strings.TrimSpace(path)
+			if path == "" {
+				continue
+			}
+			lines = append(lines, "- "+path)
+		}
+	}
+	if len(runtime.ScopeSymbols) > 0 {
+		lines = append(lines, "scope_symbols:")
+		for _, symbol := range runtime.ScopeSymbols {
+			symbol = strings.TrimSpace(symbol)
+			if symbol == "" {
+				continue
+			}
+			lines = append(lines, "- "+symbol)
+		}
+	}
+	if len(runtime.AllowedTools) > 0 {
+		lines = append(lines, "allowed_tools: "+strings.Join(runtime.AllowedTools, ", "))
+	}
+	if isolation := strings.TrimSpace(runtime.Isolation); isolation != "" {
+		lines = append(lines, "isolation: "+isolation)
+	}
+	if resultPolicy := strings.TrimSpace(runtime.ResultPolicy); resultPolicy != "" {
+		lines = append(lines, "result_policy: "+resultPolicy)
+	}
+	if len(lines) == 1 {
+		return ""
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatSubAgentDefinition(definition string) string {
+	definition = strings.TrimSpace(definition)
+	if definition == "" {
+		return ""
+	}
+	return "[SubAgent Definition]\n" + definition
 }
 
 func renderActiveSkillPrompt(skill *PromptActiveSkill) string {

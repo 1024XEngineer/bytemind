@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,8 +15,10 @@ import (
 	"time"
 
 	corepkg "bytemind/internal/core"
+	"bytemind/internal/llm"
 	planpkg "bytemind/internal/plan"
 	runtimepkg "bytemind/internal/runtime"
+	"bytemind/internal/session"
 	subagentspkg "bytemind/internal/subagents"
 	"bytemind/internal/tools"
 )
@@ -23,8 +26,10 @@ import (
 const (
 	subAgentErrorCodeNotImplemented        = "subagent_not_implemented"
 	subAgentErrorCodeRuntimeUnavailable    = "subagent_runtime_unavailable"
-	subAgentErrorCodeBackgroundUnsupported = "subagent_background_not_supported"
+	subAgentErrorCodeBackgroundUnavailable = "subagent_background_unavailable"
+	subAgentErrorCodeBackgroundWriteDenied = "subagent_background_write_not_allowed"
 	subAgentErrorCodeInvalidResult         = "subagent_invalid_result"
+	subAgentErrorCodeExecutionFailed       = "subagent_execution_failed"
 
 	subAgentResultStatusCompleted = "completed"
 	subAgentResultStatusFailed    = "failed"
@@ -34,6 +39,13 @@ const (
 
 	subAgentRequestedOutputFindings = "findings"
 	subAgentRequestedOutputSummary  = "summary"
+
+	defaultSubAgentMaxIterations = 8
+
+	subAgentResultPolicyCompressed = "Return compressed findings only. Do not include full tool logs."
+
+	subAgentTaskOutputTool = "task_output"
+	subAgentTaskStopTool   = "task_stop"
 )
 
 var subAgentInvocationCounter atomic.Uint64
@@ -102,15 +114,6 @@ func (r *Runner) delegateSubAgent(
 		result.Agent = canonical
 	}
 
-	if request.RunInBackground {
-		result.Error = &tools.DelegateSubAgentError{
-			Code:      subAgentErrorCodeBackgroundUnsupported,
-			Message:   "run_in_background is not wired yet for delegate_subagent",
-			Retryable: false,
-		}
-		return result, nil
-	}
-
 	if r.runtime == nil {
 		result.Error = &tools.DelegateSubAgentError{
 			Code:      subAgentErrorCodeRuntimeUnavailable,
@@ -137,21 +140,68 @@ func (r *Runner) delegateSubAgent(
 		metadata["requested_output"] = preflight.RequestedOutput
 	}
 
-	execution, runErr := r.runtime.RunSync(ctx, RuntimeTaskRequest{
-		SessionID: sessionIDFromExecutionContext(execCtx),
-		Name:      "delegate_subagent/" + preflightResultName(result.Agent),
-		Kind:      "subagent",
-		Timeout:   preflight.RequestedTimeoutDuration,
-		Metadata:  metadata,
+	runtimeRequest := RuntimeTaskRequest{
+		SessionID:  sessionIDFromExecutionContext(execCtx),
+		Name:       "delegate_subagent/" + preflightResultName(result.Agent),
+		Kind:       "subagent",
+		Background: request.RunInBackground,
+		Timeout:    preflight.RequestedTimeoutDuration,
+		Metadata:   metadata,
 		Execute: func(taskCtx context.Context) ([]byte, error) {
-			_ = taskCtx
-			return nil, &subAgentExecutionError{
-				code:      subAgentErrorCodeNotImplemented,
-				message:   "subagent execution pipeline is not wired yet",
-				retryable: true,
+			subAgentResult := r.executeSubAgentTask(taskCtx, request, preflight, result.InvocationID, result.Agent, runMode, execCtx)
+			output, marshalErr := json.Marshal(subAgentResult)
+			if marshalErr != nil {
+				return nil, &subAgentExecutionError{
+					code:      subAgentErrorCodeExecutionFailed,
+					message:   fmt.Sprintf("failed to marshal subagent execution result: %v", marshalErr),
+					retryable: true,
+				}
 			}
+			return output, nil
 		},
-	})
+	}
+
+	if request.RunInBackground {
+		if !supportsBackgroundLifecycleTools(parentVisible, execCtxGetAllowed(execCtx), execCtxGetDenied(execCtx)) {
+			result.Error = &tools.DelegateSubAgentError{
+				Code:      subAgentErrorCodeBackgroundUnavailable,
+				Message:   "run_in_background requires task_output and task_stop tools",
+				Retryable: false,
+			}
+			return result, nil
+		}
+		if !r.isReadOnlySubAgentToolset(preflight.EffectiveTools) {
+			result.Error = &tools.DelegateSubAgentError{
+				Code:      subAgentErrorCodeBackgroundWriteDenied,
+				Message:   "run_in_background currently supports read-only subagents only",
+				Retryable: false,
+			}
+			return result, nil
+		}
+
+		launch, runErr := r.runtime.RunAsync(ctx, runtimeRequest)
+		if runErr != nil {
+			result.Error = mapDelegateSubAgentError(runErr, subAgentErrorCodeRuntimeUnavailable)
+			return result, nil
+		}
+		if strings.TrimSpace(string(launch.TaskID)) == "" {
+			result.Error = &tools.DelegateSubAgentError{
+				Code:      subAgentErrorCodeRuntimeUnavailable,
+				Message:   "runtime gateway returned empty task id for background subagent",
+				Retryable: true,
+			}
+			return result, nil
+		}
+		result.OK = true
+		result.Status = subAgentResultStatusAccepted
+		result.TaskID = string(launch.TaskID)
+		result.ResultReadTool = subAgentTaskOutputTool
+		result.StopTool = subAgentTaskStopTool
+		result.Summary = "SubAgent task launched in background."
+		return result, nil
+	}
+
+	execution, runErr := r.runtime.RunSync(ctx, runtimeRequest)
 	if runErr != nil {
 		if execution.TaskID != "" {
 			result.TaskID = string(execution.TaskID)
@@ -207,6 +257,192 @@ func (r *Runner) delegateSubAgent(
 		Retryable: true,
 	}
 	return result, nil
+}
+
+func (r *Runner) executeSubAgentTask(
+	ctx context.Context,
+	request tools.DelegateSubAgentRequest,
+	preflight subagentspkg.PreflightResult,
+	invocationID string,
+	agent string,
+	runMode planpkg.AgentMode,
+	execCtx *tools.ExecutionContext,
+) tools.DelegateSubAgentResult {
+	workspace := strings.TrimSpace(r.workspace)
+	if execCtx != nil {
+		if scopedWorkspace := strings.TrimSpace(execCtx.Workspace); scopedWorkspace != "" {
+			workspace = scopedWorkspace
+		}
+	}
+	parentSessionID := ""
+	if execCtx != nil && execCtx.Session != nil {
+		parentSessionID = strings.TrimSpace(execCtx.Session.ID)
+	}
+
+	childRunner := r.newSubAgentChildRunner(workspace, preflight.Definition.MaxTurns)
+	if childRunner == nil || childRunner.client == nil {
+		return subAgentFailureResult(
+			invocationID,
+			agent,
+			subAgentErrorCodeRuntimeUnavailable,
+			"llm client is unavailable for subagent execution",
+			true,
+		)
+	}
+	childSession := newSubAgentSession(workspace, parentSessionID, invocationID, runMode)
+	defer childRunner.clearSessionSkillBridges(childSession)
+
+	if err := childRunner.syncExtensionTools(ctx, false); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return subAgentFailureResult(invocationID, agent, subAgentErrorCodeExecutionFailed, err.Error(), true)
+		}
+	}
+
+	userInput := buildSubAgentTaskInput(request)
+	setup, err := childRunner.prepareRunPrompt(childSession, RunPromptInput{
+		UserMessage: llm.NewUserTextMessage(userInput),
+		DisplayText: userInput,
+		SubAgent:    buildSubAgentPromptInput(request, preflight),
+	}, string(runMode))
+	if err != nil {
+		return subAgentFailureResult(invocationID, agent, subAgentErrorCodeExecutionFailed, err.Error(), true)
+	}
+	applySubAgentPreflightSetup(&setup, preflight)
+
+	answer, runErr := (&defaultEngine{runner: childRunner}).runPromptTurns(ctx, childSession, setup, nil)
+	if runErr != nil {
+		return subAgentFailureResult(invocationID, agent, subAgentErrorCodeExecutionFailed, runErr.Error(), true)
+	}
+
+	summary := strings.TrimSpace(answer)
+	if summary == "" {
+		summary = "SubAgent task completed."
+	}
+	return tools.DelegateSubAgentResult{
+		OK:           true,
+		Status:       subAgentResultStatusCompleted,
+		InvocationID: strings.TrimSpace(invocationID),
+		Agent:        strings.TrimSpace(agent),
+		Summary:      summary,
+		Findings:     []tools.DelegateSubAgentFinding{},
+		References:   []tools.DelegateSubAgentReference{},
+	}
+}
+
+func (r *Runner) newSubAgentChildRunner(workspace string, maxTurns int) *Runner {
+	cfg := r.config
+	cfg.MaxIterations = resolveSubAgentMaxIterations(cfg.MaxIterations, maxTurns)
+	return NewRunner(Options{
+		Workspace:       workspace,
+		Config:          cfg,
+		Client:          r.GetClient(),
+		Registry:        r.registry,
+		Executor:        r.executor,
+		PolicyGateway:   r.policyGateway,
+		TaskManager:     r.taskManager,
+		Runtime:         r.runtime,
+		Extensions:      r.extensions,
+		SubAgentManager: r.subAgentManager,
+		TokenManager:    r.tokenManager,
+		AuditStore:      r.auditStore,
+		PromptStore:     r.promptStore,
+		Observer:        r.observer,
+		Approval:        r.approval,
+		Stdin:           r.stdin,
+		Stdout:          r.stdout,
+	})
+}
+
+func newSubAgentSession(workspace, parentSessionID, invocationID string, runMode planpkg.AgentMode) *session.Session {
+	child := session.New(workspace)
+	base := strings.TrimSpace(parentSessionID)
+	if base == "" {
+		base = "session"
+	}
+	child.ID = fmt.Sprintf("%s/subagent/%s", base, strings.TrimSpace(invocationID))
+	child.Mode = runMode
+	child.ActiveSkill = nil
+	return child
+}
+
+func buildSubAgentTaskInput(request tools.DelegateSubAgentRequest) string {
+	task := strings.TrimSpace(request.Task)
+	if task == "" {
+		task = "Complete the delegated subagent task."
+	}
+	return task
+}
+
+func buildSubAgentPromptInput(request tools.DelegateSubAgentRequest, preflight subagentspkg.PreflightResult) *SubAgentPromptInput {
+	return &SubAgentPromptInput{
+		Name:           strings.TrimSpace(preflight.Definition.Name),
+		Task:           strings.TrimSpace(request.Task),
+		ScopePaths:     normalizeUniqueStrings(request.Scope.Paths),
+		ScopeSymbols:   normalizeUniqueStrings(request.Scope.Symbols),
+		AllowedTools:   append([]string(nil), preflight.EffectiveTools...),
+		Isolation:      strings.TrimSpace(preflight.Isolation),
+		ResultPolicy:   subAgentResultPolicyCompressed,
+		DefinitionBody: strings.TrimSpace(preflight.Definition.Instruction),
+	}
+}
+
+func applySubAgentPreflightSetup(setup *runPromptSetup, preflight subagentspkg.PreflightResult) {
+	if setup == nil {
+		return
+	}
+	setup.AllowedTools = cloneToolSet(preflight.AllowedTools)
+	setup.DeniedTools = cloneToolSet(preflight.DeniedTools)
+	setup.AllowedToolNames = append([]string(nil), preflight.EffectiveTools...)
+	setup.DeniedToolNames = sortedToolSetNames(preflight.DeniedTools)
+	setup.AvailableTools = append([]string(nil), preflight.EffectiveTools...)
+	setup.AvailableSubAgents = nil
+	setup.ActiveSkill = nil
+}
+
+func sortedToolSetNames(set map[string]struct{}) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(set))
+	for name := range set {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			continue
+		}
+		names = append(names, trimmed)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	slices.Sort(names)
+	return names
+}
+
+func resolveSubAgentMaxIterations(parentMaxIterations int, requestedMaxTurns int) int {
+	effectiveParent := parentMaxIterations
+	if effectiveParent <= 0 {
+		effectiveParent = defaultSubAgentMaxIterations
+	}
+	if requestedMaxTurns > 0 && requestedMaxTurns < effectiveParent {
+		return requestedMaxTurns
+	}
+	return effectiveParent
+}
+
+func subAgentFailureResult(invocationID, agent, code, message string, retryable bool) tools.DelegateSubAgentResult {
+	return tools.DelegateSubAgentResult{
+		OK:           false,
+		Status:       subAgentResultStatusFailed,
+		InvocationID: strings.TrimSpace(invocationID),
+		Agent:        strings.TrimSpace(agent),
+		Findings:     []tools.DelegateSubAgentFinding{},
+		References:   []tools.DelegateSubAgentReference{},
+		Error: &tools.DelegateSubAgentError{
+			Code:      strings.TrimSpace(code),
+			Message:   strings.TrimSpace(message),
+			Retryable: retryable,
+		},
+	}
 }
 
 func preflightResultName(agent string) string {
@@ -488,6 +724,52 @@ func execCtxGetDenied(execCtx *tools.ExecutionContext) map[string]struct{} {
 		return nil
 	}
 	return execCtx.DeniedTools
+}
+
+func supportsBackgroundLifecycleTools(parentVisible []string, parentAllowed map[string]struct{}, parentDenied map[string]struct{}) bool {
+	return isToolVisibleInParent(subAgentTaskOutputTool, parentVisible, parentAllowed, parentDenied) &&
+		isToolVisibleInParent(subAgentTaskStopTool, parentVisible, parentAllowed, parentDenied)
+}
+
+func isToolVisibleInParent(name string, parentVisible []string, parentAllowed map[string]struct{}, parentDenied map[string]struct{}) bool {
+	toolName := strings.TrimSpace(name)
+	if toolName == "" {
+		return false
+	}
+	if !slices.Contains(parentVisible, toolName) {
+		return false
+	}
+	if len(parentAllowed) > 0 {
+		if _, ok := parentAllowed[toolName]; !ok {
+			return false
+		}
+	}
+	if len(parentDenied) > 0 {
+		if _, denied := parentDenied[toolName]; denied {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Runner) isReadOnlySubAgentToolset(toolNames []string) bool {
+	if len(toolNames) == 0 {
+		return false
+	}
+	type toolSpecLookup interface {
+		Spec(name string) (tools.ToolSpec, bool)
+	}
+	lookup, ok := r.registry.(toolSpecLookup)
+	if !ok {
+		return false
+	}
+	for _, name := range toolNames {
+		spec, exists := lookup.Spec(strings.TrimSpace(name))
+		if !exists || !spec.ReadOnly {
+			return false
+		}
+	}
+	return true
 }
 
 func cloneToolSet(source map[string]struct{}) map[string]struct{} {

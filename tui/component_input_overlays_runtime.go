@@ -83,6 +83,7 @@ func (m model) handleCommandPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return next, cmd
 		}
+		typedValue := strings.TrimSpace(m.input.Value())
 		m.closeCommandPalette()
 		if shouldExecuteFromPalette(selected) || selected.Name == "/continue" {
 			if selected.Name == "/quit" {
@@ -102,6 +103,18 @@ func (m model) handleCommandPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return next, cmd
 		}
+		if shouldExecuteTypedSlashFromPalette(selected, typedValue) {
+			if m.busy {
+				m.statusNote = "This command is unavailable while a run is in progress. Use /btw <message>."
+				return m, nil
+			}
+			next, cmd, err := m.executeCommand(typedValue)
+			if err != nil {
+				m.statusNote = err.Error()
+				return m, nil
+			}
+			return next, cmd
+		}
 		m.setInputValue(selected.Usage)
 		m.statusNote = selected.Description
 		return m, nil
@@ -115,6 +128,23 @@ func (m model) handleCommandPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.syncInputOverlays()
 	}
 	return m, cmd
+}
+
+func shouldExecuteTypedSlashFromPalette(selected commandItem, typedValue string) bool {
+	typed := strings.TrimSpace(typedValue)
+	if typed == "" || !strings.HasPrefix(typed, "/") {
+		return false
+	}
+	usage := strings.TrimSpace(selected.Usage)
+	if usage == "" {
+		return false
+	}
+	typedLower := strings.ToLower(typed)
+	usageLower := strings.ToLower(usage)
+	if typedLower == usageLower {
+		return false
+	}
+	return strings.HasPrefix(typedLower, usageLower+" ")
 }
 
 func (m model) handleMentionPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

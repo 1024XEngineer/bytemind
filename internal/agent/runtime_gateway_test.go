@@ -170,6 +170,80 @@ func TestDefaultRuntimeGatewayRunSyncFailsWhenRegistryUnavailable(t *testing.T) 
 	}
 }
 
+func TestDefaultRuntimeGatewayRunAsyncLaunchesTask(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	manager := runtimepkg.NewInMemoryTaskManager()
+	gateway := newDefaultRuntimeGateway(manager)
+
+	launch, err := gateway.RunAsync(context.Background(), RuntimeTaskRequest{
+		SessionID: "sess-async",
+		TraceID:   "trace-async",
+		Name:      "tool_async",
+		Kind:      "tool",
+		Execute: func(execCtx context.Context) ([]byte, error) {
+			return managerTaskExecute(execCtx, started, release)
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunAsync failed: %v", err)
+	}
+	if launch.TaskID == "" {
+		t.Fatal("expected non-empty task id")
+	}
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected async task to start")
+	}
+	close(release)
+
+	result, waitErr := manager.Wait(context.Background(), launch.TaskID)
+	if waitErr != nil {
+		t.Fatalf("wait async task failed: %v", waitErr)
+	}
+	if result.Status != corepkg.TaskCompleted {
+		t.Fatalf("expected completed status, got %s", result.Status)
+	}
+	if got := string(result.Output); got != "ok" {
+		t.Fatalf("expected output %q, got %q", "ok", got)
+	}
+}
+
+func TestDefaultRuntimeGatewayRunAsyncFailsWhenRegistryUnavailable(t *testing.T) {
+	gateway := newDefaultRuntimeGateway(taskManagerWithoutRegistry{})
+
+	_, err := gateway.RunAsync(context.Background(), RuntimeTaskRequest{
+		SessionID: "sess-1",
+		TraceID:   "trace-no-registry",
+		Name:      "tool_no_registry",
+		Kind:      "tool",
+		Execute: func(_ context.Context) ([]byte, error) {
+			return []byte("ok"), nil
+		},
+	})
+	if err == nil {
+		t.Fatal("expected RunAsync to fail when registry is unavailable")
+	}
+	if got := err.Error(); got != "runtime task manager must implement TaskExecutionRegistry" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func managerTaskExecute(ctx context.Context, started chan<- struct{}, release <-chan struct{}) ([]byte, error) {
+	select {
+	case started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-release:
+		return []byte("ok"), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 func containsTaskStatus(states []corepkg.TaskStatus, expected corepkg.TaskStatus) bool {
 	for _, status := range states {
 		if status == expected {

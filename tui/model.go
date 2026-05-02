@@ -316,6 +316,9 @@ type hiddenPasteProbeState struct {
 var commandItems = []commandItem{
 	{Name: "/help", Usage: "/help", Description: "Show usage and supported commands.", Kind: "command"},
 	{Name: "/session", Usage: "/session", Description: "Open the recent session list.", Kind: "command"},
+	{Name: "/agents", Usage: "/agents [name]", Description: "List available subagents or show one definition.", Kind: "command"},
+	{Name: "/review", Usage: "/review", Description: "Delegate a focused code review task to the builtin review subagent.", Kind: "command"},
+	{Name: "/explorer", Usage: "/explorer", Description: "Delegate a focused repository exploration task to the builtin explorer subagent.", Kind: "command"},
 	{Name: "/skills-select", Usage: "/skills-select", Description: "Open the loaded skills picker.", Kind: "command"},
 	{Name: "/mcp list", Usage: "/mcp list", Description: "List configured MCP servers and current status.", Kind: "command"},
 	{Name: "/mcp help", Usage: "/mcp help", Description: "Show MCP command help.", Kind: "command"},
@@ -447,6 +450,7 @@ type model struct {
 	clipboardRead              clipboardTextReader
 	clipboardText              clipboardTextWriter
 	runCancel                  context.CancelFunc
+	pendingCommandCmd          tea.Cmd
 	pendingBTW                 []string
 	interrupting               bool
 	interruptSafe              bool
@@ -2376,7 +2380,7 @@ func shouldExecuteFromPalette(item commandItem) bool {
 		return true
 	}
 	switch item.Name {
-	case "/help", "/session", "/skills", "/skill clear", "/mcp list", "/mcp help", "/new", "/compact", "/quit":
+	case "/help", "/session", "/agents", "/skills", "/skill clear", "/mcp list", "/mcp help", "/new", "/compact", "/quit":
 		return true
 	default:
 		return false

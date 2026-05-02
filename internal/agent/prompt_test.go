@@ -137,6 +137,47 @@ func TestSystemPromptOmitsOptionalBlocksWhenEmpty(t *testing.T) {
 	assertNoTemplateMarkers(t, prompt)
 }
 
+func TestSystemPromptRendersSubAgentRuntimeAndDefinitionBlocks(t *testing.T) {
+	prompt := systemPrompt(PromptInput{
+		Workspace:      "/tmp/workspace",
+		ApprovalPolicy: "never",
+		Model:          "deepseek-chat",
+		Mode:           "build",
+		Platform:       "darwin/arm64",
+		Now:            time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC),
+		SubAgentRuntime: &PromptSubAgentRuntime{
+			Name:         "explorer",
+			Task:         "Locate prompt assembly order and summarize.",
+			ScopePaths:   []string{"internal/agent", "internal/subagents"},
+			ScopeSymbols: []string{"systemPrompt", "buildTurnMessages"},
+			AllowedTools: []string{"list_files", "read_file", "search_text"},
+			Isolation:    "none",
+			ResultPolicy: "Return compressed findings only. Do not include full tool logs.",
+		},
+		SubAgentDefinition: "You are a focused repository explorer.\nReturn concise findings with references.",
+	})
+
+	assertContains(t, prompt, "[SubAgent Runtime]")
+	assertContains(t, prompt, "name: explorer")
+	assertContains(t, prompt, "task: Locate prompt assembly order and summarize.")
+	assertContains(t, prompt, "scope_paths:")
+	assertContains(t, prompt, "- internal/agent")
+	assertContains(t, prompt, "- internal/subagents")
+	assertContains(t, prompt, "scope_symbols:")
+	assertContains(t, prompt, "- systemPrompt")
+	assertContains(t, prompt, "- buildTurnMessages")
+	assertContains(t, prompt, "allowed_tools: list_files, read_file, search_text")
+	assertContains(t, prompt, "isolation: none")
+	assertContains(t, prompt, "result_policy: Return compressed findings only. Do not include full tool logs.")
+
+	assertContains(t, prompt, "[SubAgent Definition]")
+	assertContains(t, prompt, "You are a focused repository explorer.")
+	assertContains(t, prompt, "Return concise findings with references.")
+
+	assertNotContains(t, prompt, "invocation_id:")
+	assertNotContains(t, prompt, "parent_session_id:")
+}
+
 func TestSystemPromptIncludesCurrentPlanStateWhenPresent(t *testing.T) {
 	prompt := systemPrompt(PromptInput{
 		Workspace:      "/tmp/workspace",
