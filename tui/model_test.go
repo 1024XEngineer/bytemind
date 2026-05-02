@@ -6398,6 +6398,28 @@ func TestUpdateIgnoresStaleRunFinishedMsg(t *testing.T) {
 	}
 }
 
+func TestUpdateTreatsZeroRunIDAsStaleWhenActiveRunExists(t *testing.T) {
+	m := model{
+		async:       make(chan tea.Msg, 1),
+		busy:        true,
+		activeRunID: 7,
+		statusNote:  "Running...",
+		phase:       "responding",
+	}
+
+	got, cmd := m.Update(runFinishedMsg{})
+	updated := got.(model)
+	if cmd == nil {
+		t.Fatalf("expected stale run finished to keep waiting for async events")
+	}
+	if !updated.busy {
+		t.Fatalf("expected zero RunID to be treated as stale while active run exists")
+	}
+	if updated.activeRunID != 7 {
+		t.Fatalf("expected activeRunID to remain unchanged, got %d", updated.activeRunID)
+	}
+}
+
 func TestBTWCommandInIdleSubmitsPrompt(t *testing.T) {
 	input := textarea.New()
 	input.Focus()

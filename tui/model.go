@@ -660,7 +660,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, waitForAsync(m.async)
 	case runFinishedMsg:
-		if msg.RunID > 0 && msg.RunID != m.activeRunID {
+		if m.activeRunID > 0 && msg.RunID != m.activeRunID {
 			return m, waitForAsync(m.async)
 		}
 		elapsed := time.Duration(0)
