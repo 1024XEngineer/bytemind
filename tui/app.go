@@ -3,6 +3,7 @@ package tui
 import (
 	"bytemind/internal/assets"
 	"bytemind/internal/config"
+	notifypkg "bytemind/internal/notify"
 	"bytemind/internal/session"
 	"os"
 	"runtime"
@@ -18,6 +19,7 @@ type Options struct {
 	MCPService   MCPService
 	Session      *session.Session
 	ImageStore   assets.ImageStore
+	Notifier     notifypkg.Notifier
 	Config       config.Config
 	Workspace    string
 	StartupGuide StartupGuide

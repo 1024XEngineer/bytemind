@@ -44,6 +44,19 @@
 | `auto_deny_continue`（默认） | 仅用于兼容旧配置，不再影响运行时行为 |
 | `fail_fast`                  | 仅用于兼容旧配置，不再影响运行时行为 |
 
+## `notifications.desktop`
+
+桌面通知偏好设置。
+
+| 字段                    | 类型 | 默认值 | 说明 |
+| ----------------------- | ---- | ------ | ---- |
+| `enabled`               | bool | `true` | 桌面通知总开关。 |
+| `on_approval_required`  | bool | `true` | 出现审批请求时发送通知。 |
+| `on_run_completed`      | bool | `true` | 任务成功完成时发送通知。 |
+| `on_run_failed`         | bool | `true` | 任务失败时发送通知。 |
+| `on_run_canceled`       | bool | `false` | 任务取消时发送通知。 |
+| `cooldown_seconds`      | int  | `3` | 同一通知 key 的去重窗口。`0` 表示关闭 cooldown 去重。 |
+
 ## `max_iterations`
 
 | 类型    | 默认值 |
@@ -125,6 +138,16 @@
   },
   "approval_policy": "on-request",
   "approval_mode": "interactive",
+  "notifications": {
+    "desktop": {
+      "enabled": true,
+      "on_approval_required": true,
+      "on_run_completed": true,
+      "on_run_failed": true,
+      "on_run_canceled": false,
+      "cooldown_seconds": 3
+    }
+  },
   "max_iterations": 32,
   "stream": true,
   "sandbox_enabled": false,

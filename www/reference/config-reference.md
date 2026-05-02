@@ -42,6 +42,19 @@ Deprecated compatibility field. Legacy `approval_mode: away` is blocked by defau
 | `auto_deny_continue` (default) | Accepted for compatibility; no runtime behavior change |
 | `fail_fast`                    | Accepted for compatibility; no runtime behavior change |
 
+## `notifications.desktop`
+
+Desktop notification preferences.
+
+| Field                  | Type | Default | Description |
+| ---------------------- | ---- | ------- | ----------- |
+| `enabled`              | bool | `true`  | Master switch for desktop notifications. |
+| `on_approval_required` | bool | `true`  | Notify when an approval prompt is raised. |
+| `on_run_completed`     | bool | `true`  | Notify when a run completes successfully. |
+| `on_run_failed`        | bool | `true`  | Notify when a run fails. |
+| `on_run_canceled`      | bool | `false` | Notify when a run is canceled. |
+| `cooldown_seconds`     | int  | `3`     | Cooldown window for duplicate notification keys. `0` disables cooldown dedupe. |
+
 ## `max_iterations`
 
 | Type    | Default |
@@ -123,6 +136,16 @@ Controls context window management.
   },
   "approval_policy": "on-request",
   "approval_mode": "interactive",
+  "notifications": {
+    "desktop": {
+      "enabled": true,
+      "on_approval_required": true,
+      "on_run_completed": true,
+      "on_run_failed": true,
+      "on_run_canceled": false,
+      "cooldown_seconds": 3
+    }
+  },
   "max_iterations": 32,
   "stream": true,
   "sandbox_enabled": false,

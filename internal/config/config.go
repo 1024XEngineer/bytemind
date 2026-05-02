@@ -45,6 +45,7 @@ type Config struct {
 	WritableRoots     []string              `json:"writable_roots"`
 	ExecAllowlist     []ExecAllowRule       `json:"exec_allowlist"`
 	NetworkAllowlist  []NetworkAllowRule    `json:"network_allowlist"`
+	Notifications     NotificationsConfig   `json:"notifications"`
 	MaxIterations     int                   `json:"max_iterations"`
 	Stream            bool                  `json:"stream"`
 	UpdateCheck       UpdateCheckConfig     `json:"update_check"`
@@ -99,6 +100,19 @@ type NetworkAllowRule struct {
 	Host   string `json:"host"`
 	Port   int    `json:"port"`
 	Scheme string `json:"scheme"`
+}
+
+type NotificationsConfig struct {
+	Desktop DesktopNotificationConfig `json:"desktop"`
+}
+
+type DesktopNotificationConfig struct {
+	Enabled            bool `json:"enabled"`
+	OnApprovalRequired bool `json:"on_approval_required"`
+	OnRunCompleted     bool `json:"on_run_completed"`
+	OnRunFailed        bool `json:"on_run_failed"`
+	OnRunCanceled      bool `json:"on_run_canceled"`
+	CooldownSeconds    int  `json:"cooldown_seconds"`
 }
 
 type MCPConfig struct {
@@ -170,8 +184,18 @@ func Default(workspace string) Config {
 		WritableRoots:     []string{},
 		ExecAllowlist:     []ExecAllowRule{},
 		NetworkAllowlist:  []NetworkAllowRule{},
-		MaxIterations:     32,
-		Stream:            true,
+		Notifications: NotificationsConfig{
+			Desktop: DesktopNotificationConfig{
+				Enabled:            true,
+				OnApprovalRequired: true,
+				OnRunCompleted:     true,
+				OnRunFailed:        true,
+				OnRunCanceled:      false,
+				CooldownSeconds:    3,
+			},
+		},
+		MaxIterations: 32,
+		Stream:        true,
 		UpdateCheck: UpdateCheckConfig{
 			Enabled: true,
 		},
@@ -338,8 +362,18 @@ func ensureDefaultConfigFile(home string) error {
 		WritableRoots:     []string{},
 		ExecAllowlist:     []ExecAllowRule{},
 		NetworkAllowlist:  []NetworkAllowRule{},
-		MaxIterations:     32,
-		Stream:            true,
+		Notifications: NotificationsConfig{
+			Desktop: DesktopNotificationConfig{
+				Enabled:            true,
+				OnApprovalRequired: true,
+				OnRunCompleted:     true,
+				OnRunFailed:        true,
+				OnRunCanceled:      false,
+				CooldownSeconds:    3,
+			},
+		},
+		MaxIterations: 32,
+		Stream:        true,
 		UpdateCheck: UpdateCheckConfig{
 			Enabled: true,
 		},
@@ -522,6 +556,36 @@ func applyEnv(cfg *Config) {
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_TOKEN_QUOTA")); value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil {
 			cfg.TokenQuota = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_DESKTOP_NOTIFY")); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			cfg.Notifications.Desktop.Enabled = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_NOTIFY_APPROVAL")); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			cfg.Notifications.Desktop.OnApprovalRequired = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_NOTIFY_RUN_COMPLETED")); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			cfg.Notifications.Desktop.OnRunCompleted = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_NOTIFY_RUN_FAILED")); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			cfg.Notifications.Desktop.OnRunFailed = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_NOTIFY_RUN_CANCELED")); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			cfg.Notifications.Desktop.OnRunCanceled = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_NOTIFY_COOLDOWN_SECONDS")); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			cfg.Notifications.Desktop.CooldownSeconds = parsed
 		}
 	}
 }
@@ -711,6 +775,9 @@ func normalize(cfg *Config) error {
 	}
 	if cfg.TokenQuota < 1 {
 		cfg.TokenQuota = DefaultTokenQuota
+	}
+	if cfg.Notifications.Desktop.CooldownSeconds < 0 {
+		return errors.New("notifications.desktop.cooldown_seconds must be >= 0")
 	}
 	if strings.TrimSpace(cfg.TokenUsage.StorageType) == "" {
 		cfg.TokenUsage.StorageType = "file"

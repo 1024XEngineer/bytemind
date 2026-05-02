@@ -18,6 +18,7 @@ import (
 	"bytemind/internal/history"
 	"bytemind/internal/llm"
 	"bytemind/internal/mention"
+	notifypkg "bytemind/internal/notify"
 	planpkg "bytemind/internal/plan"
 	"bytemind/internal/session"
 	"bytemind/internal/tools"
@@ -32,6 +33,18 @@ type fakeClipboardTextWriter struct {
 	last       string
 	err        error
 	waitForCtx bool
+}
+
+type fakeNotifier struct {
+	messages []notifypkg.Message
+}
+
+func (f *fakeNotifier) Notify(msg notifypkg.Message) {
+	f.messages = append(f.messages, msg)
+}
+
+func (*fakeNotifier) Close(context.Context) error {
+	return nil
 }
 
 func (f *fakeClipboardTextWriter) WriteText(ctx context.Context, text string) error {
@@ -5354,6 +5367,69 @@ func TestUpdateApprovalRequestMsgSetsApprovalPhase(t *testing.T) {
 	}
 }
 
+func TestUpdateApprovalRequestMsgSendsDesktopNotification(t *testing.T) {
+	reply := make(chan approvalDecision, 1)
+	notifier := &fakeNotifier{}
+	m := model{
+		async:    make(chan tea.Msg, 1),
+		notifier: notifier,
+		cfg: config.Config{
+			Notifications: config.NotificationsConfig{
+				Desktop: config.DesktopNotificationConfig{
+					Enabled:            true,
+					OnApprovalRequired: true,
+				},
+			},
+		},
+	}
+
+	got, _ := m.Update(approvalRequestMsg{
+		Request: ApprovalRequest{
+			Command: "go test ./tui",
+			Reason:  "run focused tests",
+		},
+		Reply: reply,
+	})
+	_ = got.(model)
+
+	if len(notifier.messages) != 1 {
+		t.Fatalf("expected one desktop notification, got %d", len(notifier.messages))
+	}
+	if notifier.messages[0].Event != notifypkg.EventApprovalRequired {
+		t.Fatalf("expected approval_required event, got %q", notifier.messages[0].Event)
+	}
+}
+
+func TestUpdateApprovalRequestMsgSkipsDesktopNotificationWhenDisabled(t *testing.T) {
+	reply := make(chan approvalDecision, 1)
+	notifier := &fakeNotifier{}
+	m := model{
+		async:    make(chan tea.Msg, 1),
+		notifier: notifier,
+		cfg: config.Config{
+			Notifications: config.NotificationsConfig{
+				Desktop: config.DesktopNotificationConfig{
+					Enabled:            false,
+					OnApprovalRequired: true,
+				},
+			},
+		},
+	}
+
+	got, _ := m.Update(approvalRequestMsg{
+		Request: ApprovalRequest{
+			Command: "go test ./tui",
+			Reason:  "run focused tests",
+		},
+		Reply: reply,
+	})
+	_ = got.(model)
+
+	if len(notifier.messages) != 0 {
+		t.Fatalf("expected no desktop notification when disabled, got %d", len(notifier.messages))
+	}
+}
+
 func TestApprovalKeysTransitionStateAndSendDecision(t *testing.T) {
 	t.Run("approve", func(t *testing.T) {
 		reply := make(chan approvalDecision, 1)
@@ -5650,6 +5726,175 @@ func TestUpdateRunFinishedMsgResetsBusyState(t *testing.T) {
 			t.Fatalf("expected latest assistant card to show failure, got %+v", last)
 		}
 	})
+}
+
+func TestRunFinishedDesktopNotifications(t *testing.T) {
+	t.Run("completed", func(t *testing.T) {
+		notifier := &fakeNotifier{}
+		m := model{
+			async:       make(chan tea.Msg, 1),
+			notifier:    notifier,
+			busy:        true,
+			activeRunID: 3,
+			cfg: config.Config{
+				Notifications: config.NotificationsConfig{
+					Desktop: config.DesktopNotificationConfig{
+						Enabled:        true,
+						OnRunCompleted: true,
+					},
+				},
+			},
+		}
+
+		got, _ := m.Update(runFinishedMsg{RunID: 3})
+		_ = got.(model)
+
+		if len(notifier.messages) != 1 {
+			t.Fatalf("expected one notification, got %d", len(notifier.messages))
+		}
+		if notifier.messages[0].Event != notifypkg.EventRunCompleted {
+			t.Fatalf("expected run_completed event, got %q", notifier.messages[0].Event)
+		}
+	})
+
+	t.Run("failed", func(t *testing.T) {
+		notifier := &fakeNotifier{}
+		m := model{
+			async:       make(chan tea.Msg, 1),
+			notifier:    notifier,
+			busy:        true,
+			activeRunID: 8,
+			cfg: config.Config{
+				Notifications: config.NotificationsConfig{
+					Desktop: config.DesktopNotificationConfig{
+						Enabled:       true,
+						OnRunFailed:   true,
+						OnRunCanceled: false,
+					},
+				},
+			},
+		}
+
+		got, _ := m.Update(runFinishedMsg{RunID: 8, Err: errors.New("provider unavailable")})
+		_ = got.(model)
+
+		if len(notifier.messages) != 1 {
+			t.Fatalf("expected one notification, got %d", len(notifier.messages))
+		}
+		if notifier.messages[0].Event != notifypkg.EventRunFailed {
+			t.Fatalf("expected run_failed event, got %q", notifier.messages[0].Event)
+		}
+	})
+
+	t.Run("canceled", func(t *testing.T) {
+		notifier := &fakeNotifier{}
+		m := model{
+			async:       make(chan tea.Msg, 1),
+			notifier:    notifier,
+			busy:        true,
+			activeRunID: 9,
+			cfg: config.Config{
+				Notifications: config.NotificationsConfig{
+					Desktop: config.DesktopNotificationConfig{
+						Enabled:       true,
+						OnRunCanceled: true,
+					},
+				},
+			},
+		}
+
+		got, _ := m.Update(runFinishedMsg{RunID: 9, Err: context.Canceled})
+		_ = got.(model)
+
+		if len(notifier.messages) != 1 {
+			t.Fatalf("expected one notification, got %d", len(notifier.messages))
+		}
+		if notifier.messages[0].Event != notifypkg.EventRunCanceled {
+			t.Fatalf("expected run_canceled event, got %q", notifier.messages[0].Event)
+		}
+	})
+}
+
+func TestRunFinishedDesktopNotificationsSkipBTWRestartAndStaleRun(t *testing.T) {
+	t.Run("btw restart", func(t *testing.T) {
+		notifier := &fakeNotifier{}
+		m := model{
+			async:        make(chan tea.Msg, 1),
+			notifier:     notifier,
+			busy:         true,
+			activeRunID:  10,
+			interrupting: true,
+			pendingBTW:   []string{"new direction"},
+			cfg: config.Config{
+				Notifications: config.NotificationsConfig{
+					Desktop: config.DesktopNotificationConfig{
+						Enabled:        true,
+						OnRunCompleted: true,
+						OnRunFailed:    true,
+						OnRunCanceled:  true,
+					},
+				},
+			},
+		}
+
+		got, _ := m.Update(runFinishedMsg{RunID: 10})
+		_ = got.(model)
+		if len(notifier.messages) != 0 {
+			t.Fatalf("expected no notification for btw restart, got %d", len(notifier.messages))
+		}
+	})
+
+	t.Run("stale run", func(t *testing.T) {
+		notifier := &fakeNotifier{}
+		m := model{
+			async:       make(chan tea.Msg, 1),
+			notifier:    notifier,
+			busy:        true,
+			activeRunID: 11,
+			cfg: config.Config{
+				Notifications: config.NotificationsConfig{
+					Desktop: config.DesktopNotificationConfig{
+						Enabled:        true,
+						OnRunCompleted: true,
+						OnRunFailed:    true,
+						OnRunCanceled:  true,
+					},
+				},
+			},
+		}
+
+		got, _ := m.Update(runFinishedMsg{RunID: 12})
+		_ = got.(model)
+		if len(notifier.messages) != 0 {
+			t.Fatalf("expected no notification for stale run, got %d", len(notifier.messages))
+		}
+	})
+}
+
+func TestRunFinishedDesktopNotificationsDisabledSkipsSend(t *testing.T) {
+	notifier := &fakeNotifier{}
+	m := model{
+		async:       make(chan tea.Msg, 1),
+		notifier:    notifier,
+		busy:        true,
+		activeRunID: 21,
+		cfg: config.Config{
+			Notifications: config.NotificationsConfig{
+				Desktop: config.DesktopNotificationConfig{
+					Enabled:        false,
+					OnRunCompleted: true,
+					OnRunFailed:    true,
+					OnRunCanceled:  true,
+				},
+			},
+		},
+	}
+
+	got, _ := m.Update(runFinishedMsg{RunID: 21})
+	_ = got.(model)
+	if len(notifier.messages) != 0 {
+		t.Fatalf("expected no notification when desktop notifications are disabled, got %d", len(notifier.messages))
+	}
 }
 
 func TestRunFinishedKeepsStreamingSlotForLateAssistantMessage(t *testing.T) {
@@ -6268,6 +6513,28 @@ func TestUpdateIgnoresStaleRunFinishedMsg(t *testing.T) {
 	}
 	if updated.statusNote != "Running..." {
 		t.Fatalf("expected stale run message not to rewrite status, got %q", updated.statusNote)
+	}
+}
+
+func TestUpdateTreatsZeroRunIDAsStaleWhenActiveRunExists(t *testing.T) {
+	m := model{
+		async:       make(chan tea.Msg, 1),
+		busy:        true,
+		activeRunID: 7,
+		statusNote:  "Running...",
+		phase:       "responding",
+	}
+
+	got, cmd := m.Update(runFinishedMsg{})
+	updated := got.(model)
+	if cmd == nil {
+		t.Fatalf("expected stale run finished to keep waiting for async events")
+	}
+	if !updated.busy {
+		t.Fatalf("expected zero RunID to be treated as stale while active run exists")
+	}
+	if updated.activeRunID != 7 {
+		t.Fatalf("expected activeRunID to remain unchanged, got %d", updated.activeRunID)
 	}
 }
 

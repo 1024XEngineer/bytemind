@@ -35,6 +35,9 @@ func TestRunTUIBuildsOptionsAndInvokesProgram(t *testing.T) {
 		if opts.ImageStore == nil {
 			t.Fatalf("expected image store to be initialized")
 		}
+		if opts.Notifier == nil {
+			t.Fatalf("expected notifier to be initialized")
+		}
 		if opts.Workspace != workspace {
 			t.Fatalf("expected workspace %q, got %q", workspace, opts.Workspace)
 		}
