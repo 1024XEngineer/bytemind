@@ -3,7 +3,7 @@ package extensions
 import (
 	"context"
 
-	corepkg "bytemind/internal/core"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 )
 
 type Manager interface {

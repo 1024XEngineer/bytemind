@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"bytemind/internal/llm"
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 func (e *defaultEngine) completeTurn(ctx context.Context, request llm.ChatRequest, out io.Writer, streamedText *bool) (llm.Message, error) {

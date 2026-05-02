@@ -6,9 +6,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"bytemind/internal/llm"
-	subagentspkg "bytemind/internal/subagents"
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 type subAgentCommandRunner interface {

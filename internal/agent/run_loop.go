@@ -4,8 +4,8 @@ import (
 	"context"
 	"io"
 
-	"bytemind/internal/llm"
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 func (r *Runner) runPromptTurns(ctx context.Context, sess *session.Session, setup runPromptSetup, out io.Writer) (string, error) {

@@ -69,12 +69,34 @@ These are typed inside an active `bytemind chat` session, not on the shell:
 | `/new`                                        | Start a new session in the current workspace |
 | `/plan`                                       | Switch to Plan mode                          |
 | `/build`                                      | Switch to Build mode                         |
+| `/commit <message>`                           | Stage all current changes and create a local Git commit |
+| `/undo-commit`                                | Undo the last local commit created by `/commit` in this session |
 | `/quit`                                       | Exit safely                                  |
 | `/bug-investigation [symptom="..."]`          | Activate bug investigation skill             |
 | `/review [base_ref=<ref>]`                    | Activate code review skill                   |
 | `/github-pr [pr_number=<n>] [base_ref=<ref>]` | Activate GitHub PR skill                     |
 | `/repo-onboarding`                            | Activate repo onboarding skill               |
 | `/write-rfc [path=<file>]`                    | Activate RFC writing skill                   |
+
+### `/commit <message>`
+
+Use `/commit` inside `bytemind chat` when you want ByteMind to save the current workspace changes as a local Git commit.
+
+```text
+/commit fix(/commit): improve commit feedback
+```
+
+When you choose `/commit` from the slash command palette, ByteMind fills the input with `/commit ` and waits for you to type the message. After you press Enter, ByteMind runs `git add -A`, creates the commit, and reports the commit hash, message, and number of files included.
+
+### `/undo-commit`
+
+Use `/undo-commit` to undo the last commit that ByteMind created with `/commit` in the current session.
+
+```text
+/undo-commit
+```
+
+ByteMind only runs this when the current `HEAD` is still that session commit, the working tree has no newer changes, and the upstream branch does not already contain the commit. It uses `git reset --soft HEAD~1`, so the file changes remain available locally.
 
 ## Config Load Order
 

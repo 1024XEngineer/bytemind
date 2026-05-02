@@ -8,15 +8,15 @@ import (
 	"strconv"
 	"strings"
 
-	"bytemind/internal/agent"
-	"bytemind/internal/config"
-	extensionspkg "bytemind/internal/extensions"
-	extensionsruntime "bytemind/internal/extensionsruntime"
-	"bytemind/internal/provider"
-	runtimepkg "bytemind/internal/runtime"
-	"bytemind/internal/session"
-	storagepkg "bytemind/internal/storage"
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/agent"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
+	extensionsruntime "github.com/1024XEngineer/bytemind/internal/extensionsruntime"
+	"github.com/1024XEngineer/bytemind/internal/provider"
+	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 var validateSystemSandboxRuntime = tools.ValidateSystemSandboxRuntime

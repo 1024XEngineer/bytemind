@@ -7,12 +7,12 @@ import (
 	"time"
 	"unicode"
 
-	extensionspkg "bytemind/internal/extensions"
-	"bytemind/internal/llm"
-	policypkg "bytemind/internal/policy"
-	"bytemind/internal/session"
-	"bytemind/internal/skills"
-	toolspkg "bytemind/internal/tools"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	policypkg "github.com/1024XEngineer/bytemind/internal/policy"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/skills"
+	toolspkg "github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 type activeSkillRuntime struct {

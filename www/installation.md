@@ -51,19 +51,19 @@ All releases and their changelogs are listed on the [GitHub Releases](https://gi
 
 The install script places the binary at:
 
-- **Linux / macOS**: `~/.local/bin/bytemind`
-- **Windows**: `%USERPROFILE%\.local\bin\bytemind.exe`
+- **Linux / macOS**: `~/bin/bytemind`
+- **Windows**: `%USERPROFILE%\bin\bytemind.exe`
 
 If `bytemind --version` reports command not found, add the directory to your `PATH`:
 
 ```bash
 # bash / zsh — add to ~/.bashrc or ~/.zshrc
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/bin:$PATH"
 ```
 
 ```powershell
 # PowerShell — permanent for current user
-[Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\.local\bin;" + $env:Path, "User")
+[Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\bin;" + $env:Path, "User")
 ```
 
 Use `BYTEMIND_INSTALL_DIR` to install to a custom location:
@@ -121,7 +121,7 @@ To suppress the update-check prompt, set in your config:
 Remove the binary to uninstall:
 
 ```bash
-rm ~/.local/bin/bytemind
+rm ~/bin/bytemind
 ```
 
 Session data and config files live in `.bytemind/` and can be removed separately if desired.

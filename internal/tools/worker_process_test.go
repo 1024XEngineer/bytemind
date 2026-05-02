@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	sandboxpkg "bytemind/internal/sandbox"
+	sandboxpkg "github.com/1024XEngineer/bytemind/internal/sandbox"
 )
 
 type fakeWorkerInvoker struct {

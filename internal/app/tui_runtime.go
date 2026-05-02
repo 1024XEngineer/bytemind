@@ -8,11 +8,11 @@ import (
 	"os"
 	"time"
 
-	"bytemind/internal/assets"
-	"bytemind/internal/config"
-	"bytemind/internal/mcpctl"
-	notifypkg "bytemind/internal/notify"
-	"bytemind/tui"
+	"github.com/1024XEngineer/bytemind/internal/assets"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/mcpctl"
+	notifypkg "github.com/1024XEngineer/bytemind/internal/notify"
+	"github.com/1024XEngineer/bytemind/tui"
 )
 
 type TUIRequest struct {
@@ -119,6 +119,7 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 			Notifier:     notifier,
 			Config:       cfg,
 			Workspace:    runtimeBundle.Session.Workspace,
+			Version:      CurrentVersion(),
 			StartupGuide: guide,
 		},
 		close: chainTUIRuntimeClose(runner.Close, notifier),

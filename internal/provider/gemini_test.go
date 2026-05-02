@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 func TestGeminiCreateMessageUsesNativeHeaderAndPayload(t *testing.T) {

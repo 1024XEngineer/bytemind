@@ -1,6 +1,6 @@
 package subagents
 
-import frontmatterpkg "bytemind/internal/frontmatter"
+import frontmatterpkg "github.com/1024XEngineer/bytemind/internal/frontmatter"
 
 var subagentFrontmatterOptions = frontmatterpkg.ParseOptions{
 	TreatEmptyValueAsMultiline: true,

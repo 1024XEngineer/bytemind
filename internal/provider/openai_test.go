@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 func TestOpenAICompatibleCreateMessageUsesCustomGatewayConfig(t *testing.T) {
@@ -270,6 +270,9 @@ func TestOpenAICompatibleCreateMessageDoesNotExposeReasoningOnlyResponse(t *test
 	if msg.Content != "" {
 		t.Fatalf("expected reasoning-only response to stay empty, got %#v", msg)
 	}
+	if got := openAIReasoningContent(msg); got != "final from reasoning" {
+		t.Fatalf("expected reasoning metadata to be preserved, got %#v", msg.Meta)
+	}
 }
 
 func TestOpenAICompatibleCreateMessageParsesLegacyFunctionCall(t *testing.T) {
@@ -321,6 +324,9 @@ func TestOpenAICompatibleStreamMessageDoesNotExposeReasoningOnlyResponse(t *test
 	}
 	if msg.Content != "" {
 		t.Fatalf("expected reasoning-only stream to stay empty, got %#v", msg)
+	}
+	if got := openAIReasoningContent(msg); got != "hello world" {
+		t.Fatalf("expected streamed reasoning metadata to be preserved, got %#v", msg.Meta)
 	}
 }
 
@@ -416,6 +422,102 @@ func TestOpenAICompatibleChatPayloadUsesFallbackModelAndTools(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleChatPayloadUsesExplicitProviderFamilyPolicy(t *testing.T) {
+	client := NewOpenAICompatible(Config{ProviderID: ProviderOpenAI, Type: "openai-compatible", ProviderFamily: "deepseek", BaseURL: "https://api.example.com/v1", APIKey: "test-key", Model: "generic-model"})
+	payload, err := client.chatPayload(llm.ChatRequest{
+		Messages: []llm.Message{{
+			Role: llm.RoleAssistant,
+			Meta: llm.MessageMeta{
+				openAIReasoningContentKey: "provider reasoning",
+			},
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{"path":"."}`,
+				},
+			}},
+		}},
+	}, false)
+	if err != nil {
+		t.Fatalf("chat payload: %v", err)
+	}
+	messages, _ := payload["messages"].([]map[string]any)
+	if len(messages) != 1 {
+		t.Fatalf("expected one message, got %#v", payload["messages"])
+	}
+	if messages[0][openAIReasoningContentKey] != "provider reasoning" {
+		t.Fatalf("expected provider reasoning_content to be sent, got %#v", messages[0])
+	}
+	if messages[0]["content"] != "" {
+		t.Fatalf("expected deepseek policy to send empty assistant content for tool calls, got %#v", messages[0])
+	}
+}
+
+func TestOpenAICompatibleChatPayloadDoesNotUseModelNameForReasoningPolicy(t *testing.T) {
+	client := NewOpenAICompatible(Config{ProviderID: ProviderOpenAI, Type: "openai-compatible", BaseURL: "https://api.openai.com/v1", APIKey: "test-key", Model: "deepseek-v4-pro"})
+	payload, err := client.chatPayload(llm.ChatRequest{
+		Messages: []llm.Message{{
+			Role: llm.RoleAssistant,
+			Meta: llm.MessageMeta{
+				openAIReasoningContentKey: "provider reasoning",
+			},
+			Content: "done",
+		}},
+	}, false)
+	if err != nil {
+		t.Fatalf("chat payload: %v", err)
+	}
+	messages, _ := payload["messages"].([]map[string]any)
+	if len(messages) != 1 {
+		t.Fatalf("expected one message, got %#v", payload["messages"])
+	}
+	if _, ok := messages[0][openAIReasoningContentKey]; ok {
+		t.Fatalf("did not expect reasoning_content based on model name alone, got %#v", messages[0])
+	}
+}
+
+func TestResolveModelPolicyFollowsProviderFamily(t *testing.T) {
+	cases := []struct {
+		name       string
+		family     string
+		provider   ProviderID
+		baseURL    string
+		wantReplay bool
+		wantFamily string
+		wantSource string
+	}{
+		{name: "deepseek explicit family", family: "deepseek", provider: ProviderOpenAI, baseURL: "https://api.example.com/v1", wantReplay: true, wantFamily: "deepseek", wantSource: ModelPolicySourceFamilyOverride},
+		{name: "kimi explicit family", family: "kimi", provider: ProviderOpenAI, wantReplay: true, wantFamily: "kimi", wantSource: ModelPolicySourceFamilyOverride},
+		{name: "moonshot explicit family", family: "moonshot", provider: ProviderOpenAI, wantReplay: true, wantFamily: "moonshot", wantSource: ModelPolicySourceFamilyOverride},
+		{name: "glm explicit family", family: "glm", provider: ProviderOpenAI, wantReplay: true, wantFamily: "glm", wantSource: ModelPolicySourceFamilyOverride},
+		{name: "zhipu explicit family", family: "zhipu", provider: ProviderOpenAI, wantReplay: true, wantFamily: "zhipu", wantSource: ModelPolicySourceFamilyOverride},
+		{name: "zai explicit family", family: "zai", provider: ProviderOpenAI, wantReplay: true, wantFamily: "zai", wantSource: ModelPolicySourceFamilyOverride},
+		{name: "explicit openai family overrides fallback signals", family: "openai", provider: "deepseek", baseURL: "https://api.deepseek.com/v1", wantReplay: false, wantFamily: "openai", wantSource: ModelPolicySourceFamilyOverride},
+		{name: "deepseek provider id fallback", provider: "deepseek", wantReplay: true, wantFamily: "deepseek", wantSource: ModelPolicySourceProviderID},
+		{name: "bigmodel base url fallback", provider: ProviderOpenAI, baseURL: "https://open.bigmodel.cn/api/paas/v4", wantReplay: true, wantFamily: "zai", wantSource: ModelPolicySourceBaseURL},
+		{name: "openai provider", provider: ProviderOpenAI, baseURL: "https://api.openai.com/v1", wantReplay: false, wantSource: ModelPolicySourceDefault},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ResolveModelPolicy(tt.provider, "openai-compatible", "test-model", tt.family, tt.baseURL)
+			if got.ReplayReasoning() != tt.wantReplay {
+				t.Fatalf("unexpected reasoning replay=%v want=%v policy=%#v", got.ReplayReasoning(), tt.wantReplay, got)
+			}
+			if got.Family != tt.wantFamily {
+				t.Fatalf("unexpected family %q want %q policy=%#v", got.Family, tt.wantFamily, got)
+			}
+			if got.Source != tt.wantSource {
+				t.Fatalf("unexpected source %q want %q policy=%#v", got.Source, tt.wantSource, got)
+			}
+			if tt.wantReplay && (got.ReasoningField != openAIReasoningContentKey || got.AssistantToolCallContentMode != AssistantToolCallContentEmptyString) {
+				t.Fatalf("expected reasoning policy fields to be set, got %#v", got)
+			}
+		})
+	}
+}
+
 func TestOpenAIMessagesMapsThinkingAndToolResultParts(t *testing.T) {
 	messages, err := openAIMessages(llm.ChatRequest{
 		Messages: []llm.Message{
@@ -428,7 +530,7 @@ func TestOpenAIMessagesMapsThinkingAndToolResultParts(t *testing.T) {
 			},
 			llm.NewToolResultMessage("call-1", `{"ok":true}`),
 		},
-	})
+	}, ResolvedModelPolicy{AssistantToolCallContentMode: AssistantToolCallContentOmit})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,8 +539,8 @@ func TestOpenAIMessagesMapsThinkingAndToolResultParts(t *testing.T) {
 	}
 
 	assistant := messages[0]
-	if assistant["content"] != "reasoning" {
-		t.Fatalf("expected thinking mapped as string content, got %#v", assistant)
+	if _, ok := assistant["content"]; ok {
+		t.Fatalf("did not expect assistant thinking to be exposed as content under generic policy, got %#v", assistant)
 	}
 	toolCalls, _ := assistant["tool_calls"].([]map[string]any)
 	if len(toolCalls) != 1 || toolCalls[0]["id"] != "call-1" {
@@ -446,6 +548,71 @@ func TestOpenAIMessagesMapsThinkingAndToolResultParts(t *testing.T) {
 	}
 	if messages[1]["role"] != "tool" || messages[1]["tool_call_id"] != "call-1" {
 		t.Fatalf("expected tool_result mapping, got %#v", messages[1])
+	}
+}
+
+func TestOpenAIMessagesRoundTripsProviderReasoningWithToolCalls(t *testing.T) {
+	messages, err := openAIMessages(llm.ChatRequest{
+		Messages: []llm.Message{
+			{
+				Role: llm.RoleAssistant,
+				Meta: llm.MessageMeta{
+					openAIReasoningContentKey: "need a file listing",
+				},
+				ToolCalls: []llm.ToolCall{{
+					ID:   "call-1",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "list_files",
+						Arguments: `{"path":"."}`,
+					},
+				}},
+			},
+			llm.NewToolResultMessage("call-1", `{"ok":true}`),
+		},
+	}, ResolveModelPolicy(ProviderOpenAI, "openai-compatible", "", "deepseek", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("expected assistant and tool_result messages, got %#v", messages)
+	}
+
+	assistant := messages[0]
+	if assistant["content"] != "" {
+		t.Fatalf("expected empty assistant content to be sent for tool call, got %#v", assistant)
+	}
+	if assistant[openAIReasoningContentKey] != "need a file listing" {
+		t.Fatalf("expected reasoning_content to round-trip, got %#v", assistant)
+	}
+	toolCalls, _ := assistant["tool_calls"].([]map[string]any)
+	if len(toolCalls) != 1 || toolCalls[0]["id"] != "call-1" {
+		t.Fatalf("expected tool call mapping, got %#v", assistant)
+	}
+}
+
+func TestOpenAIMessagesDoesNotSendReasoningToProviderWithoutReasoningContent(t *testing.T) {
+	messages, err := openAIMessages(llm.ChatRequest{
+		Model: "deepseek-v4-pro",
+		Messages: []llm.Message{{
+			Role: llm.RoleAssistant,
+			Meta: llm.MessageMeta{
+				openAIReasoningContentKey: "provider-specific reasoning",
+			},
+			Content: "done",
+		}},
+	}, ResolveModelPolicy(ProviderOpenAI, "openai-compatible", "deepseek-v4-pro", "openai", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected one assistant message, got %#v", messages)
+	}
+	if _, ok := messages[0][openAIReasoningContentKey]; ok {
+		t.Fatalf("did not expect reasoning_content for provider without reasoning_content support, got %#v", messages[0])
+	}
+	if messages[0]["content"] != "done" {
+		t.Fatalf("expected normal assistant content, got %#v", messages[0])
 	}
 }
 
@@ -458,7 +625,7 @@ func TestOpenAIMessagesDegradesMissingImageAsset(t *testing.T) {
 				Image: &llm.ImagePartRef{AssetID: "asset-1"},
 			}},
 		}},
-	})
+	}, ResolvedModelPolicy{AssistantToolCallContentMode: AssistantToolCallContentOmit})
 	if err != nil {
 		t.Fatalf("openAIMessages: %v", err)
 	}

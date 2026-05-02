@@ -12,7 +12,7 @@ import (
 	"runtime"
 	"strings"
 
-	sandboxpkg "bytemind/internal/sandbox"
+	sandboxpkg "github.com/1024XEngineer/bytemind/internal/sandbox"
 )
 
 const (

@@ -100,3 +100,25 @@ func TestLandingInputCaretBlinkKeepsDisplayWidthForWideRune(t *testing.T) {
 		t.Fatalf("expected stable display width during blink, visible=%d hidden=%d, visible=%q hidden=%q", visibleWidth, hiddenWidth, visible, hidden)
 	}
 }
+
+func TestLandingInputWrapDoesNotSplitImagePlaceholder(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("[Image#1] " + strings.Repeat("0123456789", 16))
+
+	m := model{
+		screen: screenLanding,
+		width:  84,
+		height: 32,
+		input:  input,
+	}
+	m.syncInputStyle()
+
+	rendered := xansi.Strip(m.renderLandingInputBox(false))
+	if strings.Contains(rendered, "[Image\n#1]") {
+		t.Fatalf("expected placeholder to remain atomic while wrapping, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "[Image#1]") {
+		t.Fatalf("expected placeholder to remain visible, got %q", rendered)
+	}
+}

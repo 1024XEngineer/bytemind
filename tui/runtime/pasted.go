@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 const pastedContentMetaKey = "pasted_contents"

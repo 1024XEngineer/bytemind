@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	configpkg "bytemind/internal/config"
-	extensionspkg "bytemind/internal/extensions"
-	mcppkg "bytemind/internal/extensions/mcp"
+	configpkg "github.com/1024XEngineer/bytemind/internal/config"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
+	mcppkg "github.com/1024XEngineer/bytemind/internal/extensions/mcp"
 )
 
 type Manager struct {

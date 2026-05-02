@@ -9,10 +9,10 @@ import (
 	"strings"
 	"unicode"
 
-	"bytemind/internal/llm"
-	policypkg "bytemind/internal/policy"
-	skillspkg "bytemind/internal/skills"
-	toolspkg "bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	policypkg "github.com/1024XEngineer/bytemind/internal/policy"
+	skillspkg "github.com/1024XEngineer/bytemind/internal/skills"
+	toolspkg "github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 const (

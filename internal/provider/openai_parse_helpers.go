@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 func parseOpenAIUsage(raw json.RawMessage) *llm.Usage {
@@ -118,6 +118,9 @@ func parseOpenAIMessage(raw json.RawMessage) llm.Message {
 			msg.Content = extractTextFromRaw(outputRaw, false)
 		}
 	}
+	if reasoningRaw, ok := obj[openAIReasoningContentKey]; ok {
+		setOpenAIReasoningContent(&msg, extractTextFromRaw(reasoningRaw, false))
+	}
 	if toolCallsRaw, ok := obj["tool_calls"]; ok {
 		msg.ToolCalls = parseToolCalls(toolCallsRaw)
 	}
@@ -210,6 +213,45 @@ func argumentString(raw json.RawMessage) string {
 		}
 	}
 	return trimmed
+}
+
+const openAIReasoningContentKey = "reasoning_content"
+
+func appendOpenAIReasoningContent(msg *llm.Message, delta string) {
+	if msg == nil || delta == "" {
+		return
+	}
+	existing := openAIReasoningContent(*msg)
+	setOpenAIReasoningContent(msg, existing+delta)
+}
+
+func setOpenAIReasoningContent(msg *llm.Message, reasoning string) {
+	if msg == nil || strings.TrimSpace(reasoning) == "" {
+		return
+	}
+	if msg.Meta == nil {
+		msg.Meta = llm.MessageMeta{}
+	}
+	msg.Meta[openAIReasoningContentKey] = reasoning
+}
+
+func openAIReasoningContent(msg llm.Message) string {
+	return openAIReasoningContentForField(msg, openAIReasoningContentKey)
+}
+
+func openAIReasoningContentForField(msg llm.Message, field string) string {
+	if len(msg.Meta) == 0 {
+		return ""
+	}
+	field = strings.TrimSpace(field)
+	if field == "" {
+		return ""
+	}
+	value, _ := msg.Meta[field].(string)
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return value
 }
 
 func extractTextFromRaw(raw json.RawMessage, includeReasoning bool) string {

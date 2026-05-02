@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"bytemind/internal/config"
-	"bytemind/internal/provider"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/provider"
 )
 
 type StartupFieldRequest struct {

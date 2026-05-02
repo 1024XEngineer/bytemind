@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strings"
 
-	"bytemind/internal/llm"
-	planpkg "bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 )
 
 type localRepoClaimRepairKind int

@@ -51,19 +51,19 @@ iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/
 
 安装脚本默认将二进制写入：
 
-- **Linux / macOS**：`~/.local/bin/bytemind`
-- **Windows**：`%USERPROFILE%\.local\bin\bytemind.exe`
+- **Linux / macOS**：`~/bin/bytemind`
+- **Windows**：`%USERPROFILE%\bin\bytemind.exe`
 
 如果 `bytemind --version` 提示找不到命令，将对应目录加入 `PATH`：
 
 ```bash
 # bash / zsh（写入 ~/.bashrc 或 ~/.zshrc）
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$HOME/bin:$PATH"
 ```
 
 ```powershell
 # PowerShell（永久生效）
-[Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\.local\bin;" + $env:Path, "User")
+[Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\bin;" + $env:Path, "User")
 ```
 
 也可通过 `BYTEMIND_INSTALL_DIR` 环境变量自定义安装目录：
@@ -121,7 +121,7 @@ curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts
 删除对应的二进制文件即可完成卸载：
 
 ```bash
-rm ~/.local/bin/bytemind
+rm ~/bin/bytemind
 ```
 
 会话记录和配置保存在 `.bytemind/` 目录中，需要时可一并删除。

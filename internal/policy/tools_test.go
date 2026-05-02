@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"bytemind/internal/skills"
+	"github.com/1024XEngineer/bytemind/internal/skills"
 )
 
 func TestResolveToolSetsAllowlistEmptyUsesSentinel(t *testing.T) {

@@ -3,7 +3,7 @@ package session
 import (
 	"strings"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 type MessageMetrics struct {

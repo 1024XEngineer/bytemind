@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 func TestCleanupZeroMessageSessionsKeepsActiveNoReplyAndOtherWorkspace(t *testing.T) {

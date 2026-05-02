@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/llm"
-	runtimepkg "bytemind/internal/runtime"
-	storagepkg "bytemind/internal/storage"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
+	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
 )
 
 func buildToolTraceID(call llm.ToolCall) corepkg.TraceID {

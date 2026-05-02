@@ -14,7 +14,7 @@ import (
 
 const (
 	defaultWebToolTimeout = 15 * time.Second
-	defaultWebToolUA      = "ByteMind/1.0"
+	defaultWebToolUA      = "github.com/1024XEngineer/bytemind/1.0"
 )
 
 func webClientWithTimeout(base *http.Client, timeout time.Duration) *http.Client {

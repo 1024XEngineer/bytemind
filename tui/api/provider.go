@@ -1,8 +1,8 @@
 package api
 
 import (
-	"bytemind/internal/session"
-	tuiruntime "bytemind/tui/runtime"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	tuiruntime "github.com/1024XEngineer/bytemind/tui/runtime"
 )
 
 type PromptBuilder interface {

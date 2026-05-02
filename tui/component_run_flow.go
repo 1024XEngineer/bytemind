@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"bytemind/internal/history"
-	"bytemind/internal/llm"
-	planpkg "bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/history"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

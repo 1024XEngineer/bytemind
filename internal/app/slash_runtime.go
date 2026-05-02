@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"bytemind/internal/session"
-	subagentspkg "bytemind/internal/subagents"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
 )
 
 type SlashExecution struct {

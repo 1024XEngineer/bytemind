@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	configpkg "bytemind/internal/config"
-	extensionspkg "bytemind/internal/extensions"
-	extensionsruntime "bytemind/internal/extensionsruntime"
+	configpkg "github.com/1024XEngineer/bytemind/internal/config"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
+	extensionsruntime "github.com/1024XEngineer/bytemind/internal/extensionsruntime"
 )
 
 type ServerStatus struct {

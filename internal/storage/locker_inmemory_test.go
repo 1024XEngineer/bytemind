@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	corepkg "bytemind/internal/core"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 )
 
 func TestInMemoryLockerSameKeyTimeout(t *testing.T) {

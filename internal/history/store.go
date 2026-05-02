@@ -1,8 +1,8 @@
 package history
 
 import (
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/storage"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/storage"
 	"strings"
 	"time"
 )

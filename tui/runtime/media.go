@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"bytemind/internal/assets"
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/llm"
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/assets"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 type StoredImage struct {

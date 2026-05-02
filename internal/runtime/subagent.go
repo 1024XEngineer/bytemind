@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	corepkg "bytemind/internal/core"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 )
 
 type InMemorySubAgentCoordinator struct {

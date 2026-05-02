@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 type ActiveSkill struct {

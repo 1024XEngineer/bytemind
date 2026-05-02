@@ -6,10 +6,10 @@ import (
 	"errors"
 	"strings"
 
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/llm"
-	planpkg "bytemind/internal/plan"
-	runtimepkg "bytemind/internal/runtime"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
 )
 
 type TaskStopTool struct{}

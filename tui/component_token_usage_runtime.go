@@ -6,8 +6,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"bytemind/internal/llm"
-	"bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 func (m *model) applyUsage(usage llm.Usage) {

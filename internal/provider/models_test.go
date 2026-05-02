@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/config"
 )
 
 func TestListModelsUsesRegistryInstanceIDForAllResults(t *testing.T) {

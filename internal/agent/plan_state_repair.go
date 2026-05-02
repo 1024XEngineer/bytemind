@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"bytemind/internal/llm"
-	planpkg "bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 )
 
 var clarifyChoiceShortcutPattern = regexp.MustCompile(`(?i)(^|[\s/|,，;；:：\-])([a-d]|1|2|3|4)([.)：:\s]|$)`)

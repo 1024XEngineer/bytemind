@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/config"
 )
 
 func TestMaybePrintUpdateReminderSkipsWhenDisabled(t *testing.T) {
@@ -20,9 +20,7 @@ func TestMaybePrintUpdateReminderSkipsWhenDisabled(t *testing.T) {
 	cfg := config.Default(t.TempDir())
 	cfg.UpdateCheck.Enabled = false
 
-	previousVersion := buildVersion
-	buildVersion = "v1.0.0"
-	defer func() { buildVersion = previousVersion }()
+	withAppVersion(t, "v1.0.0", "")
 
 	previousFetcher := updateCheckFetchLatestVersion
 	calls := 0
@@ -49,9 +47,7 @@ func TestMaybePrintUpdateReminderChecksAtMostOncePerDay(t *testing.T) {
 	cfg := config.Default(t.TempDir())
 	cfg.UpdateCheck.Enabled = true
 
-	previousVersion := buildVersion
-	buildVersion = "v1.0.0"
-	defer func() { buildVersion = previousVersion }()
+	withAppVersion(t, "v1.0.0", "")
 
 	previousNow := updateCheckNow
 	now := time.Date(2026, 4, 19, 10, 0, 0, 0, time.UTC)
@@ -101,9 +97,7 @@ func TestMaybePrintUpdateReminderSkipsDevVersion(t *testing.T) {
 	cfg := config.Default(t.TempDir())
 	cfg.UpdateCheck.Enabled = true
 
-	previousVersion := buildVersion
-	buildVersion = "dev"
-	defer func() { buildVersion = previousVersion }()
+	withAppVersion(t, "dev", "")
 
 	previousFetcher := updateCheckFetchLatestVersion
 	calls := 0
@@ -129,9 +123,7 @@ func TestMaybePrintUpdateReminderSkipsWhenVersionNotNewer(t *testing.T) {
 	cfg := config.Default(t.TempDir())
 	cfg.UpdateCheck.Enabled = true
 
-	previousVersion := buildVersion
-	buildVersion = "v1.2.0"
-	defer func() { buildVersion = previousVersion }()
+	withAppVersion(t, "v1.2.0", "")
 
 	previousNow := updateCheckNow
 	updateCheckNow = func() time.Time { return time.Date(2026, 4, 19, 10, 0, 0, 0, time.UTC) }
@@ -238,7 +230,7 @@ func TestFetchLatestVersionFromGitHubSuccessAndHeaders(t *testing.T) {
 	if receivedAccept != "application/vnd.github+json" {
 		t.Fatalf("expected accept header, got %q", receivedAccept)
 	}
-	if receivedUserAgent != "bytemind/v1.0.0" {
+	if receivedUserAgent != "github.com/1024XEngineer/bytemind/v1.0.0" {
 		t.Fatalf("expected user-agent header, got %q", receivedUserAgent)
 	}
 }

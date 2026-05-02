@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	configpkg "bytemind/internal/config"
+	configpkg "github.com/1024XEngineer/bytemind/internal/config"
 )
 
 var validAgentName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)

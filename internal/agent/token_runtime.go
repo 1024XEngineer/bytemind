@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/llm"
-	"bytemind/internal/session"
-	"bytemind/internal/tokenusage"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/tokenusage"
 )
 
 type TokenRealtimeSnapshot struct {

@@ -3,8 +3,8 @@ package context
 import (
 	"fmt"
 
-	"bytemind/internal/llm"
-	"bytemind/internal/tokenusage"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/tokenusage"
 )
 
 // BuildRequest defines the minimal inputs needed to assemble one model turn.

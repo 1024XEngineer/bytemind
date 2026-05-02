@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	storagepkg "bytemind/internal/storage"
+	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
 )
 
 const (

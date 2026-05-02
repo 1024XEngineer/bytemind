@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"bytemind/internal/config"
-	corepkg "bytemind/internal/core"
-	"bytemind/internal/llm"
-	"bytemind/internal/session"
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/config"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 func TestTurnEventStreamMonotonicSequenceAndTerminalClose(t *testing.T) {

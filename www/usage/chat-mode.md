@@ -72,7 +72,19 @@ Split the HTTP handler layer into a dedicated controller package. Show me the pl
 | `/new`          | Start a new session                 |
 | `/plan`         | Switch to Plan mode                 |
 | `/build`        | Switch back to Build mode           |
+| `/commit <message>` | Stage all current changes and create a local Git commit |
+| `/undo-commit` | Undo the last local commit created by `/commit` in this session |
 | `/quit`         | Exit safely                         |
+
+For `/commit`, choose the command from the slash palette or type it directly, then provide the commit message yourself:
+
+```text
+/commit fix(/commit): improve commit feedback
+```
+
+ByteMind stages the current workspace changes with `git add -A` before committing, then reports the commit hash, message, and file count.
+
+Use `/undo-commit` only for the previous commit created by `/commit` in the same session. It is blocked when that commit has already reached the upstream branch, when you are in a different session, or when newer working tree changes would be mixed into the undo.
 
 ## Interrupting and Resuming
 

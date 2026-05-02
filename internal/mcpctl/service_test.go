@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	configpkg "bytemind/internal/config"
-	extensionspkg "bytemind/internal/extensions"
+	configpkg "github.com/1024XEngineer/bytemind/internal/config"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
 )
 
 func TestServiceAddEnablesMCPAndListsReadyServer(t *testing.T) {

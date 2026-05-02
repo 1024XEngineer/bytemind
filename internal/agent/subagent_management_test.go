@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"bytemind/internal/session"
-	"bytemind/internal/tools"
+	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 func TestRunnerSubAgentManagementNilManagerGuards(t *testing.T) {

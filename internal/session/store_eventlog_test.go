@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"bytemind/internal/llm"
-	storagepkg "bytemind/internal/storage"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
 )
 
 func TestStoreSaveWritesNewEventLayoutOnly(t *testing.T) {

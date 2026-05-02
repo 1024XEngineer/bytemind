@@ -1,9 +1,9 @@
 package app
 
 import (
-	notifypkg "bytemind/internal/notify"
 	"context"
 	"errors"
+	notifypkg "github.com/1024XEngineer/bytemind/internal/notify"
 	"testing"
 	"time"
 )

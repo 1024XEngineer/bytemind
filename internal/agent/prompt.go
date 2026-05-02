@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	configpkg "bytemind/internal/config"
-	planpkg "bytemind/internal/plan"
+	configpkg "github.com/1024XEngineer/bytemind/internal/config"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 )
 
 const (

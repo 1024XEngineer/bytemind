@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/config"
 )
 
 func TestCheckAvailabilityReturnsMissingKey(t *testing.T) {

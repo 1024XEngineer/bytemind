@@ -1,6 +1,6 @@
 package runtime
 
-import corepkg "bytemind/internal/core"
+import corepkg "github.com/1024XEngineer/bytemind/internal/core"
 
 var baseAllowedTransitions = map[corepkg.TaskStatus]map[corepkg.TaskStatus]struct{}{
 	corepkg.TaskPending: {
