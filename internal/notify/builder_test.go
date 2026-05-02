@@ -34,6 +34,15 @@ func TestBuildApprovalRequiredMessageKeyUsesFullSanitizedText(t *testing.T) {
 	}
 }
 
+func TestBuildApprovalRequiredMessageKeyNormalizesWhitespaceAndCase(t *testing.T) {
+	msgOne := BuildApprovalRequiredMessage("  GO   TEST   ./TUI  ", "  Run Focused Tests ")
+	msgTwo := BuildApprovalRequiredMessage("go test ./tui", "run focused tests")
+
+	if msgOne.Key != msgTwo.Key {
+		t.Fatalf("expected normalized keys to match, got %q vs %q", msgOne.Key, msgTwo.Key)
+	}
+}
+
 func TestBuildRunFailedMessageRedactsDetail(t *testing.T) {
 	msg := BuildRunFailedMessage(7, "authorization: bearer secret-token")
 	if msg.Event != EventRunFailed {

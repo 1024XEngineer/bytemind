@@ -5753,6 +5753,32 @@ func TestRunFinishedDesktopNotificationsSkipBTWRestartAndStaleRun(t *testing.T) 
 	})
 }
 
+func TestRunFinishedDesktopNotificationsDisabledSkipsSend(t *testing.T) {
+	notifier := &fakeNotifier{}
+	m := model{
+		async:       make(chan tea.Msg, 1),
+		notifier:    notifier,
+		busy:        true,
+		activeRunID: 21,
+		cfg: config.Config{
+			Notifications: config.NotificationsConfig{
+				Desktop: config.DesktopNotificationConfig{
+					Enabled:        false,
+					OnRunCompleted: true,
+					OnRunFailed:    true,
+					OnRunCanceled:  true,
+				},
+			},
+		},
+	}
+
+	got, _ := m.Update(runFinishedMsg{RunID: 21})
+	_ = got.(model)
+	if len(notifier.messages) != 0 {
+		t.Fatalf("expected no notification when desktop notifications are disabled, got %d", len(notifier.messages))
+	}
+}
+
 func TestRunFinishedKeepsStreamingSlotForLateAssistantMessage(t *testing.T) {
 	m := model{
 		async: make(chan tea.Msg, 1),
