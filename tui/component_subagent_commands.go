@@ -21,8 +21,6 @@ type subAgentCommandRunner interface {
 	DispatchSubAgent(ctx context.Context, sess *session.Session, mode string, request tools.DelegateSubAgentRequest) (tools.DelegateSubAgentResult, error)
 }
 
-const builtinSubAgentRequestTimeout = "90s"
-
 func (m *model) runAgentsCommand(input string, fields []string) error {
 	runner, err := m.requireSubAgentRunner()
 	if err != nil {
@@ -136,9 +134,8 @@ func (m *model) submitBuiltinSubAgentPreference(input, agentName, task string) e
 		result, dispatchErr := runner.DispatchSubAgent(
 			context.Background(), sess, mode,
 			tools.DelegateSubAgentRequest{
-				Agent:   dispatchAgent,
-				Task:    dispatchTask,
-				Timeout: builtinSubAgentRequestTimeout,
+				Agent: dispatchAgent,
+				Task:  dispatchTask,
 			},
 		)
 		if dispatchErr != nil {

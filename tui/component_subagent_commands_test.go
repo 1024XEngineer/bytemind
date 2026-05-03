@@ -423,8 +423,8 @@ func TestSubmitBuiltinSubAgentPreferenceConfiguresSpinnerAndTimeout(t *testing.T
 		t.Fatal("timed out waiting for async dispatch result")
 	}
 
-	if runner.lastRequest.Timeout != builtinSubAgentRequestTimeout {
-		t.Fatalf("expected builtin subagent timeout %q, got %q", builtinSubAgentRequestTimeout, runner.lastRequest.Timeout)
+	if runner.lastRequest.Timeout != "" {
+		t.Fatalf("expected empty subagent timeout (bounded by MaxTurns only), got %q", runner.lastRequest.Timeout)
 	}
 }
 
