@@ -62,9 +62,6 @@ scan files
 	if strings.TrimSpace(result.InvocationID) == "" {
 		t.Fatalf("expected invocation id, got %#v", result)
 	}
-	if result.Findings == nil || result.References == nil {
-		t.Fatalf("expected findings/references arrays, got %#v", result)
-	}
 }
 
 func TestDelegateSubAgentExecutesWithTemporaryChildSession(t *testing.T) {
@@ -268,9 +265,6 @@ func TestDelegateSubAgentReturnsStructuredPreflightFailure(t *testing.T) {
 	}
 	if result.Error == nil || result.Error.Code != "subagent_agent_not_found" {
 		t.Fatalf("expected preflight agent_not_found code, got %#v", result.Error)
-	}
-	if result.Findings == nil || result.References == nil {
-		t.Fatalf("expected findings/references arrays, got %#v", result)
 	}
 }
 
@@ -517,7 +511,7 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 		Agent:   "explorer",
 		Task:    "Locate prompt assembly order",
 		Timeout: "90s",
-		Output:  "findings",
+		Output:  "summary",
 	}, &tools.ExecutionContext{
 		Mode:    planpkg.ModeBuild,
 		Session: sess,
@@ -583,7 +577,7 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 	if call.Metadata["requested_timeout_ms"] != "90000" {
 		t.Fatalf("expected requested_timeout_ms metadata, got %q", call.Metadata["requested_timeout_ms"])
 	}
-	if call.Metadata["requested_output"] != "findings" {
+	if call.Metadata["requested_output"] != "summary" {
 		t.Fatalf("expected requested_output metadata, got %q", call.Metadata["requested_output"])
 	}
 	if call.Timeout != 90*time.Second {
@@ -601,9 +595,7 @@ func TestDelegateSubAgentAcceptsStructuredRuntimeOutput(t *testing.T) {
 			Status: corepkg.TaskCompleted,
 			Output: []byte(`{
 				"ok": true,
-				"summary": "scoped scan complete",
-				"findings": [{"title":"Prompt order","body":"default -> mode -> runtime context"}],
-				"references": [{"path":"internal/agent/prompt.go","line":42,"note":"assembly entry"}]
+				"summary": "scoped scan complete"
 			}`),
 		},
 	}
@@ -616,7 +608,7 @@ func TestDelegateSubAgentAcceptsStructuredRuntimeOutput(t *testing.T) {
 	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
 		Agent:  "explorer",
 		Task:   "Locate prompt assembly order",
-		Output: "findings",
+		Output: "summary",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
 	})
@@ -641,8 +633,8 @@ func TestDelegateSubAgentAcceptsStructuredRuntimeOutput(t *testing.T) {
 	if strings.TrimSpace(result.InvocationID) == "" {
 		t.Fatalf("expected invocation id, got %#v", result)
 	}
-	if len(result.Findings) != 1 || len(result.References) != 1 {
-		t.Fatalf("expected findings/references from runtime result, got %#v", result)
+	if strings.TrimSpace(result.Summary) == "" {
+		t.Fatalf("expected non-empty summary, got %#v", result)
 	}
 }
 
@@ -656,9 +648,7 @@ func TestDelegateSubAgentRejectsSummaryOutputWithoutSummary(t *testing.T) {
 			Status: corepkg.TaskCompleted,
 			Output: []byte(`{
 				"ok": true,
-				"summary": " ",
-				"findings": [],
-				"references": []
+				"summary": " "
 			}`),
 		},
 	}
@@ -699,9 +689,7 @@ func TestDelegateSubAgentUsesCanonicalAgentNameWhenRequestUsesAlias(t *testing.T
 			Status: corepkg.TaskCompleted,
 			Output: []byte(`{
 				"ok": true,
-				"summary": "alias scan complete",
-				"findings": [],
-				"references": []
+				"summary": "alias scan complete"
 			}`),
 		},
 	}
@@ -738,9 +726,7 @@ func TestDelegateSubAgentAppliesDefinitionDefaultTimeoutToRuntimeTask(t *testing
 			Status: corepkg.TaskCompleted,
 			Output: []byte(`{
 				"ok": false,
-				"error": {"code":"subagent_not_implemented","message":"stub pipeline placeholder","retryable":true},
-				"findings": [],
-				"references": []
+				"error": {"code":"subagent_not_implemented","message":"stub pipeline placeholder","retryable":true}
 			}`),
 		},
 	}
@@ -835,9 +821,6 @@ func TestDelegateSubAgentRejectsInvalidStructuredRuntimeOutput(t *testing.T) {
 	if result.Error == nil || result.Error.Code != subAgentErrorCodeInvalidResult {
 		t.Fatalf("expected invalid result code, got %#v", result.Error)
 	}
-	if result.Findings == nil || result.References == nil {
-		t.Fatalf("expected findings/references arrays, got %#v", result)
-	}
 }
 
 func TestDelegateSubAgentNormalizesMissingArraysInStructuredRuntimeOutput(t *testing.T) {
@@ -880,9 +863,6 @@ func TestDelegateSubAgentNormalizesMissingArraysInStructuredRuntimeOutput(t *tes
 	}
 	if result.Error == nil || result.Error.Code != "subagent_task_failed" {
 		t.Fatalf("expected propagated error, got %#v", result.Error)
-	}
-	if result.Findings == nil || result.References == nil {
-		t.Fatalf("expected findings/references arrays, got %#v", result)
 	}
 }
 
@@ -958,7 +938,7 @@ edit files
 
 func TestNormalizeDelegateSubAgentResultDerivesStatusFromOK(t *testing.T) {
 	result, err := normalizeDelegateSubAgentResult(
-		[]byte(`{"ok":true,"summary":"done","findings":[],"references":[]}`),
+		[]byte(`{"ok":true,"summary":"done"}`),
 		"inv-1",
 		"explorer",
 		"task-1",
@@ -971,7 +951,7 @@ func TestNormalizeDelegateSubAgentResultDerivesStatusFromOK(t *testing.T) {
 	}
 
 	result, err = normalizeDelegateSubAgentResult(
-		[]byte(`{"ok":false,"error":{"code":"subagent_task_failed","message":"boom","retryable":true},"findings":[],"references":[]}`),
+		[]byte(`{"ok":false,"error":{"code":"subagent_task_failed","message":"boom","retryable":true}}`),
 		"inv-2",
 		"explorer",
 		"task-2",
@@ -989,7 +969,7 @@ func TestNormalizeDelegateSubAgentResultDerivesStatusFromOK(t *testing.T) {
 
 func TestNormalizeDelegateSubAgentResultRejectsUnsupportedStatus(t *testing.T) {
 	_, err := normalizeDelegateSubAgentResult(
-		[]byte(`{"ok":true,"status":"unknown","summary":"done","findings":[],"references":[]}`),
+		[]byte(`{"ok":true,"status":"unknown","summary":"done"}`),
 		"inv-1",
 		"explorer",
 		"task-1",
@@ -1001,7 +981,7 @@ func TestNormalizeDelegateSubAgentResultRejectsUnsupportedStatus(t *testing.T) {
 
 func TestNormalizeDelegateSubAgentResultRejectsMismatchedOKStatus(t *testing.T) {
 	_, err := normalizeDelegateSubAgentResult(
-		[]byte(`{"ok":true,"status":"failed","summary":"done","findings":[],"references":[]}`),
+		[]byte(`{"ok":true,"status":"failed","summary":"done"}`),
 		"inv-1",
 		"explorer",
 		"task-1",
@@ -1011,7 +991,7 @@ func TestNormalizeDelegateSubAgentResultRejectsMismatchedOKStatus(t *testing.T) 
 	}
 
 	_, err = normalizeDelegateSubAgentResult(
-		[]byte(`{"ok":false,"status":"completed","error":{"code":"subagent_task_failed","message":"boom","retryable":true},"findings":[],"references":[]}`),
+		[]byte(`{"ok":false,"status":"completed","error":{"code":"subagent_task_failed","message":"boom","retryable":true}}`),
 		"inv-1",
 		"explorer",
 		"task-1",
@@ -1023,7 +1003,7 @@ func TestNormalizeDelegateSubAgentResultRejectsMismatchedOKStatus(t *testing.T) 
 
 func TestNormalizeDelegateSubAgentResultNormalizesErrorCodeCase(t *testing.T) {
 	result, err := normalizeDelegateSubAgentResult(
-		[]byte(`{"ok":false,"status":"FAILED","error":{"code":"  SUBAGENT_TASK_FAILED  ","message":" boom ","retryable":true},"findings":[],"references":[]}`),
+		[]byte(`{"ok":false,"status":"FAILED","error":{"code":"  SUBAGENT_TASK_FAILED  ","message":" boom ","retryable":true}}`),
 		"inv-1",
 		"explorer",
 		"task-1",
@@ -1045,7 +1025,7 @@ func TestNormalizeDelegateSubAgentResultNormalizesErrorCodeCase(t *testing.T) {
 func TestNormalizeDelegateSubAgentResultAcceptsAsyncSuccessStatuses(t *testing.T) {
 	for _, status := range []string{subAgentResultStatusQueued, subAgentResultStatusRunning, subAgentResultStatusAccepted} {
 		result, err := normalizeDelegateSubAgentResult(
-			[]byte(`{"ok":true,"status":"`+status+`","task_id":"task-1","summary":"async","findings":[],"references":[]}`),
+			[]byte(`{"ok":true,"status":"`+status+`","task_id":"task-1","summary":"async"}`),
 			"inv-1",
 			"explorer",
 			"task-1",
@@ -1059,14 +1039,12 @@ func TestNormalizeDelegateSubAgentResultAcceptsAsyncSuccessStatuses(t *testing.T
 	}
 }
 
-func TestNormalizeDelegateSubAgentResultTrimsStructuredFields(t *testing.T) {
+func TestNormalizeDelegateSubAgentResultTrimsSummary(t *testing.T) {
 	result, err := normalizeDelegateSubAgentResult(
 		[]byte(`{
 			"ok": true,
 			"status": "completed",
-			"summary": "  done  ",
-			"findings": [{"title":"  t  ","body":"  b  "},{"title":" ","body":" "}],
-			"references": [{"path":"  a.go  ","line":12,"note":"  n  "},{"path":" ","line":0,"note":" "}]
+			"summary": "  done  "
 		}`),
 		"inv-1",
 		"explorer",
@@ -1078,42 +1056,12 @@ func TestNormalizeDelegateSubAgentResultTrimsStructuredFields(t *testing.T) {
 	if result.Summary != "done" {
 		t.Fatalf("expected trimmed summary, got %q", result.Summary)
 	}
-	if len(result.Findings) != 1 || result.Findings[0].Title != "t" || result.Findings[0].Body != "b" {
-		t.Fatalf("expected trimmed findings, got %#v", result.Findings)
-	}
-	if len(result.References) != 1 || result.References[0].Path != "a.go" || result.References[0].Note != "n" {
-		t.Fatalf("expected trimmed references, got %#v", result.References)
-	}
-}
-
-func TestNormalizeDelegateSubAgentResultFiltersEmptyStructuredItems(t *testing.T) {
-	result, err := normalizeDelegateSubAgentResult(
-		[]byte(`{
-			"ok": true,
-			"status": "completed",
-			"summary": "",
-			"findings": [{"title":" ","body":" "}],
-			"references": [{"path":" ","line":0,"note":" "}]
-		}`),
-		"inv-1",
-		"explorer",
-		"task-1",
-	)
-	if err != nil {
-		t.Fatalf("expected normalization success, got %v", err)
-	}
-	if len(result.Findings) != 0 {
-		t.Fatalf("expected empty findings after filtering, got %#v", result.Findings)
-	}
-	if len(result.References) != 0 {
-		t.Fatalf("expected empty references after filtering, got %#v", result.References)
-	}
 }
 
 func TestNormalizeDelegateSubAgentResultRejectsAsyncStatusWithoutTaskID(t *testing.T) {
 	for _, status := range []string{subAgentResultStatusQueued, subAgentResultStatusRunning, subAgentResultStatusAccepted} {
 		_, err := normalizeDelegateSubAgentResult(
-			[]byte(`{"ok":true,"status":"`+status+`","summary":"async","findings":[],"references":[]}`),
+			[]byte(`{"ok":true,"status":"`+status+`","summary":"async"}`),
 			"inv-1",
 			"explorer",
 			"",
@@ -1217,24 +1165,12 @@ func TestValidateDelegateSubAgentOutputContract(t *testing.T) {
 		t.Fatalf("expected summary contract pass, got %v", err)
 	}
 
-	okFindings := tools.DelegateSubAgentResult{
-		OK:       true,
-		Status:   subAgentResultStatusCompleted,
-		Findings: []tools.DelegateSubAgentFinding{{Title: "t", Body: "b"}},
-	}
-	if err := validateDelegateSubAgentOutputContract(okFindings, subAgentRequestedOutputFindings); err != nil {
-		t.Fatalf("expected findings contract pass, got %v", err)
-	}
-
 	empty := tools.DelegateSubAgentResult{
 		OK:     true,
 		Status: subAgentResultStatusCompleted,
 	}
 	if err := validateDelegateSubAgentOutputContract(empty, subAgentRequestedOutputSummary); err == nil {
 		t.Fatal("expected summary contract error")
-	}
-	if err := validateDelegateSubAgentOutputContract(empty, subAgentRequestedOutputFindings); err == nil {
-		t.Fatal("expected findings contract error")
 	}
 
 	queued := tools.DelegateSubAgentResult{

@@ -286,13 +286,6 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 			TaskID     string `json:"task_id"`
 			Summary    string `json:"summary"`
 			Invocation string `json:"invocation_id"`
-			Findings   []struct {
-				Title string `json:"title"`
-			} `json:"findings"`
-			References []struct {
-				Path string `json:"path"`
-				Line int    `json:"line"`
-			} `json:"references"`
 			Error *struct {
 				Code    string `json:"code"`
 				Message string `json:"message"`
@@ -328,18 +321,6 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 				}
 				if taskID != "" && !taskIDShownInline {
 					fmt.Fprintf(out, "    task_id: %s\n", taskID)
-				}
-				fmt.Fprintf(out, "    findings: %d, references: %d\n", len(result.Findings), len(result.References))
-				previewCount := toolPreview
-				if len(result.Findings) < previewCount {
-					previewCount = len(result.Findings)
-				}
-				for i := 0; i < previewCount; i++ {
-					title := compactWhitespace(result.Findings[i].Title, 100)
-					if title == "" {
-						title = "(untitled finding)"
-					}
-					fmt.Fprintf(out, "    - %s\n", title)
 				}
 			} else if result.Error != nil {
 				code := strings.TrimSpace(result.Error.Code)

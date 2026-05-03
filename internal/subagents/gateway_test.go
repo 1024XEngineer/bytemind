@@ -195,7 +195,7 @@ name: review
 description: reviewer
 tools: [read_file]
 timeout: 45s
-output: findings
+output: summary
 isolation: worktree
 ---
 review files
@@ -218,8 +218,8 @@ review files
 	if result.RequestedTimeoutDuration != 45*time.Second {
 		t.Fatalf("expected default timeout duration 45s, got %s", result.RequestedTimeoutDuration)
 	}
-	if result.RequestedOutput != "findings" {
-		t.Fatalf("expected default output findings, got %q", result.RequestedOutput)
+	if result.RequestedOutput != "summary" {
+		t.Fatalf("expected default output summary, got %q", result.RequestedOutput)
 	}
 	if result.Isolation != isolationWorktree {
 		t.Fatalf("expected default isolation %q, got %q", isolationWorktree, result.Isolation)

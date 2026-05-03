@@ -5,7 +5,6 @@ aliases: [explore]
 tools: [read_file, list_files, search_files, search_text]
 disallowed_tools: [delegate_subagent, run_shell, write_file, edit_file, delete_file]
 mode: build
-output: findings
 isolation: none
 ---
 

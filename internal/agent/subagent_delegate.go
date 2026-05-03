@@ -37,14 +37,13 @@ const (
 	subAgentResultStatusRunning   = "running"
 	subAgentResultStatusAccepted  = "accepted"
 
-	subAgentRequestedOutputFindings = "findings"
-	subAgentRequestedOutputSummary  = "summary"
+	subAgentRequestedOutputSummary = "summary"
 
 	defaultSubAgentMaxIterations = 8
 
 	subAgentResultPolicyCompressed = `Return your final answer as a single JSON object (no markdown fences). Schema:
-{"summary":"<one-paragraph overview>","findings":[{"title":"<short heading>","body":"<detail>"}],"references":[{"path":"<file>","line":<int>,"note":"<why relevant>"}]}
-If you have no findings or references, use empty arrays. Do not include full tool logs.`
+{"summary":"<one-paragraph overview>"}
+Do not include full tool logs.`
 
 	subAgentTaskOutputTool = "task_output"
 	subAgentTaskStopTool   = "task_stop"
@@ -62,8 +61,6 @@ func (r *Runner) delegateSubAgent(
 		Status:       subAgentResultStatusFailed,
 		InvocationID: newSubAgentInvocationID(),
 		Agent:        request.Agent,
-		Findings:     []tools.DelegateSubAgentFinding{},
-		References:   []tools.DelegateSubAgentReference{},
 	}
 
 	if r == nil || r.subAgentManager == nil {
@@ -329,8 +326,6 @@ func buildSubAgentResultFromAnswer(answer, invocationID, agent string) tools.Del
 		Status:       subAgentResultStatusCompleted,
 		InvocationID: strings.TrimSpace(invocationID),
 		Agent:        strings.TrimSpace(agent),
-		Findings:     []tools.DelegateSubAgentFinding{},
-		References:   []tools.DelegateSubAgentReference{},
 	}
 
 	// Try to extract JSON from the answer. The LLM may wrap it in markdown fences
@@ -348,9 +343,7 @@ func buildSubAgentResultFromAnswer(answer, invocationID, agent string) tools.Del
 	}
 
 	// Use parsed structured data if it contains meaningful content.
-	hasStructuredData := strings.TrimSpace(parsed.Summary) != "" ||
-		len(parsed.Findings) > 0 ||
-		len(parsed.References) > 0
+	hasStructuredData := strings.TrimSpace(parsed.Summary) != ""
 	if !hasStructuredData {
 		base.Summary = trimmed
 		return base
@@ -359,12 +352,6 @@ func buildSubAgentResultFromAnswer(answer, invocationID, agent string) tools.Del
 	base.Summary = strings.TrimSpace(parsed.Summary)
 	if base.Summary == "" {
 		base.Summary = trimmed
-	}
-	if len(parsed.Findings) > 0 {
-		base.Findings = normalizeDelegateSubAgentFindings(parsed.Findings)
-	}
-	if len(parsed.References) > 0 {
-		base.References = normalizeDelegateSubAgentReferences(parsed.References)
 	}
 	return base
 }
@@ -521,8 +508,6 @@ func subAgentFailureResult(invocationID, agent, code, message string, retryable 
 		Status:       subAgentResultStatusFailed,
 		InvocationID: strings.TrimSpace(invocationID),
 		Agent:        strings.TrimSpace(agent),
-		Findings:     []tools.DelegateSubAgentFinding{},
-		References:   []tools.DelegateSubAgentReference{},
 		Error: &tools.DelegateSubAgentError{
 			Code:      strings.TrimSpace(code),
 			Message:   strings.TrimSpace(message),
@@ -631,14 +616,6 @@ func normalizeDelegateSubAgentResult(
 	result.Agent = firstNonEmpty(result.Agent, fallbackAgent)
 	result.TaskID = firstNonEmpty(result.TaskID, fallbackTaskID)
 	result.Summary = strings.TrimSpace(result.Summary)
-	if result.Findings == nil {
-		result.Findings = []tools.DelegateSubAgentFinding{}
-	}
-	result.Findings = normalizeDelegateSubAgentFindings(result.Findings)
-	if result.References == nil {
-		result.References = []tools.DelegateSubAgentReference{}
-	}
-	result.References = normalizeDelegateSubAgentReferences(result.References)
 	if result.OK && result.Error != nil {
 		return tools.DelegateSubAgentResult{}, fmt.Errorf("ok result must not include error")
 	}
@@ -711,11 +688,6 @@ func validateDelegateSubAgentOutputContract(result tools.DelegateSubAgentResult,
 			return fmt.Errorf("requested output %q requires non-empty summary", subAgentRequestedOutputSummary)
 		}
 		return nil
-	case subAgentRequestedOutputFindings:
-		if strings.TrimSpace(result.Summary) == "" && len(result.Findings) == 0 {
-			return fmt.Errorf("requested output %q requires summary or findings", subAgentRequestedOutputFindings)
-		}
-		return nil
 	default:
 		return fmt.Errorf("unsupported requested output %q", requestedOutput)
 	}
@@ -728,49 +700,6 @@ func requiresTaskIDForStatus(status string) bool {
 	default:
 		return false
 	}
-}
-
-func normalizeDelegateSubAgentFindings(in []tools.DelegateSubAgentFinding) []tools.DelegateSubAgentFinding {
-	if len(in) == 0 {
-		return []tools.DelegateSubAgentFinding{}
-	}
-	out := make([]tools.DelegateSubAgentFinding, 0, len(in))
-	for _, finding := range in {
-		normalized := tools.DelegateSubAgentFinding{
-			Title: strings.TrimSpace(finding.Title),
-			Body:  strings.TrimSpace(finding.Body),
-		}
-		if normalized.Title == "" && normalized.Body == "" {
-			continue
-		}
-		out = append(out, normalized)
-	}
-	if len(out) == 0 {
-		return []tools.DelegateSubAgentFinding{}
-	}
-	return out
-}
-
-func normalizeDelegateSubAgentReferences(in []tools.DelegateSubAgentReference) []tools.DelegateSubAgentReference {
-	if len(in) == 0 {
-		return []tools.DelegateSubAgentReference{}
-	}
-	out := make([]tools.DelegateSubAgentReference, 0, len(in))
-	for _, reference := range in {
-		normalized := tools.DelegateSubAgentReference{
-			Path: strings.TrimSpace(reference.Path),
-			Line: reference.Line,
-			Note: strings.TrimSpace(reference.Note),
-		}
-		if normalized.Path == "" && normalized.Line <= 0 && normalized.Note == "" {
-			continue
-		}
-		out = append(out, normalized)
-	}
-	if len(out) == 0 {
-		return []tools.DelegateSubAgentReference{}
-	}
-	return out
 }
 
 func effectiveToolsetHash(toolNames []string) string {

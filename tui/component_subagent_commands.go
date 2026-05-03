@@ -342,46 +342,6 @@ func renderSubAgentResultCard(result tools.DelegateSubAgentResult, width int) st
 		sections = append(sections, wrapText(summary, innerWidth))
 	}
 
-	// Findings
-	if len(result.Findings) > 0 {
-		sections = append(sections, "")
-		sections = append(sections, toolSummaryStyle.Render(fmt.Sprintf("Findings (%d)", len(result.Findings))))
-		for _, finding := range result.Findings {
-			title := strings.TrimSpace(finding.Title)
-			body := strings.TrimSpace(finding.Body)
-			switch {
-			case title != "" && body != "":
-				sections = append(sections, listMarkerStyle.Render("  * ")+strongStyle.Render(title)+": "+body)
-			case title != "":
-				sections = append(sections, listMarkerStyle.Render("  * ")+title)
-			case body != "":
-				sections = append(sections, listMarkerStyle.Render("  * ")+body)
-			}
-		}
-	}
-
-	// References
-	if len(result.References) > 0 {
-		sections = append(sections, "")
-		sections = append(sections, toolSummaryStyle.Render(fmt.Sprintf("References (%d)", len(result.References))))
-		for _, ref := range result.References {
-			path := strings.TrimSpace(ref.Path)
-			if path == "" {
-				continue
-			}
-			lineStr := ""
-			if ref.Line > 0 {
-				lineStr = fmt.Sprintf(":%d", ref.Line)
-			}
-			note := strings.TrimSpace(ref.Note)
-			refLine := listMarkerStyle.Render("  * ") + accentStyle.Render(path+lineStr)
-			if note != "" {
-				refLine += " " + mutedStyle.Render("("+note+")")
-			}
-			sections = append(sections, refLine)
-		}
-	}
-
 	content := lipgloss.JoinVertical(lipgloss.Left, sections...)
 	return lipgloss.NewStyle().
 		BorderLeft(true).

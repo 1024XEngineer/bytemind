@@ -485,7 +485,7 @@ func TestRenderToolFeedbackAdditionalBranches(t *testing.T) {
 	runner.renderToolFeedback(&out, "unknown_tool", `{}`)
 
 	got := out.String()
-	for _, want := range []string{"listed", "dir  dir1", "read", "wrote", "updated", "searched", "fetched", "patch", "delegated", "invocation: subagent-1", "findings: 1, references: 1", "completed"} {
+	for _, want := range []string{"listed", "dir  dir1", "read", "wrote", "updated", "searched", "fetched", "patch", "delegated", "invocation: subagent-1", "completed"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected output to contain %q, got %q", want, got)
 		}
