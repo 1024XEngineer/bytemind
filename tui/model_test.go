@@ -125,6 +125,7 @@ func (a testRunnerAdapter) SetObserver(observer Observer) {
 			Error:         event.Error,
 			Plan:          event.Plan,
 			Usage:         event.Usage,
+			AgentID:       event.AgentID,
 		})
 	}))
 }
@@ -139,6 +140,28 @@ func (a testRunnerAdapter) SetApprovalHandler(handler ApprovalHandler) {
 			Reason:  req.Reason,
 		})
 	})
+}
+
+func (a testRunnerAdapter) DispatchSubAgent(ctx context.Context, sess *session.Session, mode string, request tools.DelegateSubAgentRequest, streamObserver Observer) (tools.DelegateSubAgentResult, error) {
+	var agentObserver agent.Observer
+	if streamObserver != nil {
+		agentObserver = agent.ObserverFunc(func(event agent.Event) {
+			streamObserver(Event{
+				Type:          mapTestEventType(event.Type),
+				SessionID:     string(event.SessionID),
+				UserInput:     event.UserInput,
+				Content:       event.Content,
+				ToolName:      event.ToolName,
+				ToolArguments: event.ToolArguments,
+				ToolResult:    event.ToolResult,
+				Error:         event.Error,
+				Plan:          event.Plan,
+				Usage:         event.Usage,
+				AgentID:       event.AgentID,
+			})
+		})
+	}
+	return a.Runner.DispatchSubAgent(ctx, sess, mode, request, agentObserver)
 }
 
 func mapTestEventType(value agent.EventType) EventType {

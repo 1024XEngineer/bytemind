@@ -39,6 +39,7 @@ type SubAgentExecutionInput struct {
 	Agent        string
 	RunMode      planpkg.AgentMode
 	ExecCtx      *tools.ExecutionContext
+	Observer     Observer // optional: receives streaming events from the child runner
 }
 
 type defaultSubAgentExecutor struct {
@@ -66,7 +67,7 @@ func (e *defaultSubAgentExecutor) Execute(
 		parentSessionID = strings.TrimSpace(input.ExecCtx.Session.ID)
 	}
 
-	childRunner := e.newSubAgentChildRunner(workspace, input.Preflight.Definition.MaxTurns)
+	childRunner := e.newSubAgentChildRunner(workspace, input.Preflight.Definition.MaxTurns, input.Observer)
 	if childRunner == nil || childRunner.client == nil {
 		return subAgentFailureResult(
 			input.InvocationID,
@@ -104,7 +105,7 @@ func (e *defaultSubAgentExecutor) Execute(
 	return buildSubAgentResultFromAnswer(answer, input.InvocationID, input.Agent), nil
 }
 
-func (e *defaultSubAgentExecutor) newSubAgentChildRunner(workspace string, maxTurns int) *Runner {
+func (e *defaultSubAgentExecutor) newSubAgentChildRunner(workspace string, maxTurns int, streamObserver Observer) *Runner {
 	r := e.runner
 	cfg := r.config
 	cfg.MaxIterations = resolveSubAgentMaxIterations(cfg.MaxIterations, maxTurns)
@@ -112,6 +113,12 @@ func (e *defaultSubAgentExecutor) newSubAgentChildRunner(workspace string, maxTu
 	cfg.WritableRoots = append([]string(nil), cfg.WritableRoots...)
 	cfg.ExecAllowlist = append([]config.ExecAllowRule(nil), cfg.ExecAllowlist...)
 	cfg.NetworkAllowlist = append([]config.NetworkAllowRule(nil), cfg.NetworkAllowlist...)
+
+	childObserver := Observer(&noOpObserver{})
+	if streamObserver != nil {
+		childObserver = streamObserver
+	}
+
 	return NewRunner(Options{
 		Workspace:       workspace,
 		Config:          cfg,
@@ -126,7 +133,7 @@ func (e *defaultSubAgentExecutor) newSubAgentChildRunner(workspace string, maxTu
 		TokenManager:    r.tokenManager,
 		AuditStore:      r.auditStore,
 		PromptStore:     r.promptStore,
-		Observer:        &noOpObserver{},
+		Observer:        childObserver,
 		Approval:        nonInteractiveApproval(),
 		Stdin:           nil,
 		Stdout:          subAgentStdout(),

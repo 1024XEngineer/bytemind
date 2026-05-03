@@ -73,7 +73,7 @@ func (s *subAgentCommandRunnerStub) FindBuiltinSubAgent(string) (subagentspkg.Ag
 	return subagentspkg.Agent{}, false
 }
 
-func (s *subAgentCommandRunnerStub) DispatchSubAgent(_ context.Context, _ *session.Session, _ string, request tools.DelegateSubAgentRequest) (tools.DelegateSubAgentResult, error) {
+func (s *subAgentCommandRunnerStub) DispatchSubAgent(_ context.Context, _ *session.Session, _ string, request tools.DelegateSubAgentRequest, _ Observer) (tools.DelegateSubAgentResult, error) {
 	s.lastRequest = request
 	return tools.DelegateSubAgentResult{
 		OK:      true,

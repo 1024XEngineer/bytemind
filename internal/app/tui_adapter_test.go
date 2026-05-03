@@ -99,7 +99,7 @@ explore files
 	result, dispatchErr := adapter.DispatchSubAgent(context.Background(), sess, "build", tools.DelegateSubAgentRequest{
 		Agent: "explorer",
 		Task:  "locate subagent runtime prompt block",
-	})
+	}, nil)
 	if dispatchErr != nil {
 		t.Fatalf("expected DispatchSubAgent to succeed through adapter, got %v", dispatchErr)
 	}
@@ -135,7 +135,7 @@ func TestTUIRunnerAdapterNilGuardMethods(t *testing.T) {
 	if _, _, err := adapter.CompactSession(context.Background(), sess); err == nil {
 		t.Fatal("expected runner unavailable error from CompactSession")
 	}
-	if _, err := adapter.DispatchSubAgent(context.Background(), sess, "build", tools.DelegateSubAgentRequest{}); err == nil {
+	if _, err := adapter.DispatchSubAgent(context.Background(), sess, "build", tools.DelegateSubAgentRequest{}, nil); err == nil {
 		t.Fatal("expected runner unavailable error from DispatchSubAgent")
 	}
 

@@ -46,7 +46,7 @@ scan files
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -89,7 +89,7 @@ func TestDelegateSubAgentExecutesWithTemporaryChildSession(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -151,7 +151,7 @@ func TestDelegateSubAgentChildSessionUsesNarrowedTools(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -218,7 +218,7 @@ func TestDelegateSubAgentChildSessionDoesNotPersistTemporarySession(t *testing.T
 	}, &tools.ExecutionContext{
 		Mode:    planpkg.ModeBuild,
 		Session: parent,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -253,7 +253,7 @@ func TestDelegateSubAgentReturnsStructuredPreflightFailure(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -289,7 +289,7 @@ func TestDelegateSubAgentLaunchesBackgroundTaskWhenLifecycleToolsAvailable(t *te
 		RunInBackground: true,
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -344,7 +344,7 @@ func TestDelegateSubAgentRejectsBackgroundWhenLifecycleToolsUnavailable(t *testi
 		RunInBackground: true,
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -372,7 +372,7 @@ func TestDelegateSubAgentRejectsBackgroundWriteToolSubAgent(t *testing.T) {
 		RunInBackground: true,
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -399,7 +399,7 @@ func TestDelegateSubAgentReturnsRuntimeUnavailableWhenGatewayMissing(t *testing.
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -435,7 +435,7 @@ func TestDelegateSubAgentMapsKilledRuntimeResultWithoutErrorCode(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -471,7 +471,7 @@ func TestDelegateSubAgentMapsFailedRuntimeResultWithoutErrorCode(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -515,7 +515,7 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 	}, &tools.ExecutionContext{
 		Mode:    planpkg.ModeBuild,
 		Session: sess,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -611,7 +611,7 @@ func TestDelegateSubAgentAcceptsStructuredRuntimeOutput(t *testing.T) {
 		Output: "summary",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -664,7 +664,7 @@ func TestDelegateSubAgentRejectsSummaryOutputWithoutSummary(t *testing.T) {
 		Output: "summary",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -704,7 +704,7 @@ func TestDelegateSubAgentUsesCanonicalAgentNameWhenRequestUsesAlias(t *testing.T
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -741,7 +741,7 @@ func TestDelegateSubAgentAppliesDefinitionDefaultTimeoutToRuntimeTask(t *testing
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -771,7 +771,7 @@ func TestDelegateSubAgentRejectsInvalidRequestedTimeoutFromPreflight(t *testing.
 		Timeout: "soon",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -805,7 +805,7 @@ func TestDelegateSubAgentRejectsInvalidStructuredRuntimeOutput(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -848,7 +848,7 @@ func TestDelegateSubAgentNormalizesMissingArraysInStructuredRuntimeOutput(t *tes
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}

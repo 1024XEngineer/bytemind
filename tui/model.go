@@ -394,6 +394,8 @@ type model struct {
 	subAgentPending            bool
 	subAgentName               string
 	subAgentTask               string
+	subAgentStreamItems        []chatEntry
+	subAgentExpanded           bool
 	runStartedAt               time.Time
 	lastRunDuration            time.Duration
 	runIndicatorState          runIndicatorState
@@ -873,10 +875,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sess.Messages = append(m.sess.Messages, llm.NewAssistantTextMessage(errBody))
 			}
 			m.statusNote = "Subagent error: " + msg.Err.Error()
+			m.subAgentStreamItems = nil
 			m.refreshViewport()
 			return m, waitForAsync(m.async)
 		}
 		m.runIndicatorState = runIndicatorComplete
+
+		// Append accumulated subagent stream items (tool calls, text output)
+		for _, item := range m.subAgentStreamItems {
+			m.appendChat(item)
+		}
+		m.subAgentStreamItems = nil
+
+		// Append the result card
 		m.appendChat(chatEntry{
 			Kind:   "assistant",
 			Title:  assistantLabel,

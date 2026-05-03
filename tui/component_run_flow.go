@@ -154,6 +154,10 @@ func (m model) submitBTW(value string) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) handleAgentEvent(event Event) {
+	if event.AgentID != "" {
+		m.handleSubAgentEvent(event)
+		return
+	}
 	switch event.Type {
 	case EventRunStarted:
 		m.tempEstimatedOutput = 0
@@ -247,5 +251,52 @@ func (m model) startRunCmd(runCtx context.Context, runID int, prompt RunPromptIn
 			m.async <- runFinishedMsg{RunID: runID, Err: err}
 		}()
 		return nil
+	}
+}
+
+func (m *model) handleSubAgentEvent(event Event) {
+	switch event.Type {
+	case EventAssistantDelta:
+		delta := stripStreamControlTags(event.Content)
+		if delta == "" {
+			return
+		}
+		if len(m.subAgentStreamItems) > 0 {
+			last := &m.subAgentStreamItems[len(m.subAgentStreamItems)-1]
+			if last.Kind == "assistant" && last.Status == "streaming" {
+				last.Body += delta
+				return
+			}
+		}
+		m.subAgentStreamItems = append(m.subAgentStreamItems, chatEntry{
+			Kind:   "assistant",
+			Title:  event.AgentID,
+			Body:   delta,
+			Status: "streaming",
+		})
+	case EventToolCallStarted:
+		m.subAgentStreamItems = append(m.subAgentStreamItems, chatEntry{
+			Kind:   "tool",
+			Title:  toolEntryTitle(event.ToolName),
+			Body:   "",
+			Status: "running",
+		})
+	case EventToolCallCompleted:
+		summary, lines, status := summarizeTool(event.ToolName, event.ToolResult)
+		body := joinSummary(summary, lines)
+		for i := len(m.subAgentStreamItems) - 1; i >= 0; i-- {
+			item := &m.subAgentStreamItems[i]
+			if item.Kind == "tool" && item.Status == "running" {
+				item.Body = body
+				item.Status = status
+				return
+			}
+		}
+		m.subAgentStreamItems = append(m.subAgentStreamItems, chatEntry{
+			Kind:   "tool",
+			Title:  toolEntryTitle(event.ToolName),
+			Body:   body,
+			Status: status,
+		})
 	}
 }

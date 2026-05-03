@@ -47,6 +47,7 @@ func (r *Runner) delegateSubAgent(
 	ctx context.Context,
 	request tools.DelegateSubAgentRequest,
 	execCtx *tools.ExecutionContext,
+	streamObserver Observer,
 ) (tools.DelegateSubAgentResult, error) {
 	result := tools.DelegateSubAgentResult{
 		OK:           false,
@@ -147,6 +148,7 @@ func (r *Runner) delegateSubAgent(
 				Agent:        result.Agent,
 				RunMode:      runMode,
 				ExecCtx:      execCtx,
+				Observer:     streamObserver,
 			})
 			if execErr != nil {
 				return nil, execErr

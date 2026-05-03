@@ -152,7 +152,9 @@ func (e *defaultEngine) executeToolCall(
 			Stdout:            runner.stdout,
 			AllowedTools:      allowedTools,
 			DeniedTools:       deniedTools,
-			DelegateSubAgent:  runner.delegateSubAgent,
+			DelegateSubAgent: func(ctx context.Context, req tools.DelegateSubAgentRequest, execCtx *tools.ExecutionContext) (tools.DelegateSubAgentResult, error) {
+				return runner.delegateSubAgent(ctx, req, execCtx, SubAgentObserver(runner.observer, req.Agent))
+			},
 		})
 	}
 

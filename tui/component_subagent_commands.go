@@ -19,7 +19,7 @@ type subAgentCommandRunner interface {
 	ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic)
 	FindSubAgent(name string) (subagentspkg.Agent, bool)
 	FindBuiltinSubAgent(name string) (subagentspkg.Agent, bool)
-	DispatchSubAgent(ctx context.Context, sess *session.Session, mode string, request tools.DelegateSubAgentRequest) (tools.DelegateSubAgentResult, error)
+	DispatchSubAgent(ctx context.Context, sess *session.Session, mode string, request tools.DelegateSubAgentRequest, streamObserver Observer) (tools.DelegateSubAgentResult, error)
 }
 
 func (m *model) runAgentsCommand(input string, fields []string) error {
@@ -133,6 +133,10 @@ func (m *model) submitBuiltinSubAgentPreference(input, agentName, task string) e
 	mode := string(m.mode)
 	resultWidth := max(40, m.width-8)
 
+	streamObserver := Observer(func(event Event) {
+		asyncCh <- agentEventMsg{Event: event}
+	})
+
 	go func() {
 		result, dispatchErr := runner.DispatchSubAgent(
 			context.Background(), sess, mode,
@@ -140,6 +144,7 @@ func (m *model) submitBuiltinSubAgentPreference(input, agentName, task string) e
 				Agent: dispatchAgent,
 				Task:  dispatchTask,
 			},
+			streamObserver,
 		)
 		if dispatchErr != nil {
 			asyncCh <- subAgentResultMsg{
