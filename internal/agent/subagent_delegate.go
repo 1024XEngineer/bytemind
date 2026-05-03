@@ -42,7 +42,9 @@ const (
 
 	defaultSubAgentMaxIterations = 8
 
-	subAgentResultPolicyCompressed = "Return compressed findings only. Do not include full tool logs."
+	subAgentResultPolicyCompressed = `Return your final answer as a single JSON object (no markdown fences). Schema:
+{"summary":"<one-paragraph overview>","findings":[{"title":"<short heading>","body":"<detail>"}],"references":[{"path":"<file>","line":<int>,"note":"<why relevant>"}]}
+If you have no findings or references, use empty arrays. Do not include full tool logs.`
 
 	subAgentTaskOutputTool = "task_output"
 	subAgentTaskStopTool   = "task_stop"
@@ -314,19 +316,103 @@ func (r *Runner) executeSubAgentTask(
 		return subAgentFailureResult(invocationID, agent, subAgentErrorCodeExecutionFailed, runErr.Error(), true)
 	}
 
-	summary := strings.TrimSpace(answer)
-	if summary == "" {
-		summary = "SubAgent task completed."
+	return buildSubAgentResultFromAnswer(answer, invocationID, agent)
+}
+
+func buildSubAgentResultFromAnswer(answer, invocationID, agent string) tools.DelegateSubAgentResult {
+	trimmed := strings.TrimSpace(answer)
+	if trimmed == "" {
+		trimmed = "SubAgent task completed."
 	}
-	return tools.DelegateSubAgentResult{
+	base := tools.DelegateSubAgentResult{
 		OK:           true,
 		Status:       subAgentResultStatusCompleted,
 		InvocationID: strings.TrimSpace(invocationID),
 		Agent:        strings.TrimSpace(agent),
-		Summary:      summary,
 		Findings:     []tools.DelegateSubAgentFinding{},
 		References:   []tools.DelegateSubAgentReference{},
 	}
+
+	// Try to extract JSON from the answer. The LLM may wrap it in markdown fences
+	// or include prose before/after the JSON object.
+	jsonStr := extractJSONFromAnswer(trimmed)
+	if jsonStr == "" {
+		base.Summary = trimmed
+		return base
+	}
+
+	var parsed tools.DelegateSubAgentResult
+	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+		base.Summary = trimmed
+		return base
+	}
+
+	// Use parsed structured data if it contains meaningful content.
+	hasStructuredData := strings.TrimSpace(parsed.Summary) != "" ||
+		len(parsed.Findings) > 0 ||
+		len(parsed.References) > 0
+	if !hasStructuredData {
+		base.Summary = trimmed
+		return base
+	}
+
+	base.Summary = strings.TrimSpace(parsed.Summary)
+	if base.Summary == "" {
+		base.Summary = trimmed
+	}
+	if len(parsed.Findings) > 0 {
+		base.Findings = normalizeDelegateSubAgentFindings(parsed.Findings)
+	}
+	if len(parsed.References) > 0 {
+		base.References = normalizeDelegateSubAgentReferences(parsed.References)
+	}
+	return base
+}
+
+// extractJSONFromAnswer attempts to find a JSON object in the answer text.
+// It handles markdown code fences and prose surrounding the JSON.
+func extractJSONFromAnswer(answer string) string {
+	// Try direct parse first (answer is pure JSON).
+	if json.Valid([]byte(answer)) {
+		return answer
+	}
+
+	// Try to extract from markdown code fences.
+	if idx := strings.Index(answer, "```"); idx >= 0 {
+		fenceEnd := strings.Index(answer[idx+3:], "\n")
+		if fenceEnd >= 0 {
+			codeStart := idx + 3 + fenceEnd + 1
+			codeEnd := strings.Index(answer[codeStart:], "```")
+			if codeEnd >= 0 {
+				candidate := strings.TrimSpace(answer[codeStart : codeStart+codeEnd])
+				if json.Valid([]byte(candidate)) {
+					return candidate
+				}
+			}
+		}
+	}
+
+	// Try to find the outermost { ... } pair.
+	first := strings.Index(answer, "{")
+	if first < 0 {
+		return ""
+	}
+	depth := 0
+	for i := first; i < len(answer); i++ {
+		switch answer[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				candidate := answer[first : i+1]
+				if json.Valid([]byte(candidate)) {
+					return candidate
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func (r *Runner) newSubAgentChildRunner(workspace string, maxTurns int) *Runner {

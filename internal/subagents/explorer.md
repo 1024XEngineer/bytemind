@@ -15,3 +15,8 @@ Use this subagent for fast discovery:
 - return concise findings with references
 
 Do not modify files or run write-capable commands.
+
+## Output format
+Return your final answer as a single JSON object (no markdown fences):
+{"summary":"<one-paragraph overview>","findings":[{"title":"<short heading>","body":"<detail>"}],"references":[{"path":"<file>","line":<int>,"note":"<why relevant>"}]}
+If you have no findings or references, use empty arrays [].
