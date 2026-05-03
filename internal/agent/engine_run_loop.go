@@ -31,6 +31,7 @@ func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Sessio
 	sandboxAudit := sandboxAuditFromSetup(setup, runner.config.SandboxEnabled, runner.config.SystemSandboxMode)
 
 	for step := 0; step < runner.config.MaxIterations; step++ {
+		drainSubAgentNotifications(runner, sess)
 		messages, err := e.messagesForStep(ctx, sess, setup, step, out)
 		if err != nil {
 			return "", err
