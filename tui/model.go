@@ -881,8 +881,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.runIndicatorState = runIndicatorComplete
 
-		// Discard accumulated subagent stream items (intermediate tool calls/text)
-		// Only the final result card is shown to the user.
+		// Append accumulated subagent stream items (tool calls, text output)
+		for _, item := range m.subAgentStreamItems {
+			m.appendChat(item)
+		}
 		m.subAgentStreamItems = nil
 
 		// Append the result card
