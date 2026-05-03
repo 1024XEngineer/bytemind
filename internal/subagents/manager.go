@@ -100,6 +100,11 @@ func (m *Manager) Reload() Catalog {
 	diags := cloneDiagnostics(m.bootstrapDiagnostics)
 	overrides := make([]Override, 0, 4)
 
+	for _, agent := range hardcodedBuiltinAgents() {
+		builtinByName[agent.Name] = agent
+		loaded[agent.Name] = agent
+	}
+
 	for _, item := range scopes {
 		agents, agentDiags := loadAgentsFromScope(item.scope, item.dir)
 		diags = append(diags, agentDiags...)
@@ -497,6 +502,31 @@ func cloneDiagnostics(in []Diagnostic) []Diagnostic {
 	out := make([]Diagnostic, len(in))
 	copy(out, in)
 	return out
+}
+
+func hardcodedBuiltinAgents() []Agent {
+	return []Agent{
+		{
+			Name:        "explorer",
+			Description: "Read-only repository exploration agent. Use for locating files, symbols, call chains, configuration flow, prompt assembly, and error origins. Do not use for editing.",
+			Scope:       ScopeBuiltin,
+			Tools:       []string{"list_files", "read_file", "search_text"},
+			MaxTurns:    6,
+			Timeout:     "90s",
+			Instruction: "You are a focused repository explorer. Search and read only what is needed.\nReturn a concise summary, key findings, and file references. Do not edit files,\nrun shell commands, or make implementation changes.",
+			Aliases:     []string{"explorer", "/explorer"},
+		},
+		{
+			Name:        "review",
+			Description: "Code review agent. Use after code changes to find correctness, regression, security, maintainability, and test coverage issues. Findings first; no edits.",
+			Scope:       ScopeBuiltin,
+			Tools:       []string{"list_files", "read_file", "search_text"},
+			MaxTurns:    8,
+			Timeout:     "2m",
+			Instruction: "You are a code reviewer. Prioritize concrete bugs and behavioral regressions.\nReturn findings first, ordered by severity, with tight file references. Mention\ntest gaps and residual risks. Do not rewrite code.",
+			Aliases:     []string{"review", "/review"},
+		},
+	}
 }
 
 func (m *Manager) findFromSnapshot(normalized string) (Agent, bool, bool, bool) {

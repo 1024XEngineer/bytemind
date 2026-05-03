@@ -42,12 +42,16 @@ project explorer body
 	if len(catalog.Agents) != 2 {
 		t.Fatalf("expected 2 effective subagents, got %d", len(catalog.Agents))
 	}
-	if len(catalog.Overrides) != 1 {
-		t.Fatalf("expected 1 override, got %#v", catalog.Overrides)
+
+	// Hardcoded builtins generate overrides when directory/user/project scopes provide same-name definitions.
+	foundUserOverride := false
+	for _, o := range catalog.Overrides {
+		if o.Name == "review" && o.Winner == ScopeUser && o.Loser == ScopeBuiltin {
+			foundUserOverride = true
+		}
 	}
-	override := catalog.Overrides[0]
-	if override.Name != "review" || override.Winner != ScopeUser || override.Loser != ScopeBuiltin {
-		t.Fatalf("unexpected override payload: %#v", override)
+	if !foundUserOverride {
+		t.Fatalf("expected user→builtin override for review, got %#v", catalog.Overrides)
 	}
 
 	review, ok := manager.Find("review")
@@ -111,8 +115,9 @@ body
 
 	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
 	catalog := manager.Reload()
-	if len(catalog.Agents) != 0 {
-		t.Fatalf("expected no valid subagent definitions, got %#v", catalog.Agents)
+	// Hardcoded builtins (explorer, review) are always present; the invalid file should not add to them.
+	if len(catalog.Agents) != 2 {
+		t.Fatalf("expected 2 hardcoded subagent definitions, got %#v", catalog.Agents)
 	}
 	if len(catalog.Diagnostics) == 0 {
 		t.Fatal("expected diagnostics for invalid name")
