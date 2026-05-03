@@ -282,44 +282,25 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 		}
 		localRepoRepairKind, localRepoEvidence := evaluateLocalRepoClaimRepairTurn(p.RunMode, latestUser, reply, p.Session.Messages)
 		if localRepoRepairKind != localRepoClaimRepairNone {
-			attempt := 0
-			maxAttempts := 0
-			if p.AdaptiveState != nil {
-				p.AdaptiveState.recordNoProgressTurn()
-				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
-				maxAttempts = p.AdaptiveState.maxSemanticRepairs
-			}
+			downgradedAnswer := buildLocalRepoClaimSoftDowngradeAnswer(localRepoRepairKind, reply, latestUser, localRepoEvidence)
+			reply = llm.NewAssistantTextMessage(downgradedAnswer)
+
 			if p.TaskReport != nil {
-				p.TaskReport.RecordNoProgressTurn()
 				switch localRepoRepairKind {
 				case localRepoClaimRepairPathUnverified:
-					p.TaskReport.RecordRetry("local_repo_claim_without_direct_path_confirmation")
-					p.TaskReport.RecordStrategyAdjustment("assistant made a concrete local repo claim without directly confirming the referenced path; injected correction prompt")
+					p.TaskReport.RecordStrategyAdjustment("assistant made a concrete local repo claim without directly confirming the referenced path; returned a conservative answer instead of asserting the claim")
 				case localRepoClaimRepairImplementationUnverified:
-					p.TaskReport.RecordRetry("local_repo_claim_without_implementation_evidence")
-					p.TaskReport.RecordStrategyAdjustment("assistant concluded the repo already had a runnable implementation based only on weak signals; injected correction prompt")
+					p.TaskReport.RecordStrategyAdjustment("assistant concluded the repo already had a runnable implementation based only on weak signals; returned a conservative answer instead of asserting the claim")
 				}
 			}
 			if p.AdaptiveState != nil {
-				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
-					if p.TaskReport != nil {
-						p.TaskReport.RecordEscalation("local repo claim repair retries exceeded while waiting for direct path confirmation or implementation evidence")
-					}
-					summary := BuildStopSummary(StopSummaryInput{
-						SessionID:     corepkg.SessionID(p.Session.ID),
-						Reason:        fmt.Sprintf("I paused because the assistant kept making local repository claims without enough direct evidence (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
-						ExecutedTools: *p.ExecutedTools,
-						TaskReport:    p.TaskReport,
-					})
-					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
-					return answer, true, summaryErr
-				}
-				p.AdaptiveState.schedulePendingControlNote(buildLocalRepoClaimRepairInstruction(localRepoRepairKind, reply, latestUser, attempt, maxAttempts, localRepoEvidence))
+				p.AdaptiveState.recordProgress()
 			}
 			if p.Out != nil {
-				fmt.Fprintf(p.Out, "%sassistant made a concrete local repo claim without enough direct evidence; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+				fmt.Fprintf(p.Out, "%sassistant made a concrete local repo claim without enough direct evidence; returning a conservative answer%s\n", ansiDim, ansiReset)
 			}
-			return "", false, nil
+			answer, finalizeErr := e.finalizeTurnWithoutTools(p.RunMode, p.Session, reply, p.Out, streamedText)
+			return answer, true, finalizeErr
 		}
 		switch intent {
 		case turnIntentContinueWork:

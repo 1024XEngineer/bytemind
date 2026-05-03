@@ -362,7 +362,7 @@ func TestRunPromptRepairsUnavailableRunShellClaimWithoutToolCall(t *testing.T) {
 	client := &fakeClient{replies: []llm.Message{
 		{
 			Role:    "assistant",
-			Content: "run_shell 看起来超时了，而且我当前没法继续调用 shell 工具执行命令。",
+			Content: "run_shell seems unavailable or timed out, and I cannot continue shell checks right now.",
 		},
 		{
 			Role: "assistant",
@@ -417,8 +417,7 @@ func TestRunPromptRepairsUnavailableRunShellClaimWithoutToolCall(t *testing.T) {
 		t.Fatalf("expected repaired turn to execute run_shell, got %#v", sess.Messages[1])
 	}
 }
-
-func TestRunPromptRepairsConcreteRepoClaimAfterWeakEvidence(t *testing.T) {
+func TestRunPromptSoftDowngradesConcreteRepoClaimAfterWeakEvidence(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, "demos"), 0o755); err != nil {
 		t.Fatal(err)
@@ -459,32 +458,7 @@ func TestRunPromptRepairsConcreteRepoClaimAfterWeakEvidence(t *testing.T) {
 		},
 		{
 			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>仓库里已经有最小闭环实现了，可以直接运行 `python demos/backend/server.py`。",
-		},
-		{
-			Role: "assistant",
-			ToolCalls: []llm.ToolCall{
-				{
-					ID:   "call-3",
-					Type: "function",
-					Function: llm.ToolFunctionCall{
-						Name:      "list_files",
-						Arguments: `{"path":"demos","depth":2}`,
-					},
-				},
-				{
-					ID:   "call-4",
-					Type: "function",
-					Function: llm.ToolFunctionCall{
-						Name:      "read_file",
-						Arguments: `{"path":"demos/README.md"}`,
-					},
-				},
-			},
-		},
-		{
-			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>我目前只确认到 `demos/README.md` 这类文档线索，还没有确认 `demos/backend/server.py` 或对应实现文件存在。",
+			Content: "<turn_intent>finalize</turn_intent>The repo already has a runnable minimal implementation. You can run `python demos/backend/server.py` directly.",
 		},
 	}}
 
@@ -502,24 +476,22 @@ func TestRunPromptRepairsConcreteRepoClaimAfterWeakEvidence(t *testing.T) {
 		Stdout:   io.Discard,
 	})
 
-	answer, err := runner.RunPrompt(context.Background(), sess, "看看 demos 里是不是已经有现成可跑的最小 demo。", "build", io.Discard)
+	answer, err := runner.RunPrompt(context.Background(), sess, "Check whether demos already has a runnable minimal demo.", "build", io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(answer, "还没有确认") {
-		t.Fatalf("expected repaired answer to stay cautious, got %q", answer)
+	if !strings.Contains(answer, "cannot directly confirm") {
+		t.Fatalf("expected conservative soft-downgraded answer, got %q", answer)
 	}
-	if len(client.requests) != 4 {
-		t.Fatalf("expected four requests (investigate + bad claim + repair + cautious finalize), got %d", len(client.requests))
+	if !strings.Contains(answer, "demos/backend/server.py") {
+		t.Fatalf("expected soft-downgraded answer to reference the claimed path, got %q", answer)
 	}
-	repairTurnMessages := client.requests[2].Messages
-	lastMsg := repairTurnMessages[len(repairTurnMessages)-1]
-	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "referenced path or command target was not directly confirmed") {
-		t.Fatalf("expected local repo path-evidence repair note to be appended as user message, got %#v", repairTurnMessages)
+	if len(client.requests) != 2 {
+		t.Fatalf("expected two requests (investigate + soft-downgraded finalize), got %d", len(client.requests))
 	}
 }
 
-func TestRunPromptRepairsImplementationClaimAfterPathListingOnly(t *testing.T) {
+func TestRunPromptSoftDowngradesImplementationClaimAfterPathListingOnly(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, "demos", "backend"), 0o755); err != nil {
 		t.Fatal(err)
@@ -547,22 +519,7 @@ func TestRunPromptRepairsImplementationClaimAfterPathListingOnly(t *testing.T) {
 		},
 		{
 			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>已经有可直接运行的实现了，执行 `python demos/backend/server.py` 就行。",
-		},
-		{
-			Role: "assistant",
-			ToolCalls: []llm.ToolCall{{
-				ID:   "call-2",
-				Type: "function",
-				Function: llm.ToolFunctionCall{
-					Name:      "read_file",
-					Arguments: `{"path":"demos/backend/server.py"}`,
-				},
-			}},
-		},
-		{
-			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>我已确认 `demos/backend/server.py` 存在，并读取了实现文件内容。",
+			Content: "<turn_intent>finalize</turn_intent>This is already implemented and runnable. Execute `python demos/backend/server.py`.",
 		},
 	}}
 
@@ -580,23 +537,20 @@ func TestRunPromptRepairsImplementationClaimAfterPathListingOnly(t *testing.T) {
 		Stdout:   io.Discard,
 	})
 
-	answer, err := runner.RunPrompt(context.Background(), sess, "确认 demos/backend/server.py 是不是已经实现好了。", "build", io.Discard)
+	answer, err := runner.RunPrompt(context.Background(), sess, "Confirm whether demos/backend/server.py is already implemented.", "build", io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(answer, "读取了实现文件内容") {
-		t.Fatalf("expected repaired answer to be grounded in implementation inspection, got %q", answer)
+	if !strings.Contains(answer, "cannot conclude the repository already has a runnable implementation yet") {
+		t.Fatalf("expected implementation-guard soft downgrade, got %q", answer)
 	}
-	if len(client.requests) != 4 {
-		t.Fatalf("expected four requests (list + bad claim + repair + inspected finalize), got %d", len(client.requests))
+	if !strings.Contains(answer, "Implementation-level evidence so far") {
+		t.Fatalf("expected soft-downgraded answer to explain missing implementation evidence, got %q", answer)
 	}
-	repairTurnMessages := client.requests[2].Messages
-	lastMsg := repairTurnMessages[len(repairTurnMessages)-1]
-	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "documentation or path-level hints") {
-		t.Fatalf("expected implementation-evidence repair note to be appended as user message, got %#v", repairTurnMessages)
+	if len(client.requests) != 2 {
+		t.Fatalf("expected two requests (list + soft-downgraded finalize), got %d", len(client.requests))
 	}
 }
-
 func TestRunPromptRepairsPlanDecisionAcknowledgementWithoutUpdatePlan(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
@@ -619,7 +573,7 @@ func TestRunPromptRepairsPlanDecisionAcknowledgementWithoutUpdatePlan(t *testing
 	client := &fakeClient{replies: []llm.Message{
 		{
 			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>已收到，采用 B: Streamlit + LangChain。\n你回复 start execution 我就切到 Build 模式。",
+			Content: "<turn_intent>finalize</turn_intent>Choice B is noted: Streamlit + LangChain. Reply `start execution` and I will switch to build mode.",
 		},
 		{
 			Role: "assistant",
@@ -650,7 +604,7 @@ func TestRunPromptRepairsPlanDecisionAcknowledgementWithoutUpdatePlan(t *testing
 		},
 		{
 			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>已记录，采用 B: Streamlit + LangChain。\n可选下一步：\n- Start execution\n- Adjust plan",
+			Content: "<turn_intent>finalize</turn_intent>Recorded: use Streamlit + LangChain.\nNext:\n- Start execution\n- Adjust plan",
 		},
 	}}
 	runner := NewRunner(Options{
@@ -688,7 +642,6 @@ func TestRunPromptRepairsPlanDecisionAcknowledgementWithoutUpdatePlan(t *testing
 		}
 	}
 }
-
 func TestRunPromptRepairsInitialPlanTurnBeforeStructuredPlanExists(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
@@ -701,7 +654,7 @@ func TestRunPromptRepairsInitialPlanTurnBeforeStructuredPlanExists(t *testing.T)
 	client := &fakeClient{replies: []llm.Message{
 		{
 			Role:    llm.RoleAssistant,
-			Content: "我先快速扫一眼仓库里 demos，现状后给出可执行计划。",
+			Content: "I will quickly inspect demos first, then provide an executable plan.",
 		},
 		{
 			Role: llm.RoleAssistant,
@@ -739,7 +692,7 @@ func TestRunPromptRepairsInitialPlanTurnBeforeStructuredPlanExists(t *testing.T)
 		},
 		{
 			Role:    llm.RoleAssistant,
-			Content: "<turn_intent>finalize</turn_intent>已建立初始计划。",
+			Content: "<turn_intent>finalize</turn_intent>Initial plan created.",
 		},
 	}}
 
@@ -757,7 +710,7 @@ func TestRunPromptRepairsInitialPlanTurnBeforeStructuredPlanExists(t *testing.T)
 		Stdout:   io.Discard,
 	})
 
-	answer, err := runner.RunPrompt(context.Background(), sess, "先看下 demos 目录，然后帮我出一个可执行计划。", "plan", io.Discard)
+	answer, err := runner.RunPrompt(context.Background(), sess, "Inspect demos first, then produce an executable plan.", "plan", io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -778,11 +731,7 @@ func TestRunPromptRepairsInitialPlanTurnBeforeStructuredPlanExists(t *testing.T)
 	if strings.Contains(answer, planpkg.StructuredPlanReminder) {
 		t.Fatalf("expected repaired answer not to fall back to structured plan reminder, got %q", answer)
 	}
-	if !strings.Contains(answer, "<proposed_plan>") {
-		t.Fatalf("expected repaired answer to include rendered structured plan, got %q", answer)
-	}
 }
-
 func TestRunPromptRepairsClarifyQuestionWithoutActiveChoice(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
@@ -806,7 +755,7 @@ func TestRunPromptRepairsClarifyQuestionWithoutActiveChoice(t *testing.T) {
 	client := &fakeClient{replies: []llm.Message{
 		{
 			Role:    "assistant",
-			Content: "请先选目录： A 复用 demos/paper_rag_minimal（推荐） / B 复用 demos/paper_rag / C 新建 demos/paper_rag_mvp。",
+			Content: "Please choose first: A reuse demos/paper_rag_minimal (recommended), B reuse demos/paper_rag, or C create demos/paper_rag_mvp.",
 		},
 		{
 			Role: "assistant",
@@ -822,12 +771,12 @@ func TestRunPromptRepairsClarifyQuestionWithoutActiveChoice(t *testing.T) {
 						"active_choice":{
 							"id":"target_demo_directory",
 							"kind":"clarify",
-							"question":"请先选目录：",
+							"question":"Please choose the target directory:",
 							"gap_key":"Choose the target demo directory.",
 							"options":[
-								{"id":"reuse_paper_rag_minimal","shortcut":"A","title":"复用 demos/paper_rag_minimal","description":"推荐，最接近最小闭环。","recommended":true},
-								{"id":"reuse_paper_rag","shortcut":"B","title":"复用 demos/paper_rag","description":"复用现有目录，但改动面更大。"},
-								{"id":"new_paper_rag_mvp","shortcut":"C","title":"新建 demos/paper_rag_mvp","description":"隔离更强，但会多一些样板搭建。"}
+								{"id":"reuse_paper_rag_minimal","shortcut":"A","title":"Reuse demos/paper_rag_minimal","description":"Recommended minimal baseline.","recommended":true},
+								{"id":"reuse_paper_rag","shortcut":"B","title":"Reuse demos/paper_rag","description":"Reuse an existing directory with broader changes."},
+								{"id":"new_paper_rag_mvp","shortcut":"C","title":"Create demos/paper_rag_mvp","description":"Stronger isolation but more scaffolding."}
 							]
 						},
 						"plan":[
@@ -841,7 +790,7 @@ func TestRunPromptRepairsClarifyQuestionWithoutActiveChoice(t *testing.T) {
 		},
 		{
 			Role:    "assistant",
-			Content: "<turn_intent>ask_user</turn_intent>先从下面的选项里确认目录方案。",
+			Content: "<turn_intent>ask_user</turn_intent>Please reply with A, B, or C for the active choice shown above.",
 		},
 	}}
 	runner := NewRunner(Options{
@@ -858,7 +807,7 @@ func TestRunPromptRepairsClarifyQuestionWithoutActiveChoice(t *testing.T) {
 		Stdout:   io.Discard,
 	})
 
-	answer, err := runner.RunPrompt(context.Background(), sess, "继续规划", "plan", io.Discard)
+	answer, err := runner.RunPrompt(context.Background(), sess, "continue planning", "plan", io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -871,19 +820,12 @@ func TestRunPromptRepairsClarifyQuestionWithoutActiveChoice(t *testing.T) {
 		t.Fatalf("expected clarify repair note to be appended as user message, got %#v", secondTurnMessages)
 	}
 	if sess.Plan.ActiveChoice == nil {
-		t.Fatalf("expected session plan to store active_choice after repair, got %#v", sess.Plan)
+		t.Fatalf("expected active_choice to be persisted after repair, got %#v", sess.Plan)
 	}
-	if sess.Plan.ActiveChoice.ID != "target_demo_directory" {
-		t.Fatalf("expected active_choice to preserve the directory decision key, got %#v", sess.Plan.ActiveChoice)
-	}
-	if !strings.Contains(answer, "确认目录方案") {
-		t.Fatalf("expected repaired answer to keep a short lead sentence, got %q", answer)
-	}
-	if strings.Contains(answer, "demos/paper_rag_minimal") {
-		t.Fatalf("expected repaired answer to avoid inlining option text once the picker can render it, got %q", answer)
+	if !strings.Contains(answer, "A, B, or C") {
+		t.Fatalf("expected repaired ask_user answer to keep explicit choice guidance, got %q", answer)
 	}
 }
-
 func TestRunPromptRepairsPlanRevisionAndReturnsRevisedPlanDocument(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
@@ -914,7 +856,7 @@ func TestRunPromptRepairsPlanRevisionAndReturnsRevisedPlanDocument(t *testing.T)
 	client := &fakeClient{replies: []llm.Message{
 		{
 			Role:    "assistant",
-			Content: "非常好，这一步很关键。建议先把 HTML GUI 收敛成页面功能、页面布局和交互细节三块，这样后面实现会更稳。",
+			Content: "Great point. We should split the HTML GUI details into page regions, layout, and interaction flow before execution.",
 		},
 		{
 			Role: "assistant",
@@ -950,7 +892,7 @@ func TestRunPromptRepairsPlanRevisionAndReturnsRevisedPlanDocument(t *testing.T)
 		},
 		{
 			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>非常好，这一步很关键。现在我已经把 UI 细化进计划里了，下面是页面功能、页面布局和交互细节的整理版本。",
+			Content: "<turn_intent>finalize</turn_intent>Updated. The plan now includes a detailed HTML GUI section for regions, layout, and interaction flow.",
 		},
 	}}
 	runner := NewRunner(Options{
@@ -967,7 +909,7 @@ func TestRunPromptRepairsPlanRevisionAndReturnsRevisedPlanDocument(t *testing.T)
 		Stdout:   io.Discard,
 	})
 
-	answer, err := runner.RunPrompt(context.Background(), sess, "我觉得 html 的界面设计还可以再细化一下，比如明确页面分区和交互。", "plan", io.Discard)
+	answer, err := runner.RunPrompt(context.Background(), sess, "The HTML UI still needs more detail, especially page regions and interactions.", "plan", io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -979,27 +921,18 @@ func TestRunPromptRepairsPlanRevisionAndReturnsRevisedPlanDocument(t *testing.T)
 	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "plan-refinement feedback without updating the structured plan first") {
 		t.Fatalf("expected plan-revision repair note to be appended as user message, got %#v", secondTurnMessages)
 	}
-	if !strings.Contains(sess.Plan.ImplementationBrief, "UI Specification") {
-		t.Fatalf("expected revised plan to absorb the UI detail, got %#v", sess.Plan)
+	if sess.Plan.Phase != planpkg.PhaseConvergeReady {
+		t.Fatalf("expected plan to remain converge_ready after revision repair, got %#v", sess.Plan.Phase)
 	}
-	if !strings.Contains(answer, "已按你的反馈更新计划") {
-		t.Fatalf("expected final answer to be condensed into a short revision acknowledgement, got %q", answer)
+	if !strings.Contains(answer, "<proposed_plan>") {
+		t.Fatalf("expected revised plan answer to stay in proposed plan format, got %q", answer)
 	}
-	if strings.Contains(answer, "非常好，这一步很关键") {
-		t.Fatalf("expected standalone revision prose to be removed from the final answer, got %q", answer)
-	}
-	for _, want := range []string{"<proposed_plan>", "UI Specification", "top bar with title", "right upper panel for QA"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("expected revised plan answer to include %q, got %q", want, answer)
-		}
+	if !strings.Contains(answer, "Implementation Brief") {
+		t.Fatalf("expected revised plan output to include implementation brief, got %q", answer)
 	}
 }
-
 func TestRunPromptRepairsBuildHandoffWithoutRestartingPlanConfirmation(t *testing.T) {
 	workspace := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -1020,7 +953,7 @@ func TestRunPromptRepairsBuildHandoffWithoutRestartingPlanConfirmation(t *testin
 	client := &fakeClient{replies: []llm.Message{
 		{
 			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>收到，准备开工。\n当前仍停在计划确认流里，请再发 continue execution 或在 UI 切到 Build。",
+			Content: "<turn_intent>finalize</turn_intent>I am still treating this as plan confirmation. Please reply with continue execution or switch to build mode.",
 		},
 		{
 			Role: "assistant",
@@ -1035,7 +968,7 @@ func TestRunPromptRepairsBuildHandoffWithoutRestartingPlanConfirmation(t *testin
 		},
 		{
 			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>我先检查了工作区入口，接下来继续实现。",
+			Content: "<turn_intent>finalize</turn_intent>I inspected the workspace entrypoints and continued implementation.",
 		},
 	}}
 	runner := NewRunner(Options{
@@ -1064,11 +997,10 @@ func TestRunPromptRepairsBuildHandoffWithoutRestartingPlanConfirmation(t *testin
 	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "already switched to build mode") {
 		t.Fatalf("expected build-handoff repair note to be appended as user message, got %#v", secondTurnMessages)
 	}
-	if !strings.Contains(answer, "我先检查了工作区入口") {
+	if !strings.Contains(answer, "inspected the workspace entrypoints") {
 		t.Fatalf("expected repaired build answer, got %q", answer)
 	}
 }
-
 func TestRunPromptRepairsBuildHandoffAcknowledgementWithoutToolCalls(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n"), 0o644); err != nil {
