@@ -346,10 +346,10 @@ func (r *Runner) newSubAgentChildRunner(workspace string, maxTurns int) *Runner 
 		TokenManager:    r.tokenManager,
 		AuditStore:      r.auditStore,
 		PromptStore:     r.promptStore,
-		Observer:        r.observer,
-		Approval:        r.approval,
-		Stdin:           r.stdin,
-		Stdout:          r.stdout,
+		Observer:        &noOpObserver{},
+		Approval:        nonInteractiveApproval(),
+		Stdin:           nil,
+		Stdout:          subAgentStdout(),
 	})
 }
 

@@ -1,20 +1,24 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/session"
 	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
 	"github.com/1024XEngineer/bytemind/internal/tools"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type subAgentCommandRunner interface {
 	ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic)
 	FindSubAgent(name string) (subagentspkg.Agent, bool)
 	FindBuiltinSubAgent(name string) (subagentspkg.Agent, bool)
+	DispatchSubAgent(ctx context.Context, sess *session.Session, mode string, request tools.DelegateSubAgentRequest) (tools.DelegateSubAgentResult, error)
 }
 
 func (m *model) runAgentsCommand(input string, fields []string) error {
@@ -76,41 +80,73 @@ func (m *model) submitBuiltinSubAgentPreference(input, agentName, task string) e
 		return fmt.Errorf("model is unavailable")
 	}
 
+	runner, err := m.requireSubAgentRunner()
+	if err != nil {
+		return err
+	}
+
 	normalizedInput := strings.TrimSpace(input)
 	if normalizedInput == "" {
 		normalizedInput = fmt.Sprintf("/%s %s", strings.TrimSpace(agentName), strings.TrimSpace(task))
 	}
-	prompt := buildBuiltinSubAgentPreferencePrompt(agentName, task)
-	next, cmd := m.submitPreparedPrompt(RunPromptInput{
-		UserMessage:                     llm.NewUserTextMessage(prompt),
-		DisplayText:                     normalizedInput,
-		PersistDisplayTextAsUserMessage: true,
-	}, normalizedInput)
-	updated, ok := next.(model)
-	if !ok {
-		return fmt.Errorf("internal error: failed to submit slash command prompt")
-	}
-	*m = updated
-	m.pendingCommandCmd = cmd
-	return nil
-}
 
-func buildBuiltinSubAgentPreferencePrompt(agentName, task string) string {
-	agentName = strings.TrimSpace(agentName)
-	task = strings.TrimSpace(task)
-	if task == "" {
-		task = "Please complete the requested task."
-	}
-	lines := []string{
-		fmt.Sprintf("User explicitly invoked slash command preference for subagent `%s`.", agentName),
-		"Treat this as a strong delegation hint, not a hard requirement.",
-		fmt.Sprintf("If `%s` is a good fit, call `delegate_subagent`.", agentName),
-		"If delegation is not appropriate, continue in the parent agent and briefly explain why.",
-		"",
-		"Requested task:",
-		task,
-	}
-	return strings.Join(lines, "\n")
+	m.screen = screenChat
+	m.input.Reset()
+	m.appendChat(chatEntry{
+		Kind:   "user",
+		Title:  "You",
+		Meta:   formatUserMeta(m.currentModelLabel(), time.Now()),
+		Body:   normalizedInput,
+		Status: "final",
+	})
+	m.busy = true
+	m.subAgentPending = true
+	m.subAgentName = agentName
+	m.phase = "thinking"
+	m.statusNote = fmt.Sprintf("Running subagent %s...", agentName)
+
+	// Add thinking card to conversation for visual feedback
+	thinkingBody := fmt.Sprintf("%s Running subagent %s...", m.spinner.View(), agentName)
+	m.appendChat(chatEntry{
+		Kind:   "assistant",
+		Title:  thinkingLabel,
+		Body:   thinkingBody,
+		Status: "thinking",
+	})
+	m.streamingIndex = len(m.chatItems) - 1
+	m.chatAutoFollow = true
+	m.refreshViewport()
+
+	asyncCh := m.async
+	commandInput := normalizedInput
+	dispatchAgent := agentName
+	dispatchTask := task
+	sess := m.sess
+	mode := string(m.mode)
+	resultWidth := max(40, m.width-8)
+
+	go func() {
+		result, dispatchErr := runner.DispatchSubAgent(
+			context.Background(), sess, mode,
+			tools.DelegateSubAgentRequest{
+				Agent: dispatchAgent,
+				Task:  dispatchTask,
+			},
+		)
+		if dispatchErr != nil {
+			asyncCh <- subAgentResultMsg{
+				Input: commandInput,
+				Err:   dispatchErr,
+			}
+			return
+		}
+		asyncCh <- subAgentResultMsg{
+			Input:    commandInput,
+			Response: renderSubAgentResultCard(result, resultWidth),
+			Status:   fmt.Sprintf("Subagent %s completed.", dispatchAgent),
+		}
+	}()
+	return nil
 }
 
 func normalizeBuiltinSubAgentCommandInput(input string) (string, string, bool) {
@@ -229,80 +265,171 @@ func renderSubAgentDetail(agent subagentspkg.Agent) string {
 }
 
 func renderSubAgentDispatchResult(result tools.DelegateSubAgentResult) string {
-	lines := make([]string, 0, 12)
-	if result.OK {
-		status := strings.TrimSpace(result.Status)
-		if status == "" {
+	return renderSubAgentResultCard(result, 80)
+}
+
+func renderSubAgentResultCard(result tools.DelegateSubAgentResult, width int) string {
+	if width < 40 {
+		width = 40
+	}
+	innerWidth := width - 4
+
+	var sections []string
+
+	// Header: agent name + status badge
+	agentName := strings.TrimSpace(result.Agent)
+	if agentName == "" {
+		agentName = "subagent"
+	}
+	status := strings.TrimSpace(result.Status)
+	if status == "" {
+		if result.OK {
 			status = "completed"
+		} else {
+			status = "failed"
 		}
-		lines = append(lines, fmt.Sprintf("subagent %s %s", strings.TrimSpace(result.Agent), status))
-		if taskID := strings.TrimSpace(result.TaskID); taskID != "" {
-			lines = append(lines, fmt.Sprintf("task_id %s", taskID))
+	}
+	badgeType := subAgentStatusBadgeType(status)
+	header := lipgloss.JoinHorizontal(lipgloss.Left,
+		strongStyle.Render("SubAgent "),
+		accentStyle.Render(agentName),
+		lipgloss.NewStyle().Render("  "),
+		renderPillBadge(strings.ToUpper(status), badgeType),
+	)
+	sections = append(sections, header)
+
+	// Metadata line
+	var meta []string
+	if taskID := strings.TrimSpace(result.TaskID); taskID != "" {
+		meta = append(meta, "task: "+taskID)
+	}
+	if invocationID := strings.TrimSpace(result.InvocationID); invocationID != "" {
+		meta = append(meta, "invocation: "+invocationID)
+	}
+	if len(meta) > 0 {
+		sections = append(sections, mutedStyle.Render(strings.Join(meta, "  |  ")))
+	}
+
+	// Error section
+	if !result.OK && result.Error != nil {
+		code := strings.TrimSpace(result.Error.Code)
+		message := strings.TrimSpace(result.Error.Message)
+		if message == "" {
+			message = "subagent execution failed"
 		}
-		if invocationID := strings.TrimSpace(result.InvocationID); invocationID != "" {
-			lines = append(lines, fmt.Sprintf("invocation %s", invocationID))
+		errLine := errorStyle.Render("Error: ")
+		if code != "" {
+			errLine += mutedStyle.Render("["+code+"] ")
 		}
+		errLine += errorStyle.Render(message)
+		sections = append(sections, errLine)
+	}
+
+	// Summary
+	if result.OK {
 		summary := strings.TrimSpace(result.Summary)
 		if summary == "" {
 			summary = "SubAgent task completed."
 		}
-		lines = append(lines, "summary "+summary)
-		if len(result.Findings) > 0 {
-			lines = append(lines, fmt.Sprintf("findings %d", len(result.Findings)))
-			for _, finding := range result.Findings {
-				title := strings.TrimSpace(finding.Title)
-				body := strings.TrimSpace(finding.Body)
-				switch {
-				case title != "" && body != "":
-					lines = append(lines, fmt.Sprintf("- %s: %s", title, body))
-				case title != "":
-					lines = append(lines, fmt.Sprintf("- %s", title))
-				case body != "":
-					lines = append(lines, fmt.Sprintf("- %s", body))
-				}
-			}
-		}
-		if len(result.References) > 0 {
-			lines = append(lines, fmt.Sprintf("references %d", len(result.References)))
-			for _, ref := range result.References {
-				path := strings.TrimSpace(ref.Path)
-				if path == "" {
-					continue
-				}
-				line := ""
-				if ref.Line > 0 {
-					line = fmt.Sprintf(":%d", ref.Line)
-				}
-				note := strings.TrimSpace(ref.Note)
-				if note != "" {
-					lines = append(lines, fmt.Sprintf("- %s%s (%s)", path, line, note))
-				} else {
-					lines = append(lines, fmt.Sprintf("- %s%s", path, line))
-				}
-			}
-		}
-		return strings.Join(lines, "\n")
+		sections = append(sections, "")
+		sections = append(sections, wrapText(summary, innerWidth))
 	}
 
-	lines = append(lines, fmt.Sprintf("subagent %s failed", strings.TrimSpace(result.Agent)))
-	if invocationID := strings.TrimSpace(result.InvocationID); invocationID != "" {
-		lines = append(lines, fmt.Sprintf("invocation %s", invocationID))
-	}
-	if taskID := strings.TrimSpace(result.TaskID); taskID != "" {
-		lines = append(lines, fmt.Sprintf("task_id %s", taskID))
-	}
-	if result.Error != nil {
-		code := strings.TrimSpace(result.Error.Code)
-		message := strings.TrimSpace(result.Error.Message)
-		if code != "" {
-			lines = append(lines, "error_code "+code)
+	// Findings
+	if len(result.Findings) > 0 {
+		sections = append(sections, "")
+		sections = append(sections, toolSummaryStyle.Render(fmt.Sprintf("Findings (%d)", len(result.Findings))))
+		for _, finding := range result.Findings {
+			title := strings.TrimSpace(finding.Title)
+			body := strings.TrimSpace(finding.Body)
+			switch {
+			case title != "" && body != "":
+				sections = append(sections, listMarkerStyle.Render("  * ")+strongStyle.Render(title)+": "+body)
+			case title != "":
+				sections = append(sections, listMarkerStyle.Render("  * ")+title)
+			case body != "":
+				sections = append(sections, listMarkerStyle.Render("  * ")+body)
+			}
 		}
-		if message != "" {
-			lines = append(lines, "error "+message)
+	}
+
+	// References
+	if len(result.References) > 0 {
+		sections = append(sections, "")
+		sections = append(sections, toolSummaryStyle.Render(fmt.Sprintf("References (%d)", len(result.References))))
+		for _, ref := range result.References {
+			path := strings.TrimSpace(ref.Path)
+			if path == "" {
+				continue
+			}
+			lineStr := ""
+			if ref.Line > 0 {
+				lineStr = fmt.Sprintf(":%d", ref.Line)
+			}
+			note := strings.TrimSpace(ref.Note)
+			refLine := listMarkerStyle.Render("  * ") + accentStyle.Render(path+lineStr)
+			if note != "" {
+				refLine += " " + mutedStyle.Render("("+note+")")
+			}
+			sections = append(sections, refLine)
 		}
 	}
-	if len(lines) == 1 {
-		lines = append(lines, "error subagent execution failed")
+
+	content := lipgloss.JoinVertical(lipgloss.Left, sections...)
+	return lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderForeground(subAgentBorderAccent(status)).
+		Background(semanticColors.PanelMuted).
+		Padding(0, 1).
+		Width(width).
+		Render(content)
+}
+
+func subAgentStatusBadgeType(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed":
+		return "success"
+	case "failed":
+		return "error"
+	case "accepted", "queued", "running":
+		return "accent"
+	default:
+		return "neutral"
+	}
+}
+
+func subAgentBorderAccent(status string) lipgloss.Color {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed":
+		return semanticColors.Success
+	case "failed":
+		return semanticColors.Danger
+	case "accepted", "queued", "running":
+		return semanticColors.Accent
+	default:
+		return semanticColors.Border
+	}
+}
+
+func wrapText(text string, width int) string {
+	if width <= 0 || len(text) <= width {
+		return text
+	}
+	var lines []string
+	for len(text) > 0 {
+		if len(text) <= width {
+			lines = append(lines, text)
+			break
+		}
+		cut := width
+		for cut > 0 && text[cut] != ' ' {
+			cut--
+		}
+		if cut == 0 {
+			cut = width
+		}
+		lines = append(lines, text[:cut])
+		text = strings.TrimSpace(text[cut:])
 	}
 	return strings.Join(lines, "\n")
 }

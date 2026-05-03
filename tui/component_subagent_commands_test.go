@@ -26,18 +26,6 @@ type subAgentCommandRunnerStub struct {
 	builtinOK    bool
 }
 
-type captureRunInputRunnerStub struct {
-	subAgentCommandRunnerStub
-	captured chan RunPromptInput
-}
-
-func (s *captureRunInputRunnerStub) RunPromptWithInput(_ context.Context, _ *session.Session, input RunPromptInput, _ string, _ io.Writer) (string, error) {
-	if s != nil && s.captured != nil {
-		s.captured <- input
-	}
-	return "", nil
-}
-
 func (s *subAgentCommandRunnerStub) RunPromptWithInput(context.Context, *session.Session, RunPromptInput, string, io.Writer) (string, error) {
 	return "", nil
 }
@@ -81,6 +69,14 @@ func (s *subAgentCommandRunnerStub) FindBuiltinSubAgent(string) (subagentspkg.Ag
 		return s.builtinAgent, true
 	}
 	return subagentspkg.Agent{}, false
+}
+
+func (s *subAgentCommandRunnerStub) DispatchSubAgent(_ context.Context, _ *session.Session, _ string, _ tools.DelegateSubAgentRequest) (tools.DelegateSubAgentResult, error) {
+	return tools.DelegateSubAgentResult{
+		OK:      true,
+		Status:  "completed",
+		Summary: "stub result",
+	}, nil
 }
 
 func TestCommandPaletteListsSubAgentCommands(t *testing.T) {
@@ -228,11 +224,8 @@ explore files
 		t.Fatalf("expected /review <task> to succeed, got %v", err)
 	}
 
-	if m.pendingCommandCmd == nil {
-		t.Fatalf("expected /review to queue a main-agent run command")
-	}
 	if !m.busy {
-		t.Fatalf("expected /review to mark model busy while the command run is queued")
+		t.Fatalf("expected /review to mark model busy while the subagent runs")
 	}
 	if len(m.chatItems) == 0 {
 		t.Fatalf("expected /review to append user slash input to chat")
@@ -274,8 +267,8 @@ explore files
 		t.Fatalf("expected compact /explorer command to succeed, got %v", err)
 	}
 
-	if m.pendingCommandCmd == nil {
-		t.Fatalf("expected compact /explorer command to queue a main-agent run")
+	if !m.busy {
+		t.Fatalf("expected compact /explorer command to mark model busy")
 	}
 	if len(m.chatItems) == 0 {
 		t.Fatalf("expected compact /explorer command to append user slash input to chat")
@@ -297,21 +290,18 @@ func TestSubmitBuiltinSubAgentPreferenceSynthesizesDisplayInput(t *testing.T) {
 	if err := m.submitBuiltinSubAgentPreference("", "explorer", "locate runtime prompt"); err != nil {
 		t.Fatalf("expected synthesized display input submission to succeed, got %v", err)
 	}
-	if m.pendingCommandCmd == nil {
-		t.Fatal("expected synthesized submission to queue a run command")
+	if !m.busy {
+		t.Fatal("expected synthesized submission to mark model busy")
 	}
 	if !containsChatEntry(m.chatItems, "user", "/explorer locate runtime prompt") {
 		t.Fatalf("expected synthesized slash input in chat history, got %#v", m.chatItems)
 	}
 }
 
-func TestSubmitBuiltinSubAgentPreferencePersistsDisplayTextInSessionHistory(t *testing.T) {
-	runner := &captureRunInputRunnerStub{
-		subAgentCommandRunnerStub: subAgentCommandRunnerStub{
-			builtinAgent: subagentspkg.Agent{Name: "review"},
-			builtinOK:    true,
-		},
-		captured: make(chan RunPromptInput, 1),
+func TestSubmitBuiltinSubAgentPreferencePersistsDisplayTextInChatHistory(t *testing.T) {
+	runner := &subAgentCommandRunnerStub{
+		builtinAgent: subagentspkg.Agent{Name: "review"},
+		builtinOK:    true,
 	}
 	input := textarea.New()
 	input.Focus()
@@ -326,43 +316,27 @@ func TestSubmitBuiltinSubAgentPreferencePersistsDisplayTextInSessionHistory(t *t
 	if err := m.submitBuiltinSubAgentPreference("/review inspect changed files", "review", "inspect changed files"); err != nil {
 		t.Fatalf("expected slash preference submission to succeed, got %v", err)
 	}
-	if m.pendingCommandCmd == nil {
-		t.Fatal("expected slash preference to queue a run command")
+	if !m.busy {
+		t.Fatal("expected slash preference to mark model busy")
 	}
-
-	msg := m.pendingCommandCmd()
-	batch, ok := msg.(tea.BatchMsg)
-	if !ok || len(batch) == 0 {
-		t.Fatalf("expected queued command batch, got %#v", msg)
+	if !containsChatEntry(m.chatItems, "user", "/review inspect changed files") {
+		t.Fatalf("expected slash command input in chat history, got %#v", m.chatItems)
 	}
-	if batch[0] == nil {
-		t.Fatalf("expected first queued command to be executable, got %#v", batch)
-	}
-	batch[0]()
 
 	select {
-	case captured := <-runner.captured:
-		if !captured.PersistDisplayTextAsUserMessage {
-			t.Fatalf("expected slash preference run input to persist display text as session user message, got %#v", captured)
+	case msg := <-m.async:
+		result, ok := msg.(subAgentResultMsg)
+		if !ok {
+			t.Fatalf("expected subAgentResultMsg, got %#v", msg)
 		}
-		if captured.DisplayText != "/review inspect changed files" {
-			t.Fatalf("expected display text to preserve slash command input, got %q", captured.DisplayText)
+		if result.Err != nil {
+			t.Fatalf("expected no dispatch error, got %v", result.Err)
 		}
-		if !strings.Contains(captured.UserMessage.Text(), "delegate_subagent") {
-			t.Fatalf("expected model-side prompt to preserve delegation hint, got %q", captured.UserMessage.Text())
+		if !strings.Contains(result.Response, "stub result") {
+			t.Fatalf("expected dispatch result to contain stub summary, got %q", result.Response)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for queued slash preference run input")
-	}
-}
-
-func TestBuildBuiltinSubAgentPreferencePromptFallsBackForEmptyTask(t *testing.T) {
-	prompt := buildBuiltinSubAgentPreferencePrompt("explorer", " ")
-	if !strings.Contains(prompt, "Please complete the requested task.") {
-		t.Fatalf("expected fallback task text in prompt, got %q", prompt)
-	}
-	if !strings.Contains(prompt, "delegate_subagent") {
-		t.Fatalf("expected delegation guidance in prompt, got %q", prompt)
+		t.Fatal("timed out waiting for async dispatch result")
 	}
 }
 

@@ -132,6 +132,16 @@ func (m *model) appendChat(item chatEntry) {
 	m.chatItems = append(m.chatItems, item)
 }
 
+func (m *model) removeThinkingCard() {
+	for i := len(m.chatItems) - 1; i >= 0; i-- {
+		item := m.chatItems[i]
+		if item.Kind == "assistant" && (item.Status == "thinking" || item.Status == "pending") {
+			m.chatItems = append(m.chatItems[:i], m.chatItems[i+1:]...)
+			return
+		}
+	}
+}
+
 func (m *model) finalizeAssistantTurnForTool(toolName string) {
 	if m.streamingIndex >= 0 && m.streamingIndex < len(m.chatItems) {
 		item := &m.chatItems[m.streamingIndex]
@@ -233,7 +243,9 @@ func (m *model) updateThinkingCard() {
 	}
 	item.Title = thinkingLabel
 	item.Status = "thinking"
-	if strings.TrimSpace(item.Body) == "" {
+	if m.subAgentPending && m.subAgentName != "" {
+		item.Body = fmt.Sprintf("%s Running subagent %s...", m.spinner.View(), m.subAgentName)
+	} else if strings.TrimSpace(item.Body) == "" {
 		item.Body = m.thinkingText()
 	}
 }

@@ -284,6 +284,13 @@ type mcpCommandResultMsg struct {
 	Err      error
 }
 
+type subAgentResultMsg struct {
+	Input    string
+	Response string
+	Status   string
+	Err      error
+}
+
 type pasteSessionState struct {
 	active       bool
 	startedAt    time.Time
@@ -383,6 +390,8 @@ type model struct {
 	promptSearchOpen           bool
 	mcpCommandPending          bool
 	busy                       bool
+	subAgentPending            bool
+	subAgentName               string
 	runStartedAt               time.Time
 	lastRunDuration            time.Duration
 	runIndicatorState          runIndicatorState
@@ -820,6 +829,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitForAsync(m.async)
 		}
 		m.appendCommandExchange(msg.Input, msg.Response)
+		if strings.TrimSpace(msg.Status) != "" {
+			m.statusNote = msg.Status
+		}
+		m.refreshViewport()
+		return m, waitForAsync(m.async)
+	case subAgentResultMsg:
+		m.busy = false
+		m.subAgentPending = false
+		m.subAgentName = ""
+		m.phase = ""
+		m.streamingIndex = -1
+
+		// Remove the thinking card
+		m.removeThinkingCard()
+
+		if msg.Err != nil {
+			m.appendChat(chatEntry{
+				Kind:   "assistant",
+				Title:  assistantLabel,
+				Body:   "Subagent failed: " + msg.Err.Error(),
+				Status: "error",
+			})
+			m.statusNote = "Subagent error: " + msg.Err.Error()
+			m.refreshViewport()
+			return m, waitForAsync(m.async)
+		}
+		m.appendChat(chatEntry{
+			Kind:   "assistant",
+			Title:  assistantLabel,
+			Body:   msg.Response,
+			Status: "final",
+		})
 		if strings.TrimSpace(msg.Status) != "" {
 			m.statusNote = msg.Status
 		}
