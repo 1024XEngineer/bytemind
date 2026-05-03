@@ -61,7 +61,7 @@ func (m *model) runBuiltinSubAgentCommand(input, builtinName string) error {
 
 	agent, ok := runner.FindBuiltinSubAgent(alias)
 	if !ok {
-		m.appendCommandExchange(input, fmt.Sprintf("builtin subagent is unavailable: %s", builtinName))
+		m.appendCommandExchange(input, fmt.Sprintf("builtin subagent is unavailable: %s", alias))
 		m.statusNote = "Builtin subagent unavailable."
 		return nil
 	}

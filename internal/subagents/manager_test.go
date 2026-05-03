@@ -220,6 +220,27 @@ builtin review body
 	}
 }
 
+func TestHardcodedBuiltinAgentsResolveWithoutFiles(t *testing.T) {
+	workspace := t.TempDir()
+	manager := NewManagerWithDirs(
+		workspace,
+		filepath.Join(workspace, "nonexistent_builtin"),
+		filepath.Join(workspace, "nonexistent_user"),
+		filepath.Join(workspace, "nonexistent_project"),
+	)
+	manager.Reload()
+
+	for _, name := range []string{"/explorer", "explorer", "/review", "review"} {
+		agent, ok := manager.FindBuiltin(name)
+		if !ok {
+			t.Fatalf("expected FindBuiltin(%q) to resolve hardcoded builtin", name)
+		}
+		if agent.Scope != ScopeBuiltin {
+			t.Fatalf("expected builtin scope for %q, got %s", name, agent.Scope)
+		}
+	}
+}
+
 func TestManagerFindMissDoesNotReloadWhenSnapshotLoaded(t *testing.T) {
 	workspace := t.TempDir()
 	manager := NewManagerWithDirs(
