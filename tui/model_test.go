@@ -5205,6 +5205,26 @@ func TestRenderConversationOmitsThinkingRowsFromViewport(t *testing.T) {
 	}
 }
 
+func TestRenderConversationShowsSubAgentThinkingWhilePending(t *testing.T) {
+	m := model{
+		width: 120,
+		viewport: func() viewport.Model {
+			vp := viewport.New(60, 10)
+			return vp
+		}(),
+		subAgentPending: true,
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "/explorer scan agent module", Status: "final"},
+			{Kind: "assistant", Title: thinkingLabel, Body: "Running subagent explorer...", Status: "thinking"},
+		},
+	}
+
+	rendered := m.renderConversation()
+	if !strings.Contains(strings.ToLower(rendered), "running subagent explorer") {
+		t.Fatalf("expected conversation viewport to show subagent thinking row while pending, got %q", rendered)
+	}
+}
+
 func TestApprovalBannerRendersAboveInput(t *testing.T) {
 	input := textarea.New()
 	m := model{

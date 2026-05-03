@@ -25,6 +25,7 @@ import (
 type subAgentCommandRunnerStub struct {
 	builtinAgent subagentspkg.Agent
 	builtinOK    bool
+	lastRequest  tools.DelegateSubAgentRequest
 }
 
 func (s *subAgentCommandRunnerStub) RunPromptWithInput(context.Context, *session.Session, RunPromptInput, string, io.Writer) (string, error) {
@@ -72,7 +73,8 @@ func (s *subAgentCommandRunnerStub) FindBuiltinSubAgent(string) (subagentspkg.Ag
 	return subagentspkg.Agent{}, false
 }
 
-func (s *subAgentCommandRunnerStub) DispatchSubAgent(_ context.Context, _ *session.Session, _ string, _ tools.DelegateSubAgentRequest) (tools.DelegateSubAgentResult, error) {
+func (s *subAgentCommandRunnerStub) DispatchSubAgent(_ context.Context, _ *session.Session, _ string, request tools.DelegateSubAgentRequest) (tools.DelegateSubAgentResult, error) {
+	s.lastRequest = request
 	return tools.DelegateSubAgentResult{
 		OK:      true,
 		Status:  "completed",
@@ -386,6 +388,43 @@ func TestSubmitBuiltinSubAgentPreferenceUpdatesRunIndicator(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for async dispatch result")
+	}
+}
+
+func TestSubmitBuiltinSubAgentPreferenceConfiguresSpinnerAndTimeout(t *testing.T) {
+	runner := &subAgentCommandRunnerStub{
+		builtinAgent: subagentspkg.Agent{Name: "review"},
+		builtinOK:    true,
+	}
+	input := textarea.New()
+	input.Focus()
+	m := model{
+		runner:            runner,
+		sess:              session.New(t.TempDir()),
+		async:             make(chan tea.Msg, 8),
+		input:             input,
+		screen:            screenChat,
+		runIndicatorState: runIndicatorReady,
+	}
+
+	if err := m.submitBuiltinSubAgentPreference("/review inspect changed files", "review", "inspect changed files"); err != nil {
+		t.Fatalf("expected slash preference submission to succeed, got %v", err)
+	}
+	if m.pendingCommandCmd == nil {
+		t.Fatal("expected slash preference to schedule spinner command")
+	}
+
+	select {
+	case msg := <-m.async:
+		if _, ok := msg.(subAgentResultMsg); !ok {
+			t.Fatalf("expected subAgentResultMsg, got %#v", msg)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for async dispatch result")
+	}
+
+	if runner.lastRequest.Timeout != builtinSubAgentRequestTimeout {
+		t.Fatalf("expected builtin subagent timeout %q, got %q", builtinSubAgentRequestTimeout, runner.lastRequest.Timeout)
 	}
 }
 
