@@ -287,6 +287,7 @@ type mcpCommandResultMsg struct {
 type subAgentResultMsg struct {
 	Input    string
 	Response string
+	Summary  string
 	Status   string
 	Err      error
 }
@@ -861,12 +862,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.runIndicatorState = runIndicatorFailed
 			}
+			errBody := "Subagent failed: " + msg.Err.Error()
 			m.appendChat(chatEntry{
 				Kind:   "assistant",
 				Title:  assistantLabel,
-				Body:   "Subagent failed: " + msg.Err.Error(),
+				Body:   errBody,
 				Status: "error",
 			})
+			if m.sess != nil {
+				m.sess.Messages = append(m.sess.Messages, llm.NewAssistantTextMessage(errBody))
+			}
 			m.statusNote = "Subagent error: " + msg.Err.Error()
 			m.refreshViewport()
 			return m, waitForAsync(m.async)
@@ -878,6 +883,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Body:   msg.Response,
 			Status: "final",
 		})
+		if m.sess != nil {
+			summary := strings.TrimSpace(msg.Summary)
+			if summary == "" {
+				summary = "SubAgent task completed."
+			}
+			m.sess.Messages = append(m.sess.Messages, llm.NewAssistantTextMessage(summary))
+		}
 		if strings.TrimSpace(msg.Status) != "" {
 			m.statusNote = msg.Status
 		}

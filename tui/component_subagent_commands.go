@@ -8,6 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/1024XEngineer/bytemind/internal/llm"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
 	"github.com/1024XEngineer/bytemind/internal/tools"
@@ -99,6 +100,9 @@ func (m *model) submitBuiltinSubAgentPreference(input, agentName, task string) e
 		Body:   normalizedInput,
 		Status: "final",
 	})
+	if m.sess != nil {
+		m.sess.Messages = append(m.sess.Messages, llm.NewUserTextMessage(normalizedInput))
+	}
 	m.busy = true
 	m.subAgentPending = true
 	m.subAgentName = agentName
@@ -147,6 +151,7 @@ func (m *model) submitBuiltinSubAgentPreference(input, agentName, task string) e
 		asyncCh <- subAgentResultMsg{
 			Input:    commandInput,
 			Response: renderSubAgentResultCard(result, resultWidth),
+			Summary:  result.Summary,
 			Status:   fmt.Sprintf("Subagent %s completed.", dispatchAgent),
 		}
 	}()
