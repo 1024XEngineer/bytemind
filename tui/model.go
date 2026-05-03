@@ -835,16 +835,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, waitForAsync(m.async)
 	case subAgentResultMsg:
+		elapsed := time.Duration(0)
+		if !m.runStartedAt.IsZero() {
+			elapsed = time.Since(m.runStartedAt)
+			if elapsed < 0 {
+				elapsed = 0
+			}
+		}
+		m.runStartedAt = time.Time{}
+		m.lastRunDuration = elapsed
 		m.busy = false
 		m.subAgentPending = false
 		m.subAgentName = ""
-		m.phase = ""
+		m.phase = "idle"
 		m.streamingIndex = -1
 
 		// Remove the thinking card
 		m.removeThinkingCard()
 
 		if msg.Err != nil {
+			if errors.Is(msg.Err, context.Canceled) {
+				m.runIndicatorState = runIndicatorCanceled
+			} else {
+				m.runIndicatorState = runIndicatorFailed
+			}
 			m.appendChat(chatEntry{
 				Kind:   "assistant",
 				Title:  assistantLabel,
@@ -855,6 +869,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewport()
 			return m, waitForAsync(m.async)
 		}
+		m.runIndicatorState = runIndicatorComplete
 		m.appendChat(chatEntry{
 			Kind:   "assistant",
 			Title:  assistantLabel,

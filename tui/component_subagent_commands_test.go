@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -337,6 +338,79 @@ func TestSubmitBuiltinSubAgentPreferencePersistsDisplayTextInChatHistory(t *test
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for async dispatch result")
+	}
+}
+
+func TestSubmitBuiltinSubAgentPreferenceUpdatesRunIndicator(t *testing.T) {
+	runner := &subAgentCommandRunnerStub{
+		builtinAgent: subagentspkg.Agent{Name: "review"},
+		builtinOK:    true,
+	}
+	input := textarea.New()
+	input.Focus()
+	m := model{
+		runner:            runner,
+		sess:              session.New(t.TempDir()),
+		async:             make(chan tea.Msg, 8),
+		input:             input,
+		screen:            screenChat,
+		runIndicatorState: runIndicatorReady,
+	}
+
+	if err := m.submitBuiltinSubAgentPreference("/review inspect changed files", "review", "inspect changed files"); err != nil {
+		t.Fatalf("expected slash preference submission to succeed, got %v", err)
+	}
+	if m.runIndicatorState != runIndicatorRunning {
+		t.Fatalf("expected slash preference to set running indicator, got %q", m.runIndicatorState)
+	}
+	if m.runStartedAt.IsZero() {
+		t.Fatal("expected slash preference to record run start time")
+	}
+
+	select {
+	case msg := <-m.async:
+		result, ok := msg.(subAgentResultMsg)
+		if !ok {
+			t.Fatalf("expected subAgentResultMsg, got %#v", msg)
+		}
+		next, _ := m.Update(result)
+		updated := next.(model)
+		if updated.runIndicatorState != runIndicatorComplete {
+			t.Fatalf("expected completed indicator after subagent result, got %q", updated.runIndicatorState)
+		}
+		if updated.phase != "idle" {
+			t.Fatalf("expected phase to become idle after subagent result, got %q", updated.phase)
+		}
+		if updated.runStartedAt != (time.Time{}) {
+			t.Fatalf("expected run start time to reset after completion, got %v", updated.runStartedAt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for async dispatch result")
+	}
+}
+
+func TestSubAgentResultErrorSetsFailedIndicator(t *testing.T) {
+	m := model{
+		async:             make(chan tea.Msg, 1),
+		busy:              true,
+		subAgentPending:   true,
+		subAgentName:      "review",
+		runStartedAt:      time.Now().Add(-80 * time.Millisecond),
+		runIndicatorState: runIndicatorRunning,
+		screen:            screenChat,
+	}
+
+	next, _ := m.Update(subAgentResultMsg{
+		Input: "/review inspect changed files",
+		Err:   errors.New("boom"),
+	})
+	updated := next.(model)
+
+	if updated.runIndicatorState != runIndicatorFailed {
+		t.Fatalf("expected failed indicator after subagent error, got %q", updated.runIndicatorState)
+	}
+	if !containsChatEntry(updated.chatItems, "assistant", "Subagent failed: boom") {
+		t.Fatalf("expected assistant error entry in chat, got %#v", updated.chatItems)
 	}
 }
 

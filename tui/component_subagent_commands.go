@@ -103,6 +103,9 @@ func (m *model) submitBuiltinSubAgentPreference(input, agentName, task string) e
 	m.subAgentPending = true
 	m.subAgentName = agentName
 	m.phase = "thinking"
+	m.runStartedAt = time.Now()
+	m.lastRunDuration = 0
+	m.runIndicatorState = runIndicatorRunning
 	m.statusNote = fmt.Sprintf("Running subagent %s...", agentName)
 
 	// Add thinking card to conversation for visual feedback
@@ -319,7 +322,7 @@ func renderSubAgentResultCard(result tools.DelegateSubAgentResult, width int) st
 		}
 		errLine := errorStyle.Render("Error: ")
 		if code != "" {
-			errLine += mutedStyle.Render("["+code+"] ")
+			errLine += mutedStyle.Render("[" + code + "] ")
 		}
 		errLine += errorStyle.Render(message)
 		sections = append(sections, errLine)
