@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
@@ -145,7 +146,11 @@ func renderStatusBarWithWidthDefault(m model, width int) string {
 		"Skill: " + m.currentSkillLabel(),
 	}
 	if m.subAgentPending && m.subAgentName != "" {
-		leftParts = append(leftParts, "SubAgent: "+m.subAgentName+"...")
+		elapsedStr := ""
+		if !m.runStartedAt.IsZero() {
+			elapsedStr = " | " + formatElapsed(time.Since(m.runStartedAt))
+		}
+		leftParts = append(leftParts, "SubAgent: "+accentStyle.Render(m.subAgentName)+elapsedStr)
 	}
 	left := strings.Join(leftParts, "  |  ")
 	right := strings.Join([]string{

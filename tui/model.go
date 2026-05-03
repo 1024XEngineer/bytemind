@@ -392,6 +392,7 @@ type model struct {
 	busy                       bool
 	subAgentPending            bool
 	subAgentName               string
+	subAgentTask               string
 	runStartedAt               time.Time
 	lastRunDuration            time.Duration
 	runIndicatorState          runIndicatorState
@@ -847,6 +848,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.busy = false
 		m.subAgentPending = false
 		m.subAgentName = ""
+		m.subAgentTask = ""
 		m.phase = "idle"
 		m.streamingIndex = -1
 

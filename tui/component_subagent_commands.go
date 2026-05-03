@@ -104,6 +104,7 @@ func (m *model) submitBuiltinSubAgentPreference(input, agentName, task string) e
 	m.busy = true
 	m.subAgentPending = true
 	m.subAgentName = agentName
+	m.subAgentTask = task
 	m.phase = "thinking"
 	m.runStartedAt = time.Now()
 	m.lastRunDuration = 0
@@ -111,12 +112,12 @@ func (m *model) submitBuiltinSubAgentPreference(input, agentName, task string) e
 	m.pendingCommandCmd = m.resetThinkingSpinner()
 	m.statusNote = fmt.Sprintf("Running subagent %s...", agentName)
 
-	// Add thinking card to conversation for visual feedback
-	thinkingBody := fmt.Sprintf("%s Running subagent %s...", m.spinner.View(), agentName)
+	// Add styled progress card to conversation
+	progressCard := renderSubAgentProgressCard(agentName, task, m.spinner.View(), "0s", max(40, m.width-8))
 	m.appendChat(chatEntry{
 		Kind:   "assistant",
 		Title:  thinkingLabel,
-		Body:   thinkingBody,
+		Body:   progressCard,
 		Status: "thinking",
 	})
 	m.streamingIndex = len(m.chatItems) - 1
@@ -299,7 +300,7 @@ func renderSubAgentResultCard(result tools.DelegateSubAgentResult, width int) st
 	badgeType := subAgentStatusBadgeType(status)
 	header := lipgloss.JoinHorizontal(lipgloss.Left,
 		strongStyle.Render("SubAgent "),
-		accentStyle.Render(agentName),
+		accentStyle.Bold(true).Render(agentName),
 		lipgloss.NewStyle().Render("  "),
 		renderPillBadge(strings.ToUpper(status), badgeType),
 	)
@@ -316,6 +317,10 @@ func renderSubAgentResultCard(result tools.DelegateSubAgentResult, width int) st
 	if len(meta) > 0 {
 		sections = append(sections, mutedStyle.Render(strings.Join(meta, "  |  ")))
 	}
+
+	// Divider
+	divider := strings.Repeat("─", innerWidth)
+	sections = append(sections, mutedStyle.Render(divider))
 
 	// Error section
 	if !result.OK && result.Error != nil {
@@ -338,7 +343,6 @@ func renderSubAgentResultCard(result tools.DelegateSubAgentResult, width int) st
 		if summary == "" {
 			summary = "SubAgent task completed."
 		}
-		sections = append(sections, "")
 		sections = append(sections, wrapText(summary, innerWidth))
 	}
 
@@ -346,6 +350,56 @@ func renderSubAgentResultCard(result tools.DelegateSubAgentResult, width int) st
 	return lipgloss.NewStyle().
 		BorderLeft(true).
 		BorderForeground(subAgentBorderAccent(status)).
+		Background(semanticColors.PanelMuted).
+		Padding(0, 1).
+		Width(width).
+		Render(content)
+}
+
+func formatElapsed(d time.Duration) string {
+	if d < time.Second {
+		return "0s"
+	}
+	s := int(d.Seconds())
+	if s < 60 {
+		return fmt.Sprintf("%ds", s)
+	}
+	return fmt.Sprintf("%dm%ds", s/60, s%60)
+}
+
+func renderSubAgentProgressCard(agentName, task, spinner, elapsed string, width int) string {
+	if width < 40 {
+		width = 40
+	}
+	innerWidth := width - 4
+
+	var sections []string
+
+	// Header: spinner + agent name
+	header := lipgloss.JoinHorizontal(lipgloss.Left,
+		lipgloss.NewStyle().Render(spinner+" "),
+		accentStyle.Bold(true).Render(agentName),
+	)
+	sections = append(sections, header)
+
+	// Task snippet (truncated)
+	taskSnippet := strings.TrimSpace(task)
+	if taskSnippet != "" {
+		if len(taskSnippet) > innerWidth*2 {
+			taskSnippet = taskSnippet[:innerWidth*2-3] + "..."
+		}
+		sections = append(sections, mutedStyle.Render(wrapText(taskSnippet, innerWidth)))
+	}
+
+	// Elapsed time
+	if elapsed != "" {
+		sections = append(sections, mutedStyle.Render("Elapsed: "+elapsed))
+	}
+
+	content := lipgloss.JoinVertical(lipgloss.Left, sections...)
+	return lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderForeground(semanticColors.Accent).
 		Background(semanticColors.PanelMuted).
 		Padding(0, 1).
 		Width(width).

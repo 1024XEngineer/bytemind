@@ -244,7 +244,12 @@ func (m *model) updateThinkingCard() {
 	item.Title = thinkingLabel
 	item.Status = "thinking"
 	if m.subAgentPending && m.subAgentName != "" {
-		item.Body = fmt.Sprintf("%s Running subagent %s...", m.spinner.View(), m.subAgentName)
+		elapsed := ""
+		if !m.runStartedAt.IsZero() {
+			elapsed = formatElapsed(time.Since(m.runStartedAt))
+		}
+		progressWidth := max(40, m.width-8)
+		item.Body = renderSubAgentProgressCard(m.subAgentName, m.subAgentTask, m.spinner.View(), elapsed, progressWidth)
 	} else if strings.TrimSpace(item.Body) == "" {
 		item.Body = m.thinkingText()
 	}
