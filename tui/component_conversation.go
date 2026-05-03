@@ -64,7 +64,7 @@ func (m model) shouldShowThinkingRowInConversation(item chatEntry) bool {
 		return false
 	}
 	body := strings.ToLower(strings.TrimSpace(item.Body))
-	return strings.Contains(body, "running subagent")
+	return strings.Contains(body, "task:") || strings.Contains(body, "running subagent")
 }
 
 func (m model) renderConversationCopy() string {

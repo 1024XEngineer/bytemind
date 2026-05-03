@@ -110,12 +110,11 @@ func (m *model) submitBuiltinSubAgentPreference(input, agentName, task string) e
 	m.pendingCommandCmd = m.resetThinkingSpinner()
 	m.statusNote = fmt.Sprintf("Running subagent %s...", agentName)
 
-	// Add styled progress card to conversation
-	progressCard := renderSubAgentProgressCard(agentName, task, m.spinner.View(), "0s", max(40, m.width-8))
+	// Add thinking card with subagent progress info
 	m.appendChat(chatEntry{
 		Kind:   "assistant",
 		Title:  thinkingLabel,
-		Body:   progressCard,
+		Body:   buildSubAgentThinkingBody(agentName, task, m.spinner.View(), "0s"),
 		Status: "thinking",
 	})
 	m.streamingIndex = len(m.chatItems) - 1
@@ -401,6 +400,19 @@ func renderSubAgentProgressCard(agentName, task, spinner, elapsed string, width 
 		Padding(0, 1).
 		Width(width).
 		Render(content)
+}
+
+func buildSubAgentThinkingBody(agentName, task, spinner, elapsed string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s\n", spinner, agentName)
+	if taskSnippet := strings.TrimSpace(task); taskSnippet != "" {
+		if len(taskSnippet) > 120 {
+			taskSnippet = taskSnippet[:117] + "..."
+		}
+		fmt.Fprintf(&b, "Task: %s\n", taskSnippet)
+	}
+	fmt.Fprintf(&b, "Elapsed: %s", elapsed)
+	return b.String()
 }
 
 func subAgentStatusBadgeType(status string) string {
