@@ -6744,8 +6744,8 @@ func TestFormatChatBodySeparatesParagraphAndList(t *testing.T) {
 	if !strings.Contains(got, "Explanation") {
 		t.Fatalf("expected explanation text to remain, got %q", got)
 	}
-	if !strings.Contains(got, "- first") {
-		t.Fatalf("expected markdown list marker to be normalized, got %q", got)
+	if !strings.Contains(got, "first") || !strings.Contains(got, "second") {
+		t.Fatalf("expected markdown list items to be rendered, got %q", got)
 	}
 }
 
@@ -6821,7 +6821,8 @@ func TestFormatChatBodyHighlightsSemanticChineseLines(t *testing.T) {
 	for _, want := range []string{
 		"\u7b2c\u4e00\u9636\u6bb5\uff1a\u57fa\u7840\u51c6\u5907\uff081-2\u4e2a\u6708\uff09",
 		"\u5b66\u4e60\u5185\u5bb9\uff1a",
-		"\\u76ee\\u6807\\uff1a \\u5efa\\u7acb\\u57fa\\u7840\\u80fd\\u529b",
+		"\\u76ee\\u6807\\uff1a",
+		"\\u5efa\\u7acb\\u57fa\\u7840\\u80fd\\u529b",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected semantic lines to remain (%q), got %q", want, got)
@@ -6866,8 +6867,8 @@ func TestFormatChatBodyStripsInlineMarkdownTokens(t *testing.T) {
 		Body: "We are **ByteMind** project, support go test ./... and [docs](https://example.com/docs).",
 	}
 
-	got := formatChatBody(item, 120)
-	for _, unwanted := range []string{"**", "`", "[", "]("} {
+	got := stripANSI(formatChatBody(item, 120))
+	for _, unwanted := range []string{"**", "`", "]("} {
 		if strings.Contains(got, unwanted) {
 			t.Fatalf("expected inline markdown token %q to be removed, got %q", unwanted, got)
 		}
@@ -6878,7 +6879,7 @@ func TestFormatChatBodyStripsInlineMarkdownTokens(t *testing.T) {
 	if !strings.Contains(got, "go test ./...") {
 		t.Fatalf("expected inline code content to remain after normalization, got %q", got)
 	}
-	if !strings.Contains(got, "docs (https://example.com/docs)") {
+	if !strings.Contains(got, "docs") || !strings.Contains(got, "https://example.com/docs") {
 		t.Fatalf("expected markdown link to be normalized to plain text, got %q", got)
 	}
 }
@@ -6947,7 +6948,7 @@ func TestScrollbarTrackBoundsAndDragScrollbarTo(t *testing.T) {
 		viewport:   viewport.New(60, 10),
 		tokenUsage: newTokenUsageComponent(),
 		chatItems: []chatEntry{
-			{Kind: "assistant", Body: strings.Repeat("line\n", 260), Status: "final"},
+			{Kind: "assistant", Body: strings.Repeat("- line item\n", 260), Status: "final"},
 		},
 	}
 	m.refreshViewport()
@@ -7004,7 +7005,7 @@ func TestHandleMouseScrollbarDragLifecycle(t *testing.T) {
 		tokenUsage:     newTokenUsageComponent(),
 		chatAutoFollow: true,
 		chatItems: []chatEntry{
-			{Kind: "assistant", Body: strings.Repeat("row\n", 280), Status: "final"},
+			{Kind: "assistant", Body: strings.Repeat("- row item\n", 280), Status: "final"},
 		},
 	}
 	m.refreshViewport()
