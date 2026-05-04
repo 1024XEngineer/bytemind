@@ -511,6 +511,217 @@ func TestRunPromptPlanModeFinalizesWithoutUpdatePlan(t *testing.T) {
 	}
 }
 
+func TestRunPromptPlanModeWithToolCallsFinalizesWithoutRepair(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModePlan
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{}`,
+				},
+			}},
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-2",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "read_file",
+					Arguments: `{"path":"main.go"}`,
+				},
+			}},
+		},
+		{
+			Role:    llm.RoleAssistant,
+			Content: "Based on my analysis, here's the plan:\n1. Modify the config\n2. Update the main function\n3. Add tests",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 6,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "analyze the codebase and create a plan", "plan", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(answer, "Based on my analysis") {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected three requests (list_files + read_file + finalize), got %d", len(client.requests))
+	}
+	// Verify no update_plan tool was called
+	for _, msg := range sess.Messages {
+		for _, tc := range msg.ToolCalls {
+			if tc.Function.Name == "update_plan" {
+				t.Fatal("expected no update_plan tool calls in plan mode")
+			}
+		}
+	}
+	// Verify tool calls were executed
+	if len(sess.Messages) < 6 {
+		t.Fatalf("expected at least 6 session messages, got %d", len(sess.Messages))
+	}
+}
+
+func TestRunPromptBuildModeWithMultipleToolCalls(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModeBuild
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{
+				{
+					ID:   "call-1",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "list_files",
+						Arguments: `{}`,
+					},
+				},
+				{
+					ID:   "call-2",
+					Type: "function",
+					Function: llm.ToolFunctionCall{
+						Name:      "search_text",
+						Arguments: `{"query":"func main"}`,
+					},
+				},
+			},
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-3",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "read_file",
+					Arguments: `{"path":"main.go"}`,
+				},
+			}},
+		},
+		{
+			Role:    "assistant",
+			Content: "Implementation complete. Modified main.go and updated config.",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 6,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "implement the feature", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(answer, "Implementation complete") {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(client.requests) != 3 {
+		t.Fatalf("expected three requests (parallel tools + read_file + finalize), got %d", len(client.requests))
+	}
+	// Verify all tool calls were executed
+	toolCalls := make([]string, 0)
+	for _, msg := range sess.Messages {
+		for _, tc := range msg.ToolCalls {
+			toolCalls = append(toolCalls, tc.Function.Name)
+		}
+	}
+	expectedTools := []string{"list_files", "search_text", "read_file"}
+	if len(toolCalls) != len(expectedTools) {
+		t.Fatalf("expected %d tool calls, got %d: %v", len(expectedTools), len(toolCalls), toolCalls)
+	}
+}
+
+func TestRunPromptNoLoopWhenLLMDoesNotFollowProtocol(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModePlan
+
+	// Simulate LLM that says "I will do X" without tool calls multiple times
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    "assistant",
+			Content: "I will read the main.go file first.",
+		},
+		{
+			Role:    "assistant",
+			Content: "I will check the config files next.",
+		},
+		{
+			Role:    "assistant",
+			Content: "I will implement the changes.",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 4,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "analyze the codebase", "plan", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The agent should finalize on first response (no tool calls = finalize)
+	if !strings.Contains(answer, "I will read the main.go file first") {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	// Should only make 1 request (finalize), not loop
+	if len(client.requests) != 1 {
+		t.Fatalf("expected one request (finalize), got %d", len(client.requests))
+	}
+}
+
 func TestRunPromptPreservesBlockerQuestionWithoutRepair(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
