@@ -1210,3 +1210,189 @@ func (e fmtErrorWithCode) Error() string {
 }
 
 func (e fmtErrorWithCode) Code() string { return e.code }
+
+func TestPreflightResultName(t *testing.T) {
+	if got := preflightResultName("explorer"); got != "explorer" {
+		t.Fatalf("expected explorer, got %q", got)
+	}
+	if got := preflightResultName("  "); got != "unknown" {
+		t.Fatalf("expected unknown for blank, got %q", got)
+	}
+	if got := preflightResultName(""); got != "unknown" {
+		t.Fatalf("expected unknown for empty, got %q", got)
+	}
+}
+
+func TestSessionIDFromExecutionContext(t *testing.T) {
+	if got := sessionIDFromExecutionContext(nil); got != "" {
+		t.Fatalf("expected empty for nil execCtx, got %q", got)
+	}
+	if got := sessionIDFromExecutionContext(&tools.ExecutionContext{}); got != "" {
+		t.Fatalf("expected empty for nil session, got %q", got)
+	}
+	sess := session.New("/ws")
+	got := sessionIDFromExecutionContext(&tools.ExecutionContext{Session: sess})
+	if got == "" {
+		t.Fatal("expected non-empty session id")
+	}
+}
+
+func TestMapDelegateSubAgentErrorNil(t *testing.T) {
+	if got := mapDelegateSubAgentError(nil, "fallback"); got != nil {
+		t.Fatalf("expected nil for nil error, got %v", got)
+	}
+}
+
+func TestMapDelegateSubAgentErrorPlainError(t *testing.T) {
+	mapped := mapDelegateSubAgentError(errors.New("something broke"), "fallback_code")
+	if mapped == nil {
+		t.Fatal("expected mapped error")
+	}
+	if mapped.Code != "fallback_code" {
+		t.Fatalf("expected fallback code, got %q", mapped.Code)
+	}
+	if !mapped.Retryable {
+		t.Fatal("expected retryable true for plain error")
+	}
+}
+
+func TestMapDelegateSubAgentErrorExecutionError(t *testing.T) {
+	execErr := &subAgentExecutionError{code: "custom_code", message: "exec failed", retryable: false}
+	mapped := mapDelegateSubAgentError(execErr, "fallback")
+	if mapped == nil {
+		t.Fatal("expected mapped error")
+	}
+	if mapped.Code != "custom_code" {
+		t.Fatalf("expected custom code, got %q", mapped.Code)
+	}
+	if mapped.Retryable {
+		t.Fatal("expected retryable false")
+	}
+}
+
+func TestMapDelegateSubAgentErrorExecutionErrorEmptyCode(t *testing.T) {
+	execErr := &subAgentExecutionError{code: "", message: "exec failed", retryable: true}
+	mapped := mapDelegateSubAgentError(execErr, "fallback")
+	if mapped.Code != "fallback" {
+		t.Fatalf("expected fallback code for empty execution error code, got %q", mapped.Code)
+	}
+}
+
+func TestCloneToolSet(t *testing.T) {
+	if got := cloneToolSet(nil); got != nil {
+		t.Fatalf("expected nil for nil input, got %v", got)
+	}
+	if got := cloneToolSet(map[string]struct{}{}); got != nil {
+		t.Fatalf("expected nil for empty input, got %v", got)
+	}
+	src := map[string]struct{}{"a": {}, "b": {}}
+	cloned := cloneToolSet(src)
+	if len(cloned) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(cloned))
+	}
+	// Mutating source should not affect clone
+	src["c"] = struct{}{}
+	if len(cloned) != 2 {
+		t.Fatal("clone was affected by source mutation")
+	}
+}
+
+func TestIsToolVisibleInParent(t *testing.T) {
+	visible := []string{"read_file", "write_file", "task_output", "task_stop"}
+
+	if isToolVisibleInParent("", visible, nil, nil) {
+		t.Fatal("expected empty name to be invisible")
+	}
+	if isToolVisibleInParent("nonexistent", visible, nil, nil) {
+		t.Fatal("expected nonexistent tool to be invisible")
+	}
+	if !isToolVisibleInParent("read_file", visible, nil, nil) {
+		t.Fatal("expected read_file to be visible")
+	}
+
+	// With allowed list
+	allowed := map[string]struct{}{"read_file": {}}
+	if !isToolVisibleInParent("read_file", visible, allowed, nil) {
+		t.Fatal("expected read_file in allowed list")
+	}
+	if isToolVisibleInParent("write_file", visible, allowed, nil) {
+		t.Fatal("expected write_file not in allowed list")
+	}
+
+	// With denied list
+	denied := map[string]struct{}{"read_file": {}}
+	if isToolVisibleInParent("read_file", visible, nil, denied) {
+		t.Fatal("expected read_file to be denied")
+	}
+}
+
+func TestIsReadOnlySubAgentToolset(t *testing.T) {
+	runner := NewRunner(Options{
+		Workspace: t.TempDir(),
+		Registry:  tools.DefaultRegistry(),
+	})
+
+	if runner.isReadOnlySubAgentToolset(nil) {
+		t.Fatal("expected false for nil toolset")
+	}
+	if runner.isReadOnlySubAgentToolset([]string{}) {
+		t.Fatal("expected false for empty toolset")
+	}
+	// read_file is read-only
+	if !runner.isReadOnlySubAgentToolset([]string{"read_file", "search_text"}) {
+		t.Fatal("expected read-only tools to return true")
+	}
+	// write_file is not read-only
+	if runner.isReadOnlySubAgentToolset([]string{"read_file", "write_file"}) {
+		t.Fatal("expected mixed toolset to return false")
+	}
+}
+
+func TestNewSubAgentInvocationID(t *testing.T) {
+	id1 := newSubAgentInvocationID()
+	id2 := newSubAgentInvocationID()
+	if id1 == "" || id2 == "" {
+		t.Fatal("expected non-empty invocation ids")
+	}
+	if id1 == id2 {
+		t.Fatal("expected unique invocation ids")
+	}
+	if !strings.HasPrefix(id1, "subagent-") {
+		t.Fatalf("expected subagent- prefix, got %q", id1)
+	}
+}
+
+func TestMapSubAgentTerminalResultWithErrorCode(t *testing.T) {
+	code, retryable := mapSubAgentTerminalResult(corepkg.TaskKilled, "custom_code")
+	if code != "custom_code" {
+		t.Fatalf("expected custom code, got %q", code)
+	}
+	if retryable {
+		t.Fatal("expected retryable false for killed with custom code")
+	}
+
+	code, retryable = mapSubAgentTerminalResult(corepkg.TaskFailed, "custom_code")
+	if code != "custom_code" {
+		t.Fatalf("expected custom code, got %q", code)
+	}
+	if !retryable {
+		t.Fatal("expected retryable true for failed")
+	}
+}
+
+func TestDelegateSubAgentNilRunner(t *testing.T) {
+	var r *Runner
+	result, err := r.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test",
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for nil runner")
+	}
+	if result.Error == nil || result.Error.Code != subagentspkg.ErrorCodeSubAgentUnavailable {
+		t.Fatalf("expected subagent_unavailable, got %v", result.Error)
+	}
+}
