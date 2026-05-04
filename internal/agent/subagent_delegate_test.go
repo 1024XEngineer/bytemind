@@ -1703,6 +1703,186 @@ func TestDelegateSubAgentRunSyncExecutionError(t *testing.T) {
 	}
 }
 
+// invokingRuntimeGateway calls Execute synchronously and invokes OnTaskStateChanged.
+type invokingRuntimeGateway struct {
+	mu         sync.Mutex
+	calls      []RuntimeTaskRequest
+	result     runtimepkg.TaskResult
+	execErr    error
+	taskStatus corepkg.TaskStatus
+}
+
+func (g *invokingRuntimeGateway) RunSync(_ context.Context, req RuntimeTaskRequest) (RuntimeTaskExecution, error) {
+	g.mu.Lock()
+	g.calls = append(g.calls, req)
+	g.mu.Unlock()
+
+	var output []byte
+	var execErr error
+	if req.Execute != nil {
+		output, execErr = req.Execute(context.Background())
+	}
+
+	status := g.taskStatus
+	if status == "" {
+		status = corepkg.TaskCompleted
+	}
+	result := g.result
+	result.TaskID = "runtime-task-1"
+	result.Status = status
+	if len(result.Output) == 0 && output != nil {
+		result.Output = output
+	}
+
+	if req.OnTaskStateChanged != nil {
+		req.OnTaskStateChanged(runtimepkg.Task{
+			ID:        "runtime-task-1",
+			Status:    status,
+			Output:    result.Output,
+			ErrorCode: result.ErrorCode,
+		})
+	}
+
+	if execErr != nil {
+		return RuntimeTaskExecution{TaskID: "runtime-task-1", Result: result, ExecutionError: execErr}, nil
+	}
+	return RuntimeTaskExecution{TaskID: "runtime-task-1", Result: result}, nil
+}
+
+func (g *invokingRuntimeGateway) RunAsync(_ context.Context, _ RuntimeTaskRequest) (RuntimeTaskLaunch, error) {
+	return RuntimeTaskLaunch{TaskID: "runtime-task-1"}, nil
+}
+
+func TestDelegateSubAgentExecuteCallbackError(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &invokingRuntimeGateway{}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config:    config.Config{Provider: config.ProviderConfig{Model: "test-model"}, MaxIterations: 2},
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for execute error")
+	}
+}
+
+func TestDelegateSubAgentOnTaskStateChangedFailedStatus(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{Role: llm.RoleAssistant, Content: "done"},
+	}}
+	notifier := &defaultSubAgentNotifier{}
+	gateway := &invokingRuntimeGateway{
+		taskStatus: corepkg.TaskFailed,
+		result:     runtimepkg.TaskResult{ErrorCode: "worker_crash"},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config:    config.Config{Provider: config.ProviderConfig{Model: "test-model"}, MaxIterations: 2},
+		Client:    client,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	runner.subAgentNotifier = notifier
+	sess := session.New(workspace)
+	result, _ := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild, Session: sess}, nil)
+	if result.OK {
+		t.Fatal("expected failure for failed task")
+	}
+	// Verify notification was enqueued
+	pending := notifier.DrainPending()
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 notification, got %d", len(pending))
+	}
+	if pending[0].Status != subAgentResultStatusFailed {
+		t.Fatalf("expected failed status in notification, got %q", pending[0].Status)
+	}
+	if pending[0].ErrorCode != "worker_crash" {
+		t.Fatalf("expected worker_crash error code, got %q", pending[0].ErrorCode)
+	}
+}
+
+func TestDelegateSubAgentOnTaskStateChangedCompletedWithSummary(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{Role: llm.RoleAssistant, Content: "done"},
+	}}
+	notifier := &defaultSubAgentNotifier{}
+	gateway := &invokingRuntimeGateway{
+		taskStatus: corepkg.TaskCompleted,
+		result: runtimepkg.TaskResult{
+			Output: []byte(`{"ok":true,"status":"completed","summary":"scan complete"}`),
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config:    config.Config{Provider: config.ProviderConfig{Model: "test-model"}, MaxIterations: 2},
+		Client:    client,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	runner.subAgentNotifier = notifier
+	sess := session.New(workspace)
+	result, _ := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent:  "explorer",
+		Task:   "test",
+		Output: "summary",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild, Session: sess}, nil)
+	if !result.OK {
+		t.Fatalf("expected success, got %#v", result)
+	}
+	pending := notifier.DrainPending()
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 notification, got %d", len(pending))
+	}
+	if pending[0].Status != subAgentResultStatusCompleted {
+		t.Fatalf("expected completed status, got %q", pending[0].Status)
+	}
+	if pending[0].Summary != "scan complete" {
+		t.Fatalf("expected summary in notification, got %q", pending[0].Summary)
+	}
+}
+
+func TestEffectiveToolsetHashNilInput(t *testing.T) {
+	if got := effectiveToolsetHash(nil); got != "" {
+		t.Fatalf("expected empty for nil, got %q", got)
+	}
+	if got := effectiveToolsetHash([]string{}); got != "" {
+		t.Fatalf("expected empty for empty slice, got %q", got)
+	}
+}
+
+// minimalRegistry does not implement toolSpecLookup (no Spec method).
+type minimalRegistry struct{}
+
+func (r *minimalRegistry) DefinitionsForMode(_ planpkg.AgentMode) []llm.ToolDefinition {
+	return nil
+}
+func (r *minimalRegistry) DefinitionsForModeWithFilters(_ planpkg.AgentMode, _, _ []string) []llm.ToolDefinition {
+	return nil
+}
+
+func TestIsReadOnlySubAgentToolsetNonSpecRegistry(t *testing.T) {
+	runner := &Runner{registry: &minimalRegistry{}}
+	if runner.isReadOnlySubAgentToolset([]string{"read_file"}) {
+		t.Fatal("expected false for non-Spec registry")
+	}
+}
+
 func TestDelegateSubAgentNilRunner(t *testing.T) {
 	var r *Runner
 	result, err := r.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{

@@ -1,16 +1,28 @@
 package agent
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/1024XEngineer/bytemind/internal/config"
+	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
 	"github.com/1024XEngineer/bytemind/internal/tools"
 )
+
+type contextErrorExtensions struct {
+	extensionspkg.NopManager
+	err error
+}
+
+func (e *contextErrorExtensions) ResolveAllTools(_ context.Context) ([]extensionspkg.ExtensionTool, error) {
+	return nil, e.err
+}
 
 type recordingObserver struct {
 	mu     sync.Mutex
@@ -407,5 +419,118 @@ func TestBuildSubAgentResultFromAnswerUnmarshalableJSON(t *testing.T) {
 	// Unmarshal fails, falls back to trimmed raw input
 	if result.Summary != input {
 		t.Fatalf("expected fallback to raw input, got %q", result.Summary)
+	}
+}
+
+func TestExecuteSyncExtensionToolsContextCanceled(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{Role: llm.RoleAssistant, Content: "done"},
+	}}
+	ext := &contextErrorExtensions{err: context.Canceled}
+	runner := NewRunner(Options{
+		Workspace:  workspace,
+		Config:     config.Config{Provider: config.ProviderConfig{Model: "test-model"}, MaxIterations: 2},
+		Client:     client,
+		Registry:   tools.DefaultRegistry(),
+		Extensions: ext,
+	})
+	executor := NewSubAgentExecutor(runner)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	result, err := executor.Execute(ctx, SubAgentExecutionInput{
+		Request:      tools.DelegateSubAgentRequest{Agent: "explorer", Task: "scan"},
+		Preflight:    subagentspkg.PreflightResult{Definition: subagentspkg.Agent{Name: "explorer", Tools: []string{"read_file"}}},
+		InvocationID: "inv-1",
+		Agent:        "explorer",
+		RunMode:      planpkg.ModeBuild,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	// syncExtensionTools returns canceled, but the executor continues and may succeed or fail
+	// depending on downstream behavior. We just verify no panic and valid result.
+	_ = result
+}
+
+func TestExecutePrepareRunPromptError(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{Role: llm.RoleAssistant, Content: "done"},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:         config.ProviderConfig{Model: "test-model"},
+			MaxIterations:    2,
+			SandboxEnabled:   true,
+			SystemSandboxMode: "required",
+		},
+		Client:   client,
+		Registry: tools.DefaultRegistry(),
+	})
+	executor := NewSubAgentExecutor(runner)
+
+	// Swap the resolver to always return an error
+	original := resolveAgentSystemSandboxRuntimeStatus
+	resolveAgentSystemSandboxRuntimeStatus = func(_ bool, _ string) (tools.SystemSandboxRuntimeStatus, error) {
+		return tools.SystemSandboxRuntimeStatus{}, fmt.Errorf("sandbox unavailable")
+	}
+	defer func() { resolveAgentSystemSandboxRuntimeStatus = original }()
+
+	result, err := executor.Execute(t.Context(), SubAgentExecutionInput{
+		Request:      tools.DelegateSubAgentRequest{Agent: "explorer", Task: "scan"},
+		Preflight:    subagentspkg.PreflightResult{Definition: subagentspkg.Agent{Name: "explorer", Tools: []string{"read_file"}}},
+		InvocationID: "inv-1",
+		Agent:        "explorer",
+		RunMode:      planpkg.ModeBuild,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for prepareRunPrompt error")
+	}
+}
+
+type errorClient struct {
+	err error
+}
+
+func (c *errorClient) CreateMessage(_ context.Context, _ llm.ChatRequest) (llm.Message, error) {
+	return llm.Message{}, c.err
+}
+
+func (c *errorClient) StreamMessage(_ context.Context, _ llm.ChatRequest, _ func(string)) (llm.Message, error) {
+	return llm.Message{}, c.err
+}
+
+func TestExecuteRunPromptTurnsError(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config:    config.Config{Provider: config.ProviderConfig{Model: "test-model"}, MaxIterations: 2},
+		Client:    &errorClient{err: fmt.Errorf("llm connection failed")},
+		Registry:  tools.DefaultRegistry(),
+	})
+	executor := NewSubAgentExecutor(runner)
+
+	result, err := executor.Execute(t.Context(), SubAgentExecutionInput{
+		Request:      tools.DelegateSubAgentRequest{Agent: "explorer", Task: "scan"},
+		Preflight:    subagentspkg.PreflightResult{Definition: subagentspkg.Agent{Name: "explorer", Tools: []string{"read_file"}}},
+		InvocationID: "inv-1",
+		Agent:        "explorer",
+		RunMode:      planpkg.ModeBuild,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for runPromptTurns error")
 	}
 }
