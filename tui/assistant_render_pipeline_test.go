@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -99,5 +100,44 @@ func TestBlueGlamourStyleOverridesCoreBlueThemeSlots(t *testing.T) {
 	}
 	if cfg.Table.ColumnSeparator == nil || *cfg.Table.ColumnSeparator != "\u2502" {
 		t.Fatalf("expected table column separator override, got %+v", cfg.Table.ColumnSeparator)
+	}
+}
+
+func TestRenderAssistantBodyReturnsEmptyAfterStructuralTagStripping(t *testing.T) {
+	got := renderAssistantBody("<proposed_plan>\n\n</proposed_plan>", 80)
+	if got != "" {
+		t.Fatalf("expected empty output after stripping structural tags, got %q", got)
+	}
+}
+
+func TestRenderAssistantBodyUsesMarkdownRendererWhenAvailable(t *testing.T) {
+	got := renderAssistantBody("## Goal\n\n- ship it", 80)
+	if strings.TrimSpace(got) == "" {
+		t.Fatal("expected rendered markdown output")
+	}
+	if strings.Contains(got, "## Goal") {
+		t.Fatalf("expected markdown heading marker to be rendered, got %q", got)
+	}
+	if !strings.Contains(got, "Goal") || !strings.Contains(got, "ship it") {
+		t.Fatalf("expected rendered markdown content, got %q", got)
+	}
+}
+
+func TestRenderAssistantBodyFallsBackToLegacyOnMarkdownRenderError(t *testing.T) {
+	original := renderAssistantMarkdownFn
+	renderAssistantMarkdownFn = func(text string, width int) (string, error) {
+		return "", errors.New("forced markdown renderer failure")
+	}
+	t.Cleanup(func() { renderAssistantMarkdownFn = original })
+
+	got := renderAssistantBody("# Fallback heading\nBody", 80)
+	if strings.TrimSpace(got) == "" {
+		t.Fatal("expected fallback legacy renderer output")
+	}
+	if strings.Contains(got, "# Fallback heading") {
+		t.Fatalf("expected fallback renderer to normalize heading markers, got %q", got)
+	}
+	if !strings.Contains(got, "Fallback heading") || !strings.Contains(got, "Body") {
+		t.Fatalf("expected fallback content in output, got %q", got)
 	}
 }
