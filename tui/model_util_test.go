@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"runtime"
 	"testing"
 )
 
@@ -117,16 +118,29 @@ func TestCompactDisplayPathShortPaths(t *testing.T) {
 
 func TestCompactDisplayPathLongUnixPath(t *testing.T) {
 	got := compactDisplayPath("/home/user/project/src/deep/nested/file.go")
-	// VolumeName returns "" for unix paths on Windows, so leading "/" is stripped
-	if got != "home/.../nested/file.go" {
-		t.Fatalf("expected compacted path, got %q", got)
+	if runtime.GOOS == "windows" {
+		// VolumeName returns "" for unix paths on Windows, so leading "/" is stripped
+		if got != "home/.../nested/file.go" {
+			t.Fatalf("expected compacted path, got %q", got)
+		}
+	} else {
+		if got != "/home/.../nested/file.go" {
+			t.Fatalf("expected compacted path, got %q", got)
+		}
 	}
 }
 
 func TestCompactDisplayPathLongWindowsPath(t *testing.T) {
 	got := compactDisplayPath(`C:\Users\dev\project\src\deep\nested\file.go`)
-	if got != `C:\Users\...\nested\file.go` {
-		t.Fatalf("expected compacted windows path, got %q", got)
+	if runtime.GOOS == "windows" {
+		if got != `C:\Users\...\nested\file.go` {
+			t.Fatalf("expected compacted windows path, got %q", got)
+		}
+	} else {
+		// On Linux, VolumeName returns "" for Windows-style paths
+		if got != `C:\...\nested\file.go` {
+			t.Fatalf("expected compacted windows path on linux, got %q", got)
+		}
 	}
 }
 
