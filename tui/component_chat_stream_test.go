@@ -1113,3 +1113,186 @@ func TestHandleAgentEventToolCallCompletedWithRateLimitError(t *testing.T) {
 		t.Fatalf("expected thinking phase, got %q", m.phase)
 	}
 }
+
+// --- Screenshot scenario: tool result with error text + empty running card ---
+
+func TestToolResultCardShowsOnlyToolResult(t *testing.T) {
+	// A completed tool result should show clean content, not error text
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "", Status: "running"},
+		},
+		toolRuns: []toolRun{
+			{Name: "read_file", Summary: "Tool call started.", Status: "running"},
+		},
+	}
+	m.handleAgentEvent(Event{
+		Type:       EventToolCallCompleted,
+		ToolName:   "read_file",
+		ToolResult: `{"path":"/project/main.go","start_line":1,"end_line":50}`,
+	})
+
+	if m.chatItems[0].Status != "done" {
+		t.Fatalf("expected done, got %q", m.chatItems[0].Status)
+	}
+	if strings.Contains(m.chatItems[0].Body, "Request failed") {
+		t.Fatalf("tool result should not contain error text, got %q", m.chatItems[0].Body)
+	}
+	if !strings.Contains(m.chatItems[0].Body, "main.go") {
+		t.Fatalf("expected file name in body, got %q", m.chatItems[0].Body)
+	}
+}
+
+func TestRunFailedEmptyRunningToolCardBecomesError(t *testing.T) {
+	// An empty tool card in "running" state should become "error" on run failure
+	m := model{
+		async:          make(chan tea.Msg, 1),
+		busy:           true,
+		streamingIndex: -1,
+		phase:          "tool",
+		llmConnected:   true,
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "do something", Status: "final"},
+			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
+		},
+		toolRuns: []toolRun{
+			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
+		},
+	}
+
+	got, _ := m.Update(runFinishedMsg{Err: errors.New("provider rate limited: 429")})
+	updated := got.(model)
+
+	if updated.chatItems[1].Status != "error" {
+		t.Fatalf("expected empty running tool card to become error, got %q", updated.chatItems[1].Status)
+	}
+	if updated.toolRuns[0].Status != "error" {
+		t.Fatalf("expected tool run to become error, got %q", updated.toolRuns[0].Status)
+	}
+}
+
+func TestRunFailedCompletedToolThenRunningTool(t *testing.T) {
+	// Scenario: read_file completed, then run_shell started but run failed
+	m := model{
+		async:          make(chan tea.Msg, 1),
+		busy:           true,
+		streamingIndex: -1,
+		phase:          "tool",
+		llmConnected:   true,
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "read and run", Status: "final"},
+			{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read main.go\nrange: 1-50", Status: "done"},
+			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
+			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
+		},
+		toolRuns: []toolRun{
+			{Name: "read_file", Summary: "Read main.go", Status: "done"},
+			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
+		},
+	}
+
+	got, _ := m.Update(runFinishedMsg{Err: errors.New("provider rate limited: 429 You have requ")})
+	updated := got.(model)
+
+	// Completed tool should remain done
+	if updated.chatItems[1].Status != "done" {
+		t.Fatalf("expected read_file to remain done, got %q", updated.chatItems[1].Status)
+	}
+	if strings.Contains(updated.chatItems[1].Body, "Request failed") {
+		t.Fatalf("completed tool body should not be modified, got %q", updated.chatItems[1].Body)
+	}
+
+	// Running tool should become error
+	if updated.chatItems[2].Status != "error" {
+		t.Fatalf("expected run_shell to become error, got %q", updated.chatItems[2].Status)
+	}
+
+	// Thinking card should become error
+	if updated.chatItems[3].Status != "error" {
+		t.Fatalf("expected thinking card to become error, got %q", updated.chatItems[3].Status)
+	}
+	if updated.chatItems[3].Title != assistantLabel {
+		t.Fatalf("expected assistant label, got %q", updated.chatItems[3].Title)
+	}
+
+	// Done toolRun should remain done
+	if updated.toolRuns[0].Status != "done" {
+		t.Fatalf("expected read_file toolRun done, got %q", updated.toolRuns[0].Status)
+	}
+	// Running toolRun should become error
+	if updated.toolRuns[1].Status != "error" {
+		t.Fatalf("expected run_shell toolRun error, got %q", updated.toolRuns[1].Status)
+	}
+}
+
+func TestRunFailedToolResultWithEmbeddedErrorText(t *testing.T) {
+	// Scenario: tool result body contains error text (e.g., from provider)
+	// The card should show the error status correctly
+	m := model{
+		async:          make(chan tea.Msg, 1),
+		busy:           true,
+		streamingIndex: -1,
+		phase:          "tool",
+		llmConnected:   true,
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "read file", Status: "final"},
+			{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read main.go\nrange: 1-50\npath: /project/main.go\nRequest failed: provider rate limited: 429 You have requ", Status: "error"},
+			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
+		},
+		toolRuns: []toolRun{
+			{Name: "read_file", Summary: "Read main.go", Status: "error"},
+		},
+	}
+
+	got, _ := m.Update(runFinishedMsg{Err: errors.New("provider rate limited: 429")})
+	updated := got.(model)
+
+	// Thinking card should become error
+	if updated.chatItems[2].Status != "error" {
+		t.Fatalf("expected thinking card error, got %q", updated.chatItems[2].Status)
+	}
+	if updated.chatItems[2].Title != assistantLabel {
+		t.Fatalf("expected assistant label, got %q", updated.chatItems[2].Title)
+	}
+
+	// Tool card should remain error (not modified further)
+	if updated.chatItems[1].Status != "error" {
+		t.Fatalf("expected tool card to remain error, got %q", updated.chatItems[1].Status)
+	}
+}
+
+func TestMultipleRunningToolCardsAllBecomeError(t *testing.T) {
+	// Scenario: multiple tools started simultaneously, all should become error
+	m := model{
+		async:          make(chan tea.Msg, 1),
+		busy:           true,
+		streamingIndex: -1,
+		phase:          "tool",
+		llmConnected:   true,
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "run commands", Status: "final"},
+			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
+			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
+			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
+		},
+		toolRuns: []toolRun{
+			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
+			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
+			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
+		},
+	}
+
+	got, _ := m.Update(runFinishedMsg{Err: errors.New("provider rate limited")})
+	updated := got.(model)
+
+	for i, item := range updated.chatItems {
+		if item.Kind == "tool" && item.Status != "error" {
+			t.Fatalf("expected tool card %d to be error, got %q", i, item.Status)
+		}
+	}
+	for i, tr := range updated.toolRuns {
+		if tr.Status != "error" {
+			t.Fatalf("expected tool run %d to be error, got %q", i, tr.Status)
+		}
+	}
+}
