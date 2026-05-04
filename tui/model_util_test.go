@@ -2,9 +2,14 @@ package tui
 
 import (
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 // --- toolEntryTitle ---
@@ -576,5 +581,585 @@ func TestRenderRunSectionGroupEmpty(t *testing.T) {
 	rendered := renderRunSectionGroup(nil, 80)
 	if rendered != "" {
 		t.Fatalf("expected empty rendering, got %q", rendered)
+	}
+}
+
+// --- normalizePlanActionChoiceText ---
+
+func TestNormalizePlanActionChoiceTextStripsNumberedPrefix(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"1. Start execution", "start execution"},
+		{"2. Adjust plan", "adjust plan"},
+		{"a. Option A", "option a"},
+		{"1) First option", "first option"},
+		{"b: Second option", "second option"},
+	}
+	for _, tt := range tests {
+		got := normalizePlanActionChoiceText(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizePlanActionChoiceText(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestNormalizePlanActionChoiceTextStripsOptionPrefix(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"option 1: Start execution", "start execution"},
+		{"option a: Choice A", "choice a"},
+		{"Option 2. Something", "something"},
+	}
+	for _, tt := range tests {
+		got := normalizePlanActionChoiceText(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizePlanActionChoiceText(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestNormalizePlanActionChoiceTextStripsBulletPrefix(t *testing.T) {
+	got := normalizePlanActionChoiceText("- Start execution")
+	if got != "start execution" {
+		t.Fatalf("expected \"start execution\", got %q", got)
+	}
+	got = normalizePlanActionChoiceText("* Adjust plan")
+	if got != "adjust plan" {
+		t.Fatalf("expected \"adjust plan\", got %q", got)
+	}
+}
+
+func TestNormalizePlanActionChoiceTextPlainText(t *testing.T) {
+	got := normalizePlanActionChoiceText("Start execution")
+	if got != "start execution" {
+		t.Fatalf("expected \"start execution\", got %q", got)
+	}
+}
+
+func TestNormalizePlanActionChoiceTextEmpty(t *testing.T) {
+	if got := normalizePlanActionChoiceText(""); got != "" {
+		t.Fatalf("expected empty, got %q", got)
+	}
+	if got := normalizePlanActionChoiceText("   "); got != "" {
+		t.Fatalf("expected empty for whitespace, got %q", got)
+	}
+}
+
+// --- isBTWCommand ---
+
+func TestIsBTWCommandWithMessage(t *testing.T) {
+	if !isBTWCommand("/btw check the tests") {
+		t.Fatalf("expected true for /btw with message")
+	}
+}
+
+func TestIsBTWCommandWithoutMessage(t *testing.T) {
+	if !isBTWCommand("/btw") {
+		t.Fatalf("expected true for bare /btw")
+	}
+}
+
+func TestIsBTWCommandEmpty(t *testing.T) {
+	if isBTWCommand("") {
+		t.Fatalf("expected false for empty input")
+	}
+	if isBTWCommand("   ") {
+		t.Fatalf("expected false for whitespace input")
+	}
+}
+
+func TestIsBTWCommandNotBTW(t *testing.T) {
+	if isBTWCommand("/help") {
+		t.Fatalf("expected false for /help")
+	}
+	if isBTWCommand("btw something") {
+		t.Fatalf("expected false for btw without slash")
+	}
+}
+
+// --- extractBTWText ---
+
+func TestExtractBTWTextSuccess(t *testing.T) {
+	got, err := extractBTWText("/btw check the tests")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "check the tests" {
+		t.Fatalf("expected \"check the tests\", got %q", got)
+	}
+}
+
+func TestExtractBTWTextNoMessage(t *testing.T) {
+	_, err := extractBTWText("/btw")
+	if err == nil {
+		t.Fatalf("expected error for bare /btw")
+	}
+}
+
+func TestExtractBTWTextNotBTW(t *testing.T) {
+	_, err := extractBTWText("/help")
+	if err == nil {
+		t.Fatalf("expected error for non-btw command")
+	}
+}
+
+func TestExtractBTWTextEmpty(t *testing.T) {
+	_, err := extractBTWText("")
+	if err == nil {
+		t.Fatalf("expected error for empty input")
+	}
+}
+
+// --- hasPlanActionChoices ---
+
+func TestHasPlanActionChoicesBothPhrases(t *testing.T) {
+	text := "Choose an action:\n1. Start execution\n2. Adjust plan"
+	if !hasPlanActionChoices(text) {
+		t.Fatalf("expected true for text with both phrases")
+	}
+}
+
+func TestHasPlanActionChoicesOnlyStart(t *testing.T) {
+	text := "Ready to start execution"
+	if hasPlanActionChoices(text) {
+		t.Fatalf("expected false when only start execution present")
+	}
+}
+
+func TestHasPlanActionChoicesOnlyAdjust(t *testing.T) {
+	text := "You can adjust plan first"
+	if hasPlanActionChoices(text) {
+		t.Fatalf("expected false when only adjust plan present")
+	}
+}
+
+func TestHasPlanActionChoicesEmpty(t *testing.T) {
+	if hasPlanActionChoices("") {
+		t.Fatalf("expected false for empty text")
+	}
+}
+
+// --- latestAssistantMessageText ---
+
+func TestLatestAssistantMessageTextNilSession(t *testing.T) {
+	if got := latestAssistantMessageText(nil); got != "" {
+		t.Fatalf("expected empty for nil session, got %q", got)
+	}
+}
+
+func TestLatestAssistantMessageTextNoMessages(t *testing.T) {
+	sess := &session.Session{Messages: []llm.Message{}}
+	if got := latestAssistantMessageText(sess); got != "" {
+		t.Fatalf("expected empty for no messages, got %q", got)
+	}
+}
+
+func TestLatestAssistantMessageTextOnlyUserMessages(t *testing.T) {
+	sess := &session.Session{Messages: []llm.Message{
+		llm.NewUserTextMessage("hello"),
+	}}
+	if got := latestAssistantMessageText(sess); got != "" {
+		t.Fatalf("expected empty for no assistant messages, got %q", got)
+	}
+}
+
+func TestLatestAssistantMessageTextFindsLastAssistant(t *testing.T) {
+	sess := &session.Session{Messages: []llm.Message{
+		llm.NewUserTextMessage("question 1"),
+		llm.NewAssistantTextMessage("answer 1"),
+		llm.NewUserTextMessage("question 2"),
+		llm.NewAssistantTextMessage("answer 2"),
+	}}
+	got := latestAssistantMessageText(sess)
+	if got != "answer 2" {
+		t.Fatalf("expected \"answer 2\", got %q", got)
+	}
+}
+
+// --- shortID ---
+
+func TestShortIDShort(t *testing.T) {
+	if got := shortID("abc"); got != "abc" {
+		t.Fatalf("expected \"abc\", got %q", got)
+	}
+}
+
+func TestShortIDExact12(t *testing.T) {
+	id := "123456789012"
+	if got := shortID(id); got != id {
+		t.Fatalf("expected %q, got %q", id, got)
+	}
+}
+
+func TestShortIDLong(t *testing.T) {
+	id := "12345678901234567890"
+	if got := shortID(id); got != "123456789012" {
+		t.Fatalf("expected \"123456789012\", got %q", got)
+	}
+}
+
+// --- formatUserMeta ---
+
+func TestFormatUserMetaWithModel(t *testing.T) {
+	at := time.Date(2026, 5, 4, 14, 30, 0, 0, time.UTC)
+	got := formatUserMeta("claude-sonnet", at)
+	if !strings.Contains(got, "claude-sonnet") {
+		t.Fatalf("expected model in output, got %q", got)
+	}
+	if !strings.Contains(got, "14:30:00") {
+		t.Fatalf("expected time in output, got %q", got)
+	}
+}
+
+func TestFormatUserMetaEmptyModel(t *testing.T) {
+	at := time.Date(2026, 5, 4, 14, 30, 0, 0, time.UTC)
+	got := formatUserMeta("", at)
+	if !strings.Contains(got, "-") {
+		t.Fatalf("expected \"-\" for empty model, got %q", got)
+	}
+}
+
+// --- normalizeKeyName ---
+
+func TestNormalizeKeyNameStripsSpecialChars(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"ctrl+v", "ctrl+v"},
+		{"Ctrl + V", "ctrl+v"},
+		{"page_up", "pageup"},
+		{"PgUp", "pgup"},
+		{"  Enter  ", "enter"},
+		{"space bar", "spacebar"},
+		{"some-key", "somekey"},
+	}
+	for _, tt := range tests {
+		got := normalizeKeyName(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizeKeyName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// --- looksLikeMarkdownPasteFragment ---
+
+func TestLooksLikeMarkdownPasteFragmentHeaders(t *testing.T) {
+	if !looksLikeMarkdownPasteFragment("# Title") {
+		t.Fatalf("expected true for # prefix")
+	}
+	if !looksLikeMarkdownPasteFragment("## Subtitle") {
+		t.Fatalf("expected true for ## prefix")
+	}
+}
+
+func TestLooksLikeMarkdownPasteFragmentBlockquote(t *testing.T) {
+	if !looksLikeMarkdownPasteFragment("> quoted text") {
+		t.Fatalf("expected true for > prefix")
+	}
+}
+
+func TestLooksLikeMarkdownPasteFragmentLists(t *testing.T) {
+	if !looksLikeMarkdownPasteFragment("- item") {
+		t.Fatalf("expected true for - prefix")
+	}
+	if !looksLikeMarkdownPasteFragment("* item") {
+		t.Fatalf("expected true for * prefix")
+	}
+	if !looksLikeMarkdownPasteFragment("1. first item") {
+		t.Fatalf("expected true for numbered list")
+	}
+}
+
+func TestLooksLikeMarkdownPasteFragmentCodeBlock(t *testing.T) {
+	if !looksLikeMarkdownPasteFragment("```go") {
+		t.Fatalf("expected true for code block")
+	}
+}
+
+func TestLooksLikeMarkdownPasteFragmentPlainText(t *testing.T) {
+	if looksLikeMarkdownPasteFragment("just regular text") {
+		t.Fatalf("expected false for plain text")
+	}
+}
+
+func TestLooksLikeMarkdownPasteFragmentEmpty(t *testing.T) {
+	if looksLikeMarkdownPasteFragment("") {
+		t.Fatalf("expected false for empty")
+	}
+}
+
+// --- isMeaningfulThinking ---
+
+func TestIsMeaningfulThinkingGenericPrefix(t *testing.T) {
+	tests := []struct {
+		body   string
+		expect bool
+	}{
+		{"I will call `run_shell` to inspect the relevant context first.", false},
+		{"I'll call read_file to check the file.", false},
+		{"Let me call search_text.", false},
+		{"I have the tool result. Let me organize the next step.", false},
+		{"Analyzing the user's request to understand the bug in the login flow.", true},
+		{"The error is caused by a nil pointer dereference in handler.go line 42.", true},
+	}
+	for _, tt := range tests {
+		got := isMeaningfulThinking(tt.body, "run_shell")
+		if got != tt.expect {
+			t.Errorf("isMeaningfulThinking(%q, %q) = %v, want %v", tt.body, "run_shell", got, tt.expect)
+		}
+	}
+}
+
+func TestIsMeaningfulThinkingEmpty(t *testing.T) {
+	if isMeaningfulThinking("", "run_shell") {
+		t.Fatalf("expected false for empty body")
+	}
+	if isMeaningfulThinking("   ", "run_shell") {
+		t.Fatalf("expected false for whitespace body")
+	}
+}
+
+// --- preparePlanForContinuation ---
+
+func TestPreparePlanForContinuationNoStructuredPlan(t *testing.T) {
+	state := planpkg.State{Phase: planpkg.PhaseExplore}
+	_, err := preparePlanForContinuation(state)
+	if err == nil {
+		t.Fatalf("expected error for no structured plan")
+	}
+	if !strings.Contains(err.Error(), "no structured plan") {
+		t.Fatalf("expected 'no structured plan' error, got %q", err.Error())
+	}
+}
+
+func TestPreparePlanForContinuationBlockedWithReason(t *testing.T) {
+	state := planpkg.State{
+		Phase:       planpkg.PhaseBlocked,
+		BlockReason: "waiting for API key",
+		Steps:       []planpkg.Step{{Title: "step1", Status: planpkg.StepPending}},
+	}
+	_, err := preparePlanForContinuation(state)
+	if err == nil {
+		t.Fatalf("expected error for blocked plan")
+	}
+	if !strings.Contains(err.Error(), "waiting for API key") {
+		t.Fatalf("expected block reason in error, got %q", err.Error())
+	}
+}
+
+func TestPreparePlanForContinuationBlockedWithoutReason(t *testing.T) {
+	state := planpkg.State{
+		Phase: planpkg.PhaseBlocked,
+		Steps: []planpkg.Step{{Title: "step1", Status: planpkg.StepPending}},
+	}
+	_, err := preparePlanForContinuation(state)
+	if err == nil {
+		t.Fatalf("expected error for blocked plan without reason")
+	}
+	if !strings.Contains(err.Error(), "cannot continue") {
+		t.Fatalf("expected 'cannot continue' error, got %q", err.Error())
+	}
+}
+
+func TestPreparePlanForContinuationCompleted(t *testing.T) {
+	state := planpkg.State{
+		Phase: planpkg.PhaseCompleted,
+		Steps: []planpkg.Step{{Title: "step1", Status: planpkg.StepCompleted}},
+	}
+	_, err := preparePlanForContinuation(state)
+	if err == nil {
+		t.Fatalf("expected error for completed plan")
+	}
+	if !strings.Contains(err.Error(), "already completed") {
+		t.Fatalf("expected 'already completed' error, got %q", err.Error())
+	}
+}
+
+func TestPreparePlanForContinuationNotConverged(t *testing.T) {
+	state := planpkg.State{
+		Phase: planpkg.PhaseDraft,
+		Steps: []planpkg.Step{{Title: "step1", Status: planpkg.StepPending}},
+	}
+	_, err := preparePlanForContinuation(state)
+	if err == nil {
+		t.Fatalf("expected error for non-converged plan")
+	}
+	if !strings.Contains(err.Error(), "not converged") {
+		t.Fatalf("expected 'not converged' error, got %q", err.Error())
+	}
+}
+
+func TestPreparePlanForContinuationSuccess(t *testing.T) {
+	state := planpkg.State{
+		Phase:               planpkg.PhaseConvergeReady,
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+		Steps: []planpkg.Step{
+			{Title: "step1", Status: planpkg.StepPending},
+			{Title: "step2", Status: planpkg.StepPending},
+		},
+	}
+	result, err := preparePlanForContinuation(state)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Phase != planpkg.PhaseExecuting {
+		t.Fatalf("expected phase executing, got %q", result.Phase)
+	}
+	// First pending step should be promoted to in_progress
+	if planpkg.NormalizeStepStatus(string(result.Steps[0].Status)) != planpkg.StepInProgress {
+		t.Fatalf("expected first step to be in_progress, got %q", result.Steps[0].Status)
+	}
+	if planpkg.NormalizeStepStatus(string(result.Steps[1].Status)) != planpkg.StepPending {
+		t.Fatalf("expected second step to remain pending, got %q", result.Steps[1].Status)
+	}
+}
+
+func TestPreparePlanForContinuationWithCurrentStep(t *testing.T) {
+	state := planpkg.State{
+		Phase:               planpkg.PhaseConvergeReady,
+		ScopeDefined:        true,
+		RiskRollbackDefined: true,
+		VerificationDefined: true,
+		Steps: []planpkg.Step{
+			{Title: "step1", Status: planpkg.StepCompleted},
+			{Title: "step2", Status: planpkg.StepInProgress},
+		},
+	}
+	result, err := preparePlanForContinuation(state)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should not change existing in_progress step
+	if planpkg.NormalizeStepStatus(string(result.Steps[1].Status)) != planpkg.StepInProgress {
+		t.Fatalf("expected step2 to remain in_progress")
+	}
+}
+
+// --- resolveActiveChoiceSelection ---
+
+func TestResolveActiveChoiceSelectionNoChoice(t *testing.T) {
+	state := planpkg.State{}
+	_, ok := resolveActiveChoiceSelection("1", state)
+	if ok {
+		t.Fatalf("expected false for no active choice")
+	}
+}
+
+func TestResolveActiveChoiceSelectionMatchByNumber(t *testing.T) {
+	state := planpkg.State{
+		Phase: planpkg.PhaseClarify,
+		Steps: []planpkg.Step{{Title: "step1", Status: planpkg.StepPending}},
+		ActiveChoice: &planpkg.ActiveChoice{
+			ID:       "layout",
+			Kind:     "clarify",
+			Question: "Choose layout",
+			Options: []planpkg.ChoiceOption{
+				{ID: "sidebar", Title: "Sidebar layout", Shortcut: "s"},
+				{ID: "stacked", Title: "Stacked layout", Shortcut: "k"},
+			},
+		},
+	}
+	action, ok := resolveActiveChoiceSelection("1", state)
+	if !ok {
+		t.Fatalf("expected match by number")
+	}
+	if !strings.Contains(action, "layout") || !strings.Contains(action, "sidebar") {
+		t.Fatalf("expected action to contain choice and option IDs, got %q", action)
+	}
+}
+
+func TestResolveActiveChoiceSelectionMatchByShortcut(t *testing.T) {
+	state := planpkg.State{
+		Phase: planpkg.PhaseClarify,
+		Steps: []planpkg.Step{{Title: "step1", Status: planpkg.StepPending}},
+		ActiveChoice: &planpkg.ActiveChoice{
+			ID:       "layout",
+			Kind:     "clarify",
+			Question: "Choose layout",
+			Options: []planpkg.ChoiceOption{
+				{ID: "sidebar", Title: "Sidebar layout", Shortcut: "s"},
+				{ID: "stacked", Title: "Stacked layout", Shortcut: "k"},
+			},
+		},
+	}
+	action, ok := resolveActiveChoiceSelection("k", state)
+	if !ok {
+		t.Fatalf("expected match by shortcut")
+	}
+	if !strings.Contains(action, "stacked") {
+		t.Fatalf("expected stacked option, got %q", action)
+	}
+}
+
+func TestResolveActiveChoiceSelectionMatchByTitle(t *testing.T) {
+	state := planpkg.State{
+		Phase: planpkg.PhaseClarify,
+		Steps: []planpkg.Step{{Title: "step1", Status: planpkg.StepPending}},
+		ActiveChoice: &planpkg.ActiveChoice{
+			ID:       "layout",
+			Kind:     "clarify",
+			Question: "Choose layout",
+			Options: []planpkg.ChoiceOption{
+				{ID: "sidebar", Shortcut: "s", Title: "Sidebar layout"},
+				{ID: "stacked", Shortcut: "k", Title: "Stacked layout"},
+			},
+		},
+	}
+	action, ok := resolveActiveChoiceSelection("Sidebar layout", state)
+	if !ok {
+		t.Fatalf("expected match by title")
+	}
+	if !strings.Contains(action, "sidebar") {
+		t.Fatalf("expected sidebar option, got %q", action)
+	}
+}
+
+func TestResolveActiveChoiceSelectionOtherFreeform(t *testing.T) {
+	state := planpkg.State{
+		Phase: planpkg.PhaseClarify,
+		Steps: []planpkg.Step{{Title: "step1", Status: planpkg.StepPending}},
+		ActiveChoice: &planpkg.ActiveChoice{
+			ID:       "layout",
+			Kind:     "clarify",
+			Question: "Choose layout",
+			Options: []planpkg.ChoiceOption{
+				{ID: "sidebar", Title: "Sidebar"},
+				{ID: "custom", Title: "Custom", Freeform: true},
+			},
+		},
+	}
+	action, ok := resolveActiveChoiceSelection("other", state)
+	if !ok {
+		t.Fatalf("expected match for 'other' with freeform option")
+	}
+	if !strings.Contains(action, "custom") {
+		t.Fatalf("expected custom option, got %q", action)
+	}
+}
+
+func TestResolveActiveChoiceSelectionNoMatch(t *testing.T) {
+	state := planpkg.State{
+		Phase: planpkg.PhaseClarify,
+		Steps: []planpkg.Step{{Title: "step1", Status: planpkg.StepPending}},
+		ActiveChoice: &planpkg.ActiveChoice{
+			ID:       "layout",
+			Kind:     "clarify",
+			Question: "Choose layout",
+			Options: []planpkg.ChoiceOption{
+				{ID: "sidebar", Title: "Sidebar"},
+				{ID: "stacked", Title: "Stacked"},
+			},
+		},
+	}
+	_, ok := resolveActiveChoiceSelection("nonexistent option", state)
+	if ok {
+		t.Fatalf("expected no match")
 	}
 }

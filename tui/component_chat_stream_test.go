@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 	tea "github.com/charmbracelet/bubbletea"
@@ -1294,5 +1295,157 @@ func TestMultipleRunningToolCardsAllBecomeError(t *testing.T) {
 		if tr.Status != "error" {
 			t.Fatalf("expected tool run %d to be error, got %q", i, tr.Status)
 		}
+	}
+}
+
+// --- formatElapsedWords ---
+
+func TestFormatElapsedWordsZeroStart(t *testing.T) {
+	got := formatElapsedWords(time.Time{}, time.Now())
+	if got != "0s" {
+		t.Fatalf("expected \"0s\" for zero start, got %q", got)
+	}
+}
+
+func TestFormatElapsedWordsNegativeTime(t *testing.T) {
+	now := time.Now()
+	got := formatElapsedWords(now.Add(10*time.Second), now)
+	if got != "0s" {
+		t.Fatalf("expected \"0s\" for negative elapsed, got %q", got)
+	}
+}
+
+func TestFormatElapsedWordsSecondsOnly(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(45 * time.Second)
+	got := formatElapsedWords(start, end)
+	if got != "45s" {
+		t.Fatalf("expected \"45s\", got %q", got)
+	}
+}
+
+func TestFormatElapsedWordsMinutesAndSeconds(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(2*time.Minute + 30*time.Second)
+	got := formatElapsedWords(start, end)
+	if got != "2m 30s" {
+		t.Fatalf("expected \"2m 30s\", got %q", got)
+	}
+}
+
+func TestFormatElapsedWordsHoursMinutesSeconds(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(1*time.Hour + 5*time.Minute + 10*time.Second)
+	got := formatElapsedWords(start, end)
+	if got != "1h 5m 10s" {
+		t.Fatalf("expected \"1h 5m 10s\", got %q", got)
+	}
+}
+
+func TestFormatElapsedWordsExactlyOneMinute(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(60 * time.Second)
+	got := formatElapsedWords(start, end)
+	if got != "1m" {
+		t.Fatalf("expected \"1m\", got %q", got)
+	}
+}
+
+func TestFormatElapsedWordsExactlyOneHour(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(3600 * time.Second)
+	got := formatElapsedWords(start, end)
+	if got != "1h" {
+		t.Fatalf("expected \"1h\", got %q", got)
+	}
+}
+
+// --- decorateFinalAnswer ---
+
+func TestDecorateFinalAnswerEmptyContent(t *testing.T) {
+	m := model{runStartedAt: time.Now()}
+	if got := m.decorateFinalAnswer(""); got != "" {
+		t.Fatalf("expected empty for empty content, got %q", got)
+	}
+	if got := m.decorateFinalAnswer("   "); got != "" {
+		t.Fatalf("expected empty for whitespace content, got %q", got)
+	}
+}
+
+func TestDecorateFinalAnswerZeroStartedAt(t *testing.T) {
+	m := model{}
+	got := m.decorateFinalAnswer("hello")
+	if got != "hello" {
+		t.Fatalf("expected unchanged content for zero startedAt, got %q", got)
+	}
+}
+
+func TestDecorateFinalAnswerAlreadyDecorated(t *testing.T) {
+	m := model{runStartedAt: time.Now()}
+	content := "answer\n\nProcessed for 5s"
+	got := m.decorateFinalAnswer(content)
+	if got != content {
+		t.Fatalf("expected unchanged for already decorated content, got %q", got)
+	}
+}
+
+func TestDecorateFinalAnswerAlreadyDecoratedCompleted(t *testing.T) {
+	m := model{runStartedAt: time.Now()}
+	content := "answer\n\nCompleted in 3s"
+	got := m.decorateFinalAnswer(content)
+	if got != content {
+		t.Fatalf("expected unchanged for completed content, got %q", got)
+	}
+}
+
+func TestDecorateFinalAnswerAddsElapsed(t *testing.T) {
+	m := model{runStartedAt: time.Now().Add(-5 * time.Second)}
+	got := m.decorateFinalAnswer("the answer")
+	if !strings.Contains(got, "the answer") {
+		t.Fatalf("expected original content preserved, got %q", got)
+	}
+	if !strings.Contains(got, "Processed for") {
+		t.Fatalf("expected elapsed decoration, got %q", got)
+	}
+}
+
+// --- appendAssistantToolFollowUp ---
+
+func TestAppendAssistantToolFollowUpEmptySummary(t *testing.T) {
+	m := model{}
+	m.chatItems = []chatEntry{{Kind: "assistant", Body: "existing"}}
+	m.appendAssistantToolFollowUp("run_shell", "", "done")
+	// Empty summary still generates a default follow-up message
+	if len(m.chatItems) != 2 {
+		t.Fatalf("expected 2 items (default follow-up), got %d", len(m.chatItems))
+	}
+}
+
+func TestAppendAssistantToolFollowUpNormalAppend(t *testing.T) {
+	m := model{}
+	m.chatItems = []chatEntry{{Kind: "assistant", Body: "existing"}}
+	m.appendAssistantToolFollowUp("run_shell", "exit code 0", "done")
+	if len(m.chatItems) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(m.chatItems))
+	}
+	if m.chatItems[1].Body == "" {
+		t.Fatalf("expected non-empty follow-up body")
+	}
+}
+
+func TestAppendAssistantToolFollowUpErrorStatus(t *testing.T) {
+	m := model{}
+	m.chatItems = []chatEntry{{Kind: "assistant", Body: "existing"}}
+	m.appendAssistantToolFollowUp("run_shell", "command not found", "error")
+	if len(m.chatItems) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(m.chatItems))
+	}
+}
+
+func TestAppendAssistantToolFollowUpEmptyChatItems(t *testing.T) {
+	m := model{}
+	m.appendAssistantToolFollowUp("read_file", "read file.go", "done")
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(m.chatItems))
 	}
 }
