@@ -38,6 +38,15 @@ var (
 )
 
 func renderAssistantBody(text string, width int) string {
+	text = stripAssistantStructuralTags(text)
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+
+	if rendered, err := renderAssistantBodyWithMarkdownAndTags(text, width); err == nil && strings.TrimSpace(rendered) != "" {
+		return rendered
+	}
+
 	return renderAssistantBodyLegacy(text, width)
 }
 
