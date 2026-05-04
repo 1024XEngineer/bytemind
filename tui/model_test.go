@@ -6759,7 +6759,7 @@ func TestScrollbarTrackBoundsAndDragScrollbarTo(t *testing.T) {
 		viewport:   viewport.New(60, 10),
 		tokenUsage: newTokenUsageComponent(),
 		chatItems: []chatEntry{
-			{Kind: "assistant", Body: strings.Repeat("line\n", 260), Status: "final"},
+			{Kind: "assistant", Body: strings.Repeat("- line item\n", 260), Status: "final"},
 		},
 	}
 	m.refreshViewport()
@@ -6816,7 +6816,7 @@ func TestHandleMouseScrollbarDragLifecycle(t *testing.T) {
 		tokenUsage:     newTokenUsageComponent(),
 		chatAutoFollow: true,
 		chatItems: []chatEntry{
-			{Kind: "assistant", Body: strings.Repeat("row\n", 280), Status: "final"},
+			{Kind: "assistant", Body: strings.Repeat("- row item\n", 280), Status: "final"},
 		},
 	}
 	m.refreshViewport()
