@@ -943,3 +943,173 @@ func TestHandleAgentEventPlanUpdatedCopiesPlan(t *testing.T) {
 		t.Fatalf("expected 1 step, got %d", len(m.plan.Steps))
 	}
 }
+
+// --- Rate limit error scenarios (from screenshot) ---
+
+func TestRunFailedWithToolResultErrorContent(t *testing.T) {
+	// Scenario: tool result card has error body from rate limit, then run fails
+	m := model{
+		async:          make(chan tea.Msg, 1),
+		busy:           true,
+		streamingIndex: -1,
+		statusNote:     "Running tool...",
+		phase:          "tool",
+		llmConnected:   true,
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "search code", Status: "final"},
+			{Kind: "tool", Title: toolEntryTitle("search_text"), Body: "Request failed: provider rate limited: 429 You have requ", Status: "error"},
+			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
+		},
+		toolRuns: []toolRun{
+			{Name: "search_text", Summary: "Request failed: provider rate limited", Status: "error"},
+		},
+	}
+
+	got, _ := m.Update(runFinishedMsg{Err: errors.New("provider rate limited: 429")})
+	updated := got.(model)
+
+	// Thinking card (last item) should become error with correct title
+	last := updated.chatItems[len(updated.chatItems)-1]
+	if last.Status != "error" {
+		t.Fatalf("expected error status on last card, got %q", last.Status)
+	}
+	if last.Title != assistantLabel {
+		t.Fatalf("expected assistant label on error card, got %q", last.Title)
+	}
+
+	// Tool card should remain error (not changed to running)
+	toolCard := updated.chatItems[1]
+	if toolCard.Status != "error" {
+		t.Fatalf("expected tool card to remain error, got %q", toolCard.Status)
+	}
+}
+
+func TestRunFailedAfterMultipleToolCalls(t *testing.T) {
+	// Scenario: multiple tools executed, last one running when error hits
+	m := model{
+		async:          make(chan tea.Msg, 1),
+		busy:           true,
+		streamingIndex: -1,
+		statusNote:     "Running tool...",
+		phase:          "tool",
+		llmConnected:   true,
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "do stuff", Status: "final"},
+			{Kind: "tool", Title: toolEntryTitle("list_files"), Body: "Read 5 files", Status: "done"},
+			{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read main.go", Status: "done"},
+			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
+			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
+		},
+		toolRuns: []toolRun{
+			{Name: "list_files", Summary: "Listed files.", Status: "done"},
+			{Name: "read_file", Summary: "Read file.", Status: "done"},
+			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
+		},
+	}
+
+	got, _ := m.Update(runFinishedMsg{Err: errors.New("provider rate limited")})
+	updated := got.(model)
+
+	// Done tools should remain done
+	if updated.chatItems[1].Status != "done" {
+		t.Fatalf("expected list_files to remain done, got %q", updated.chatItems[1].Status)
+	}
+	if updated.chatItems[2].Status != "done" {
+		t.Fatalf("expected read_file to remain done, got %q", updated.chatItems[2].Status)
+	}
+	// Running tool should become error
+	if updated.chatItems[3].Status != "error" {
+		t.Fatalf("expected run_shell to become error, got %q", updated.chatItems[3].Status)
+	}
+	// Thinking card should become error
+	if updated.chatItems[4].Status != "error" {
+		t.Fatalf("expected thinking card to become error, got %q", updated.chatItems[4].Status)
+	}
+	if updated.chatItems[4].Title != assistantLabel {
+		t.Fatalf("expected error card title %q, got %q", assistantLabel, updated.chatItems[4].Title)
+	}
+	// Done toolRuns should remain done
+	if updated.toolRuns[0].Status != "done" {
+		t.Fatalf("expected list_files toolRun done, got %q", updated.toolRuns[0].Status)
+	}
+	// Running toolRun should become error
+	if updated.toolRuns[2].Status != "error" {
+		t.Fatalf("expected run_shell toolRun error, got %q", updated.toolRuns[2].Status)
+	}
+}
+
+func TestRunFailedSetsIndicatorState(t *testing.T) {
+	m := model{
+		async:       make(chan tea.Msg, 1),
+		busy:        true,
+		activeRunID: 5,
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
+		},
+	}
+
+	got, _ := m.Update(runFinishedMsg{RunID: 5, Err: errors.New("rate limit")})
+	updated := got.(model)
+
+	if updated.runIndicatorState != runIndicatorFailed {
+		t.Fatalf("expected runIndicatorFailed, got %q", updated.runIndicatorState)
+	}
+	if updated.activeRunID != 0 {
+		t.Fatalf("expected activeRunID=0, got %d", updated.activeRunID)
+	}
+	if updated.runCancel != nil {
+		t.Fatalf("expected runCancel=nil")
+	}
+}
+
+func TestRunFailedPhaseError(t *testing.T) {
+	m := model{
+		async:       make(chan tea.Msg, 1),
+		busy:        true,
+		activeRunID: 3,
+		phase:       "tool",
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
+		},
+	}
+
+	got, _ := m.Update(runFinishedMsg{RunID: 3, Err: errors.New("429 Too Many Requests")})
+	updated := got.(model)
+
+	if updated.phase != "error" {
+		t.Fatalf("expected error phase, got %q", updated.phase)
+	}
+	if !strings.Contains(updated.statusNote, "429") {
+		t.Fatalf("expected 429 in status note, got %q", updated.statusNote)
+	}
+	if updated.llmConnected {
+		t.Fatalf("expected llmConnected=false")
+	}
+}
+
+func TestHandleAgentEventToolCallCompletedWithRateLimitError(t *testing.T) {
+	// When tool result contains rate limit error JSON
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
+		},
+		toolRuns: []toolRun{
+			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
+		},
+	}
+	m.handleAgentEvent(Event{
+		Type:       EventToolCallCompleted,
+		ToolName:   "run_shell",
+		ToolResult: `{"ok":false,"error":"provider rate limited: 429"}`,
+	})
+
+	if m.chatItems[0].Status != "error" {
+		t.Fatalf("expected error status, got %q", m.chatItems[0].Status)
+	}
+	if m.toolRuns[0].Status != "error" {
+		t.Fatalf("expected tool run error, got %q", m.toolRuns[0].Status)
+	}
+	if m.phase != "thinking" {
+		t.Fatalf("expected thinking phase, got %q", m.phase)
+	}
+}

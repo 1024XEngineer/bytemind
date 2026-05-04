@@ -3,6 +3,8 @@ package tui
 import (
 	"runtime"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // --- toolEntryTitle ---
@@ -410,5 +412,169 @@ func TestStripStreamControlTagsNoTags(t *testing.T) {
 	got := stripStreamControlTags("just text")
 	if got != "just text" {
 		t.Fatalf("expected \"just text\", got %q", got)
+	}
+}
+
+// --- summarizeTool: rate limit / provider error scenarios ---
+
+func TestSummarizeToolRateLimitErrorEnvelope(t *testing.T) {
+	payload := `{"ok":false,"error":"provider rate limited: 429 You have reached the rate limit"}`
+	summary, _, status := summarizeTool("search_text", payload)
+	if status != "error" {
+		t.Fatalf("expected error, got %q", status)
+	}
+	if summary == "" {
+		t.Fatalf("expected non-empty summary")
+	}
+}
+
+func TestSummarizeToolRateLimitErrorInRunShell(t *testing.T) {
+	payload := `{"ok":false,"error":"provider rate limited: 429 Too Many Requests"}`
+	summary, _, status := summarizeTool("run_shell", payload)
+	if status != "error" {
+		t.Fatalf("expected error, got %q", status)
+	}
+	if summary == "" {
+		t.Fatalf("expected non-empty summary")
+	}
+}
+
+func TestSummarizeToolRateLimitErrorInReadFile(t *testing.T) {
+	payload := `{"ok":false,"error":"Request failed: provider rate limited: 429"}`
+	summary, _, status := summarizeTool("read_file", payload)
+	if status != "error" {
+		t.Fatalf("expected error, got %q", status)
+	}
+	if summary == "" {
+		t.Fatalf("expected non-empty summary")
+	}
+}
+
+func TestSummarizeToolRateLimitErrorInWriteFile(t *testing.T) {
+	payload := `{"ok":false,"error":"rate limit exceeded"}`
+	summary, _, status := summarizeTool("write_file", payload)
+	if status != "error" {
+		t.Fatalf("expected error, got %q", status)
+	}
+	if summary == "" {
+		t.Fatalf("expected non-empty summary")
+	}
+}
+
+func TestSummarizeToolRateLimitErrorInApplyPatch(t *testing.T) {
+	payload := `{"ok":false,"error":"429 rate limit"}`
+	summary, _, status := summarizeTool("apply_patch", payload)
+	if status != "error" {
+		t.Fatalf("expected error, got %q", status)
+	}
+	if summary == "" {
+		t.Fatalf("expected non-empty summary")
+	}
+}
+
+func TestSummarizeToolTruncatesLongError(t *testing.T) {
+	longError := "provider rate limited: 429 You have reached the rate limit. Please wait before making more requests. Your current plan allows 100 requests per minute."
+	payload := `{"ok":false,"error":"` + longError + `"}`
+	summary, _, status := summarizeTool("run_shell", payload)
+	if status != "error" {
+		t.Fatalf("expected error, got %q", status)
+	}
+	if len(summary) > 100 {
+		t.Fatalf("expected truncated summary, got length %d: %q", len(summary), summary)
+	}
+}
+
+// --- aggregateToolGroupStatus ---
+
+func TestAggregateToolGroupStatusAllDone(t *testing.T) {
+	group := []chatEntry{
+		{Kind: "tool", Status: "done"},
+		{Kind: "tool", Status: "done"},
+	}
+	if got := aggregateToolGroupStatus(group); got != "done" {
+		t.Fatalf("expected done, got %q", got)
+	}
+}
+
+func TestAggregateToolGroupStatusWithError(t *testing.T) {
+	group := []chatEntry{
+		{Kind: "tool", Status: "done"},
+		{Kind: "tool", Status: "error"},
+	}
+	if got := aggregateToolGroupStatus(group); got != "error" {
+		t.Fatalf("expected error, got %q", got)
+	}
+}
+
+func TestAggregateToolGroupStatusWithRunning(t *testing.T) {
+	group := []chatEntry{
+		{Kind: "tool", Status: "done"},
+		{Kind: "tool", Status: "running"},
+	}
+	if got := aggregateToolGroupStatus(group); got != "running" {
+		t.Fatalf("expected running, got %q", got)
+	}
+}
+
+func TestAggregateToolGroupStatusWithWarn(t *testing.T) {
+	group := []chatEntry{
+		{Kind: "tool", Status: "done"},
+		{Kind: "tool", Status: "warn"},
+	}
+	if got := aggregateToolGroupStatus(group); got != "warn" {
+		t.Fatalf("expected warn, got %q", got)
+	}
+}
+
+func TestAggregateToolGroupStatusAllRunning(t *testing.T) {
+	group := []chatEntry{
+		{Kind: "tool", Status: "running"},
+		{Kind: "tool", Status: "running"},
+	}
+	if got := aggregateToolGroupStatus(group); got != "running" {
+		t.Fatalf("expected running, got %q", got)
+	}
+}
+
+// --- resolveToolRunSectionStyle ---
+
+func TestResolveToolRunSectionStyleDone(t *testing.T) {
+	style := resolveToolRunSectionStyle("done")
+	if style.GetBorderStyle() == lipgloss.NormalBorder() {
+		t.Fatalf("expected styled border for done")
+	}
+}
+
+func TestResolveToolRunSectionStyleError(t *testing.T) {
+	style := resolveToolRunSectionStyle("error")
+	if style.GetBorderStyle() == lipgloss.NormalBorder() {
+		t.Fatalf("expected styled border for error")
+	}
+}
+
+func TestResolveToolRunSectionStyleRunning(t *testing.T) {
+	style := resolveToolRunSectionStyle("running")
+	_ = style // should not panic
+}
+
+// --- renderRunSectionGroup ---
+
+func TestRenderRunSectionGroupSingleErrorTool(t *testing.T) {
+	item := chatEntry{
+		Kind:   "tool",
+		Title:  toolEntryTitle("run_shell"),
+		Body:   "Request failed: provider rate limited",
+		Status: "error",
+	}
+	rendered := renderRunSectionGroup([]chatEntry{item}, 80)
+	if rendered == "" {
+		t.Fatalf("expected non-empty rendering")
+	}
+}
+
+func TestRenderRunSectionGroupEmpty(t *testing.T) {
+	rendered := renderRunSectionGroup(nil, 80)
+	if rendered != "" {
+		t.Fatalf("expected empty rendering, got %q", rendered)
 	}
 }
