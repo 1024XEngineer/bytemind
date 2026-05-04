@@ -292,6 +292,7 @@ func (m *model) failLatestAssistant(errText string) {
 	}
 	for i := len(m.chatItems) - 1; i >= 0; i-- {
 		if m.chatItems[i].Kind == "assistant" {
+			m.chatItems[i].Title = assistantLabel
 			m.chatItems[i].Body = "Request failed: " + errText
 			m.chatItems[i].Status = "error"
 			return
