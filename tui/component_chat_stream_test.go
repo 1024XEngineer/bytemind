@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -516,5 +517,429 @@ func TestRunFailedWithMixedToolStates(t *testing.T) {
 	// Running toolRun should become error
 	if updated.toolRuns[1].Status != "error" {
 		t.Fatalf("expected running toolRun to become error, got %q", updated.toolRuns[1].Status)
+	}
+}
+
+// --- finalizeAssistantTurnForTool ---
+
+func TestFinalizeAssistantTurnForToolConvertsEmptyThinkingToThinkingCard(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "pending"},
+		},
+		streamingIndex: 0,
+	}
+	m.finalizeAssistantTurnForTool("run_shell")
+
+	if m.streamingIndex != -1 {
+		t.Fatalf("expected streamingIndex=-1, got %d", m.streamingIndex)
+	}
+	if m.chatItems[0].Status != "thinking" {
+		t.Fatalf("expected thinking status, got %q", m.chatItems[0].Status)
+	}
+	if m.chatItems[0].Title != thinkingLabel {
+		t.Fatalf("expected thinking title, got %q", m.chatItems[0].Title)
+	}
+}
+
+func TestFinalizeAssistantTurnForToolRemovesGenericThinking(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: thinkingLabel, Body: "I will call `run_shell` to inspect the relevant context first.", Status: "streaming"},
+		},
+		streamingIndex: 0,
+	}
+	m.finalizeAssistantTurnForTool("run_shell")
+
+	if m.streamingIndex != -1 {
+		t.Fatalf("expected streamingIndex=-1, got %d", m.streamingIndex)
+	}
+	if len(m.chatItems) != 0 {
+		t.Fatalf("expected generic thinking removed, got %d items", len(m.chatItems))
+	}
+}
+
+func TestFinalizeAssistantTurnForToolKeepsMeaningfulThinking(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: thinkingLabel, Body: "Analyzing the repository structure to understand the codebase layout", Status: "streaming"},
+		},
+		streamingIndex: 0,
+	}
+	m.finalizeAssistantTurnForTool("run_shell")
+
+	if m.streamingIndex != -1 {
+		t.Fatalf("expected streamingIndex=-1, got %d", m.streamingIndex)
+	}
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected meaningful thinking preserved, got %d items", len(m.chatItems))
+	}
+	if m.chatItems[0].Status != "thinking" {
+		t.Fatalf("expected thinking status, got %q", m.chatItems[0].Status)
+	}
+}
+
+func TestFinalizeAssistantTurnForToolNoOpWhenNoStreamingIndex(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: assistantLabel, Body: "answer", Status: "final"},
+		},
+		streamingIndex: -1,
+	}
+	m.finalizeAssistantTurnForTool("run_shell")
+
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected no change, got %d items", len(m.chatItems))
+	}
+}
+
+func TestFinalizeAssistantTurnForToolNoOpWhenNotAssistant(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "hello", Status: "final"},
+		},
+		streamingIndex: 0,
+	}
+	m.finalizeAssistantTurnForTool("run_shell")
+
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected no change, got %d items", len(m.chatItems))
+	}
+}
+
+// --- finishLatestToolCall ---
+
+func TestFinishLatestToolCallUpdatesMatchingTool(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
+		},
+	}
+	m.finishLatestToolCall("run_shell", "exit code 0", "done")
+
+	if m.chatItems[0].Status != "done" {
+		t.Fatalf("expected done status, got %q", m.chatItems[0].Status)
+	}
+	if m.chatItems[0].Body != "exit code 0" {
+		t.Fatalf("expected body update, got %q", m.chatItems[0].Body)
+	}
+}
+
+func TestFinishLatestToolCallAppendsWhenNoMatch(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "content", Status: "done"},
+		},
+	}
+	m.finishLatestToolCall("run_shell", "output", "done")
+
+	if len(m.chatItems) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(m.chatItems))
+	}
+	if m.chatItems[1].Status != "done" {
+		t.Fatalf("expected done status on new item, got %q", m.chatItems[1].Status)
+	}
+}
+
+func TestFinishLatestToolCallUpdatesLastMatching(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
+			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
+		},
+	}
+	m.finishLatestToolCall("run_shell", "output", "done")
+
+	if m.chatItems[0].Status != "running" {
+		t.Fatalf("expected first to remain running, got %q", m.chatItems[0].Status)
+	}
+	if m.chatItems[1].Status != "done" {
+		t.Fatalf("expected second to become done, got %q", m.chatItems[1].Status)
+	}
+}
+
+func TestFinishLatestToolCallAppendsWhenEmpty(t *testing.T) {
+	m := model{}
+	m.finishLatestToolCall("run_shell", "output", "done")
+
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(m.chatItems))
+	}
+	if m.chatItems[0].Status != "done" {
+		t.Fatalf("expected done, got %q", m.chatItems[0].Status)
+	}
+}
+
+// --- ensureThinkingCard ---
+
+func TestEnsureThinkingCardCreatesNewCard(t *testing.T) {
+	m := model{}
+	m.ensureThinkingCard()
+
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(m.chatItems))
+	}
+	if m.chatItems[0].Status != "pending" {
+		t.Fatalf("expected pending status, got %q", m.chatItems[0].Status)
+	}
+	if m.streamingIndex != 0 {
+		t.Fatalf("expected streamingIndex=0, got %d", m.streamingIndex)
+	}
+}
+
+func TestEnsureThinkingCardReusesExisting(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "pending"},
+		},
+		streamingIndex: 0,
+	}
+	m.ensureThinkingCard()
+
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected 1 item (reused), got %d", len(m.chatItems))
+	}
+	if m.chatItems[0].Status != "thinking" {
+		t.Fatalf("expected thinking status after reuse, got %q", m.chatItems[0].Status)
+	}
+}
+
+func TestEnsureThinkingCardCreatesNewWhenExistingIsFinal(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: assistantLabel, Body: "answer", Status: "final"},
+		},
+		streamingIndex: 0,
+	}
+	m.ensureThinkingCard()
+
+	if len(m.chatItems) != 2 {
+		t.Fatalf("expected 2 items (new card), got %d", len(m.chatItems))
+	}
+	if m.chatItems[1].Status != "pending" {
+		t.Fatalf("expected pending on new card, got %q", m.chatItems[1].Status)
+	}
+}
+
+// --- removeStreamingAssistantPlaceholder ---
+
+func TestRemoveStreamingAssistantPlaceholderRemovesItem(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "hello", Status: "final"},
+			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "pending"},
+		},
+		streamingIndex: 1,
+	}
+	m.removeStreamingAssistantPlaceholder()
+
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected 1 item after removal, got %d", len(m.chatItems))
+	}
+	if m.streamingIndex != -1 {
+		t.Fatalf("expected streamingIndex=-1, got %d", m.streamingIndex)
+	}
+}
+
+func TestRemoveStreamingAssistantPlaceholderNoOpWhenOutOfBounds(t *testing.T) {
+	m := model{
+		chatItems:    []chatEntry{{Kind: "user", Title: "You", Body: "hello", Status: "final"}},
+		streamingIndex: 5,
+	}
+	m.removeStreamingAssistantPlaceholder()
+
+	if m.streamingIndex != -1 {
+		t.Fatalf("expected streamingIndex=-1, got %d", m.streamingIndex)
+	}
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected no change, got %d items", len(m.chatItems))
+	}
+}
+
+func TestRemoveStreamingAssistantPlaceholderNoOpWhenNotAssistant(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "hello", Status: "final"},
+		},
+		streamingIndex: 0,
+	}
+	m.removeStreamingAssistantPlaceholder()
+
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected no change, got %d items", len(m.chatItems))
+	}
+	if m.streamingIndex != -1 {
+		t.Fatalf("expected streamingIndex=-1, got %d", m.streamingIndex)
+	}
+}
+
+// --- populateLatestThinkingToolStep ---
+
+func TestPopulateLatestThinkingToolStepFillsEmptyCard(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
+		},
+	}
+	ok := m.populateLatestThinkingToolStep("run_shell", "running command", "running")
+
+	if !ok {
+		t.Fatalf("expected true")
+	}
+	if strings.TrimSpace(m.chatItems[0].Body) == "" {
+		t.Fatalf("expected non-empty body after population, got %q", m.chatItems[0].Body)
+	}
+}
+
+func TestPopulateLatestThinkingToolStepSkipsNonEmptyCard(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: thinkingLabel, Body: "already has content", Status: "thinking"},
+		},
+	}
+	ok := m.populateLatestThinkingToolStep("run_shell", "running", "running")
+
+	if ok {
+		t.Fatalf("expected false for non-empty card")
+	}
+	if m.chatItems[0].Body != "already has content" {
+		t.Fatalf("expected body unchanged, got %q", m.chatItems[0].Body)
+	}
+}
+
+func TestPopulateLatestThinkingToolStepSkipsNonThinkingCard(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: assistantLabel, Body: "answer", Status: "final"},
+		},
+	}
+	ok := m.populateLatestThinkingToolStep("run_shell", "running", "running")
+
+	if ok {
+		t.Fatalf("expected false for non-thinking card")
+	}
+}
+
+func TestPopulateLatestThinkingToolStepNoOpWhenEmpty(t *testing.T) {
+	m := model{}
+	ok := m.populateLatestThinkingToolStep("run_shell", "running", "running")
+
+	if ok {
+		t.Fatalf("expected false for empty chat")
+	}
+}
+
+// --- handleAgentEvent ---
+
+func TestHandleAgentEventDeltaAppendsToStream(t *testing.T) {
+	m := model{
+		phase: "thinking",
+	}
+	m.handleAgentEvent(Event{Type: EventAssistantDelta, Content: "Hello"})
+
+	if m.phase != "responding" {
+		t.Fatalf("expected responding phase, got %q", m.phase)
+	}
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(m.chatItems))
+	}
+	if !strings.Contains(m.chatItems[0].Body, "Hello") {
+		t.Fatalf("expected delta in body, got %q", m.chatItems[0].Body)
+	}
+}
+
+func TestHandleAgentEventToolCallStartedAppendsToolCard(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: thinkingLabel, Body: "thinking...", Status: "streaming"},
+		},
+		streamingIndex: 0,
+	}
+	m.handleAgentEvent(Event{Type: EventToolCallStarted, ToolName: "run_shell"})
+
+	if m.phase != "tool" {
+		t.Fatalf("expected tool phase, got %q", m.phase)
+	}
+	found := false
+	for _, item := range m.chatItems {
+		if item.Kind == "tool" && item.Status == "running" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected running tool card")
+	}
+	if len(m.toolRuns) != 1 {
+		t.Fatalf("expected 1 tool run, got %d", len(m.toolRuns))
+	}
+}
+
+func TestHandleAgentEventToolCallCompletedUpdatesToolCard(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
+		},
+		toolRuns: []toolRun{
+			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
+		},
+	}
+	m.handleAgentEvent(Event{
+		Type:       EventToolCallCompleted,
+		ToolName:   "run_shell",
+		ToolResult: `{"ok":true,"exit_code":0,"stdout":"hello","stderr":""}`,
+	})
+
+	if m.chatItems[0].Status != "done" {
+		t.Fatalf("expected done status, got %q", m.chatItems[0].Status)
+	}
+	if m.toolRuns[0].Status != "done" {
+		t.Fatalf("expected tool run done, got %q", m.toolRuns[0].Status)
+	}
+	if m.phase != "thinking" {
+		t.Fatalf("expected thinking phase after tool completion, got %q", m.phase)
+	}
+}
+
+func TestHandleAgentEventRunFinishedSetsIdle(t *testing.T) {
+	m := model{
+		phase: "responding",
+	}
+	m.handleAgentEvent(Event{Type: EventRunFinished, Content: "done"})
+
+	if m.phase != "idle" {
+		t.Fatalf("expected idle phase, got %q", m.phase)
+	}
+}
+
+func TestHandleAgentEventRunStartedResetsEstimatedOutput(t *testing.T) {
+	m := model{
+		tempEstimatedOutput: 500,
+	}
+	m.handleAgentEvent(Event{Type: EventRunStarted})
+
+	if m.tempEstimatedOutput != 0 {
+		t.Fatalf("expected 0, got %d", m.tempEstimatedOutput)
+	}
+}
+
+func TestHandleAgentEventPlanUpdatedCopiesPlan(t *testing.T) {
+	m := model{
+		phase: "thinking",
+	}
+	m.handleAgentEvent(Event{
+		Type: EventPlanUpdated,
+		Plan: planpkg.State{
+			Goal:  "Build feature",
+			Phase: planpkg.PhaseReady,
+			Steps: []planpkg.Step{{Title: "Step 1", Status: planpkg.StepPending}},
+		},
+	})
+
+	if m.plan.Goal != "Build feature" {
+		t.Fatalf("expected plan goal, got %q", m.plan.Goal)
+	}
+	if len(m.plan.Steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(m.plan.Steps))
 	}
 }
