@@ -462,6 +462,55 @@ func TestRunPromptFinalizesConcreteRepoClaimWithoutRepair(t *testing.T) {
 	}
 }
 
+func TestRunPromptPlanModeFinalizesWithoutUpdatePlan(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	sess.Mode = planpkg.ModePlan
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role:    llm.RoleAssistant,
+			Content: "I've analyzed the codebase. Here's my plan:\n1. Read the main entry point\n2. Check the config files\n3. Implement the changes",
+		},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 4,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "analyze the codebase and create a plan", "plan", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(answer, "I've analyzed the codebase") {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("expected one request (finalize), got %d", len(client.requests))
+	}
+	// Verify no update_plan tool was called
+	for _, msg := range sess.Messages {
+		for _, tc := range msg.ToolCalls {
+			if tc.Function.Name == "update_plan" {
+				t.Fatal("expected no update_plan tool calls in plan mode")
+			}
+		}
+	}
+}
+
 func TestRunPromptPreservesBlockerQuestionWithoutRepair(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
