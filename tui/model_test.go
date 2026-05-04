@@ -3144,6 +3144,12 @@ func TestPasteMsgTransactionConsumesEchoedPlainKeyStream(t *testing.T) {
 		t.Fatalf("expected paste payload to compress into marker, got %q", afterPaste)
 	}
 
+	// Reset the paste transaction timer so the 120ms stale-echo window
+	// starts fresh before the simulated echo key stream. On slow CI runners
+	// the wall-clock gap between handlePastePayload and the first handleKey
+	// can exceed the window, causing the transaction to expire prematurely.
+	updated.pasteTransaction.StartedAt = time.Now()
+
 	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("echo line 1")})
 	updated = got.(model)
 	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -3196,6 +3202,9 @@ func TestPasteKeyTransactionConsumesEchoedPlainKeyStream(t *testing.T) {
 	if afterPaste != "title\nbody" {
 		t.Fatalf("expected paste-key flow to keep preview text visible, got %q", afterPaste)
 	}
+
+	// Reset the paste transaction timer to prevent CI timing flakiness.
+	updated.pasteTransaction.StartedAt = time.Now()
 
 	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("title")})
 	updated = got.(model)
