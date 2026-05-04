@@ -130,6 +130,17 @@ func TestBuildSubAgentResultFromAnswerPlainText(t *testing.T) {
 	}
 }
 
+func TestBuildSubAgentResultFromAnswerJSONWithEmptySummary(t *testing.T) {
+	result := buildSubAgentResultFromAnswer(`{"ok":true,"summary":"  "}`, "inv-1", "explorer")
+	if !result.OK {
+		t.Fatal("expected OK true")
+	}
+	// JSON parsed but summary is whitespace-only, falls back to trimmed raw answer
+	if result.Summary != `{"ok":true,"summary":"  "}` {
+		t.Fatalf("expected fallback to raw answer, got %q", result.Summary)
+	}
+}
+
 func TestBuildSubAgentResultFromAnswerJSONWithoutSummary(t *testing.T) {
 	result := buildSubAgentResultFromAnswer(`{"ok":true}`, "inv-1", "explorer")
 	if !result.OK {

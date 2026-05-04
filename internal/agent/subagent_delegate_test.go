@@ -1380,6 +1380,124 @@ func TestMapSubAgentTerminalResultWithErrorCode(t *testing.T) {
 	}
 }
 
+// runtimeErrorWithEmptyCode implements Code() string returning empty.
+type runtimeErrorWithEmptyCode struct{ msg string }
+
+func (e runtimeErrorWithEmptyCode) Error() string { return e.msg }
+func (e runtimeErrorWithEmptyCode) Code() string   { return "" }
+
+func TestMapDelegateSubAgentErrorRuntimeErrorEmptyCode(t *testing.T) {
+	mapped := mapDelegateSubAgentError(
+		runtimeErrorWithEmptyCode{msg: "runtime exploded"},
+		"fallback_code",
+	)
+	if mapped == nil {
+		t.Fatal("expected mapped error")
+	}
+	if mapped.Code != "fallback_code" {
+		t.Fatalf("expected fallback code for empty Code(), got %q", mapped.Code)
+	}
+	if !mapped.Retryable {
+		t.Fatal("expected retryable true for runtime error with empty code")
+	}
+}
+
+func TestMapSubAgentTerminalResultDefaultStatus(t *testing.T) {
+	code, retryable := mapSubAgentTerminalResult(corepkg.TaskStatus("unknown_status"), "")
+	if code != subAgentErrorCodeRuntimeUnavailable {
+		t.Fatalf("expected runtime unavailable code, got %q", code)
+	}
+	if !retryable {
+		t.Fatal("expected retryable true for unknown status")
+	}
+}
+
+func TestNormalizeDelegateSubAgentResultOKWithError(t *testing.T) {
+	_, err := normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":true,"error":{"code":"x","message":"y"}}`),
+		"inv-1", "explorer", "task-1",
+	)
+	if err == nil || !strings.Contains(err.Error(), "must not include error") {
+		t.Fatalf("expected ok+error rejection, got %v", err)
+	}
+}
+
+func TestNormalizeDelegateSubAgentResultFailedEmptyErrorCode(t *testing.T) {
+	_, err := normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":false,"error":{"code":"","message":"boom"}}`),
+		"inv-1", "explorer", "task-1",
+	)
+	if err == nil || !strings.Contains(err.Error(), "non-empty error code") {
+		t.Fatalf("expected empty code rejection, got %v", err)
+	}
+
+	_, err = normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":false,"error":{"code":"x","message":"  "}}`),
+		"inv-1", "explorer", "task-1",
+	)
+	if err == nil || !strings.Contains(err.Error(), "non-empty error") {
+		t.Fatalf("expected empty message rejection, got %v", err)
+	}
+}
+
+func TestNormalizeDelegateSubAgentResultFailedNonFailedStatus(t *testing.T) {
+	_, err := normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":false,"status":"completed","error":{"code":"x","message":"y"}}`),
+		"inv-1", "explorer", "task-1",
+	)
+	if err == nil || !strings.Contains(err.Error(), "must use status") {
+		t.Fatalf("expected failed+completed rejection, got %v", err)
+	}
+}
+
+func TestEffectiveToolsetHashAllEmpty(t *testing.T) {
+	got := effectiveToolsetHash([]string{"", "  ", ""})
+	if got != "" {
+		t.Fatalf("expected empty hash for all-empty entries, got %q", got)
+	}
+}
+
+func TestEffectiveToolsetHashDedupToEmpty(t *testing.T) {
+	got := effectiveToolsetHash([]string{"  ", "  "})
+	if got != "" {
+		t.Fatalf("expected empty hash for whitespace-only entries, got %q", got)
+	}
+}
+
+func TestExecCtxGetAllowed(t *testing.T) {
+	if got := execCtxGetAllowed(nil); got != nil {
+		t.Fatalf("expected nil for nil execCtx, got %v", got)
+	}
+	if got := execCtxGetAllowed(&tools.ExecutionContext{}); got != nil {
+		t.Fatalf("expected nil for nil AllowedTools, got %v", got)
+	}
+	allowed := map[string]struct{}{"read_file": {}}
+	got := execCtxGetAllowed(&tools.ExecutionContext{AllowedTools: allowed})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got))
+	}
+	if _, ok := got["read_file"]; !ok {
+		t.Fatal("expected read_file in allowed")
+	}
+}
+
+func TestExecCtxGetDenied(t *testing.T) {
+	if got := execCtxGetDenied(nil); got != nil {
+		t.Fatalf("expected nil for nil execCtx, got %v", got)
+	}
+	if got := execCtxGetDenied(&tools.ExecutionContext{}); got != nil {
+		t.Fatalf("expected nil for nil DeniedTools, got %v", got)
+	}
+	denied := map[string]struct{}{"write_file": {}}
+	got := execCtxGetDenied(&tools.ExecutionContext{DeniedTools: denied})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got))
+	}
+	if _, ok := got["write_file"]; !ok {
+		t.Fatal("expected write_file in denied")
+	}
+}
+
 func TestDelegateSubAgentNilRunner(t *testing.T) {
 	var r *Runner
 	result, err := r.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
