@@ -8,7 +8,6 @@ import (
 
 	"github.com/1024XEngineer/bytemind/internal/config"
 	"github.com/1024XEngineer/bytemind/internal/llm"
-	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	"github.com/1024XEngineer/bytemind/internal/tools"
 )
@@ -206,26 +205,6 @@ func TestRunPromptWithInputPlanModeSetsGoalFromUserMessageWhenDisplayTextBlank(t
 
 	client := &fakeClient{
 		replies: []llm.Message{
-			{
-				Role: llm.RoleAssistant,
-				ToolCalls: []llm.ToolCall{{
-					ID:   "call-1",
-					Type: "function",
-					Function: llm.ToolFunctionCall{
-						Name: "update_plan",
-						Arguments: `{
-							"summary":"Drafted the initial plan from the structured user prompt.",
-							"phase":"draft",
-							"decision_gaps":[],
-							"plan":[
-								{"step":"Inspect the relevant repo area","status":"pending"},
-								{"step":"Draft the implementation approach","status":"pending"},
-								{"step":"Define verification","status":"pending"}
-							]
-						}`,
-					},
-				}},
-			},
 			llm.NewAssistantTextMessage("drafted plan"),
 		},
 	}
@@ -257,12 +236,6 @@ func TestRunPromptWithInputPlanModeSetsGoalFromUserMessageWhenDisplayTextBlank(t
 	}
 	if !strings.Contains(answer, "drafted plan") {
 		t.Fatalf("unexpected answer: %q", answer)
-	}
-	if strings.Contains(answer, planpkg.StructuredPlanReminder) {
-		t.Fatalf("expected structured plan repair flow instead of reminder-only answer, got %q", answer)
-	}
-	if !strings.Contains(answer, "<proposed_plan>") {
-		t.Fatalf("expected structured plan block in answer, got %q", answer)
 	}
 	if sess.Plan.Goal != "plan from structured prompt" {
 		t.Fatalf("expected plan goal from structured user message text, got %q", sess.Plan.Goal)

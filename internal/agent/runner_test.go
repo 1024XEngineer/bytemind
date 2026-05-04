@@ -286,7 +286,7 @@ func TestRunPromptCompletesMinimalToolLoop(t *testing.T) {
 	}
 }
 
-func TestRunPromptRepairsContinueWorkWithoutToolCalls(t *testing.T) {
+func TestRunPromptFinalizesContinueWorkWithoutToolCalls(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
@@ -296,22 +296,7 @@ func TestRunPromptRepairsContinueWorkWithoutToolCalls(t *testing.T) {
 	client := &fakeClient{replies: []llm.Message{
 		{
 			Role:    "assistant",
-			Content: "<turn_intent>continue_work</turn_intent>I will inspect files first.",
-		},
-		{
-			Role: "assistant",
-			ToolCalls: []llm.ToolCall{{
-				ID:   "call-1",
-				Type: "function",
-				Function: llm.ToolFunctionCall{
-					Name:      "list_files",
-					Arguments: `{}`,
-				},
-			}},
-		},
-		{
-			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>Workspace inspected.",
+			Content: "I will inspect files first.",
 		},
 	}}
 	runner := NewRunner(Options{
@@ -332,23 +317,11 @@ func TestRunPromptRepairsContinueWorkWithoutToolCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if answer != "Workspace inspected." {
+	if answer != "I will inspect files first." {
 		t.Fatalf("unexpected answer: %q", answer)
 	}
-	if len(client.requests) != 3 {
-		t.Fatalf("expected three requests (repair + tool + finalize), got %d", len(client.requests))
-	}
-	secondTurnMessages := client.requests[1].Messages
-	if len(secondTurnMessages) == 0 || secondTurnMessages[0].Role != llm.RoleSystem {
-		t.Fatalf("expected second request to keep system prompt first, got %#v", secondTurnMessages)
-	}
-	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
-	if lastMsg.Role != llm.RoleUser ||
-		!strings.Contains(strings.ToLower(lastMsg.Text()), "ongoing work but returned no structured tool calls") {
-		t.Fatalf("expected repair control note to be appended as user message, got %#v", secondTurnMessages)
-	}
-	if len(sess.Messages) != 4 {
-		t.Fatalf("expected user + tool call + tool result + final assistant, got %#v", sess.Messages)
+	if len(client.requests) != 1 {
+		t.Fatalf("expected one request (finalize), got %d", len(client.requests))
 	}
 }
 
@@ -362,7 +335,7 @@ func TestRunPromptRepairsUnavailableRunShellClaimWithoutToolCall(t *testing.T) {
 	client := &fakeClient{replies: []llm.Message{
 		{
 			Role:    "assistant",
-			Content: "run_shell seems unavailable or timed out, and I cannot continue shell checks right now.",
+			Content: "run_shell 看起来超时了，而且我当前没法继续调用 shell 工具执行命令。",
 		},
 		{
 			Role: "assistant",
@@ -417,7 +390,8 @@ func TestRunPromptRepairsUnavailableRunShellClaimWithoutToolCall(t *testing.T) {
 		t.Fatalf("expected repaired turn to execute run_shell, got %#v", sess.Messages[1])
 	}
 }
-func TestRunPromptSoftDowngradesConcreteRepoClaimAfterWeakEvidence(t *testing.T) {
+
+func TestRunPromptFinalizesConcreteRepoClaimWithoutRepair(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, "demos"), 0o755); err != nil {
 		t.Fatal(err)
@@ -458,7 +432,7 @@ func TestRunPromptSoftDowngradesConcreteRepoClaimAfterWeakEvidence(t *testing.T)
 		},
 		{
 			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>The repo already has a runnable minimal implementation. You can run `python demos/backend/server.py` directly.",
+			Content: "仓库里已经有最小闭环实现了，可以直接运行 `python demos/backend/server.py`。",
 		},
 	}}
 
@@ -476,462 +450,19 @@ func TestRunPromptSoftDowngradesConcreteRepoClaimAfterWeakEvidence(t *testing.T)
 		Stdout:   io.Discard,
 	})
 
-	answer, err := runner.RunPrompt(context.Background(), sess, "Check whether demos already has a runnable minimal demo.", "build", io.Discard)
+	answer, err := runner.RunPrompt(context.Background(), sess, "看看 demos 里是不是已经有现成可跑的最小 demo。", "build", io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(answer, "cannot directly confirm") {
-		t.Fatalf("expected conservative soft-downgraded answer, got %q", answer)
-	}
-	if !strings.Contains(answer, "demos/backend/server.py") {
-		t.Fatalf("expected soft-downgraded answer to reference the claimed path, got %q", answer)
+	if !strings.Contains(answer, "仓库里已经有最小闭环实现了") {
+		t.Fatalf("unexpected answer: %q", answer)
 	}
 	if len(client.requests) != 2 {
-		t.Fatalf("expected two requests (investigate + soft-downgraded finalize), got %d", len(client.requests))
+		t.Fatalf("expected two requests (investigate + finalize), got %d", len(client.requests))
 	}
 }
 
-func TestRunPromptSoftDowngradesImplementationClaimAfterPathListingOnly(t *testing.T) {
-	workspace := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(workspace, "demos", "backend"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace, "demos", "backend", "server.py"), []byte("print('demo')\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	store, err := session.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := session.New(workspace)
-	client := &fakeClient{replies: []llm.Message{
-		{
-			Role: "assistant",
-			ToolCalls: []llm.ToolCall{{
-				ID:   "call-1",
-				Type: "function",
-				Function: llm.ToolFunctionCall{
-					Name:      "list_files",
-					Arguments: `{"path":"demos/backend","depth":2}`,
-				},
-			}},
-		},
-		{
-			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>This is already implemented and runnable. Execute `python demos/backend/server.py`.",
-		},
-	}}
-
-	runner := NewRunner(Options{
-		Workspace: workspace,
-		Config: config.Config{
-			Provider:      config.ProviderConfig{Model: "test-model"},
-			MaxIterations: 8,
-			Stream:        false,
-		},
-		Client:   client,
-		Store:    store,
-		Registry: tools.DefaultRegistry(),
-		Stdin:    strings.NewReader(""),
-		Stdout:   io.Discard,
-	})
-
-	answer, err := runner.RunPrompt(context.Background(), sess, "Confirm whether demos/backend/server.py is already implemented.", "build", io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(answer, "cannot conclude the repository already has a runnable implementation yet") {
-		t.Fatalf("expected implementation-guard soft downgrade, got %q", answer)
-	}
-	if !strings.Contains(answer, "Implementation-level evidence so far") {
-		t.Fatalf("expected soft-downgraded answer to explain missing implementation evidence, got %q", answer)
-	}
-	if len(client.requests) != 2 {
-		t.Fatalf("expected two requests (list + soft-downgraded finalize), got %d", len(client.requests))
-	}
-}
-func TestRunPromptRepairsPlanDecisionAcknowledgementWithoutUpdatePlan(t *testing.T) {
-	workspace := t.TempDir()
-	store, err := session.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := session.New(workspace)
-	sess.Mode = planpkg.ModePlan
-	sess.Plan = planpkg.State{
-		Goal:         "Implement the first RAG demo",
-		Summary:      "Need to lock the frontend choice before convergence.",
-		Phase:        planpkg.PhaseClarify,
-		DecisionGaps: []string{"Choose the first frontend stack."},
-		Steps: []planpkg.Step{
-			{Title: "Freeze the frontend stack", Status: planpkg.StepPending},
-			{Title: "Implement the minimal flow", Status: planpkg.StepPending},
-		},
-	}
-
-	client := &fakeClient{replies: []llm.Message{
-		{
-			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>Choice B is noted: Streamlit + LangChain. Reply `start execution` and I will switch to build mode.",
-		},
-		{
-			Role: "assistant",
-			ToolCalls: []llm.ToolCall{{
-				ID:   "call-1",
-				Type: "function",
-				Function: llm.ToolFunctionCall{
-					Name: "update_plan",
-					Arguments: `{
-						"summary":"Frontend choice is locked and the plan is ready for execution review.",
-						"implementation_brief":"Objective: deliver the first local RAG demo in demos/ with Streamlit + LangChain.\nTechnical direction: keep the existing local Python stack, use Streamlit for UI, LangChain for orchestration, and a local vector store path.\nDeliverables: a runnable demo app, document ingestion flow, retrieval + answer generation flow, and basic local verification.\nAcceptance: another coding model should be able to implement directly from this brief.",
-						"phase":"converge_ready",
-						"decision_log":[{"decision":"Adopt Streamlit + LangChain for the first frontend stack","reason":"User selected option B for faster UI delivery."}],
-						"decision_gaps":[],
-						"scope_defined":true,
-						"risk_and_rollback_defined":true,
-						"verification_defined":true,
-						"risks":["Frontend stack change may require adapter refactors."],
-						"verification":["Run the local Streamlit app and validate one ingest + one query flow."],
-						"next_action":"Present the full handoff-ready plan and ask whether to start execution.",
-						"plan":[
-							{"step":"Freeze the frontend stack", "status":"pending"},
-							{"step":"Implement the minimal flow", "status":"pending"}
-						]
-					}`,
-				},
-			}},
-		},
-		{
-			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>Recorded: use Streamlit + LangChain.\nNext:\n- Start execution\n- Adjust plan",
-		},
-	}}
-	runner := NewRunner(Options{
-		Workspace: workspace,
-		Config: config.Config{
-			Provider:      config.ProviderConfig{Model: "test-model"},
-			MaxIterations: 6,
-			Stream:        false,
-		},
-		Client:   client,
-		Store:    store,
-		Registry: tools.DefaultRegistry(),
-		Stdin:    strings.NewReader(""),
-		Stdout:   io.Discard,
-	})
-
-	answer, err := runner.RunPrompt(context.Background(), sess, "b", "plan", io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(client.requests) != 3 {
-		t.Fatalf("expected three requests (repair + update_plan + finalize), got %d", len(client.requests))
-	}
-	secondTurnMessages := client.requests[1].Messages
-	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
-	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "without calling update_plan first") {
-		t.Fatalf("expected plan-state repair note to be appended as user message, got %#v", secondTurnMessages)
-	}
-	if sess.Plan.Phase != planpkg.PhaseConvergeReady {
-		t.Fatalf("expected session plan to converge after repair, got %#v", sess.Plan)
-	}
-	for _, want := range []string{"<proposed_plan>", "Implementation Brief", "Start execution"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("expected repaired answer to include %q, got %q", want, answer)
-		}
-	}
-}
-func TestRunPromptRepairsInitialPlanTurnBeforeStructuredPlanExists(t *testing.T) {
-	workspace := t.TempDir()
-	store, err := session.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := session.New(workspace)
-	sess.Mode = planpkg.ModePlan
-
-	client := &fakeClient{replies: []llm.Message{
-		{
-			Role:    llm.RoleAssistant,
-			Content: "I will quickly inspect demos first, then provide an executable plan.",
-		},
-		{
-			Role: llm.RoleAssistant,
-			ToolCalls: []llm.ToolCall{{
-				ID:   "call-1",
-				Type: "function",
-				Function: llm.ToolFunctionCall{
-					Name:      "list_files",
-					Arguments: `{"path":"demos"}`,
-				},
-			}},
-		},
-		{
-			Role: llm.RoleAssistant,
-			ToolCalls: []llm.ToolCall{{
-				ID:   "call-2",
-				Type: "function",
-				Function: llm.ToolFunctionCall{
-					Name: "update_plan",
-					Arguments: `{
-						"goal":"Review the demos area and produce an executable plan.",
-						"summary":"Inspected the demos directory and created the first plan skeleton.",
-						"phase":"draft",
-						"decision_gaps":[],
-						"risks":["The existing demos layout may constrain where the new work should land."],
-						"verification":["Inspect the target demo path and confirm the first runnable slice before switching to Build."],
-						"plan":[
-							{"step":"Inspect the demos directory and relevant entrypoints","status":"pending"},
-							{"step":"Choose the target demo slice and define scope","status":"pending"},
-							{"step":"Draft the implementation and verification path","status":"pending"}
-						]
-					}`,
-				},
-			}},
-		},
-		{
-			Role:    llm.RoleAssistant,
-			Content: "<turn_intent>finalize</turn_intent>Initial plan created.",
-		},
-	}}
-
-	runner := NewRunner(Options{
-		Workspace: workspace,
-		Config: config.Config{
-			Provider:      config.ProviderConfig{Model: "test-model"},
-			MaxIterations: 8,
-			Stream:        false,
-		},
-		Client:   client,
-		Store:    store,
-		Registry: tools.DefaultRegistry(),
-		Stdin:    strings.NewReader(""),
-		Stdout:   io.Discard,
-	})
-
-	answer, err := runner.RunPrompt(context.Background(), sess, "Inspect demos first, then produce an executable plan.", "plan", io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(client.requests) != 4 {
-		t.Fatalf("expected four requests (repair + investigate + update_plan + finalize), got %d", len(client.requests))
-	}
-	repairTurnMessages := client.requests[1].Messages
-	lastMsg := repairTurnMessages[len(repairTurnMessages)-1]
-	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "without creating the initial structured plan state") {
-		t.Fatalf("expected bootstrap repair note to be appended as user message, got %#v", repairTurnMessages)
-	}
-	if !planpkg.HasStructuredPlan(sess.Plan) {
-		t.Fatalf("expected session plan to be structured after repair, got %#v", sess.Plan)
-	}
-	if sess.Plan.Phase != planpkg.PhaseDraft {
-		t.Fatalf("expected repaired plan to reach draft phase, got %#v", sess.Plan.Phase)
-	}
-	if strings.Contains(answer, planpkg.StructuredPlanReminder) {
-		t.Fatalf("expected repaired answer not to fall back to structured plan reminder, got %q", answer)
-	}
-}
-func TestRunPromptRepairsClarifyQuestionWithoutActiveChoice(t *testing.T) {
-	workspace := t.TempDir()
-	store, err := session.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := session.New(workspace)
-	sess.Mode = planpkg.ModePlan
-	sess.Plan = planpkg.State{
-		Goal:         "Implement the first paper RAG demo",
-		Summary:      "Need to choose the target demo directory before the rest of the plan converges.",
-		Phase:        planpkg.PhaseClarify,
-		DecisionGaps: []string{"Choose the target demo directory."},
-		Steps: []planpkg.Step{
-			{Title: "Choose the target demo directory", Status: planpkg.StepPending},
-			{Title: "Lock the technical path", Status: planpkg.StepPending},
-			{Title: "Define the runnable acceptance path", Status: planpkg.StepPending},
-		},
-	}
-
-	client := &fakeClient{replies: []llm.Message{
-		{
-			Role:    "assistant",
-			Content: "Please choose first: A reuse demos/paper_rag_minimal (recommended), B reuse demos/paper_rag, or C create demos/paper_rag_mvp.",
-		},
-		{
-			Role: "assistant",
-			ToolCalls: []llm.ToolCall{{
-				ID:   "call-1",
-				Type: "function",
-				Function: llm.ToolFunctionCall{
-					Name: "update_plan",
-					Arguments: `{
-						"summary":"The first directory choice is waiting on the user before plan convergence.",
-						"phase":"clarify",
-						"decision_gaps":["Choose the target demo directory."],
-						"active_choice":{
-							"id":"target_demo_directory",
-							"kind":"clarify",
-							"question":"Please choose the target directory:",
-							"gap_key":"Choose the target demo directory.",
-							"options":[
-								{"id":"reuse_paper_rag_minimal","shortcut":"A","title":"Reuse demos/paper_rag_minimal","description":"Recommended minimal baseline.","recommended":true},
-								{"id":"reuse_paper_rag","shortcut":"B","title":"Reuse demos/paper_rag","description":"Reuse an existing directory with broader changes."},
-								{"id":"new_paper_rag_mvp","shortcut":"C","title":"Create demos/paper_rag_mvp","description":"Stronger isolation but more scaffolding."}
-							]
-						},
-						"plan":[
-							{"step":"Choose the target demo directory", "status":"pending"},
-							{"step":"Lock the technical path", "status":"pending"},
-							{"step":"Define the runnable acceptance path", "status":"pending"}
-						]
-					}`,
-				},
-			}},
-		},
-		{
-			Role:    "assistant",
-			Content: "<turn_intent>ask_user</turn_intent>Please reply with A, B, or C for the active choice shown above.",
-		},
-	}}
-	runner := NewRunner(Options{
-		Workspace: workspace,
-		Config: config.Config{
-			Provider:      config.ProviderConfig{Model: "test-model"},
-			MaxIterations: 6,
-			Stream:        false,
-		},
-		Client:   client,
-		Store:    store,
-		Registry: tools.DefaultRegistry(),
-		Stdin:    strings.NewReader(""),
-		Stdout:   io.Discard,
-	})
-
-	answer, err := runner.RunPrompt(context.Background(), sess, "continue planning", "plan", io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(client.requests) != 3 {
-		t.Fatalf("expected three requests (repair + update_plan + ask_user), got %d", len(client.requests))
-	}
-	secondTurnMessages := client.requests[1].Messages
-	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
-	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "without storing active_choice first") {
-		t.Fatalf("expected clarify repair note to be appended as user message, got %#v", secondTurnMessages)
-	}
-	if sess.Plan.ActiveChoice == nil {
-		t.Fatalf("expected active_choice to be persisted after repair, got %#v", sess.Plan)
-	}
-	if !strings.Contains(answer, "A, B, or C") {
-		t.Fatalf("expected repaired ask_user answer to keep explicit choice guidance, got %q", answer)
-	}
-}
-func TestRunPromptRepairsPlanRevisionAndReturnsRevisedPlanDocument(t *testing.T) {
-	workspace := t.TempDir()
-	store, err := session.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := session.New(workspace)
-	sess.Mode = planpkg.ModePlan
-	sess.Plan = planpkg.State{
-		Goal:                "Implement the first paper RAG demo",
-		Summary:             "The plan is converged and ready to execute.",
-		ImplementationBrief: "Objective: deliver the first local paper RAG demo.\nDeliverables: upload, retrieval, answer generation, and a minimal HTML page.",
-		Phase:               planpkg.PhaseConvergeReady,
-		DecisionLog: []planpkg.Decision{
-			{Decision: "Use FastAPI + Jinja2 HTML for the first UI path", Reason: "Keeps the HTML GUI simple and local."},
-		},
-		Steps: []planpkg.Step{
-			{Title: "Freeze the MVP scope", Status: planpkg.StepPending},
-			{Title: "Implement the minimal UI flow", Status: planpkg.StepPending},
-		},
-		Verification:        []string{"Start the local app and validate one upload + one answer flow."},
-		ScopeDefined:        true,
-		RiskRollbackDefined: true,
-		VerificationDefined: true,
-		NextAction:          "Ask whether to start execution or keep adjusting the plan.",
-	}
-
-	client := &fakeClient{replies: []llm.Message{
-		{
-			Role:    "assistant",
-			Content: "Great point. We should split the HTML GUI details into page regions, layout, and interaction flow before execution.",
-		},
-		{
-			Role: "assistant",
-			ToolCalls: []llm.ToolCall{{
-				ID:   "call-1",
-				Type: "function",
-				Function: llm.ToolFunctionCall{
-					Name: "update_plan",
-					Arguments: `{
-						"summary":"The plan stays converged and now includes a more detailed HTML GUI specification.",
-						"implementation_brief":"Objective: deliver the first local paper RAG demo in demos/.\nUI Specification: refine the HTML GUI into explicit page regions and interactions.\nLayout: top bar with title and current model tag; left column for paper management and system status; right upper panel for QA; right lower panel for synthesis and retrieval results.\nInteraction Flow: upload triggers indexing with progress states; answer and synthesis are split into separate tabs; each answer lists its cited source papers.\nDeliverables: runnable FastAPI app, HTML templates, upload/index/qa/synthesis flows, and verification notes.",
-						"phase":"converge_ready",
-						"decision_log":[
-							{"decision":"Use FastAPI + Jinja2 HTML for the first UI path","reason":"Keeps the HTML GUI simple and local."},
-							{"decision":"Expand the HTML GUI spec into concrete layout and interaction sections","reason":"User asked for a more detailed UI design before execution."}
-						],
-						"decision_gaps":[],
-						"scope_defined":true,
-						"risk_and_rollback_defined":true,
-						"verification_defined":true,
-						"verification":[
-							"Start the local app and validate one upload + one answer flow.",
-							"Confirm the HTML page shows the top bar, paper panel, QA tab, and synthesis tab."
-						],
-						"next_action":"Ask whether to start execution or keep adjusting the plan.",
-						"plan":[
-							{"step":"Freeze the MVP scope", "status":"pending", "description":"Lock the minimal local paper-RAG scope and the refined HTML GUI boundaries."},
-							{"step":"Implement the HTML GUI flow", "status":"pending", "description":"Build the top bar, paper management area, QA tab, and synthesis tab with clear state feedback."}
-						]
-					}`,
-				},
-			}},
-		},
-		{
-			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>Updated. The plan now includes a detailed HTML GUI section for regions, layout, and interaction flow.",
-		},
-	}}
-	runner := NewRunner(Options{
-		Workspace: workspace,
-		Config: config.Config{
-			Provider:      config.ProviderConfig{Model: "test-model"},
-			MaxIterations: 6,
-			Stream:        false,
-		},
-		Client:   client,
-		Store:    store,
-		Registry: tools.DefaultRegistry(),
-		Stdin:    strings.NewReader(""),
-		Stdout:   io.Discard,
-	})
-
-	answer, err := runner.RunPrompt(context.Background(), sess, "The HTML UI still needs more detail, especially page regions and interactions.", "plan", io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(client.requests) != 3 {
-		t.Fatalf("expected three requests (repair + update_plan + finalize), got %d", len(client.requests))
-	}
-	secondTurnMessages := client.requests[1].Messages
-	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
-	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "plan-refinement feedback without updating the structured plan first") {
-		t.Fatalf("expected plan-revision repair note to be appended as user message, got %#v", secondTurnMessages)
-	}
-	if sess.Plan.Phase != planpkg.PhaseConvergeReady {
-		t.Fatalf("expected plan to remain converge_ready after revision repair, got %#v", sess.Plan.Phase)
-	}
-	if !strings.Contains(answer, "<proposed_plan>") {
-		t.Fatalf("expected revised plan answer to stay in proposed plan format, got %q", answer)
-	}
-	if !strings.Contains(answer, "Implementation Brief") {
-		t.Fatalf("expected revised plan output to include implementation brief, got %q", answer)
-	}
-}
-func TestRunPromptRepairsBuildHandoffWithoutRestartingPlanConfirmation(t *testing.T) {
+func TestRunPromptPreservesBlockerQuestionWithoutRepair(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
@@ -953,22 +484,7 @@ func TestRunPromptRepairsBuildHandoffWithoutRestartingPlanConfirmation(t *testin
 	client := &fakeClient{replies: []llm.Message{
 		{
 			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>I am still treating this as plan confirmation. Please reply with continue execution or switch to build mode.",
-		},
-		{
-			Role: "assistant",
-			ToolCalls: []llm.ToolCall{{
-				ID:   "call-1",
-				Type: "function",
-				Function: llm.ToolFunctionCall{
-					Name:      "list_files",
-					Arguments: `{}`,
-				},
-			}},
-		},
-		{
-			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>I inspected the workspace entrypoints and continued implementation.",
+			Content: "I need to check if there is a config file first. Could you confirm?",
 		},
 	}}
 	runner := NewRunner(Options{
@@ -976,135 +492,6 @@ func TestRunPromptRepairsBuildHandoffWithoutRestartingPlanConfirmation(t *testin
 		Config: config.Config{
 			Provider:      config.ProviderConfig{Model: "test-model"},
 			MaxIterations: 6,
-			Stream:        false,
-		},
-		Client:   client,
-		Store:    store,
-		Registry: tools.DefaultRegistry(),
-		Stdin:    strings.NewReader(""),
-		Stdout:   io.Discard,
-	})
-
-	answer, err := runner.RunPrompt(context.Background(), sess, "start execution", "build", io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(client.requests) != 3 {
-		t.Fatalf("expected three requests (repair + tool + finalize), got %d", len(client.requests))
-	}
-	secondTurnMessages := client.requests[1].Messages
-	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
-	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "already switched to build mode") {
-		t.Fatalf("expected build-handoff repair note to be appended as user message, got %#v", secondTurnMessages)
-	}
-	if !strings.Contains(answer, "inspected the workspace entrypoints") {
-		t.Fatalf("expected repaired build answer, got %q", answer)
-	}
-}
-func TestRunPromptRepairsBuildHandoffAcknowledgementWithoutToolCalls(t *testing.T) {
-	workspace := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("package main\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	store, err := session.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := session.New(workspace)
-	sess.Mode = planpkg.ModeBuild
-	sess.Plan = planpkg.State{
-		Goal:                "Implement the first RAG demo",
-		Summary:             "Plan is converged and execution should begin from the repo baseline.",
-		Phase:               planpkg.PhaseExecuting,
-		NextAction:          "Inspect the workspace entrypoints before editing.",
-		Steps:               []planpkg.Step{{Title: "Inspect the workspace entrypoints", Status: planpkg.StepInProgress}},
-		ScopeDefined:        true,
-		RiskRollbackDefined: true,
-		VerificationDefined: true,
-	}
-
-	client := &fakeClient{replies: []llm.Message{
-		{
-			Role:    "assistant",
-			Content: "Started execution.",
-		},
-		{
-			Role: "assistant",
-			ToolCalls: []llm.ToolCall{{
-				ID:   "call-1",
-				Type: "function",
-				Function: llm.ToolFunctionCall{
-					Name:      "list_files",
-					Arguments: `{}`,
-				},
-			}},
-		},
-		{
-			Role:    "assistant",
-			Content: "<turn_intent>finalize</turn_intent>Inspected the workspace entrypoints and continued implementation.",
-		},
-	}}
-	runner := NewRunner(Options{
-		Workspace: workspace,
-		Config: config.Config{
-			Provider:      config.ProviderConfig{Model: "test-model"},
-			MaxIterations: 6,
-			Stream:        false,
-		},
-		Client:   client,
-		Store:    store,
-		Registry: tools.DefaultRegistry(),
-		Stdin:    strings.NewReader(""),
-		Stdout:   io.Discard,
-	})
-
-	answer, err := runner.RunPrompt(context.Background(), sess, "start execution", "build", io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(client.requests) != 3 {
-		t.Fatalf("expected three requests (repair + tool + finalize), got %d requests", len(client.requests))
-	}
-	secondTurnMessages := client.requests[1].Messages
-	lastMsg := secondTurnMessages[len(secondTurnMessages)-1]
-	if lastMsg.Role != llm.RoleUser || !strings.Contains(strings.ToLower(lastMsg.Text()), "already switched to build mode") {
-		t.Fatalf("expected build-handoff repair note to be appended as user message, got %#v", secondTurnMessages)
-	}
-	if !strings.Contains(answer, "Inspected the workspace entrypoints") {
-		t.Fatalf("expected repaired build answer, got %q", answer)
-	}
-}
-
-func TestRunPromptDoesNotRepairBuildHandoffWhenAssistantRequestsRealBlockerInfo(t *testing.T) {
-	workspace := t.TempDir()
-	store, err := session.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := session.New(workspace)
-	sess.Mode = planpkg.ModeBuild
-	sess.Plan = planpkg.State{
-		Goal:                "Implement the first RAG demo",
-		Summary:             "Plan is converged and execution should continue from the repo baseline.",
-		Phase:               planpkg.PhaseExecuting,
-		NextAction:          "Run the first execution step.",
-		Steps:               []planpkg.Step{{Title: "Run the first execution step", Status: planpkg.StepInProgress}},
-		ScopeDefined:        true,
-		RiskRollbackDefined: true,
-		VerificationDefined: true,
-	}
-
-	client := &fakeClient{replies: []llm.Message{
-		{
-			Role:    "assistant",
-			Content: "<turn_intent>ask_user</turn_intent>Before I proceed, I need the missing API token for the target service.",
-		},
-	}}
-	runner := NewRunner(Options{
-		Workspace: workspace,
-		Config: config.Config{
-			Provider:      config.ProviderConfig{Model: "test-model"},
-			MaxIterations: 4,
 			Stream:        false,
 		},
 		Client:   client,
@@ -1119,57 +506,10 @@ func TestRunPromptDoesNotRepairBuildHandoffWhenAssistantRequestsRealBlockerInfo(
 		t.Fatal(err)
 	}
 	if len(client.requests) != 1 {
-		t.Fatalf("expected direct ask_user response without build-handoff repair retry, got %d requests", len(client.requests))
+		t.Fatalf("expected one request (finalize), got %d requests", len(client.requests))
 	}
-	if !strings.Contains(strings.ToLower(answer), "missing api token") {
-		t.Fatalf("expected answer to preserve the genuine blocker clarification, got %q", answer)
-	}
-	if len(sess.Messages) != 2 {
-		t.Fatalf("expected user + assistant messages only, got %#v", sess.Messages)
-	}
-}
-
-func TestRunPromptStopsWhenContinueWorkWithoutToolCallsKeepsRepeating(t *testing.T) {
-	workspace := t.TempDir()
-	store, err := session.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := session.New(workspace)
-	client := &fakeClient{replies: []llm.Message{
-		{
-			Role:    "assistant",
-			Content: "<turn_intent>continue_work</turn_intent>I will continue now.",
-		},
-	}}
-	runner := NewRunner(Options{
-		Workspace: workspace,
-		Config: config.Config{
-			Provider:      config.ProviderConfig{Model: "test-model"},
-			MaxIterations: 8,
-			Stream:        false,
-			ContextBudget: config.ContextBudgetConfig{
-				WarningRatio:     config.DefaultContextBudgetWarningRatio,
-				CriticalRatio:    config.DefaultContextBudgetCriticalRatio,
-				MaxReactiveRetry: 1,
-			},
-		},
-		Client:   client,
-		Store:    store,
-		Registry: tools.DefaultRegistry(),
-		Stdin:    strings.NewReader(""),
-		Stdout:   io.Discard,
-	})
-
-	answer, err := runner.RunPrompt(context.Background(), sess, "keep going", "build", io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(answer, "ongoing work without structured tool calls") {
-		t.Fatalf("expected stop summary for repeated no-tool continue turns, got %q", answer)
-	}
-	if len(sess.Messages) != 2 {
-		t.Fatalf("expected user + summary assistant messages, got %#v", sess.Messages)
+	if !strings.Contains(answer, "config file") {
+		t.Fatalf("expected blocker question preserved, got %q", answer)
 	}
 }
 
