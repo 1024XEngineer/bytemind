@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1495,6 +1496,210 @@ func TestExecCtxGetDenied(t *testing.T) {
 	}
 	if _, ok := got["write_file"]; !ok {
 		t.Fatal("expected write_file in denied")
+	}
+}
+
+// flexibleRuntimeGateway allows per-test control of RunSync/RunAsync behavior.
+type flexibleRuntimeGateway struct {
+	mu          sync.Mutex
+	syncResult  RuntimeTaskExecution
+	syncErr     error
+	asyncResult RuntimeTaskLaunch
+	asyncErr    error
+	asyncCalls  []RuntimeTaskRequest
+	syncCalls   []RuntimeTaskRequest
+}
+
+func (g *flexibleRuntimeGateway) RunSync(_ context.Context, req RuntimeTaskRequest) (RuntimeTaskExecution, error) {
+	g.mu.Lock()
+	g.syncCalls = append(g.syncCalls, req)
+	g.mu.Unlock()
+	return g.syncResult, g.syncErr
+}
+
+func (g *flexibleRuntimeGateway) RunAsync(_ context.Context, req RuntimeTaskRequest) (RuntimeTaskLaunch, error) {
+	g.mu.Lock()
+	g.asyncCalls = append(g.asyncCalls, req)
+	g.mu.Unlock()
+	return g.asyncResult, g.asyncErr
+}
+
+func TestDelegateSubAgentRunSyncError(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &flexibleRuntimeGateway{
+		syncResult: RuntimeTaskExecution{TaskID: "task-1"},
+		syncErr:    errors.New("runtime sync failure"),
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test task",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure result")
+	}
+	if result.TaskID != "task-1" {
+		t.Fatalf("expected task id from execution, got %q", result.TaskID)
+	}
+	if result.Error == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestDelegateSubAgentRunSyncEmptyOutput(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &flexibleRuntimeGateway{
+		syncResult: RuntimeTaskExecution{
+			TaskID: "task-1",
+			Result: runtimepkg.TaskResult{
+				TaskID: "task-1",
+				Status: corepkg.TaskCompleted,
+				Output: []byte{},
+			},
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test task",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for empty output")
+	}
+	if result.Error == nil || result.Error.Code != subAgentErrorCodeNotImplemented {
+		t.Fatalf("expected not_implemented code, got %v", result.Error)
+	}
+}
+
+func TestDelegateSubAgentRunSyncInvalidJSONOutput(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &flexibleRuntimeGateway{
+		syncResult: RuntimeTaskExecution{
+			TaskID: "task-1",
+			Result: runtimepkg.TaskResult{
+				TaskID: "task-1",
+				Status: corepkg.TaskCompleted,
+				Output: []byte(`{invalid json`),
+			},
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test task",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for invalid JSON")
+	}
+	if result.Error == nil || result.Error.Code != subAgentErrorCodeInvalidResult {
+		t.Fatalf("expected invalid_result code, got %v", result.Error)
+	}
+}
+
+func TestDelegateSubAgentRunAsyncError(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &flexibleRuntimeGateway{
+		asyncErr: errors.New("async runtime failure"),
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent:           "explorer",
+		Task:            "test task",
+		RunInBackground: true,
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for async error")
+	}
+	if result.Error == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestDelegateSubAgentRunAsyncEmptyTaskID(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &flexibleRuntimeGateway{
+		asyncResult: RuntimeTaskLaunch{TaskID: ""},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent:           "explorer",
+		Task:            "test task",
+		RunInBackground: true,
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for empty task id")
+	}
+	if result.Error == nil || result.Error.Code != subAgentErrorCodeRuntimeUnavailable {
+		t.Fatalf("expected runtime_unavailable code, got %v", result.Error)
+	}
+}
+
+func TestDelegateSubAgentRunSyncExecutionError(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &flexibleRuntimeGateway{
+		syncResult: RuntimeTaskExecution{
+			TaskID:         "task-1",
+			ExecutionError: errors.New("execution exploded"),
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test task",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for execution error")
+	}
+	if result.Error == nil {
+		t.Fatal("expected error")
 	}
 }
 

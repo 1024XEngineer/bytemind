@@ -2,12 +2,26 @@ package agent
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
 	"github.com/1024XEngineer/bytemind/internal/tools"
 )
+
+type recordingObserver struct {
+	mu     sync.Mutex
+	events []Event
+}
+
+func (o *recordingObserver) HandleEvent(e Event) {
+	o.mu.Lock()
+	o.events = append(o.events, e)
+	o.mu.Unlock()
+}
 
 func TestExtractJSONFromAnswerValidJSON(t *testing.T) {
 	input := `{"summary":"done"}`
@@ -318,5 +332,80 @@ func TestSubAgentExecutionError(t *testing.T) {
 	err := &subAgentExecutionError{code: "test", message: "  hello  "}
 	if got := err.Error(); got != "hello" {
 		t.Fatalf("expected trimmed message, got %q", got)
+	}
+}
+
+func TestExecuteScopedWorkspaceOverride(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{Role: llm.RoleAssistant, Content: "done"},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config:    config.Config{Provider: config.ProviderConfig{Model: "test-model"}, MaxIterations: 2},
+		Client:    client,
+		Registry:  tools.DefaultRegistry(),
+	})
+	executor := NewSubAgentExecutor(runner)
+
+	scopedWs := t.TempDir()
+	result, err := executor.Execute(t.Context(), SubAgentExecutionInput{
+		Request:      tools.DelegateSubAgentRequest{Agent: "explorer", Task: "scan"},
+		Preflight:    subagentspkg.PreflightResult{Definition: subagentspkg.Agent{Name: "explorer", Tools: []string{"read_file"}}},
+		InvocationID: "inv-1",
+		Agent:        "explorer",
+		RunMode:      planpkg.ModeBuild,
+		ExecCtx:      &tools.ExecutionContext{Workspace: scopedWs},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("expected success, got %#v", result)
+	}
+}
+
+func TestExecuteWithStreamObserver(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{Role: llm.RoleAssistant, Content: "done"},
+	}}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config:    config.Config{Provider: config.ProviderConfig{Model: "test-model"}, MaxIterations: 2},
+		Client:    client,
+		Registry:  tools.DefaultRegistry(),
+	})
+	executor := NewSubAgentExecutor(runner)
+
+	observer := &recordingObserver{}
+	result, err := executor.Execute(t.Context(), SubAgentExecutionInput{
+		Request:      tools.DelegateSubAgentRequest{Agent: "explorer", Task: "scan"},
+		Preflight:    subagentspkg.PreflightResult{Definition: subagentspkg.Agent{Name: "explorer", Tools: []string{"read_file"}}},
+		InvocationID: "inv-1",
+		Agent:        "explorer",
+		RunMode:      planpkg.ModeBuild,
+		Observer:     observer,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("expected success, got %#v", result)
+	}
+}
+
+func TestBuildSubAgentResultFromAnswerUnmarshalableJSON(t *testing.T) {
+	// Valid JSON but summary is a number, not a string — Unmarshal fails
+	input := `{"ok":true,"summary":123}`
+	result := buildSubAgentResultFromAnswer(input, "inv-1", "explorer")
+	if !result.OK {
+		t.Fatal("expected OK true")
+	}
+	// Unmarshal fails, falls back to trimmed raw input
+	if result.Summary != input {
+		t.Fatalf("expected fallback to raw input, got %q", result.Summary)
 	}
 }
