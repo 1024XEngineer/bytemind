@@ -362,10 +362,15 @@ func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded boo
 	status := aggregateToolGroupStatus(group)
 
 	// Tree-style summary line plus detail lines for each entry.
-	iconStyle := lipgloss.NewStyle().Foreground(colorTool)
-	statusBadge := renderToolTag(status, status)
+	statusBadge := ""
+	if shouldRenderToolStatusTag(status) {
+		statusBadge = renderToolTag(status, status)
+	}
 
-	headLine := iconStyle.Render(toolIcon) + label + " " + summaryLine
+	headLine := toolStatusIndicator(status) + label
+	if summaryLine != "" {
+		headLine += " " + summaryLine
+	}
 	if statusBadge != "" {
 		headLine += "  " + statusBadge
 	}
@@ -420,10 +425,12 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool) str
 		compact = strings.TrimSpace(firstNonEmptyLine(item.Body))
 	}
 
-	iconStyle := lipgloss.NewStyle().Foreground(colorTool)
-	statusBadge := renderToolTag(item.Status, item.Status)
+	statusBadge := ""
+	if shouldRenderToolStatusTag(item.Status) {
+		statusBadge = renderToolTag(item.Status, item.Status)
+	}
 
-	headLine := iconStyle.Render(toolIcon) + label
+	headLine := toolStatusIndicator(item.Status) + label
 	if compact != "" {
 		headLine += " " + compact
 	}
@@ -633,6 +640,38 @@ func renderToolTag(text, tagType string) string {
 		style = style.Foreground(semanticColors.TextMuted)
 	}
 	return style.Render(text)
+}
+
+func normalizeToolStatus(status string) string {
+	return strings.TrimSpace(strings.ToLower(status))
+}
+
+func shouldRenderToolStatusTag(status string) bool {
+	switch normalizeToolStatus(status) {
+	case "", "done", "success":
+		return false
+	default:
+		return true
+	}
+}
+
+func toolStatusIndicator(status string) string {
+	glyph := toolIcon
+	style := lipgloss.NewStyle()
+	switch normalizeToolStatus(status) {
+	case "running", "active":
+		glyph = "○"
+		style = style.Foreground(semanticColors.AccentSoft)
+	case "warn", "warning", "pending":
+		style = style.Foreground(semanticColors.Warning)
+	case "error", "failed":
+		style = style.Foreground(semanticColors.Danger)
+	case "done", "success":
+		style = style.Foreground(semanticColors.Success)
+	default:
+		style = style.Foreground(colorTool)
+	}
+	return style.Render(glyph)
 }
 
 func resolveRunCardStyle(items []chatEntry) lipgloss.Style {

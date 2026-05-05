@@ -365,6 +365,9 @@ func TestRenderRunSectionGroupSummariesAndStatuses(t *testing.T) {
 	if !strings.Contains(stripANSI(singleCollapsed), "one.go") {
 		t.Fatalf("expected single group to render compact body, got %q", singleCollapsed)
 	}
+	if strings.Contains(strings.ToLower(stripANSI(singleCollapsed)), "done") {
+		t.Fatalf("expected done status text to stay hidden for cleaner render, got %q", singleCollapsed)
+	}
 	if strings.Contains(stripANSI(singleCollapsed), "range: 1-10") {
 		t.Fatalf("expected single collapsed group to hide details, got %q", singleCollapsed)
 	}
