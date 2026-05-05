@@ -4300,6 +4300,35 @@ func TestEscapeClosesCommandPaletteBeforeInterruptingRun(t *testing.T) {
 	}
 }
 
+func TestEscapeClosesMentionPaletteBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	input := textarea.New()
+	input.SetValue("@mod")
+	m := model{
+		screen:    screenChat,
+		busy:      true,
+		runCancel: func() { canceled = true },
+		input:     input,
+		mentionIndex: mention.NewStaticWorkspaceFileIndex([]mention.Candidate{
+			{Path: "tui/model.go", BaseName: "model.go"},
+		}, 0, false),
+	}
+	m.syncInputOverlays()
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.mentionOpen {
+		t.Fatalf("expected esc to close mention palette first")
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while mention palette is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes mention palette")
+	}
+}
+
 func TestEscapePrioritizesApprovalOverPromptSearch(t *testing.T) {
 	reply := make(chan approvalDecision, 1)
 	m := model{
