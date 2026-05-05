@@ -48,7 +48,7 @@ const (
 	thinkingLabel              = "thinking"
 	chatTitleLabel             = "Bytemind Chat"
 	tuiTitleLabel              = "Bytemind TUI"
-	footerHintText             = "tab agents | / commands | drag select | Ctrl+A full-access | Ctrl+C copy/quit | Ctrl+L sessions"
+	footerHintText             = "tab agents | / commands | drag select | Ctrl+O tools | Ctrl+A full-access | Ctrl+C copy/quit | Ctrl+L sessions"
 	conversationViewportZoneID = "bytemind:conversation:viewport"
 	inputEditorZoneID          = "bytemind:input:editor"
 	thinkingSpinnerFPS         = 80 * time.Millisecond
@@ -66,6 +66,7 @@ type footerShortcutHint struct {
 var footerShortcutHints = []footerShortcutHint{
 	{Key: "tab", Label: "agents"},
 	{Key: "/", Label: "commands"},
+	{Key: "Ctrl+O", Label: "tools"},
 	{Key: "Ctrl+C", Label: "copy/quit"},
 	{Key: "Ctrl+L", Label: "sessions"},
 	{Key: "Ctrl+A", Label: "full-access"},

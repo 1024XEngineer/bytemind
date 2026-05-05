@@ -5745,6 +5745,28 @@ func TestTogglePasteExpandMessagesAndCtrlE(t *testing.T) {
 	}
 }
 
+func TestCtrlOTogglesToolDetailExpansion(t *testing.T) {
+	m := model{}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
+	expanded := got.(model)
+	if !expanded.toolDetailExpanded {
+		t.Fatalf("expected Ctrl+O to expand tool details")
+	}
+	if expanded.statusNote != "Tool details expanded." {
+		t.Fatalf("expected expanded status note, got %q", expanded.statusNote)
+	}
+
+	got, _ = expanded.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
+	collapsed := got.(model)
+	if collapsed.toolDetailExpanded {
+		t.Fatalf("expected second Ctrl+O to collapse tool details")
+	}
+	if collapsed.statusNote != "Tool details collapsed." {
+		t.Fatalf("expected collapsed status note, got %q", collapsed.statusNote)
+	}
+}
+
 func TestUpdateRunFinishedMsgResetsBusyState(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		m := model{

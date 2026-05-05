@@ -211,47 +211,71 @@ func TestRenderConversationRendersExpandableUserPasteBlocks(t *testing.T) {
 }
 
 func TestRenderBytemindRunCardCollapsesConsecutiveReadTools(t *testing.T) {
-	view := stripANSI(renderBytemindRunCard([]chatEntry{
+	entries := []chatEntry{
 		{Kind: "assistant", Title: thinkingLabel, Body: "Inspecting files", Status: "thinking"},
 		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read server.py\nrange: 1-20", Status: "done", CompactBody: "server.py (1-20)"},
 		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read index.html\nrange: 1-40", Status: "done", CompactBody: "index.html (1-40)"},
 		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read README.md\nrange: 1-80", Status: "done", CompactBody: "README.md (1-80)"},
 		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read faq.md\nrange: 1-50", Status: "done", CompactBody: "faq.md (1-50)"},
-	}, 80))
-
-	if !strings.Contains(view, "Read 4 files") {
-		t.Fatalf("expected consecutive read tools to collapse into one section with summary, got %q", view)
 	}
-	// Should show ⎿ detail lines for each file
-	if strings.Count(view, "⎿") != 4 {
-		t.Fatalf("expected 4 detail lines with ⎿ connector, got %q", view)
+
+	collapsed := stripANSI(renderBytemindRunCard(entries, 80, false))
+	if !strings.Contains(collapsed, "Read 4 files") {
+		t.Fatalf("expected consecutive read tools to collapse into one summary row, got %q", collapsed)
+	}
+	if strings.Contains(collapsed, "└") {
+		t.Fatalf("expected collapsed view to hide detail rows, got %q", collapsed)
+	}
+
+	expanded := stripANSI(renderBytemindRunCard(entries, 80, true))
+	if strings.Count(expanded, "└") != 4 {
+		t.Fatalf("expected expanded view to show 4 detail rows, got %q", expanded)
 	}
 }
-
 func TestRenderBytemindRunCardDoesNotCollapseSeparatedReadTools(t *testing.T) {
 	view := stripANSI(renderBytemindRunCard([]chatEntry{
 		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read server.py", Status: "done", CompactBody: "server.py"},
 		{Kind: "assistant", Title: assistantLabel, Body: "Using that result first", Status: "final"},
 		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read index.html", Status: "done", CompactBody: "index.html"},
-	}, 80))
+	}, 80, false))
 
-	// Each separated tool should render as its own ⏺ line
-	if strings.Count(view, "⏺") != 2 {
-		t.Fatalf("expected separated read tools to remain distinct with ⏺ icon, got %q", view)
+	if strings.Count(view, "●") != 2 {
+		t.Fatalf("expected separated read tools to remain distinct with tool icons, got %q", view)
 	}
 }
-
 func TestRenderBytemindRunCardOmitsDividerBetweenSections(t *testing.T) {
 	view := stripANSI(renderBytemindRunCard([]chatEntry{
 		{Kind: "tool", Title: toolEntryTitle("list_files"), Body: "Read 29 files, listed 31 directories", Status: "done", CompactBody: "29 files, 31 dirs"},
 		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read 2 files", Status: "error", CompactBody: "README.md"},
-	}, 100))
+	}, 100, false))
 
 	if strings.Contains(view, "-----") {
 		t.Fatalf("expected run card sections to omit divider line, got %q", view)
 	}
 	if !strings.Contains(view, "LIST") || !strings.Contains(view, "READ") {
 		t.Fatalf("expected both sections to render, got %q", view)
+	}
+}
+
+func TestRenderConversationToolDetailsDefaultCollapsedAndExpandToggle(t *testing.T) {
+	m := model{}
+	m.viewport.Width = 80
+	m.chatItems = []chatEntry{
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read a.go\nrange: 1-10", Status: "done", CompactBody: "a.go (1-10)"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read b.go\nrange: 1-20", Status: "done", CompactBody: "b.go (1-20)"},
+	}
+
+	collapsed := stripANSI(m.renderConversation())
+	if strings.Contains(collapsed, "└a.go") || strings.Contains(collapsed, "└b.go") {
+		t.Fatalf("expected default tool detail view to be collapsed, got %q", collapsed)
+	}
+
+	m.toolDetailExpanded = true
+	expanded := stripANSI(m.renderConversation())
+	for _, want := range []string{"└a.go (1-10)", "└b.go (1-20)"} {
+		if !strings.Contains(expanded, want) {
+			t.Fatalf("expected expanded tool detail view to contain %q, got %q", want, expanded)
+		}
 	}
 }
 
@@ -331,31 +355,56 @@ func TestCollapsibleParallelToolNameAcceptsAllTools(t *testing.T) {
 }
 
 func TestRenderRunSectionGroupSummariesAndStatuses(t *testing.T) {
-	if got := renderRunSectionGroup(nil, 60); got != "" {
+	if got := renderRunSectionGroup(nil, 60, false); got != "" {
 		t.Fatalf("expected empty group to render empty string, got %q", got)
 	}
 
-	single := renderRunSectionGroup([]chatEntry{
-		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read one.go", Status: "done", CompactBody: "one.go"},
-	}, 60)
-	if !strings.Contains(stripANSI(single), "one.go") {
-		t.Fatalf("expected single group to render compact body, got %q", single)
+	singleCollapsed := renderRunSectionGroup([]chatEntry{
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read one.go", Status: "done", CompactBody: "one.go", DetailLines: []string{"range: 1-10", "path: one.go"}},
+	}, 60, false)
+	if !strings.Contains(stripANSI(singleCollapsed), "one.go") {
+		t.Fatalf("expected single group to render compact body, got %q", singleCollapsed)
+	}
+	if strings.Contains(stripANSI(singleCollapsed), "range: 1-10") {
+		t.Fatalf("expected single collapsed group to hide details, got %q", singleCollapsed)
 	}
 
-	multiRead := stripANSI(renderRunSectionGroup([]chatEntry{
+	singleExpanded := renderRunSectionGroup([]chatEntry{
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read one.go", Status: "done", CompactBody: "one.go", DetailLines: []string{"range: 1-10", "path: one.go"}},
+	}, 60, true)
+	for _, want := range []string{"one.go", "range: 1-10", "path: one.go"} {
+		if !strings.Contains(stripANSI(singleExpanded), want) {
+			t.Fatalf("expected single expanded group to contain %q, got %q", want, singleExpanded)
+		}
+	}
+
+	multiReadCollapsed := stripANSI(renderRunSectionGroup([]chatEntry{
 		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read one.go", Status: "done", CompactBody: "one.go"},
 		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read two.go", Status: "running", CompactBody: "two.go"},
-	}, 80))
+	}, 80, false))
+	for _, want := range []string{"read 2 files", "running"} {
+		if !strings.Contains(strings.ToLower(multiReadCollapsed), strings.ToLower(want)) {
+			t.Fatalf("expected grouped read collapsed render to contain %q, got %q", want, multiReadCollapsed)
+		}
+	}
+	if strings.Contains(multiReadCollapsed, "└") {
+		t.Fatalf("expected grouped read collapsed render to hide detail rows, got %q", multiReadCollapsed)
+	}
+
+	multiReadExpanded := stripANSI(renderRunSectionGroup([]chatEntry{
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read one.go", Status: "done", CompactBody: "one.go"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read two.go", Status: "running", CompactBody: "two.go"},
+	}, 80, true))
 	for _, want := range []string{"read 2 files", "one.go", "two.go", "running"} {
-		if !strings.Contains(strings.ToLower(multiRead), strings.ToLower(want)) {
-			t.Fatalf("expected grouped read render to contain %q, got %q", want, multiRead)
+		if !strings.Contains(strings.ToLower(multiReadExpanded), strings.ToLower(want)) {
+			t.Fatalf("expected grouped read expanded render to contain %q, got %q", want, multiReadExpanded)
 		}
 	}
 
 	multiOther := stripANSI(renderRunSectionGroup([]chatEntry{
 		{Kind: "tool", Title: toolEntryTitle("list_files"), Body: "files", Status: "warn", CompactBody: "10 files, 5 dirs"},
 		{Kind: "tool", Title: toolEntryTitle("list_files"), Body: "more files", Status: "done", CompactBody: "20 files, 3 dirs"},
-	}, 80))
+	}, 80, false))
 	if !strings.Contains(multiOther, "2 × list") {
 		t.Fatalf("expected generic parallel summary, got %q", multiOther)
 	}
@@ -363,7 +412,6 @@ func TestRenderRunSectionGroupSummariesAndStatuses(t *testing.T) {
 		t.Fatalf("expected grouped status to prefer warn, got %q", multiOther)
 	}
 }
-
 func TestSummarizeParallelReadGroupAndAggregateStatusFallbacks(t *testing.T) {
 	if got := summarizeParallelReadGroup([]chatEntry{
 		{Kind: "tool", Body: ""},
