@@ -184,8 +184,23 @@ iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/
 
 删除对应的二进制文件即可完成卸载：
 
+### macOS / Linux
+
 ```bash
 rm ~/bin/bytemind
 ```
 
-会话记录和配置保存在 `.bytemind/` 目录中，需要时可一并删除。
+### Windows（PowerShell）
+
+```powershell
+Remove-Item "$env:USERPROFILE\bin\bytemind.exe"
+```
+
+如果你曾经自定义安装目录，或不确定当前运行的是哪一个二进制，先查看实际路径再删除：
+
+```powershell
+Get-Command bytemind -All | Select-Object Source
+Remove-Item "<上一步显示的 bytemind.exe 路径>"
+```
+
+会话记录和配置保存在 `.bytemind/` 目录中，需要时可一并删除。Windows 默认位置是 `%USERPROFILE%\.bytemind`。

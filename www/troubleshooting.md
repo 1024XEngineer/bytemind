@@ -55,6 +55,23 @@ iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/
 
 Only use `install.sh | bash` after you are inside a working WSL/Linux shell. WSL `~/bin/bytemind` and Windows `%USERPROFILE%\bin\bytemind.exe` are different files.
 
+## Windows Uninstall Says the Path Does Not Exist
+
+Symptom: in PowerShell, `rm ~/bin/bytemind` reports that `C:\Users\<you>\bin\bytemind` does not exist.
+
+**Fix:** The Windows binary is named `bytemind.exe`; remove the file with the `.exe` suffix:
+
+```powershell
+Remove-Item "$env:USERPROFILE\bin\bytemind.exe"
+```
+
+If the command is running from another directory, check the actual path before deleting:
+
+```powershell
+Get-Command bytemind -All | Select-Object Source
+Remove-Item "<path to bytemind.exe from the previous command>"
+```
+
 ## Provider Authentication Failed
 
 Symptom: `401 Unauthorized` or `authentication failed` in the output.

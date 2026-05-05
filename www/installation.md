@@ -184,8 +184,23 @@ To suppress the update-check prompt, set in your config:
 
 Remove the binary to uninstall:
 
+### macOS / Linux
+
 ```bash
 rm ~/bin/bytemind
 ```
 
-Session data and config files live in `.bytemind/` and can be removed separately if desired.
+### Windows (PowerShell)
+
+```powershell
+Remove-Item "$env:USERPROFILE\bin\bytemind.exe"
+```
+
+If you used a custom install directory, or you are not sure which binary is running, check the actual path before deleting:
+
+```powershell
+Get-Command bytemind -All | Select-Object Source
+Remove-Item "<path to bytemind.exe from the previous command>"
+```
+
+Session data and config files live in `.bytemind/` and can be removed separately if desired. On Windows, the default location is `%USERPROFILE%\.bytemind`.

@@ -55,6 +55,23 @@ iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/
 
 只有在已经进入正常工作的 WSL/Linux 终端时，才使用 `install.sh | bash`。WSL 里的 `~/bin/bytemind` 和 Windows 的 `%USERPROFILE%\bin\bytemind.exe` 是两个不同位置。
 
+## Windows 卸载时报路径不存在
+
+症状：在 PowerShell 中运行 `rm ~/bin/bytemind`，提示找不到 `C:\Users\<你>\bin\bytemind`。
+
+**修复：** Windows 安装的文件名是 `bytemind.exe`，请删除带 `.exe` 后缀的文件：
+
+```powershell
+Remove-Item "$env:USERPROFILE\bin\bytemind.exe"
+```
+
+如果当前命令来自其他目录，先查看实际路径再删除：
+
+```powershell
+Get-Command bytemind -All | Select-Object Source
+Remove-Item "<上一步显示的 bytemind.exe 路径>"
+```
+
 ## Provider 鉴权失败
 
 症状：输出中出现 `401 Unauthorized` 或 `authentication failed`。
