@@ -223,6 +223,36 @@ func (m *model) finishLatestToolCall(name, body, status string) {
 	})
 }
 
+// finishToolCall finds the tool chatEntry by ToolCallID (precise match)
+// and updates its Body, Status, CompactBody, and DetailLines.
+func (m *model) finishToolCall(toolCallID, body, status string, compactBody string, detailLines []string) {
+	if toolCallID != "" {
+		for i := len(m.chatItems) - 1; i >= 0; i-- {
+			if m.chatItems[i].Kind == "tool" && m.chatItems[i].ToolCallID == toolCallID {
+				m.chatItems[i].Body = body
+				m.chatItems[i].Status = status
+				m.chatItems[i].CompactBody = compactBody
+				m.chatItems[i].DetailLines = detailLines
+				return
+			}
+		}
+	}
+	// Fallback: no ID match, append as new entry
+	renderer := GetToolRenderer("unknown")
+	label := "TOOL"
+	if renderer != nil {
+		label = renderer.DisplayLabel()
+	}
+	m.appendChat(chatEntry{
+		Kind:        "tool",
+		Title:       label,
+		Body:        body,
+		Status:      status,
+		CompactBody: compactBody,
+		DetailLines: detailLines,
+	})
+}
+
 func (m *model) updateThinkingCard() {
 	if !m.busy || m.streamingIndex < 0 || m.streamingIndex >= len(m.chatItems) {
 		return

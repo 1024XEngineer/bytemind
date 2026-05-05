@@ -213,45 +213,44 @@ func TestRenderConversationRendersExpandableUserPasteBlocks(t *testing.T) {
 func TestRenderBytemindRunCardCollapsesConsecutiveReadTools(t *testing.T) {
 	view := stripANSI(renderBytemindRunCard([]chatEntry{
 		{Kind: "assistant", Title: thinkingLabel, Body: "Inspecting files", Status: "thinking"},
-		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read server.py\nrange: 1-20", Status: "done"},
-		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read index.html\nrange: 1-40", Status: "done"},
-		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read README.md\nrange: 1-80", Status: "done"},
-		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read faq.md\nrange: 1-50", Status: "done"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read server.py\nrange: 1-20", Status: "done", CompactBody: "server.py (1-20)"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read index.html\nrange: 1-40", Status: "done", CompactBody: "index.html (1-40)"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read README.md\nrange: 1-80", Status: "done", CompactBody: "README.md (1-80)"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read faq.md\nrange: 1-50", Status: "done", CompactBody: "faq.md (1-50)"},
 	}, 80))
 
-	if strings.Count(view, "READ x") != 1 {
-		t.Fatalf("expected consecutive read tools to collapse into one section, got %q", view)
+	if !strings.Contains(view, "Read 4 files") {
+		t.Fatalf("expected consecutive read tools to collapse into one section with summary, got %q", view)
 	}
-	if !strings.Contains(view, "READ x 4") {
-		t.Fatalf("expected collapsed read header with count, got %q", view)
-	}
-	if !strings.Contains(view, "Read 4 files: server.py, index.html, README.md +1") {
-		t.Fatalf("expected collapsed read summary, got %q", view)
+	// Should show ⎿ detail lines for each file
+	if strings.Count(view, "⎿") != 4 {
+		t.Fatalf("expected 4 detail lines with ⎿ connector, got %q", view)
 	}
 }
 
 func TestRenderBytemindRunCardDoesNotCollapseSeparatedReadTools(t *testing.T) {
 	view := stripANSI(renderBytemindRunCard([]chatEntry{
-		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read server.py", Status: "done"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read server.py", Status: "done", CompactBody: "server.py"},
 		{Kind: "assistant", Title: assistantLabel, Body: "Using that result first", Status: "final"},
-		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read index.html", Status: "done"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read index.html", Status: "done", CompactBody: "index.html"},
 	}, 80))
 
-	if strings.Count(view, "READ  ") != 2 {
-		t.Fatalf("expected separated read tools to remain distinct, got %q", view)
+	// Each separated tool should render as its own ⏺ line
+	if strings.Count(view, "⏺") != 2 {
+		t.Fatalf("expected separated read tools to remain distinct with ⏺ icon, got %q", view)
 	}
 }
 
 func TestRenderBytemindRunCardOmitsDividerBetweenSections(t *testing.T) {
 	view := stripANSI(renderBytemindRunCard([]chatEntry{
-		{Kind: "tool", Title: toolEntryTitle("list_files"), Body: "Read 29 files, listed 31 directories", Status: "done"},
-		{Kind: "tool", Title: "READ x 2 | read_file", Body: "Read 2 files: invalid_args: unknown argument \"limit\", README.md", Status: "error"},
+		{Kind: "tool", Title: toolEntryTitle("list_files"), Body: "Read 29 files, listed 31 directories", Status: "done", CompactBody: "29 files, 31 dirs"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read 2 files", Status: "error", CompactBody: "README.md"},
 	}, 100))
 
 	if strings.Contains(view, "-----") {
 		t.Fatalf("expected run card sections to omit divider line, got %q", view)
 	}
-	if !strings.Contains(view, "LIST") || !strings.Contains(view, "READ x 2") {
+	if !strings.Contains(view, "LIST") || !strings.Contains(view, "READ") {
 		t.Fatalf("expected both sections to render, got %q", view)
 	}
 }
@@ -283,7 +282,7 @@ func TestCollapseRunSectionGroupsKeepsNonReadAndSplitsReadRuns(t *testing.T) {
 	}
 }
 
-func TestCollapsibleParallelToolNameOnlyAcceptsReadTools(t *testing.T) {
+func TestCollapsibleParallelToolNameAcceptsAllTools(t *testing.T) {
 	tests := []struct {
 		name string
 		item chatEntry
@@ -304,12 +303,20 @@ func TestCollapsibleParallelToolNameOnlyAcceptsReadTools(t *testing.T) {
 		{
 			name: "empty tool name",
 			item: chatEntry{Kind: "tool", Title: "READ | "},
-			ok:   false,
+			ok:   true,
+			want: "READ |",
 		},
 		{
-			name: "non read tool",
+			name: "list tool",
 			item: chatEntry{Kind: "tool", Title: toolEntryTitle("list_files")},
-			ok:   false,
+			ok:   true,
+			want: "list_files",
+		},
+		{
+			name: "shell tool",
+			item: chatEntry{Kind: "tool", Title: toolEntryTitle("run_shell")},
+			ok:   true,
+			want: "run_shell",
 		},
 	}
 
@@ -329,27 +336,27 @@ func TestRenderRunSectionGroupSummariesAndStatuses(t *testing.T) {
 	}
 
 	single := renderRunSectionGroup([]chatEntry{
-		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read one.go", Status: "done"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read one.go", Status: "done", CompactBody: "one.go"},
 	}, 60)
-	if !strings.Contains(stripANSI(single), "Read one.go") {
-		t.Fatalf("expected single group to render original section, got %q", single)
+	if !strings.Contains(stripANSI(single), "one.go") {
+		t.Fatalf("expected single group to render compact body, got %q", single)
 	}
 
 	multiRead := stripANSI(renderRunSectionGroup([]chatEntry{
-		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read one.go", Status: "done"},
-		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read two.go", Status: "running"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read one.go", Status: "done", CompactBody: "one.go"},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read two.go", Status: "running", CompactBody: "two.go"},
 	}, 80))
-	for _, want := range []string{"READ x 2", "Read 2 files: one.go, two.go", "running"} {
+	for _, want := range []string{"read 2 files", "one.go", "two.go", "running"} {
 		if !strings.Contains(strings.ToLower(multiRead), strings.ToLower(want)) {
 			t.Fatalf("expected grouped read render to contain %q, got %q", want, multiRead)
 		}
 	}
 
 	multiOther := stripANSI(renderRunSectionGroup([]chatEntry{
-		{Kind: "tool", Title: toolEntryTitle("list_files"), Body: "files", Status: "warn"},
-		{Kind: "tool", Title: toolEntryTitle("list_files"), Body: "more files", Status: "done"},
+		{Kind: "tool", Title: toolEntryTitle("list_files"), Body: "files", Status: "warn", CompactBody: "10 files, 5 dirs"},
+		{Kind: "tool", Title: toolEntryTitle("list_files"), Body: "more files", Status: "done", CompactBody: "20 files, 3 dirs"},
 	}, 80))
-	if !strings.Contains(multiOther, "2 parallel list calls") {
+	if !strings.Contains(multiOther, "2 × list") {
 		t.Fatalf("expected generic parallel summary, got %q", multiOther)
 	}
 	if !strings.Contains(strings.ToLower(multiOther), "warn") {

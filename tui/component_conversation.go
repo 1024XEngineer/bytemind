@@ -7,6 +7,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const (
+	toolIcon     = "⏺ "
+	toolTreeChar = "⎿ "
+)
+
 func (m model) renderConversation() string {
 	if len(m.chatItems) == 0 {
 		return mutedStyle.Render("No messages yet. Start with an instruction like \"analyze this repo\" or \"implement a TUI shell\".")
@@ -323,6 +328,9 @@ func collapseRunSectionGroups(items []chatEntry) [][]chatEntry {
 	return groups
 }
 
+// collapsibleParallelToolName returns the tool name if this entry can be
+// grouped with adjacent entries of the same tool. All tool entries are
+// collapsible; grouping happens at render time, not data time.
 func collapsibleParallelToolName(item chatEntry) (string, bool) {
 	if item.Kind != "tool" {
 		return "", false
@@ -330,9 +338,6 @@ func collapsibleParallelToolName(item chatEntry) (string, bool) {
 	_, name := toolDisplayParts(item.Title)
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return "", false
-	}
-	if toolDisplayLabel(name) != "READ" {
 		return "", false
 	}
 	return name, true
@@ -347,20 +352,52 @@ func renderRunSectionGroup(group []chatEntry, width int) string {
 	}
 
 	_, name := toolDisplayParts(group[0].Title)
-	synthetic := chatEntry{
-		Kind:   "tool",
-		Title:  fmt.Sprintf("%s x %d | %s", toolDisplayLabel(name), len(group), name),
-		Body:   summarizeParallelToolGroup(group, name),
-		Status: aggregateToolGroupStatus(group),
+	renderer := GetToolRenderer(name)
+	label := toolDisplayLabel(name)
+	if renderer != nil {
+		label = renderer.DisplayLabel()
 	}
-	return renderRunSection(synthetic, width)
+
+	summaryLine := summarizeParallelToolGroup(group, name)
+	status := aggregateToolGroupStatus(group)
+
+	// Tree-style: ⏺ summary line + ⎿ detail lines for each entry
+	iconStyle := lipgloss.NewStyle().Foreground(colorTool)
+	statusBadge := renderToolTag(status, status)
+
+	headLine := iconStyle.Render(toolIcon) + label + " " + summaryLine
+	if statusBadge != "" {
+		headLine += "  " + statusBadge
+	}
+
+	// Build ⎿ detail lines from each entry's CompactBody
+	detailLines := make([]string, 0, len(group))
+	connectorStyle := lipgloss.NewStyle().Foreground(colorTool)
+	for _, item := range group {
+		compact := item.CompactBody
+		if compact == "" {
+			compact = strings.TrimSpace(firstNonEmptyLine(item.Body))
+		}
+		if compact == "" {
+			continue
+		}
+		detailLines = append(detailLines, connectorStyle.Render(toolTreeChar)+compact)
+	}
+
+	indent := "  "
+	body := headLine
+	if len(detailLines) > 0 {
+		body = headLine + "\n" + indent + strings.Join(detailLines, "\n"+indent)
+	}
+
+	style := resolveToolRunSectionStyle(status)
+	contentWidth := max(8, width-style.GetHorizontalFrameSize())
+	return style.Width(contentWidth).Render(body)
 }
 
 func renderRunSection(item chatEntry, width int) string {
 	if item.Kind == "tool" {
-		style := resolveToolRunSectionStyle(item.Status)
-		contentWidth := max(8, width-style.GetHorizontalFrameSize())
-		return style.Width(contentWidth).Render(renderChatSection(item, contentWidth))
+		return renderToolTreeItem(item, width)
 	}
 	if item.Kind == "assistant" && item.Status == "final" {
 		contentWidth := max(8, width-runAnswerSectionStyle.GetHorizontalFrameSize())
@@ -369,26 +406,66 @@ func renderRunSection(item chatEntry, width int) string {
 	return renderChatSection(item, width)
 }
 
+// renderToolTreeItem renders a single tool entry in tree style: ⏺ compactText
+func renderToolTreeItem(item chatEntry, width int) string {
+	_, name := toolDisplayParts(item.Title)
+	renderer := GetToolRenderer(name)
+	label := toolDisplayLabel(name)
+	if renderer != nil {
+		label = renderer.DisplayLabel()
+	}
+
+	compact := item.CompactBody
+	if compact == "" {
+		compact = strings.TrimSpace(firstNonEmptyLine(item.Body))
+	}
+
+	iconStyle := lipgloss.NewStyle().Foreground(colorTool)
+	statusBadge := renderToolTag(item.Status, item.Status)
+
+	headLine := iconStyle.Render(toolIcon) + label
+	if compact != "" {
+		headLine += " " + compact
+	}
+	if statusBadge != "" {
+		headLine += "  " + statusBadge
+	}
+
+	style := resolveToolRunSectionStyle(item.Status)
+	contentWidth := max(8, width-style.GetHorizontalFrameSize())
+	return style.Width(contentWidth).Render(headLine)
+}
+
 func summarizeParallelToolGroup(group []chatEntry, name string) string {
 	if len(group) == 0 {
 		return ""
 	}
+	renderer := GetToolRenderer(name)
+	label := toolDisplayLabel(name)
+	if renderer != nil {
+		label = renderer.DisplayLabel()
+	}
+	// For READ tools, show file names; for others, show count
 	if toolDisplayLabel(name) == "READ" {
 		return summarizeParallelReadGroup(group)
 	}
-	return fmt.Sprintf("%d parallel %s calls", len(group), strings.ToLower(toolDisplayLabel(name)))
+	return fmt.Sprintf("%d × %s", len(group), strings.ToLower(label))
 }
 
 func summarizeParallelReadGroup(group []chatEntry) string {
 	fileNames := make([]string, 0, len(group))
 	for _, item := range group {
-		summary := strings.TrimSpace(firstNonEmptyLine(item.Body))
-		if summary == "" {
+		// Prefer CompactBody (e.g. "model.go (1-50)")
+		name := strings.TrimSpace(item.CompactBody)
+		if name == "" {
+			name = strings.TrimSpace(firstNonEmptyLine(item.Body))
+		}
+		if name == "" {
 			continue
 		}
-		name := strings.TrimSpace(strings.TrimPrefix(summary, "Read "))
+		name = strings.TrimSpace(strings.TrimPrefix(name, "Read "))
 		if name == "" {
-			name = summary
+			continue
 		}
 		fileNames = append(fileNames, name)
 	}

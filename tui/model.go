@@ -122,11 +122,14 @@ var startupFieldOrder = []string{
 }
 
 type chatEntry struct {
-	Kind   string
-	Title  string
-	Meta   string
-	Body   string
-	Status string
+	Kind        string
+	Title       string
+	Meta        string
+	Body        string
+	Status      string
+	ToolCallID  string   // precise matching for tool call completion
+	CompactBody string   // collapsed tree view text (e.g. "Read model.go (1-50)")
+	DetailLines []string // expanded detail lines
 }
 
 type viewportSelectionPoint struct {
@@ -405,6 +408,7 @@ type model struct {
 	pasteBurstCandidate        pasteBurstCandidateState
 	clipboardCaptureArmedUntil time.Time
 	chatAutoFollow             bool
+	toolDetailExpanded         bool
 	draggingScrollbar          bool
 	scrollbarDragOffset        int
 	mouseSelecting             bool
@@ -1413,6 +1417,18 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, func() tea.Msg { return togglePasteExpandAllMsg{} }
+	case "ctrl+o":
+		m.toolDetailExpanded = !m.toolDetailExpanded
+		if m.toolDetailExpanded {
+			m.statusNote = "Tool details expanded."
+		} else {
+			m.statusNote = "Tool details collapsed."
+		}
+		if m.width > 0 && m.height > 0 {
+			m.syncLayoutForCurrentScreen()
+			m.refreshViewport()
+		}
+		return m, nil
 	}
 
 	if m.approval != nil {
@@ -1939,12 +1955,25 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 				if name == "" {
 					name = "tool"
 				}
-				summary, lines, status := summarizeTool(name, part.ToolResult.Content)
+				renderer := GetToolRenderer(name)
+				var summary string
+				var lines []string
+				var status string
+				var compactBody string
+				if renderer != nil {
+					summary, lines, status = renderer.ResultSummary(part.ToolResult.Content)
+					compactBody = renderer.CompactLine(part.ToolResult.Content)
+				} else {
+					summary, lines, status = summarizeTool(name, part.ToolResult.Content)
+					compactBody = summary
+				}
 				items = append(items, chatEntry{
-					Kind:   "tool",
-					Title:  toolEntryTitle(name),
-					Body:   joinSummary(summary, lines),
-					Status: status,
+					Kind:        "tool",
+					Title:       toolEntryTitle(name),
+					Body:        joinSummary(summary, lines),
+					Status:      status,
+					CompactBody: compactBody,
+					DetailLines: lines,
 				})
 				runs = append(runs, toolRun{Name: name, Summary: summary, Lines: lines, Status: status})
 			}
@@ -1964,12 +1993,25 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 			if name == "" {
 				name = "tool"
 			}
-			summary, lines, status := summarizeTool(name, message.Content)
+			renderer := GetToolRenderer(name)
+			var summary string
+			var lines []string
+			var status string
+			var compactBody string
+			if renderer != nil {
+				summary, lines, status = renderer.ResultSummary(message.Content)
+				compactBody = renderer.CompactLine(message.Content)
+			} else {
+				summary, lines, status = summarizeTool(name, message.Content)
+				compactBody = summary
+			}
 			items = append(items, chatEntry{
-				Kind:   "tool",
-				Title:  toolEntryTitle(name),
-				Body:   joinSummary(summary, lines),
-				Status: status,
+				Kind:        "tool",
+				Title:       toolEntryTitle(name),
+				Body:        joinSummary(summary, lines),
+				Status:      status,
+				CompactBody: compactBody,
+				DetailLines: lines,
 			})
 			runs = append(runs, toolRun{Name: name, Summary: summary, Lines: lines, Status: status})
 		}

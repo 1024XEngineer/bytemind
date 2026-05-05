@@ -170,11 +170,20 @@ func (m *model) handleAgentEvent(event Event) {
 		m.llmConnected = true
 		m.finalizeAssistantTurnForTool(event.ToolName)
 		m.populateLatestThinkingToolStep(event.ToolName, "", "running")
+		renderer := GetToolRenderer(event.ToolName)
+		label := "TOOL"
+		if renderer != nil {
+			label = renderer.DisplayLabel()
+		} else {
+			label = toolDisplayLabel(event.ToolName)
+		}
+		title := label + " | " + event.ToolName
 		m.appendChat(chatEntry{
-			Kind:   "tool",
-			Title:  toolEntryTitle(event.ToolName),
-			Body:   "",
-			Status: "running",
+			Kind:       "tool",
+			Title:      title,
+			Body:       "",
+			Status:     "running",
+			ToolCallID: event.ToolCallID,
 		})
 		m.toolRuns = append(m.toolRuns, toolRun{
 			Name:    event.ToolName,
@@ -183,8 +192,19 @@ func (m *model) handleAgentEvent(event Event) {
 		})
 		m.statusNote = "Running tool: " + event.ToolName
 	case EventToolCallCompleted:
-		summary, lines, status := summarizeTool(event.ToolName, event.ToolResult)
-		m.finishLatestToolCall(event.ToolName, joinSummary(summary, lines), status)
+		renderer := GetToolRenderer(event.ToolName)
+		var summary string
+		var lines []string
+		var status string
+		var compactBody string
+		if renderer != nil {
+			summary, lines, status = renderer.ResultSummary(event.ToolResult)
+			compactBody = renderer.CompactLine(event.ToolResult)
+		} else {
+			summary, lines, status = summarizeTool(event.ToolName, event.ToolResult)
+			compactBody = summary
+		}
+		m.finishToolCall(event.ToolCallID, joinSummary(summary, lines), status, compactBody, lines)
 		if len(m.toolRuns) > 0 {
 			index := len(m.toolRuns) - 1
 			m.toolRuns[index].Summary = summary

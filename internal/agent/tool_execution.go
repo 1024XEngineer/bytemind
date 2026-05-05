@@ -106,6 +106,7 @@ func (e *defaultEngine) executeToolCall(
 		Type:          EventToolCallStarted,
 		SessionID:     sessionID,
 		ToolName:      call.Function.Name,
+		ToolCallID:    call.ID,
 		ToolArguments: call.Function.Arguments,
 	})
 	sandboxLeaseID := fmt.Sprintf("session-%s", sess.ID)
@@ -234,6 +235,7 @@ func (e *defaultEngine) executeToolCall(
 		Type:       EventToolCallCompleted,
 		SessionID:  sessionID,
 		ToolName:   call.Function.Name,
+		ToolCallID: call.ID,
 		ToolResult: result,
 		Error:      errText,
 	})
