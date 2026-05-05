@@ -5,8 +5,8 @@ Every ByteMind conversation lives inside a **session**. Sessions are automatical
 ## How Sessions Work
 
 - Each session has a unique ID (e.g. `abc123def`)
-- Session data is stored in `.bytemind/` in your working directory
-- When you start `bytemind chat`, it creates a new session or lets you resume an existing one
+- Session data is stored under ByteMind's home directory, which defaults to `.bytemind/` in your user home directory
+- When you start `bytemind`, it creates a new session or lets you resume an existing one
 - The full message history is preserved, so the agent has context for follow-up tasks
 
 ## Listing Sessions
@@ -52,7 +52,7 @@ Creates a fresh session in the current workspace. The previous session remains s
 Start a refactor session, do a chunk of work, `/quit`. Come back the next day:
 
 ```bash
-bytemind chat
+bytemind
 /sessions
 /resume <id from yesterday>
 ```
@@ -71,7 +71,7 @@ Shows a summary of tools called and changes made in the current session.
 
 ## Storage Location
 
-Session files are stored at `.bytemind/sessions/` relative to the working directory where you ran `bytemind chat`. Use `BYTEMIND_HOME` to override the `.bytemind/` base directory.
+Session files are stored under ByteMind's home directory, which defaults to `.bytemind/` in your user home directory. Use `BYTEMIND_HOME` to override that base directory.
 
 ## See Also
 

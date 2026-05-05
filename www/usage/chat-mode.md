@@ -1,27 +1,33 @@
 # Chat Mode
 
-Chat mode (`bytemind chat`) is the primary way to use ByteMind. It supports multi-turn conversations, persistent context, and dynamic task adjustment.
+The default interactive mode (`bytemind`) is the primary way to use ByteMind. It supports multi-turn conversations, persistent context, and dynamic task adjustment. `bytemind chat` still works as a compatibility alias.
 
 ```bash
-bytemind chat
+bytemind
 ```
 
 ## How It Works
 
 When you start chat mode, ByteMind:
 
-1. Reads `.bytemind/config.json` from the current directory
-2. Initializes or resumes an existing session
-3. Enters interactive mode and waits for your input
+1. Resolves the current directory as the workspace
+2. Loads the global user config and merges any optional `.bytemind/config.json` from the current workspace
+3. Initializes or resumes an existing session
+4. Enters interactive mode and waits for your input
+
+:::warning Do not open very large folders directly
+Start ByteMind inside a specific code repository or project subdirectory. Your home directory, a drive root, Downloads, Desktop, or a large folder with many unrelated files is not a good default workspace.
+:::
 
 After you describe a task, the agent calls tools (read files, search code, run commands) to complete it. High-risk tool calls pause and wait for your approval.
 
 ## Startup Options
 
 ```bash
-bytemind chat                         # use default config
-bytemind chat -max-iterations 64      # raise the iteration limit
-bytemind chat -config ./my.json       # use a custom config file
+bytemind                         # use the default interactive mode
+bytemind -max-iterations 64      # raise the iteration limit
+bytemind -config ./my.json       # use a custom config file
+bytemind -workspace ./my-project # choose a workspace
 ```
 
 ## Best Practices
@@ -93,7 +99,7 @@ Press `Ctrl+C` or type `/quit` at any time — the session context is automatica
 To resume later:
 
 ```bash
-bytemind chat
+bytemind
 /sessions          # find the session ID
 /resume abc123     # resume by ID
 ```

@@ -80,7 +80,7 @@ iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/
 提高 `max_iterations`：
 
 ```bash
-bytemind chat -max-iterations 64
+bytemind -max-iterations 64
 ```
 
 或在配置文件中永久设置：

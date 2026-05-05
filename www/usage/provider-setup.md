@@ -82,7 +82,7 @@ Always prefer `api_key_env` over a literal `api_key` in config files. This keeps
 
 ```bash
 export MY_API_KEY_VAR="sk-..."
-bytemind chat
+bytemind
 ```
 
 ## Custom Auth Headers
@@ -107,7 +107,7 @@ For providers that require non-standard authentication:
 After creating your config, run:
 
 ```bash
-bytemind chat
+bytemind
 ```
 
 Type a simple task like `say hello` and verify the model responds. If it fails, check:

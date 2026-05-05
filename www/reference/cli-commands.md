@@ -1,29 +1,33 @@
 # CLI Commands
 
-ByteMind exposes two top-level commands: `chat` and `run`.
+ByteMind starts the interactive UI when you run it without a subcommand. `chat` is a compatibility alias, and `run` executes a single non-interactive task.
 
-## `bytemind chat`
+## `bytemind`
 
 Start an interactive, multi-turn session.
 
 ```bash
-bytemind chat [flags]
+bytemind [flags]
 ```
 
 | Flag                  | Description                   | Default     |
 | --------------------- | ----------------------------- | ----------- |
 | `-config <path>`      | Path to config file           | auto-detect |
 | `-max-iterations <n>` | Max tool-call rounds per task | 32          |
+| `-workspace <path>`   | Workspace directory to open   | current dir |
 | `-v`                  | Enable verbose/debug output   | false       |
 
 **Examples:**
 
 ```bash
-bytemind chat
-bytemind chat -max-iterations 64
-bytemind chat -config ~/.bytemind/work.json
-bytemind chat -v
+bytemind
+bytemind -max-iterations 64
+bytemind -config ~/.bytemind/work.json
+bytemind -workspace D:\code\my-project
+bytemind -v
 ```
+
+`bytemind chat` and `bytemind tui` still work and behave like the default interactive UI.
 
 ## `bytemind run`
 
@@ -58,7 +62,7 @@ bytemind --version
 
 ## Session Slash Commands
 
-These are typed inside an active `bytemind chat` session, not on the shell:
+These are typed inside an active `bytemind` interactive session, not on the shell:
 
 | Command                                       | Description                                  |
 | --------------------------------------------- | -------------------------------------------- |
@@ -80,7 +84,7 @@ These are typed inside an active `bytemind chat` session, not on the shell:
 
 ### `/commit <message>`
 
-Use `/commit` inside `bytemind chat` when you want ByteMind to save the current workspace changes as a local Git commit.
+Use `/commit` inside a `bytemind` session when you want ByteMind to save the current workspace changes as a local Git commit.
 
 ```text
 /commit fix(/commit): improve commit feedback
@@ -100,11 +104,10 @@ ByteMind only runs this when the current `HEAD` is still that session commit, th
 
 ## Config Load Order
 
-When no `-config` flag is given, ByteMind looks for config in this order:
+When no `-config` flag is given, ByteMind loads global config first, then project overrides:
 
-1. `.bytemind/config.json` in the current working directory
-2. `config.json` in the current working directory
-3. `~/.bytemind/config.json` in the home directory
+1. `~/.bytemind/config.json` in the home directory
+2. `.bytemind/config.json` in the current workspace (optional project overrides)
 
 ## See Also
 

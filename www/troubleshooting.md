@@ -97,7 +97,7 @@ Symptom: The agent outputs a partial result and says it hit the iteration limit.
 **Fix:** Raise `max_iterations`:
 
 ```bash
-bytemind chat -max-iterations 64
+bytemind -max-iterations 64
 ```
 
 Or set it permanently in your config:
@@ -110,13 +110,31 @@ Or set it permanently in your config:
 
 Symptom: ByteMind behaves as if no config exists (uses defaults).
 
-**Check the config search path:**
+**Check the config load order:**
 
-1. `.bytemind/config.json` in the current directory
-2. `config.json` in the current directory
-3. `~/.bytemind/config.json` in the home directory
+1. `~/.bytemind/config.json` in the home directory
+2. `.bytemind/config.json` in the current workspace (optional project overrides)
 
-Run `bytemind chat -v` to see which config file was loaded.
+New users should put common settings in the user config, not in `~/bin` or `%USERPROFILE%\bin`. Run `bytemind -v` to see which config file was loaded.
+
+## Workspace Is Too Large or Too Broad
+
+Symptom: when started from your home directory, a drive root, Downloads, Desktop, or a very large folder, ByteMind reports that the current directory is too broad or feels slow.
+
+**Fix:** Change into a specific code repository or project subdirectory before starting:
+
+```powershell
+Set-Location D:\code\my-project
+bytemind
+```
+
+You can also specify the workspace explicitly from anywhere:
+
+```powershell
+bytemind -workspace D:\code\my-project
+```
+
+Avoid using a large folder with many unrelated files as the workspace. The install directory `%USERPROFILE%\bin` / `~/bin` only stores the binary and is not a workspace.
 
 ## Session Not Found After Resume
 
@@ -125,7 +143,7 @@ Symptom: `/resume <id>` reports session not found.
 **Check:**
 
 - You are in the same working directory where the session was created
-- Session files exist in `.bytemind/sessions/`
+- The session exists in ByteMind's home directory
 - `BYTEMIND_HOME` env var is not pointing to a different directory
 
 ## Sandbox Blocks Writes

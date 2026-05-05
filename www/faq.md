@@ -80,7 +80,7 @@ Use `api_key_env` instead of `api_key` in your config file. Store the actual key
 Raise `max_iterations` in your config or use the `-max-iterations` flag:
 
 ```bash
-bytemind chat -max-iterations 64
+bytemind -max-iterations 64
 ```
 
 ### Can I use ByteMind in CI without manual approvals?

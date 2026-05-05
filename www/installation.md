@@ -139,7 +139,7 @@ go build -o bytemind ./cmd/bytemind
 Run without installing:
 
 ```bash
-go run ./cmd/bytemind chat
+go run ./cmd/bytemind
 ```
 
 ## Verify the Installation

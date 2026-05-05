@@ -139,7 +139,7 @@ go build -o bytemind ./cmd/bytemind
 直接运行而不安装：
 
 ```bash
-go run ./cmd/bytemind chat
+go run ./cmd/bytemind
 ```
 
 ## 验证安装

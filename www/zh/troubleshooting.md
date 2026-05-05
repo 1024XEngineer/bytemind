@@ -97,7 +97,7 @@ curl -s -H "Authorization: Bearer $OPENAI_API_KEY" \
 **修复：** 提高 `max_iterations`：
 
 ```bash
-bytemind chat -max-iterations 64
+bytemind -max-iterations 64
 ```
 
 或写入配置文件永久生效：
@@ -110,13 +110,31 @@ bytemind chat -max-iterations 64
 
 症状：ByteMind 行为与配置不符，似乎使用默认值。
 
-**检查配置查找顺序：**
+**检查配置加载顺序：**
 
-1. 当前目录的 `.bytemind/config.json`
-2. 当前目录的 `config.json`
-3. 主目录的 `~/.bytemind/config.json`
+1. 用户目录的 `~/.bytemind/config.json`
+2. 当前工作区的 `.bytemind/config.json`（可选，覆盖全局配置）
 
-运行 `bytemind chat -v` 可查看实际加载的配置文件路径。
+新用户建议先把通用配置放在用户目录，不要放到 `~/bin` 或 `%USERPROFILE%\bin`。运行 `bytemind -v` 可查看实际加载的配置文件路径。
+
+## 工作区过大或目录不合适
+
+症状：在用户主目录、磁盘根目录、Downloads、Desktop 或很大的文件夹中启动时，ByteMind 提示当前目录过宽，或响应明显变慢。
+
+**修复：** 先进入具体代码仓库或项目子目录，再启动：
+
+```powershell
+Set-Location D:\code\my-project
+bytemind
+```
+
+也可以从任意目录显式指定工作区：
+
+```powershell
+bytemind -workspace D:\code\my-project
+```
+
+暂不建议把包含大量无关文件的大文件夹作为工作区。安装目录 `%USERPROFILE%\bin` / `~/bin` 只用于存放二进制，也不是工作区。
 
 ## 恢复会话后找不到
 
@@ -125,7 +143,7 @@ bytemind chat -max-iterations 64
 **检查：**
 
 - 当前工作目录与创建会话时相同
-- `.bytemind/sessions/` 中存在对应会话文件
+- ByteMind home 目录的会话数据中存在对应会话
 - `BYTEMIND_HOME` 环境变量未指向其他目录
 
 ## 沙箱限制了写入
