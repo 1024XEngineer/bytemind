@@ -744,7 +744,7 @@ func TestRemoveStreamingAssistantPlaceholderRemovesItem(t *testing.T) {
 
 func TestRemoveStreamingAssistantPlaceholderNoOpWhenOutOfBounds(t *testing.T) {
 	m := model{
-		chatItems:    []chatEntry{{Kind: "user", Title: "You", Body: "hello", Status: "final"}},
+		chatItems:      []chatEntry{{Kind: "user", Title: "You", Body: "hello", Status: "final"}},
 		streamingIndex: 5,
 	}
 	m.removeStreamingAssistantPlaceholder()
@@ -873,6 +873,32 @@ func TestHandleAgentEventToolCallStartedAppendsToolCard(t *testing.T) {
 	}
 	if len(m.toolRuns) != 1 {
 		t.Fatalf("expected 1 tool run, got %d", len(m.toolRuns))
+	}
+}
+
+func TestHandleAgentEventToolCallStartedCapturesCompactHint(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
+		},
+		streamingIndex: 0,
+	}
+
+	m.handleAgentEvent(Event{
+		Type:          EventToolCallStarted,
+		ToolName:      "search_text",
+		ToolCallID:    "call-hint-1",
+		ToolArguments: `{"query":"isMeaningfulThinking","path":"tui/model.go"}`,
+	})
+	if len(m.chatItems) == 0 {
+		t.Fatal("expected tool item to be appended")
+	}
+	last := m.chatItems[len(m.chatItems)-1]
+	if last.Kind != "tool" || last.ToolCallID != "call-hint-1" {
+		t.Fatalf("expected latest chat item to be started tool call, got %+v", last)
+	}
+	if last.CompactBody != `"isMeaningfulThinking"` {
+		t.Fatalf("expected tool compact hint from arguments, got %q", last.CompactBody)
 	}
 }
 

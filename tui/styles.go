@@ -399,6 +399,9 @@ var (
 	toolDetailStyle = lipgloss.NewStyle().
 			Foreground(semanticColors.TextMuted)
 
+	toolExpandHintStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextMuted)
+
 	toolErrorSummaryStyle = lipgloss.NewStyle().
 				Foreground(semanticColors.Danger).
 				Bold(true)

@@ -260,11 +260,14 @@ func TestRenderBytemindRunCardCollapsesConsecutiveReadTools(t *testing.T) {
 	}
 
 	collapsed := stripANSI(renderBytemindRunCard(entries, 80, false))
-	if !strings.Contains(collapsed, "Read 4 files") {
+	if !strings.Contains(strings.ToLower(collapsed), "reading 4 files") {
 		t.Fatalf("expected consecutive read tools to collapse into one summary row, got %q", collapsed)
 	}
-	if strings.Contains(collapsed, "└") {
-		t.Fatalf("expected collapsed view to hide detail rows, got %q", collapsed)
+	if !strings.Contains(strings.ToLower(collapsed), "(ctrl+o to expand)") {
+		t.Fatalf("expected collapsed view to include expand hint, got %q", collapsed)
+	}
+	if !strings.Contains(collapsed, "└ faq.md (1-50)") {
+		t.Fatalf("expected collapsed view to keep latest detail hint, got %q", collapsed)
 	}
 
 	expanded := stripANSI(renderBytemindRunCard(entries, 80, true))
@@ -292,8 +295,11 @@ func TestRenderBytemindRunCardOmitsDividerBetweenSections(t *testing.T) {
 	if strings.Contains(view, "-----") {
 		t.Fatalf("expected run card sections to omit divider line, got %q", view)
 	}
-	if !strings.Contains(view, "LIST") || !strings.Contains(view, "READ") {
-		t.Fatalf("expected both sections to render, got %q", view)
+	if !strings.Contains(strings.ToLower(view), "reading 1 file, listing 1 path") {
+		t.Fatalf("expected collapsed live inspect summary to include read/list counters, got %q", view)
+	}
+	if !strings.Contains(strings.ToLower(view), "error") {
+		t.Fatalf("expected error status to remain visible, got %q", view)
 	}
 }
 
@@ -306,8 +312,11 @@ func TestRenderConversationToolDetailsDefaultCollapsedAndExpandToggle(t *testing
 	}
 
 	collapsed := stripANSI(m.renderConversation())
-	if strings.Contains(collapsed, "└a.go") || strings.Contains(collapsed, "└b.go") {
-		t.Fatalf("expected default tool detail view to be collapsed, got %q", collapsed)
+	if strings.Contains(collapsed, "└a.go") {
+		t.Fatalf("expected collapsed tool details to show only latest hint, got %q", collapsed)
+	}
+	if !strings.Contains(collapsed, "└ b.go (1-20)") {
+		t.Fatalf("expected collapsed tool details to include latest hint, got %q", collapsed)
 	}
 
 	m.toolDetailExpanded = true
@@ -343,6 +352,43 @@ func TestCollapseRunSectionGroupsKeepsNonReadAndSplitsReadRuns(t *testing.T) {
 	}
 	if len(groups[3]) != 1 || !strings.Contains(groups[3][0].Body, "Read c.go") {
 		t.Fatalf("expected trailing read tool to become its own group, got %#v", groups[3])
+	}
+}
+
+func TestCollapseRunSectionGroupsForViewCollapsesLiveInspectFlow(t *testing.T) {
+	items := []chatEntry{
+		{Kind: "tool", Title: toolEntryTitle("search_text"), Status: "running", CompactBody: `"isMeaningfulThinking"`},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Status: "done", CompactBody: "tui/model.go"},
+		{Kind: "tool", Title: toolEntryTitle("search_text"), Status: "running", CompactBody: `"finalizeAssistantTurnForTool"`},
+	}
+
+	collapsedGroups := collapseRunSectionGroupsForView(items, false)
+	if len(collapsedGroups) != 1 {
+		t.Fatalf("expected collapsed live inspect flow to merge into one group, got %#v", collapsedGroups)
+	}
+
+	expandedGroups := collapseRunSectionGroupsForView(items, true)
+	if len(expandedGroups) != 3 {
+		t.Fatalf("expected expanded view to keep tool groups split, got %#v", expandedGroups)
+	}
+}
+
+func TestRenderBytemindRunCardCollapsedLiveInspectSummaryAcrossTools(t *testing.T) {
+	entries := []chatEntry{
+		{Kind: "tool", Title: toolEntryTitle("search_text"), Status: "running", CompactBody: `"isMeaningfulThinking"`},
+		{Kind: "tool", Title: toolEntryTitle("read_file"), Status: "done", CompactBody: "tui/model.go"},
+		{Kind: "tool", Title: toolEntryTitle("search_text"), Status: "running", CompactBody: `"finalizeAssistantTurnForTool"`},
+	}
+
+	collapsed := stripANSI(renderBytemindRunCard(entries, 100, false))
+	for _, want := range []string{
+		"Searching for 2 patterns, reading 1 file...",
+		"(ctrl+o to expand)",
+		`└ "finalizeAssistantTurnForTool"`,
+	} {
+		if !strings.Contains(collapsed, want) {
+			t.Fatalf("expected collapsed live inspect summary to contain %q, got %q", want, collapsed)
+		}
 	}
 }
 
@@ -425,13 +471,10 @@ func TestRenderRunSectionGroupSummariesAndStatuses(t *testing.T) {
 		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read one.go", Status: "done", CompactBody: "one.go"},
 		{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read two.go", Status: "running", CompactBody: "two.go"},
 	}, 80, false))
-	for _, want := range []string{"read 2 files", "running"} {
+	for _, want := range []string{"reading 2 files", "(ctrl+o to expand)", "two.go"} {
 		if !strings.Contains(strings.ToLower(multiReadCollapsed), strings.ToLower(want)) {
 			t.Fatalf("expected grouped read collapsed render to contain %q, got %q", want, multiReadCollapsed)
 		}
-	}
-	if strings.Contains(multiReadCollapsed, "└") {
-		t.Fatalf("expected grouped read collapsed render to hide detail rows, got %q", multiReadCollapsed)
 	}
 
 	multiReadExpanded := stripANSI(renderRunSectionGroup([]chatEntry{
@@ -448,8 +491,8 @@ func TestRenderRunSectionGroupSummariesAndStatuses(t *testing.T) {
 		{Kind: "tool", Title: toolEntryTitle("list_files"), Body: "files", Status: "warn", CompactBody: "10 files, 5 dirs"},
 		{Kind: "tool", Title: toolEntryTitle("list_files"), Body: "more files", Status: "done", CompactBody: "20 files, 3 dirs"},
 	}, 80, false))
-	if !strings.Contains(multiOther, "2 × list") {
-		t.Fatalf("expected generic parallel summary, got %q", multiOther)
+	if !strings.Contains(strings.ToLower(multiOther), "listing 2 paths") {
+		t.Fatalf("expected live inspect summary for list tools, got %q", multiOther)
 	}
 	if !strings.Contains(strings.ToLower(multiOther), "warn") {
 		t.Fatalf("expected grouped status to prefer warn, got %q", multiOther)

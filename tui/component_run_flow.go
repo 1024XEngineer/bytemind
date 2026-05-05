@@ -2,8 +2,10 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -213,12 +215,15 @@ func (m *model) handleAgentEvent(event Event) {
 			label = toolDisplayLabel(event.ToolName)
 		}
 		title := label + " | " + event.ToolName
+		compactBody, detailLines := summarizeToolCallStart(event.ToolName, event.ToolArguments)
 		m.appendChat(chatEntry{
-			Kind:       "tool",
-			Title:      title,
-			Body:       "",
-			Status:     "running",
-			ToolCallID: event.ToolCallID,
+			Kind:        "tool",
+			Title:       title,
+			Body:        "",
+			Status:      "running",
+			CompactBody: compactBody,
+			DetailLines: detailLines,
+			ToolCallID:  event.ToolCallID,
 		})
 		m.toolRuns = append(m.toolRuns, toolRun{
 			Name:    event.ToolName,
@@ -291,6 +296,53 @@ func (m *model) handleAgentEvent(event Event) {
 			m.closePlanActionPicker()
 		}
 	}
+}
+
+func summarizeToolCallStart(toolName, rawArgs string) (string, []string) {
+	switch strings.TrimSpace(strings.ToLower(toolName)) {
+	case "search_text", "web_search":
+		var args struct {
+			Query string `json:"query"`
+		}
+		if json.Unmarshal([]byte(rawArgs), &args) == nil {
+			query := strings.TrimSpace(args.Query)
+			if query != "" {
+				return fmt.Sprintf("%q", query), []string{"query: " + query}
+			}
+		}
+	case "read_file":
+		var args struct {
+			Path      string `json:"path"`
+			StartLine int    `json:"start_line"`
+			EndLine   int    `json:"end_line"`
+		}
+		if json.Unmarshal([]byte(rawArgs), &args) == nil {
+			path := strings.TrimSpace(args.Path)
+			if path != "" {
+				name := filepath.ToSlash(path)
+				if args.StartLine > 0 || args.EndLine > 0 {
+					return fmt.Sprintf("%s (%d-%d)", name, args.StartLine, args.EndLine), []string{
+						"path: " + name,
+						fmt.Sprintf("range: %d-%d", args.StartLine, args.EndLine),
+					}
+				}
+				return name, []string{"path: " + name}
+			}
+		}
+	case "list_files":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal([]byte(rawArgs), &args) == nil {
+			path := strings.TrimSpace(args.Path)
+			if path == "" {
+				path = "."
+			}
+			path = filepath.ToSlash(path)
+			return path, []string{"path: " + path}
+		}
+	}
+	return "", nil
 }
 
 func (m model) startRunCmd(runCtx context.Context, runID int, prompt RunPromptInput, mode string) tea.Cmd {

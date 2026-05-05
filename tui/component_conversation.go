@@ -307,12 +307,19 @@ func renderBytemindRunRow(items []chatEntry, width int, toolDetailsExpanded bool
 func renderBytemindRunCard(items []chatEntry, width int, toolDetailsExpanded bool) string {
 	outer := resolveRunCardStyle(items)
 	contentWidth := max(8, width-outer.GetHorizontalFrameSize())
-	sectionGroups := collapseRunSectionGroups(items)
+	sectionGroups := collapseRunSectionGroupsForView(items, toolDetailsExpanded)
 	sections := make([]string, 0, len(sectionGroups))
 	for _, group := range sectionGroups {
 		sections = append(sections, renderRunSectionGroup(group, contentWidth, toolDetailsExpanded))
 	}
 	return outer.Width(contentWidth).Render(strings.Join(sections, "\n"))
+}
+
+func collapseRunSectionGroupsForView(items []chatEntry, toolDetailsExpanded bool) [][]chatEntry {
+	if toolDetailsExpanded {
+		return collapseRunSectionGroups(items)
+	}
+	return collapseRunSectionGroupsCollapsedLive(items)
 }
 
 func collapseRunSectionGroups(items []chatEntry) [][]chatEntry {
@@ -342,6 +349,44 @@ func collapseRunSectionGroups(items []chatEntry) [][]chatEntry {
 	return groups
 }
 
+func collapseRunSectionGroupsCollapsedLive(items []chatEntry) [][]chatEntry {
+	groups := make([][]chatEntry, 0, len(items))
+	for i := 0; i < len(items); {
+		item := items[i]
+		key, ok := collapsibleParallelGroupKey(item, false)
+		if !ok {
+			groups = append(groups, []chatEntry{item})
+			i++
+			continue
+		}
+
+		j := i + 1
+		group := []chatEntry{item}
+		for j < len(items) {
+			nextKey, nextOK := collapsibleParallelGroupKey(items[j], false)
+			if !nextOK || nextKey != key {
+				break
+			}
+			group = append(group, items[j])
+			j++
+		}
+		groups = append(groups, group)
+		i = j
+	}
+	return groups
+}
+
+func collapsibleParallelGroupKey(item chatEntry, toolDetailsExpanded bool) (string, bool) {
+	name, ok := collapsibleParallelToolName(item)
+	if !ok {
+		return "", false
+	}
+	if !toolDetailsExpanded && isLiveInspectToolName(name) {
+		return "inspect_live", true
+	}
+	return name, true
+}
+
 // collapsibleParallelToolName returns the tool name if this entry can be
 // grouped with adjacent entries of the same tool. All tool entries are
 // collapsible; grouping happens at render time, not data time.
@@ -363,6 +408,9 @@ func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded boo
 	}
 	if len(group) == 1 {
 		return renderRunSection(group[0], width, toolDetailsExpanded)
+	}
+	if !toolDetailsExpanded && isLiveInspectGroup(group) {
+		return renderLiveInspectGroup(group, width)
 	}
 
 	_, name := toolDisplayParts(group[0].Title)
@@ -488,6 +536,126 @@ func summarizeParallelToolGroup(group []chatEntry, name string) string {
 		return summarizeParallelReadGroup(group)
 	}
 	return fmt.Sprintf("%d × %s", len(group), strings.ToLower(label))
+}
+
+func isLiveInspectToolName(name string) bool {
+	switch strings.TrimSpace(strings.ToLower(name)) {
+	case "search_text", "web_search", "read_file", "list_files":
+		return true
+	default:
+		return false
+	}
+}
+
+func isLiveInspectGroup(group []chatEntry) bool {
+	if len(group) == 0 {
+		return false
+	}
+	for _, item := range group {
+		_, name := toolDisplayParts(item.Title)
+		if !isLiveInspectToolName(name) {
+			return false
+		}
+	}
+	return true
+}
+
+func renderLiveInspectGroup(group []chatEntry, width int) string {
+	status := aggregateToolGroupStatus(group)
+	summary := summarizeLiveInspectGroup(group)
+	headLine := toolStatusIndicator(status) + summary
+	if shouldRenderToolStatusTag(status) && normalizeToolStatus(status) != "running" && normalizeToolStatus(status) != "active" {
+		headLine += "  " + renderToolTag(status, status)
+	}
+	headLine += " " + toolExpandHintStyle.Render("(ctrl+o to expand)")
+
+	if detail := latestLiveInspectHint(group); detail != "" {
+		connectorStyle := lipgloss.NewStyle().Foreground(colorTool)
+		headLine += "\n  " + connectorStyle.Render(toolTreeChar) + " " + detail
+	}
+
+	style := resolveToolRunSectionStyle(status)
+	contentWidth := max(8, width-style.GetHorizontalFrameSize())
+	return style.Width(contentWidth).Render(headLine)
+}
+
+func summarizeLiveInspectGroup(group []chatEntry) string {
+	searchCount := 0
+	readCount := 0
+	listCount := 0
+	running := false
+
+	for _, item := range group {
+		_, name := toolDisplayParts(item.Title)
+		switch strings.TrimSpace(strings.ToLower(name)) {
+		case "search_text", "web_search":
+			searchCount++
+		case "read_file":
+			readCount++
+		case "list_files":
+			listCount++
+		}
+		switch normalizeToolStatus(item.Status) {
+		case "running", "active":
+			running = true
+		}
+	}
+
+	parts := make([]string, 0, 3)
+	if searchCount > 0 {
+		parts = append(parts, fmt.Sprintf("Searching for %d %s", searchCount, pluralWord(searchCount, "pattern", "patterns")))
+	}
+	if readCount > 0 {
+		parts = append(parts, fmt.Sprintf("reading %d %s", readCount, pluralWord(readCount, "file", "files")))
+	}
+	if listCount > 0 {
+		parts = append(parts, fmt.Sprintf("listing %d %s", listCount, pluralWord(listCount, "path", "paths")))
+	}
+	if len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("Running %d tool calls", len(group)))
+	}
+
+	summary := strings.Join(parts, ", ")
+	if running {
+		return summary + "..."
+	}
+	return summary
+}
+
+func latestLiveInspectHint(group []chatEntry) string {
+	for i := len(group) - 1; i >= 0; i-- {
+		status := normalizeToolStatus(group[i].Status)
+		if status != "running" && status != "active" {
+			continue
+		}
+		if hint := compactToolHint(group[i]); hint != "" {
+			return hint
+		}
+	}
+	for i := len(group) - 1; i >= 0; i-- {
+		if hint := compactToolHint(group[i]); hint != "" {
+			return hint
+		}
+	}
+	return ""
+}
+
+func compactToolHint(item chatEntry) string {
+	hint := strings.TrimSpace(item.CompactBody)
+	if hint == "" {
+		hint = strings.TrimSpace(firstNonEmptyLine(item.Body))
+	}
+	if hint == "" {
+		return ""
+	}
+	return hint
+}
+
+func pluralWord(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
 }
 
 func summarizeParallelReadGroup(group []chatEntry) string {
