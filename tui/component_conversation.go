@@ -326,7 +326,11 @@ func renderBytemindRunCard(items []chatEntry, width int, toolDetailsExpanded boo
 	for _, group := range sectionGroups {
 		sections = append(sections, renderRunSectionGroup(group, contentWidth, toolDetailsExpanded, runningIndicatorVisible))
 	}
-	return outer.Width(contentWidth).Render(strings.Join(sections, "\n"))
+	// Do NOT apply outer.Width() here — each section already manages its own
+	// width via .Width() inside renderRunSectionGroup. Applying .Width() again
+	// on the joined output causes lipgloss to re-wrap at word boundaries,
+	// breaking the formatting that the inner sections carefully constructed.
+	return outer.Render(strings.Join(sections, "\n"))
 }
 
 func collapseRunSectionGroupsForView(items []chatEntry, toolDetailsExpanded bool) [][]chatEntry {
