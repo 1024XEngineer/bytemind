@@ -193,7 +193,13 @@ func renderChatCard(item chatEntry, width int) string {
 		}
 	}
 	contentWidth := max(8, width-border.GetHorizontalFrameSize())
-	rendered := border.Width(contentWidth).Render(renderChatSection(item, contentWidth))
+	// Do NOT apply border.Width() — renderChatSection already wraps head and
+	// body to contentWidth. Applying .Width() again causes lipgloss to re-wrap
+	// at word boundaries. Instead, subtract the border's horizontal padding so
+	// the total rendered width stays the same.
+	borderPadding := border.GetHorizontalPadding()
+	sectionWidth := max(8, contentWidth-borderPadding)
+	rendered := border.Render(renderChatSection(item, sectionWidth))
 	if item.Kind != "tool" {
 		return rendered
 	}
