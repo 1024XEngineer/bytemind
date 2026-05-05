@@ -64,14 +64,45 @@ func TestComponentCommandAndMentionPaletteRenderStates(t *testing.T) {
 }
 
 func TestComponentFooterInfoRightModelAndHintPaths(t *testing.T) {
-	withModel := renderFooterInfoRight("GPT-5.4", 40)
+	hints := []footerShortcutHint{
+		{Key: "tab", Label: "agents"},
+		{Key: "/", Label: "commands"},
+	}
+	withModel := renderFooterInfoRight("GPT-5.4", hints, 40)
 	if !strings.Contains(withModel, "GPT-5.4") {
 		t.Fatalf("expected model text in footer right, got %q", withModel)
 	}
 
-	hintsOnly := renderFooterInfoRight("", 20)
+	hintsOnly := renderFooterInfoRight("", hints, 20)
 	if strings.TrimSpace(hintsOnly) == "" {
 		t.Fatal("expected compacted hints when model is empty")
+	}
+}
+
+func TestComponentFooterHintsShowEscInterruptOnlyWhenCancelable(t *testing.T) {
+	m := model{
+		busy:      true,
+		runCancel: func() {},
+	}
+
+	hints := m.footerShortcutHints()
+	foundEsc := false
+	for _, hint := range hints {
+		if hint.Key == "Esc" && hint.Label == "interrupt" {
+			foundEsc = true
+			break
+		}
+	}
+	if !foundEsc {
+		t.Fatalf("expected Esc interrupt hint while run is cancelable, got %#v", hints)
+	}
+
+	m.runCancel = nil
+	hints = m.footerShortcutHints()
+	for _, hint := range hints {
+		if hint.Key == "Esc" {
+			t.Fatalf("did not expect Esc hint when runCancel is nil, got %#v", hints)
+		}
 	}
 }
 
