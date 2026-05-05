@@ -6550,6 +6550,37 @@ func TestRunFinishedClearsPendingInterruptStateOnFailure(t *testing.T) {
 	}
 }
 
+func TestRunFinishedClearsToolPhaseEscInterruptStateWithoutExtraCancel(t *testing.T) {
+	cancelCalls := 0
+	m := model{
+		async:       make(chan tea.Msg, 1),
+		busy:        true,
+		activeRunID: 12,
+		phase:       "tool",
+		runCancel:   func() { cancelCalls++ },
+	}
+
+	if !m.requestRunInterrupt("esc") {
+		t.Fatalf("expected esc interrupt request to be accepted during tool phase")
+	}
+	if !m.pendingInterrupt || !m.interruptSafe || !m.interrupting {
+		t.Fatalf("expected tool-phase esc interrupt to set deferred flags")
+	}
+
+	got, _ := m.Update(runFinishedMsg{RunID: 12, Err: nil})
+	updated := got.(model)
+
+	if cancelCalls != 0 {
+		t.Fatalf("expected no additional cancel call when run already finished, got %d", cancelCalls)
+	}
+	if updated.pendingInterrupt || updated.pendingInterruptReason != "" {
+		t.Fatalf("expected pending interrupt state cleared after normal run finish, got pending=%v reason=%q", updated.pendingInterrupt, updated.pendingInterruptReason)
+	}
+	if updated.interrupting || updated.interruptSafe {
+		t.Fatalf("expected interrupt flags cleared after normal run finish, got interrupting=%v interruptSafe=%v", updated.interrupting, updated.interruptSafe)
+	}
+}
+
 func TestClassifyRunFinish(t *testing.T) {
 	if got := classifyRunFinish(nil, false); got != runFinishReasonCompleted {
 		t.Fatalf("expected completed, got %q", got)
