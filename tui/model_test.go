@@ -4227,6 +4227,29 @@ func TestEscapeClosesSessionsModalBeforeInterruptingRun(t *testing.T) {
 	}
 }
 
+func TestEscapeClosesHelpOverlayBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	m := model{
+		screen:    screenChat,
+		busy:      true,
+		runCancel: func() { canceled = true },
+		helpOpen:  true,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.helpOpen {
+		t.Fatalf("expected esc to close help overlay first")
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while help overlay is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes help overlay")
+	}
+}
+
 func TestEscapePrioritizesApprovalOverPromptSearch(t *testing.T) {
 	reply := make(chan approvalDecision, 1)
 	m := model{
