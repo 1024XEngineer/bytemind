@@ -104,6 +104,15 @@ func TestComponentFooterHintsShowEscInterruptOnlyWhenCancelable(t *testing.T) {
 			t.Fatalf("did not expect Esc hint when runCancel is nil, got %#v", hints)
 		}
 	}
+
+	m.busy = false
+	m.runCancel = func() {}
+	hints = m.footerShortcutHints()
+	for _, hint := range hints {
+		if hint.Key == "Esc" {
+			t.Fatalf("did not expect Esc hint when not busy, got %#v", hints)
+		}
+	}
 }
 
 func TestComponentPlanPanelContentAndStepRender(t *testing.T) {
