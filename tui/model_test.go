@@ -6457,6 +6457,33 @@ func TestToolCallCompletedTriggersDeferredInterruptWithoutBTWQueue(t *testing.T)
 	}
 }
 
+func TestToolCallCompletedDeferredInterruptCancelsAtMostOnce(t *testing.T) {
+	cancelCalls := 0
+	m := model{
+		interrupting:     true,
+		interruptSafe:    true,
+		pendingInterrupt: true,
+		runCancel:        func() { cancelCalls++ },
+	}
+
+	first := Event{
+		Type:       EventToolCallCompleted,
+		ToolName:   "read_file",
+		ToolResult: `{"path":"tui/model.go","start_line":1,"end_line":3}`,
+	}
+	second := Event{
+		Type:       EventToolCallCompleted,
+		ToolName:   "read_file",
+		ToolResult: `{"path":"tui/model.go","start_line":4,"end_line":6}`,
+	}
+	m.handleAgentEvent(first)
+	m.handleAgentEvent(second)
+
+	if cancelCalls != 1 {
+		t.Fatalf("expected deferred interrupt cancel to trigger once, got %d", cancelCalls)
+	}
+}
+
 func TestRunFinishedWithPendingBTWRestartsRun(t *testing.T) {
 	m := model{
 		async:        make(chan tea.Msg, 1),
