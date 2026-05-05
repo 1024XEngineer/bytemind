@@ -597,6 +597,172 @@ func TestLoadUserProviderPrecedenceResetsProjectProviderRuntime(t *testing.T) {
 	}
 }
 
+func TestLoadUserProviderOverrideHandlesMissingMalformedAndRuntimeOnlyConfigs(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BYTEMIND_TEST_MISSING_PROVIDER_KEY", "")
+
+	_, err := loadUserProviderOverride(filepath.Join(dir, "missing.json"))
+	if err == nil {
+		t.Fatal("expected missing user provider override to fail")
+	}
+
+	malformedPath := filepath.Join(dir, "malformed.json")
+	if err := os.WriteFile(malformedPath, []byte(`{"provider":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = loadUserProviderOverride(malformedPath)
+	if err == nil {
+		t.Fatal("expected malformed user provider override to fail")
+	}
+
+	uncredentialedPath := filepath.Join(dir, "uncredentialed.json")
+	if err := writeConfig(uncredentialedPath, map[string]any{
+		"provider": map[string]any{
+			"type":        "openai-compatible",
+			"model":       "gpt-5.4-mini",
+			"api_key":     " ",
+			"api_key_env": "BYTEMIND_TEST_MISSING_PROVIDER_KEY",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := loadUserProviderOverride(uncredentialedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw != nil {
+		t.Fatalf("expected uncredentialed user provider override to be ignored, got %#v", raw)
+	}
+
+	runtimeOnlyPath := filepath.Join(dir, "runtime-only.json")
+	if err := writeConfig(runtimeOnlyPath, map[string]any{
+		"provider_runtime": map[string]any{
+			"default_provider": "deepseek",
+			"default_model":    "deepseek-chat",
+			"providers": map[string]any{
+				"deepseek": map[string]any{
+					"type":     "openai-compatible",
+					"base_url": "https://api.deepseek.com",
+					"model":    "deepseek-chat",
+					"api_key":  "runtime-key",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = loadUserProviderOverride(runtimeOnlyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw == nil {
+		t.Fatal("expected credentialed runtime provider override")
+	}
+	if _, ok := raw["provider_runtime"]; !ok {
+		t.Fatalf("expected provider_runtime in raw override, got %#v", raw)
+	}
+}
+
+func TestMergeProviderOverrideAppliesRuntimeAndReportsMalformedSections(t *testing.T) {
+	if err := mergeProviderOverride(nil, &Config{}); err != nil {
+		t.Fatalf("nil override should not fail: %v", err)
+	}
+	if err := mergeProviderOverride(map[string]json.RawMessage{}, nil); err != nil {
+		t.Fatalf("nil config should not fail: %v", err)
+	}
+	if err := mergeProviderOverride(map[string]json.RawMessage{
+		"provider": json.RawMessage(`{"api_key":`),
+	}, &Config{}); err == nil {
+		t.Fatal("expected malformed provider override to fail")
+	}
+	if err := mergeProviderOverride(map[string]json.RawMessage{
+		"provider_runtime": json.RawMessage(`{"providers":`),
+	}, &Config{}); err == nil {
+		t.Fatal("expected malformed provider_runtime override to fail")
+	}
+
+	cfg := Config{
+		ProviderRuntime: ProviderRuntimeConfig{
+			DefaultProvider: "project",
+			DefaultModel:    "project-model",
+			Providers: map[string]ProviderConfig{
+				"project": {Model: "project-model", APIKey: "project-key"},
+			},
+		},
+	}
+	raw := map[string]json.RawMessage{
+		"provider": json.RawMessage(`{
+			"type": "openai-compatible",
+			"base_url": "https://api.deepseek.com",
+			"model": "deepseek-chat",
+			"api_key": "user-key"
+		}`),
+		"provider_runtime": json.RawMessage(`{
+			"default_provider": "deepseek",
+			"default_model": "deepseek-chat",
+			"providers": {
+				"deepseek": {
+					"type": "openai-compatible",
+					"base_url": "https://api.deepseek.com",
+					"model": "deepseek-chat",
+					"api_key": "runtime-key"
+				}
+			}
+		}`),
+	}
+	if err := mergeProviderOverride(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Model != "deepseek-chat" || cfg.Provider.ResolveAPIKey() != "user-key" {
+		t.Fatalf("expected user provider override, got %#v", cfg.Provider)
+	}
+	if cfg.ProviderRuntime.DefaultProvider != "deepseek" {
+		t.Fatalf("expected runtime default provider deepseek, got %q", cfg.ProviderRuntime.DefaultProvider)
+	}
+	if provider := cfg.ProviderRuntime.Providers["deepseek"]; provider.ResolveAPIKey() != "runtime-key" {
+		t.Fatalf("expected runtime provider override key, got %#v", provider)
+	}
+}
+
+func TestProviderCredentialDetection(t *testing.T) {
+	t.Setenv("BYTEMIND_TEST_PROVIDER_KEY", "env-key")
+	t.Setenv("BYTEMIND_TEST_MISSING_PROVIDER_KEY", "")
+
+	tests := []struct {
+		name string
+		raw  json.RawMessage
+		want bool
+	}{
+		{name: "malformed provider", raw: json.RawMessage(`{"api_key":`), want: false},
+		{name: "literal api key", raw: json.RawMessage(`{"api_key":"literal-key"}`), want: true},
+		{name: "blank api key", raw: json.RawMessage(`{"api_key":" "}`), want: false},
+		{name: "env api key", raw: json.RawMessage(`{"api_key_env":"BYTEMIND_TEST_PROVIDER_KEY"}`), want: true},
+		{name: "missing env api key", raw: json.RawMessage(`{"api_key_env":"BYTEMIND_TEST_MISSING_PROVIDER_KEY"}`), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := providerRawHasCredential(tt.raw); got != tt.want {
+				t.Fatalf("providerRawHasCredential() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	if hasProviderCredential(map[string]json.RawMessage{
+		"provider_runtime": json.RawMessage(`{"providers":`),
+	}) {
+		t.Fatal("expected malformed provider_runtime to have no credential")
+	}
+	if !hasProviderCredential(map[string]json.RawMessage{
+		"provider_runtime": json.RawMessage(`{
+			"providers": {
+				"deepseek": {"api_key_env": "BYTEMIND_TEST_PROVIDER_KEY"}
+			}
+		}`),
+	}) {
+		t.Fatal("expected provider_runtime env credential to be detected")
+	}
+}
+
 func TestLoadIgnoresLegacyBytemindConfigJSON(t *testing.T) {
 	workspace := t.TempDir()
 	home := t.TempDir()
