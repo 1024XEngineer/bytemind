@@ -4250,6 +4250,30 @@ func TestEscapeClosesHelpOverlayBeforeInterruptingRun(t *testing.T) {
 	}
 }
 
+func TestEscapeClosesPlanActionPickerBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	m := model{
+		screen:         screenChat,
+		busy:           true,
+		runCancel:      func() { canceled = true },
+		planActionOpen: true,
+		mode:           modePlan,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.planActionOpen {
+		t.Fatalf("expected esc to close plan action picker first")
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while plan action picker is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes plan action picker")
+	}
+}
+
 func TestEscapePrioritizesApprovalOverPromptSearch(t *testing.T) {
 	reply := make(chan approvalDecision, 1)
 	m := model{
