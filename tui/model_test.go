@@ -4204,6 +4204,29 @@ func TestEscapeClosesPromptSearchBeforeInterruptingRun(t *testing.T) {
 	}
 }
 
+func TestEscapeClosesSessionsModalBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	m := model{
+		screen:       screenChat,
+		busy:         true,
+		runCancel:    func() { canceled = true },
+		sessionsOpen: true,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.sessionsOpen {
+		t.Fatalf("expected esc to close sessions modal first")
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while sessions modal is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes sessions modal")
+	}
+}
+
 func TestEscapePrioritizesApprovalOverPromptSearch(t *testing.T) {
 	reply := make(chan approvalDecision, 1)
 	m := model{
