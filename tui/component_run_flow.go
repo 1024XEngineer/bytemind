@@ -127,30 +127,61 @@ func (m model) submitBTW(value string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	wasToolPhase := m.phase == "tool"
-	m.interrupting = true
-	m.phase = "interrupting"
-	if m.runCancel != nil {
-		if wasToolPhase {
-			m.interruptSafe = true
-			m.statusNote = "BTW queued. Waiting for current tool step to finish..."
-		} else {
-			m.interruptSafe = false
-			m.statusNote = "BTW received. Stopping current run..."
-			m.runCancel()
-		}
-	} else {
+	if m.runCancel == nil {
 		prompt := composeBTWPrompt(m.pendingBTW)
 		m.pendingBTW = nil
 		m.interrupting = false
 		m.interruptSafe = false
+		m.pendingInterrupt = false
+		m.pendingInterruptReason = ""
 		return m, m.beginRun(prompt, string(m.mode), "BTW accepted. Restarting with your update...")
+	}
+	if m.requestRunInterrupt("btw") {
+		if m.pendingInterrupt {
+			m.statusNote = "BTW queued. Waiting for current tool step to finish..."
+		} else {
+			m.statusNote = "BTW received. Stopping current run..."
+		}
 	}
 	if m.width > 0 && m.height > 0 {
 		m.syncLayoutForCurrentScreen()
 		m.refreshViewport()
 	}
 	return m, nil
+}
+
+func (m *model) requestRunInterrupt(source string) bool {
+	if m.interrupting {
+		if strings.EqualFold(strings.TrimSpace(source), "esc") {
+			m.statusNote = "Interrupt already requested. Waiting for current run to stop..."
+		}
+		return true
+	}
+	if m.runCancel == nil || !m.busy {
+		return false
+	}
+
+	wasToolPhase := strings.EqualFold(strings.TrimSpace(m.phase), "tool")
+	m.interrupting = true
+	m.phase = "interrupting"
+	m.pendingInterruptReason = strings.TrimSpace(source)
+	if wasToolPhase {
+		m.interruptSafe = true
+		m.pendingInterrupt = true
+		if strings.EqualFold(strings.TrimSpace(source), "esc") {
+			m.statusNote = "Interrupt requested. Waiting for current tool step to finish..."
+		}
+		return true
+	}
+
+	m.interruptSafe = false
+	m.pendingInterrupt = false
+	m.pendingInterruptReason = ""
+	if strings.EqualFold(strings.TrimSpace(source), "esc") {
+		m.statusNote = "Interrupt requested. Stopping current run..."
+	}
+	m.runCancel()
+	return true
 }
 
 func (m *model) handleAgentEvent(event Event) {
@@ -197,10 +228,12 @@ func (m *model) handleAgentEvent(event Event) {
 		}
 		m.statusNote = summary
 		m.phase = "thinking"
-		if m.interruptSafe && m.interrupting && len(m.pendingBTW) > 0 && m.runCancel != nil {
+		if m.interruptSafe && m.interrupting && m.pendingInterrupt && m.runCancel != nil {
 			m.interruptSafe = false
+			m.pendingInterrupt = false
+			m.pendingInterruptReason = ""
 			m.phase = "interrupting"
-			m.statusNote = "BTW received. Stopping current run..."
+			m.statusNote = "Interrupt requested. Stopping current run..."
 			m.runCancel()
 		}
 	case EventPlanUpdated:
