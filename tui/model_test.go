@@ -4329,6 +4329,33 @@ func TestEscapeClosesMentionPaletteBeforeInterruptingRun(t *testing.T) {
 	}
 }
 
+func TestEscapeClosesSkillsPickerBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	m := model{
+		screen:        screenChat,
+		busy:          true,
+		runCancel:     func() { canceled = true },
+		skillsOpen:    true,
+		commandCursor: 3,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.skillsOpen {
+		t.Fatalf("expected esc to close skills picker first")
+	}
+	if updated.commandCursor != 0 {
+		t.Fatalf("expected esc to reset skills cursor, got %d", updated.commandCursor)
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while skills picker is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes skills picker")
+	}
+}
+
 func TestEscapePrioritizesApprovalOverPromptSearch(t *testing.T) {
 	reply := make(chan approvalDecision, 1)
 	m := model{
