@@ -151,6 +151,8 @@ func (m *model) newSession() error {
 	m.pasteTransaction = pasteTransactionState{}
 	m.ensurePastedContentState()
 	m.pendingBTW = nil
+	m.pendingInterrupt = false
+	m.pendingInterruptReason = ""
 	m.interrupting = false
 	m.interruptSafe = false
 	m.runCancel = nil
@@ -209,6 +211,8 @@ func (m *model) resumeSession(prefix string) error {
 	m.ensurePastedContentState()
 	m.syncInputImageRefs("")
 	m.pendingBTW = nil
+	m.pendingInterrupt = false
+	m.pendingInterruptReason = ""
 	m.interrupting = false
 	m.interruptSafe = false
 	m.runCancel = nil

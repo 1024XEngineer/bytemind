@@ -6110,10 +6110,11 @@ func TestSubmitBTWWithoutRunCancelRestartsImmediately(t *testing.T) {
 func TestToolCallCompletedTriggersDeferredBTWCancel(t *testing.T) {
 	canceled := false
 	m := model{
-		interrupting:  true,
-		interruptSafe: true,
-		pendingBTW:    []string{"change plan"},
-		runCancel:     func() { canceled = true },
+		interrupting:     true,
+		interruptSafe:    true,
+		pendingBTW:       []string{"change plan"},
+		pendingInterrupt: true,
+		runCancel:        func() { canceled = true },
 	}
 
 	m.handleAgentEvent(Event{
@@ -6128,8 +6129,41 @@ func TestToolCallCompletedTriggersDeferredBTWCancel(t *testing.T) {
 	if m.interruptSafe {
 		t.Fatalf("expected deferred interrupt flag to clear after cancel")
 	}
+	if m.pendingInterrupt {
+		t.Fatalf("expected pending interrupt flag to clear after deferred cancel")
+	}
 	if m.phase != "interrupting" {
 		t.Fatalf("expected phase to switch to interrupting, got %q", m.phase)
+	}
+}
+
+func TestToolCallCompletedTriggersDeferredInterruptWithoutBTWQueue(t *testing.T) {
+	canceled := false
+	m := model{
+		interrupting:           true,
+		interruptSafe:          true,
+		pendingInterrupt:       true,
+		pendingInterruptReason: "esc",
+		runCancel:              func() { canceled = true },
+	}
+
+	m.handleAgentEvent(Event{
+		Type:       EventToolCallCompleted,
+		ToolName:   "read_file",
+		ToolResult: `{"path":"tui/model.go","start_line":1,"end_line":3}`,
+	})
+
+	if !canceled {
+		t.Fatalf("expected deferred interrupt cancel to trigger after tool completion")
+	}
+	if m.interruptSafe {
+		t.Fatalf("expected deferred interruptSafe to clear after cancel")
+	}
+	if m.pendingInterrupt {
+		t.Fatalf("expected deferred pendingInterrupt to clear after cancel")
+	}
+	if m.pendingInterruptReason != "" {
+		t.Fatalf("expected deferred interrupt reason to clear after cancel, got %q", m.pendingInterruptReason)
 	}
 }
 
@@ -6181,6 +6215,27 @@ func TestRunFinishedWithPendingBTWRestartsRun(t *testing.T) {
 	}
 	if updated.activeRunID == 0 {
 		t.Fatalf("expected resumed run to have a new active run id")
+	}
+}
+
+func TestRunFinishedClearsPendingInterruptState(t *testing.T) {
+	m := model{
+		async:                  make(chan tea.Msg, 1),
+		busy:                   true,
+		activeRunID:            4,
+		interrupting:           true,
+		pendingInterrupt:       true,
+		pendingInterruptReason: "esc",
+	}
+
+	got, _ := m.Update(runFinishedMsg{RunID: 4, Err: context.Canceled})
+	updated := got.(model)
+
+	if updated.pendingInterrupt {
+		t.Fatalf("expected pending interrupt flag to clear after run finish")
+	}
+	if updated.pendingInterruptReason != "" {
+		t.Fatalf("expected pending interrupt reason to clear after run finish, got %q", updated.pendingInterruptReason)
 	}
 }
 
@@ -6288,15 +6343,17 @@ func TestNewSessionClearsInterruptState(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("pending input")
 	m := model{
-		store:         store,
-		sess:          current,
-		workspace:     workspace,
-		input:         input,
-		pendingBTW:    []string{"keep this"},
-		interrupting:  true,
-		interruptSafe: true,
-		runCancel:     func() {},
-		activeRunID:   9,
+		store:                  store,
+		sess:                   current,
+		workspace:              workspace,
+		input:                  input,
+		pendingBTW:             []string{"keep this"},
+		pendingInterrupt:       true,
+		pendingInterruptReason: "esc",
+		interrupting:           true,
+		interruptSafe:          true,
+		runCancel:              func() {},
+		activeRunID:            9,
 	}
 
 	if err := m.newSession(); err != nil {
@@ -6307,6 +6364,9 @@ func TestNewSessionClearsInterruptState(t *testing.T) {
 	}
 	if len(m.pendingBTW) != 0 {
 		t.Fatalf("expected pending btw queue cleared, got %#v", m.pendingBTW)
+	}
+	if m.pendingInterrupt || m.pendingInterruptReason != "" {
+		t.Fatalf("expected pending interrupt state cleared, got pending=%v reason=%q", m.pendingInterrupt, m.pendingInterruptReason)
 	}
 	if m.runCancel != nil {
 		t.Fatalf("expected runCancel cleared on new session")
@@ -6338,15 +6398,17 @@ func TestResumeSessionClearsInterruptState(t *testing.T) {
 	}
 
 	m := model{
-		store:         store,
-		sess:          current,
-		workspace:     workspace,
-		sessions:      []session.Summary{{ID: target.ID}},
-		pendingBTW:    []string{"queued"},
-		interrupting:  true,
-		interruptSafe: true,
-		runCancel:     func() {},
-		activeRunID:   7,
+		store:                  store,
+		sess:                   current,
+		workspace:              workspace,
+		sessions:               []session.Summary{{ID: target.ID}},
+		pendingBTW:             []string{"queued"},
+		pendingInterrupt:       true,
+		pendingInterruptReason: "esc",
+		interrupting:           true,
+		interruptSafe:          true,
+		runCancel:              func() {},
+		activeRunID:            7,
 	}
 
 	if err := m.resumeSession(target.ID); err != nil {
@@ -6360,6 +6422,9 @@ func TestResumeSessionClearsInterruptState(t *testing.T) {
 	}
 	if len(m.pendingBTW) != 0 {
 		t.Fatalf("expected pending btw queue cleared, got %#v", m.pendingBTW)
+	}
+	if m.pendingInterrupt || m.pendingInterruptReason != "" {
+		t.Fatalf("expected pending interrupt state cleared, got pending=%v reason=%q", m.pendingInterrupt, m.pendingInterruptReason)
 	}
 	if m.runCancel != nil {
 		t.Fatalf("expected runCancel cleared on resume")

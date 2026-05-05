@@ -450,6 +450,8 @@ type model struct {
 	clipboardText              clipboardTextWriter
 	runCancel                  context.CancelFunc
 	pendingBTW                 []string
+	pendingInterrupt           bool
+	pendingInterruptReason     string
 	interrupting               bool
 	interruptSafe              bool
 	runSeq                     int
@@ -674,6 +676,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.runCancel = nil
 		m.activeRunID = 0
 		m.interruptSafe = false
+		m.pendingInterrupt = false
+		m.pendingInterruptReason = ""
 		shouldResumeBTW := m.interrupting && len(m.pendingBTW) > 0
 		m.interrupting = false
 		finishReason := classifyRunFinish(msg.Err, shouldResumeBTW)
