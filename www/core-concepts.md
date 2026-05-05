@@ -16,7 +16,7 @@ In Build mode the agent reads files, searches code, writes changes, and runs ver
 - Updating documentation
 
 ```bash
-bytemind chat          # starts in Build mode by default
+bytemind          # starts in Build mode by default
 ```
 
 ### Plan Mode
@@ -36,7 +36,7 @@ Switch modes with slash commands inside a session:
 
 ## Sessions
 
-Every `bytemind chat` invocation creates or resumes a **session**. Sessions automatically persist the full conversation context.
+Every `bytemind` invocation creates or resumes a **session**. Sessions automatically persist the full conversation context.
 
 - Stored in the `.bytemind/` directory
 - Survive interruptions — restart and continue where you left off
@@ -89,7 +89,7 @@ See [Tools and Approval](/usage/tools-and-approval) for details.
 - Raise it for complex tasks via config or CLI flag:
 
 ```bash
-bytemind chat -max-iterations 64
+bytemind -max-iterations 64
 ```
 
 ## Skills

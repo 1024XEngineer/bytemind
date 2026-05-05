@@ -8,7 +8,7 @@ Passed to the install script to control how the binary is downloaded.
 
 | Variable               | Description                            | Default                  |
 | ---------------------- | -------------------------------------- | ------------------------ |
-| `BYTEMIND_VERSION`     | Release tag to install (e.g. `v0.3.0`) | latest                   |
+| `BYTEMIND_VERSION`     | Release tag to install (e.g. `vX.Y.Z`) | latest                   |
 | `BYTEMIND_INSTALL_DIR` | Directory to install the binary into   | `~/bin`                  |
 | `BYTEMIND_REPO`        | GitHub repository to download from     | `1024XEngineer/bytemind` |
 
@@ -16,7 +16,7 @@ Passed to the install script to control how the binary is downloaded.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh \
-  | BYTEMIND_VERSION=v0.3.0 BYTEMIND_INSTALL_DIR=/usr/local/bin bash
+  | BYTEMIND_VERSION=vX.Y.Z BYTEMIND_INSTALL_DIR=/usr/local/bin bash
 ```
 
 ## Runtime Variables

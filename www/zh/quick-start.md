@@ -26,27 +26,29 @@ curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
+:::warning 按当前终端复制命令
+Windows PowerShell 用户请复制 PowerShell 代码块，不要复制 macOS / Linux 的 `install.sh | bash` 命令。那条命令会启动 WSL；如果 WSL 本身损坏，会出现 `ext4.vhdx` 或 `HCS` 错误。
+:::
+
 安装完成后验证：
 
-```bash
+```powershell
 bytemind --version
 ```
 
 :::tip 安装目录
-默认安装到 `~/bin`（Linux/macOS）或 `%USERPROFILE%\bin`（Windows）。如果提示找不到命令，请确认该目录已加入 `PATH`。
+默认安装到 `~/bin`（Linux/macOS）或 `%USERPROFILE%\bin`（Windows）。如果提示找不到命令，或更新后仍显示旧版本，请确认该目录已加入 `PATH` 且排在旧副本之前。PowerShell 中可用 `Get-Command bytemind -All` 查看实际命中的二进制。
 :::
 
-## 第二步：创建配置
+## 第二步：创建全局配置
 
-在你的项目根目录下创建 `.bytemind/config.json`：
+推荐先在用户目录创建全局配置：`~/.bytemind/config.json`。这样只需配置一次，之后在任意项目目录运行 ByteMind 都会读取同一份配置。`~/bin` 或 `%USERPROFILE%\bin` 只是安装目录，不是项目目录，也不需要把配置放在那里。
+
+**macOS / Linux**
 
 ```bash
-mkdir -p .bytemind
-```
-
-以 OpenAI 兼容接口为例，写入以下内容：
-
-```json
+mkdir -p ~/.bytemind
+cat > ~/.bytemind/config.json <<'JSON'
 {
   "provider": {
     "type": "openai-compatible",
@@ -58,7 +60,29 @@ mkdir -p .bytemind
   "max_iterations": 32,
   "stream": true
 }
+JSON
 ```
+
+**Windows（PowerShell）**
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.bytemind" | Out-Null
+@'
+{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-4o",
+    "api_key": "YOUR_API_KEY"
+  },
+  "approval_policy": "on-request",
+  "max_iterations": 32,
+  "stream": true
+}
+'@ | Set-Content -Encoding utf8 "$env:USERPROFILE\.bytemind\config.json"
+```
+
+将其中的 `YOUR_API_KEY` 替换为你的真实 API Key。
 
 :::warning 安全提示
 不要把含有真实 `api_key` 的配置文件提交到 Git。建议把 `.bytemind/` 加入 `.gitignore`，或者改用 `api_key_env` 字段读取环境变量。
@@ -77,20 +101,36 @@ mkdir -p .bytemind
 | `max_iterations`       | 单任务最大工具调用轮次                            | `32`                        |
 | `stream`               | 流式输出                                          | `true`                      |
 
-完整配置字段见[配置参考](/zh/reference/config-reference)。
+如果某个项目需要不同模型或沙箱设置，可以在该项目目录下额外创建 `.bytemind/config.json`；项目配置会覆盖全局配置中的同名字段。完整配置字段见[配置参考](/zh/reference/config-reference)。
 
-## 第三步：启动聊天模式
+## 第三步：进入项目目录并启动 ByteMind
 
-进入你的项目目录后运行：
+进入你要处理的具体代码项目目录后运行：
+
+**macOS / Linux**
 
 ```bash
-bytemind chat
+cd /path/to/your-project
+bytemind
 ```
 
-ByteMind 会读取当前目录的 `.bytemind/config.json`，初始化会话，然后进入交互模式。
+**Windows（PowerShell）**
+
+```powershell
+Set-Location D:\code\your-project
+bytemind
+```
+
+`bytemind` 会启动默认交互界面。`bytemind chat` 仍可作为兼容别名使用，但日常使用直接运行 `bytemind` 即可。
+
+:::warning 选择具体项目目录
+ByteMind 会把当前目录作为工作区。不要直接在用户主目录、磁盘根目录、Downloads、Desktop 或包含大量无关文件的大文件夹中启动；请先进入具体代码仓库或项目子目录。安装目录 `%USERPROFILE%\bin` / `~/bin` 只放二进制文件，也不是工作区。
+:::
+
+启动后，ByteMind 会读取全局配置和当前项目的可选覆盖配置，初始化会话，然后进入交互模式。
 
 :::info 会话自动保存
-每次对话都会被持久化。下次运行 `bytemind chat` 时，可以用 `/sessions` 列出历史会话，用 `/resume <id>` 恢复。
+每次对话都会被持久化。下次运行 `bytemind` 时，可以用 `/sessions` 列出历史会话，用 `/resume <id>` 恢复。
 :::
 
 ## 第四步：执行第一个任务

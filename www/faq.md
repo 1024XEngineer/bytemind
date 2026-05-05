@@ -20,7 +20,35 @@ Add that line to your `~/.bashrc` or `~/.zshrc` to make it permanent.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh \
-  | BYTEMIND_VERSION=v0.3.0 bash
+  | BYTEMIND_VERSION=vX.Y.Z bash
+```
+
+Windows PowerShell:
+
+```powershell
+$env:BYTEMIND_VERSION = 'vX.Y.Z'
+iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
+```
+
+Replace `vX.Y.Z` with the release tag you want to install.
+
+### Why does the old version still run after updating?
+
+PowerShell may be finding an older `bytemind.exe` earlier in `PATH`. Run:
+
+```powershell
+Get-Command bytemind -All | Select-Object Source
+& "$env:USERPROFILE\bin\bytemind.exe" --version
+```
+
+If the second command prints the new version, move `%USERPROFILE%\bin` to the front of your user `PATH`; see [Troubleshooting](/troubleshooting#windows-still-shows-the-old-version-after-updating).
+
+### Why do I get a WSL error when running the bash install command on Windows?
+
+`install.sh | bash` is for macOS, Linux, or a working WSL shell. In Windows PowerShell, use:
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
 ## Providers
@@ -54,7 +82,7 @@ Use `api_key_env` instead of `api_key` in your config file. Store the actual key
 Raise `max_iterations` in your config or use the `-max-iterations` flag:
 
 ```bash
-bytemind chat -max-iterations 64
+bytemind -max-iterations 64
 ```
 
 ### Can I use ByteMind in CI without manual approvals?
