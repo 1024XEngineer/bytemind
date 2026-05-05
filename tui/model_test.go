@@ -4274,6 +4274,32 @@ func TestEscapeClosesPlanActionPickerBeforeInterruptingRun(t *testing.T) {
 	}
 }
 
+func TestEscapeClosesCommandPaletteBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	input := textarea.New()
+	input.SetValue("/h")
+	m := model{
+		screen:      screenChat,
+		busy:        true,
+		runCancel:   func() { canceled = true },
+		commandOpen: true,
+		input:       input,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.commandOpen {
+		t.Fatalf("expected esc to close command palette first")
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while command palette is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes command palette")
+	}
+}
+
 func TestEscapePrioritizesApprovalOverPromptSearch(t *testing.T) {
 	reply := make(chan approvalDecision, 1)
 	m := model{
