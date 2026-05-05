@@ -23,7 +23,7 @@ func TestDelegateSubAgentToolValidatesRequiredFields(t *testing.T) {
 	tool := DelegateSubAgentTool{}
 	execCtx := &ExecutionContext{
 		DelegateSubAgent: func(context.Context, DelegateSubAgentRequest, *ExecutionContext) (DelegateSubAgentResult, error) {
-			return DelegateSubAgentResult{OK: true, Findings: []DelegateSubAgentFinding{}, References: []DelegateSubAgentReference{}}, nil
+			return DelegateSubAgentResult{OK: true}, nil
 		},
 	}
 	_, err := tool.Run(context.Background(), json.RawMessage(`{"agent":"","task":"scan"}`), execCtx)
@@ -64,12 +64,6 @@ func TestDelegateSubAgentToolCallsHandlerAndReturnsJSON(t *testing.T) {
 				InvocationID: "subagent-1",
 				Agent:        req.Agent,
 				Summary:      "done",
-				Findings: []DelegateSubAgentFinding{
-					{Title: "Prompt order", Body: "default -> mode -> runtime -> active_skill -> instructions"},
-				},
-				References: []DelegateSubAgentReference{
-					{Path: "internal/agent/prompt.go", Line: 40, Note: "systemPrompt"},
-				},
 			}, nil
 		},
 	})

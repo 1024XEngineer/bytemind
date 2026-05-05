@@ -25,17 +25,6 @@ type DelegateSubAgentRequest struct {
 	RunInBackground bool                  `json:"run_in_background"`
 }
 
-type DelegateSubAgentFinding struct {
-	Title string `json:"title"`
-	Body  string `json:"body"`
-}
-
-type DelegateSubAgentReference struct {
-	Path string `json:"path"`
-	Line int    `json:"line"`
-	Note string `json:"note"`
-}
-
 type DelegateSubAgentError struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
@@ -43,17 +32,15 @@ type DelegateSubAgentError struct {
 }
 
 type DelegateSubAgentResult struct {
-	OK             bool                        `json:"ok"`
-	Status         string                      `json:"status,omitempty"`
-	InvocationID   string                      `json:"invocation_id"`
-	Agent          string                      `json:"agent"`
-	TaskID         string                      `json:"task_id,omitempty"`
-	ResultReadTool string                      `json:"result_read_tool,omitempty"`
-	StopTool       string                      `json:"stop_tool,omitempty"`
-	Summary        string                      `json:"summary,omitempty"`
-	Findings       []DelegateSubAgentFinding   `json:"findings"`
-	References     []DelegateSubAgentReference `json:"references"`
-	Error          *DelegateSubAgentError      `json:"error,omitempty"`
+	OK             bool                   `json:"ok"`
+	Status         string                 `json:"status,omitempty"`
+	InvocationID   string                 `json:"invocation_id"`
+	Agent          string                 `json:"agent"`
+	TaskID         string                 `json:"task_id,omitempty"`
+	ResultReadTool string                 `json:"result_read_tool,omitempty"`
+	StopTool       string                 `json:"stop_tool,omitempty"`
+	Summary        string                 `json:"summary,omitempty"`
+	Error          *DelegateSubAgentError `json:"error,omitempty"`
 }
 
 type DelegateSubAgentHandler func(context.Context, DelegateSubAgentRequest, *ExecutionContext) (DelegateSubAgentResult, error)
@@ -149,12 +136,6 @@ func (DelegateSubAgentTool) Run(ctx context.Context, raw json.RawMessage, execCt
 	result, err := execCtx.DelegateSubAgent(ctx, req, execCtx)
 	if err != nil {
 		return "", err
-	}
-	if result.Findings == nil {
-		result.Findings = []DelegateSubAgentFinding{}
-	}
-	if result.References == nil {
-		result.References = []DelegateSubAgentReference{}
 	}
 	output, marshalErr := toJSON(result)
 	if marshalErr != nil {

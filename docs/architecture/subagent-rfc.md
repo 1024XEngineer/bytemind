@@ -221,6 +221,23 @@
 - `review`：禁止文件写入和会产生变更的 shell 命令
 - `general`：允许受控写入与 shell，但仍受父审批边界约束
 
+## Worktree 路径约定（MVP 硬约束）
+
+为避免实现分叉和清理歧义，MVP 固定使用仓库内 worktree 根目录：
+
+- `worktree_root = <workspace>/.bytemind/worktrees`
+- `worktree_path = <workspace>/.bytemind/worktrees/<worktree_id>`
+
+owner 元数据继续放在全局运行目录：
+
+- `owner_metadata = ${BYTEMIND_HOME}/runtime/subagents/worktrees/<worktree_id>.json`
+
+语义约束：
+
+- owner 元数据必须记录 `worktree_path`，并作为 `cleanup/reconcile` 的事实来源。
+- `cleanup` 与启动期 `reconcile` 必须幂等；重复执行不应导致致命错误。
+- 子任务改动不自动回传父工作区；回传通过标准 Git 流程（提交/合并）完成。
+
 ## 结果协议
 
 subagent 输出不应继续只是一个不透明的 `[]byte`。
@@ -529,6 +546,13 @@ Bootstrap
 `Runner` 在处理 turn 时可使用 `SubAgentService`。
 第一阶段仍建议优先显式 delegation，而不是直接引入自动 delegation。
 
+## 配置策略
+
+MVP 不新增 `config.json` 顶层 `subagents` 专用配置，也不开放 `worktree_root` 自定义。
+
+- 默认固定：`<workspace>/.bytemind/worktrees`
+- 仅保留代码内保守默认（如超时、最大轮数、并发上限）
+
 ## 分阶段落地路线
 
 ### M1：最小可用版本
@@ -569,6 +593,7 @@ Bootstrap
 - 取消传播测试：验证 `ParentTaskID` 打通后，父任务取消可正确传播到子任务。
 - prompt 组装测试：验证主 prompt 顺序保持 `default -> mode -> runtime context -> active skill -> AGENTS.md`。
 - 可观测性测试：验证 task metadata 中 `invocation_kind`、`runtime_task_id`、`delegation_depth` 等字段完整落盘与展示。
+- worktree 一致性测试：验证 `worktree_path`、`owner_metadata.path` 与 `reconcile` 安全删除前置条件一致，且 `cleanup/reconcile` 幂等。
 
 ## 最终建议
 

@@ -19,8 +19,7 @@ const (
 	DelegateSubAgentToolName         = "delegate_subagent"
 	isolationNone                    = "none"
 	isolationWorktree                = "worktree"
-	outputFindings                   = "findings"
-	outputSummary                    = "summary"
+	outputSummary = "summary"
 	maxRequestedTimeout              = 15 * time.Minute
 )
 
@@ -284,7 +283,7 @@ func isAllowedIsolation(value string) bool {
 
 func isAllowedOutput(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case outputFindings, outputSummary:
+	case outputSummary:
 		return true
 	default:
 		return false

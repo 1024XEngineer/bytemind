@@ -26,7 +26,7 @@ func TestRunnerSubAgentManagementNilManagerGuards(t *testing.T) {
 	result, err := runner.DispatchSubAgent(context.Background(), nil, "build", tools.DelegateSubAgentRequest{
 		Agent: "explorer",
 		Task:  "locate prompt assembly",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured dispatch failure without Go error, got %v", err)
 	}
@@ -65,7 +65,7 @@ func TestRunnerSubAgentManagementListFindAndDispatch(t *testing.T) {
 	result, err := runner.DispatchSubAgent(nil, scopedSession, "build", tools.DelegateSubAgentRequest{
 		Agent: "explorer",
 		Task:  "locate prompt assembly",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured dispatch result, got %v", err)
 	}

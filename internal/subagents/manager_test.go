@@ -42,12 +42,16 @@ project explorer body
 	if len(catalog.Agents) != 2 {
 		t.Fatalf("expected 2 effective subagents, got %d", len(catalog.Agents))
 	}
-	if len(catalog.Overrides) != 1 {
-		t.Fatalf("expected 1 override, got %#v", catalog.Overrides)
+
+	// Hardcoded builtins generate overrides when directory/user/project scopes provide same-name definitions.
+	foundUserOverride := false
+	for _, o := range catalog.Overrides {
+		if o.Name == "review" && o.Winner == ScopeUser && o.Loser == ScopeBuiltin {
+			foundUserOverride = true
+		}
 	}
-	override := catalog.Overrides[0]
-	if override.Name != "review" || override.Winner != ScopeUser || override.Loser != ScopeBuiltin {
-		t.Fatalf("unexpected override payload: %#v", override)
+	if !foundUserOverride {
+		t.Fatalf("expected user→builtin override for review, got %#v", catalog.Overrides)
 	}
 
 	review, ok := manager.Find("review")
@@ -111,8 +115,9 @@ body
 
 	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
 	catalog := manager.Reload()
-	if len(catalog.Agents) != 0 {
-		t.Fatalf("expected no valid subagent definitions, got %#v", catalog.Agents)
+	// Hardcoded builtins (explorer, review) are always present; the invalid file should not add to them.
+	if len(catalog.Agents) != 2 {
+		t.Fatalf("expected 2 hardcoded subagent definitions, got %#v", catalog.Agents)
 	}
 	if len(catalog.Diagnostics) == 0 {
 		t.Fatal("expected diagnostics for invalid name")
@@ -212,6 +217,27 @@ builtin review body
 	after := manager.Snapshot().LoadedAt
 	if !after.Equal(before) {
 		t.Fatalf("expected Find hit not to trigger reload; before=%s after=%s", before.Format(time.RFC3339Nano), after.Format(time.RFC3339Nano))
+	}
+}
+
+func TestHardcodedBuiltinAgentsResolveWithoutFiles(t *testing.T) {
+	workspace := t.TempDir()
+	manager := NewManagerWithDirs(
+		workspace,
+		filepath.Join(workspace, "nonexistent_builtin"),
+		filepath.Join(workspace, "nonexistent_user"),
+		filepath.Join(workspace, "nonexistent_project"),
+	)
+	manager.Reload()
+
+	for _, name := range []string{"/explorer", "explorer", "/review", "review"} {
+		agent, ok := manager.FindBuiltin(name)
+		if !ok {
+			t.Fatalf("expected FindBuiltin(%q) to resolve hardcoded builtin", name)
+		}
+		if agent.Scope != ScopeBuiltin {
+			t.Fatalf("expected builtin scope for %q, got %s", name, agent.Scope)
+		}
 	}
 }
 

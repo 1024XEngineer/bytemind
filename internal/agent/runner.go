@@ -96,6 +96,8 @@ type Runner struct {
 	extensions      extensionspkg.Manager
 	skillManager    *skills.Manager
 	subAgentManager *subagentspkg.Manager
+	subAgentExecutor SubAgentExecutor
+	subAgentNotifier SubAgentNotifier
 	tokenManager    *tokenusage.TokenUsageManager
 	auditStore      storagepkg.AuditStore
 	promptStore     storagepkg.PromptHistoryWriter
@@ -204,6 +206,9 @@ func NewRunner(opts Options) *Runner {
 		engine = NewDefaultEngine(runner)
 	}
 	runner.engine = engine
+
+	runner.subAgentExecutor = NewSubAgentExecutor(runner)
+	runner.subAgentNotifier = &defaultSubAgentNotifier{}
 
 	return runner
 }

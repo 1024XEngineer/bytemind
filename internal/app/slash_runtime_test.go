@@ -326,8 +326,17 @@ review files
 	if !listOut.Handled || listOut.Command != "agents" {
 		t.Fatalf("expected /agents list branch, got %#v", listOut)
 	}
-	if len(listOut.SubAgents) != 1 || listOut.SubAgents[0].Name != "review" {
-		t.Fatalf("expected one review subagent, got %#v", listOut.SubAgents)
+	if len(listOut.SubAgents) < 1 {
+		t.Fatalf("expected at least one subagent, got %#v", listOut.SubAgents)
+	}
+	foundReview := false
+	for _, a := range listOut.SubAgents {
+		if a.Name == "review" {
+			foundReview = true
+		}
+	}
+	if !foundReview {
+		t.Fatalf("expected review subagent in list, got %#v", listOut.SubAgents)
 	}
 
 	detailOut, err := ExecuteSlashCommand(store, current, "/agents review", DefaultSlashCommands())

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,7 +47,7 @@ scan files
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -61,9 +62,6 @@ scan files
 	}
 	if strings.TrimSpace(result.InvocationID) == "" {
 		t.Fatalf("expected invocation id, got %#v", result)
-	}
-	if result.Findings == nil || result.References == nil {
-		t.Fatalf("expected findings/references arrays, got %#v", result)
 	}
 }
 
@@ -92,7 +90,7 @@ func TestDelegateSubAgentExecutesWithTemporaryChildSession(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -154,7 +152,7 @@ func TestDelegateSubAgentChildSessionUsesNarrowedTools(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -221,7 +219,7 @@ func TestDelegateSubAgentChildSessionDoesNotPersistTemporarySession(t *testing.T
 	}, &tools.ExecutionContext{
 		Mode:    planpkg.ModeBuild,
 		Session: parent,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -256,7 +254,7 @@ func TestDelegateSubAgentReturnsStructuredPreflightFailure(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -268,9 +266,6 @@ func TestDelegateSubAgentReturnsStructuredPreflightFailure(t *testing.T) {
 	}
 	if result.Error == nil || result.Error.Code != "subagent_agent_not_found" {
 		t.Fatalf("expected preflight agent_not_found code, got %#v", result.Error)
-	}
-	if result.Findings == nil || result.References == nil {
-		t.Fatalf("expected findings/references arrays, got %#v", result)
 	}
 }
 
@@ -295,7 +290,7 @@ func TestDelegateSubAgentLaunchesBackgroundTaskWhenLifecycleToolsAvailable(t *te
 		RunInBackground: true,
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -350,7 +345,7 @@ func TestDelegateSubAgentRejectsBackgroundWhenLifecycleToolsUnavailable(t *testi
 		RunInBackground: true,
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -378,7 +373,7 @@ func TestDelegateSubAgentRejectsBackgroundWriteToolSubAgent(t *testing.T) {
 		RunInBackground: true,
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -405,7 +400,7 @@ func TestDelegateSubAgentReturnsRuntimeUnavailableWhenGatewayMissing(t *testing.
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -441,7 +436,7 @@ func TestDelegateSubAgentMapsKilledRuntimeResultWithoutErrorCode(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -477,7 +472,7 @@ func TestDelegateSubAgentMapsFailedRuntimeResultWithoutErrorCode(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -517,11 +512,11 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 		Agent:   "explorer",
 		Task:    "Locate prompt assembly order",
 		Timeout: "90s",
-		Output:  "findings",
+		Output:  "summary",
 	}, &tools.ExecutionContext{
 		Mode:    planpkg.ModeBuild,
 		Session: sess,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -583,7 +578,7 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 	if call.Metadata["requested_timeout_ms"] != "90000" {
 		t.Fatalf("expected requested_timeout_ms metadata, got %q", call.Metadata["requested_timeout_ms"])
 	}
-	if call.Metadata["requested_output"] != "findings" {
+	if call.Metadata["requested_output"] != "summary" {
 		t.Fatalf("expected requested_output metadata, got %q", call.Metadata["requested_output"])
 	}
 	if call.Timeout != 90*time.Second {
@@ -601,9 +596,7 @@ func TestDelegateSubAgentAcceptsStructuredRuntimeOutput(t *testing.T) {
 			Status: corepkg.TaskCompleted,
 			Output: []byte(`{
 				"ok": true,
-				"summary": "scoped scan complete",
-				"findings": [{"title":"Prompt order","body":"default -> mode -> runtime context"}],
-				"references": [{"path":"internal/agent/prompt.go","line":42,"note":"assembly entry"}]
+				"summary": "scoped scan complete"
 			}`),
 		},
 	}
@@ -616,10 +609,10 @@ func TestDelegateSubAgentAcceptsStructuredRuntimeOutput(t *testing.T) {
 	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
 		Agent:  "explorer",
 		Task:   "Locate prompt assembly order",
-		Output: "findings",
+		Output: "summary",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -641,8 +634,8 @@ func TestDelegateSubAgentAcceptsStructuredRuntimeOutput(t *testing.T) {
 	if strings.TrimSpace(result.InvocationID) == "" {
 		t.Fatalf("expected invocation id, got %#v", result)
 	}
-	if len(result.Findings) != 1 || len(result.References) != 1 {
-		t.Fatalf("expected findings/references from runtime result, got %#v", result)
+	if strings.TrimSpace(result.Summary) == "" {
+		t.Fatalf("expected non-empty summary, got %#v", result)
 	}
 }
 
@@ -656,9 +649,7 @@ func TestDelegateSubAgentRejectsSummaryOutputWithoutSummary(t *testing.T) {
 			Status: corepkg.TaskCompleted,
 			Output: []byte(`{
 				"ok": true,
-				"summary": " ",
-				"findings": [],
-				"references": []
+				"summary": " "
 			}`),
 		},
 	}
@@ -674,7 +665,7 @@ func TestDelegateSubAgentRejectsSummaryOutputWithoutSummary(t *testing.T) {
 		Output: "summary",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -699,9 +690,7 @@ func TestDelegateSubAgentUsesCanonicalAgentNameWhenRequestUsesAlias(t *testing.T
 			Status: corepkg.TaskCompleted,
 			Output: []byte(`{
 				"ok": true,
-				"summary": "alias scan complete",
-				"findings": [],
-				"references": []
+				"summary": "alias scan complete"
 			}`),
 		},
 	}
@@ -716,7 +705,7 @@ func TestDelegateSubAgentUsesCanonicalAgentNameWhenRequestUsesAlias(t *testing.T
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -738,9 +727,7 @@ func TestDelegateSubAgentAppliesDefinitionDefaultTimeoutToRuntimeTask(t *testing
 			Status: corepkg.TaskCompleted,
 			Output: []byte(`{
 				"ok": false,
-				"error": {"code":"subagent_not_implemented","message":"stub pipeline placeholder","retryable":true},
-				"findings": [],
-				"references": []
+				"error": {"code":"subagent_not_implemented","message":"stub pipeline placeholder","retryable":true}
 			}`),
 		},
 	}
@@ -755,7 +742,7 @@ func TestDelegateSubAgentAppliesDefinitionDefaultTimeoutToRuntimeTask(t *testing
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -785,7 +772,7 @@ func TestDelegateSubAgentRejectsInvalidRequestedTimeoutFromPreflight(t *testing.
 		Timeout: "soon",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -819,7 +806,7 @@ func TestDelegateSubAgentRejectsInvalidStructuredRuntimeOutput(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -834,9 +821,6 @@ func TestDelegateSubAgentRejectsInvalidStructuredRuntimeOutput(t *testing.T) {
 	}
 	if result.Error == nil || result.Error.Code != subAgentErrorCodeInvalidResult {
 		t.Fatalf("expected invalid result code, got %#v", result.Error)
-	}
-	if result.Findings == nil || result.References == nil {
-		t.Fatalf("expected findings/references arrays, got %#v", result)
 	}
 }
 
@@ -865,7 +849,7 @@ func TestDelegateSubAgentNormalizesMissingArraysInStructuredRuntimeOutput(t *tes
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -880,9 +864,6 @@ func TestDelegateSubAgentNormalizesMissingArraysInStructuredRuntimeOutput(t *tes
 	}
 	if result.Error == nil || result.Error.Code != "subagent_task_failed" {
 		t.Fatalf("expected propagated error, got %#v", result.Error)
-	}
-	if result.Findings == nil || result.References == nil {
-		t.Fatalf("expected findings/references arrays, got %#v", result)
 	}
 }
 
@@ -958,7 +939,7 @@ edit files
 
 func TestNormalizeDelegateSubAgentResultDerivesStatusFromOK(t *testing.T) {
 	result, err := normalizeDelegateSubAgentResult(
-		[]byte(`{"ok":true,"summary":"done","findings":[],"references":[]}`),
+		[]byte(`{"ok":true,"summary":"done"}`),
 		"inv-1",
 		"explorer",
 		"task-1",
@@ -971,7 +952,7 @@ func TestNormalizeDelegateSubAgentResultDerivesStatusFromOK(t *testing.T) {
 	}
 
 	result, err = normalizeDelegateSubAgentResult(
-		[]byte(`{"ok":false,"error":{"code":"subagent_task_failed","message":"boom","retryable":true},"findings":[],"references":[]}`),
+		[]byte(`{"ok":false,"error":{"code":"subagent_task_failed","message":"boom","retryable":true}}`),
 		"inv-2",
 		"explorer",
 		"task-2",
@@ -989,7 +970,7 @@ func TestNormalizeDelegateSubAgentResultDerivesStatusFromOK(t *testing.T) {
 
 func TestNormalizeDelegateSubAgentResultRejectsUnsupportedStatus(t *testing.T) {
 	_, err := normalizeDelegateSubAgentResult(
-		[]byte(`{"ok":true,"status":"unknown","summary":"done","findings":[],"references":[]}`),
+		[]byte(`{"ok":true,"status":"unknown","summary":"done"}`),
 		"inv-1",
 		"explorer",
 		"task-1",
@@ -1001,7 +982,7 @@ func TestNormalizeDelegateSubAgentResultRejectsUnsupportedStatus(t *testing.T) {
 
 func TestNormalizeDelegateSubAgentResultRejectsMismatchedOKStatus(t *testing.T) {
 	_, err := normalizeDelegateSubAgentResult(
-		[]byte(`{"ok":true,"status":"failed","summary":"done","findings":[],"references":[]}`),
+		[]byte(`{"ok":true,"status":"failed","summary":"done"}`),
 		"inv-1",
 		"explorer",
 		"task-1",
@@ -1011,7 +992,7 @@ func TestNormalizeDelegateSubAgentResultRejectsMismatchedOKStatus(t *testing.T) 
 	}
 
 	_, err = normalizeDelegateSubAgentResult(
-		[]byte(`{"ok":false,"status":"completed","error":{"code":"subagent_task_failed","message":"boom","retryable":true},"findings":[],"references":[]}`),
+		[]byte(`{"ok":false,"status":"completed","error":{"code":"subagent_task_failed","message":"boom","retryable":true}}`),
 		"inv-1",
 		"explorer",
 		"task-1",
@@ -1023,7 +1004,7 @@ func TestNormalizeDelegateSubAgentResultRejectsMismatchedOKStatus(t *testing.T) 
 
 func TestNormalizeDelegateSubAgentResultNormalizesErrorCodeCase(t *testing.T) {
 	result, err := normalizeDelegateSubAgentResult(
-		[]byte(`{"ok":false,"status":"FAILED","error":{"code":"  SUBAGENT_TASK_FAILED  ","message":" boom ","retryable":true},"findings":[],"references":[]}`),
+		[]byte(`{"ok":false,"status":"FAILED","error":{"code":"  SUBAGENT_TASK_FAILED  ","message":" boom ","retryable":true}}`),
 		"inv-1",
 		"explorer",
 		"task-1",
@@ -1045,7 +1026,7 @@ func TestNormalizeDelegateSubAgentResultNormalizesErrorCodeCase(t *testing.T) {
 func TestNormalizeDelegateSubAgentResultAcceptsAsyncSuccessStatuses(t *testing.T) {
 	for _, status := range []string{subAgentResultStatusQueued, subAgentResultStatusRunning, subAgentResultStatusAccepted} {
 		result, err := normalizeDelegateSubAgentResult(
-			[]byte(`{"ok":true,"status":"`+status+`","task_id":"task-1","summary":"async","findings":[],"references":[]}`),
+			[]byte(`{"ok":true,"status":"`+status+`","task_id":"task-1","summary":"async"}`),
 			"inv-1",
 			"explorer",
 			"task-1",
@@ -1059,14 +1040,12 @@ func TestNormalizeDelegateSubAgentResultAcceptsAsyncSuccessStatuses(t *testing.T
 	}
 }
 
-func TestNormalizeDelegateSubAgentResultTrimsStructuredFields(t *testing.T) {
+func TestNormalizeDelegateSubAgentResultTrimsSummary(t *testing.T) {
 	result, err := normalizeDelegateSubAgentResult(
 		[]byte(`{
 			"ok": true,
 			"status": "completed",
-			"summary": "  done  ",
-			"findings": [{"title":"  t  ","body":"  b  "},{"title":" ","body":" "}],
-			"references": [{"path":"  a.go  ","line":12,"note":"  n  "},{"path":" ","line":0,"note":" "}]
+			"summary": "  done  "
 		}`),
 		"inv-1",
 		"explorer",
@@ -1078,42 +1057,12 @@ func TestNormalizeDelegateSubAgentResultTrimsStructuredFields(t *testing.T) {
 	if result.Summary != "done" {
 		t.Fatalf("expected trimmed summary, got %q", result.Summary)
 	}
-	if len(result.Findings) != 1 || result.Findings[0].Title != "t" || result.Findings[0].Body != "b" {
-		t.Fatalf("expected trimmed findings, got %#v", result.Findings)
-	}
-	if len(result.References) != 1 || result.References[0].Path != "a.go" || result.References[0].Note != "n" {
-		t.Fatalf("expected trimmed references, got %#v", result.References)
-	}
-}
-
-func TestNormalizeDelegateSubAgentResultFiltersEmptyStructuredItems(t *testing.T) {
-	result, err := normalizeDelegateSubAgentResult(
-		[]byte(`{
-			"ok": true,
-			"status": "completed",
-			"summary": "",
-			"findings": [{"title":" ","body":" "}],
-			"references": [{"path":" ","line":0,"note":" "}]
-		}`),
-		"inv-1",
-		"explorer",
-		"task-1",
-	)
-	if err != nil {
-		t.Fatalf("expected normalization success, got %v", err)
-	}
-	if len(result.Findings) != 0 {
-		t.Fatalf("expected empty findings after filtering, got %#v", result.Findings)
-	}
-	if len(result.References) != 0 {
-		t.Fatalf("expected empty references after filtering, got %#v", result.References)
-	}
 }
 
 func TestNormalizeDelegateSubAgentResultRejectsAsyncStatusWithoutTaskID(t *testing.T) {
 	for _, status := range []string{subAgentResultStatusQueued, subAgentResultStatusRunning, subAgentResultStatusAccepted} {
 		_, err := normalizeDelegateSubAgentResult(
-			[]byte(`{"ok":true,"status":"`+status+`","summary":"async","findings":[],"references":[]}`),
+			[]byte(`{"ok":true,"status":"`+status+`","summary":"async"}`),
 			"inv-1",
 			"explorer",
 			"",
@@ -1217,24 +1166,12 @@ func TestValidateDelegateSubAgentOutputContract(t *testing.T) {
 		t.Fatalf("expected summary contract pass, got %v", err)
 	}
 
-	okFindings := tools.DelegateSubAgentResult{
-		OK:       true,
-		Status:   subAgentResultStatusCompleted,
-		Findings: []tools.DelegateSubAgentFinding{{Title: "t", Body: "b"}},
-	}
-	if err := validateDelegateSubAgentOutputContract(okFindings, subAgentRequestedOutputFindings); err != nil {
-		t.Fatalf("expected findings contract pass, got %v", err)
-	}
-
 	empty := tools.DelegateSubAgentResult{
 		OK:     true,
 		Status: subAgentResultStatusCompleted,
 	}
 	if err := validateDelegateSubAgentOutputContract(empty, subAgentRequestedOutputSummary); err == nil {
 		t.Fatal("expected summary contract error")
-	}
-	if err := validateDelegateSubAgentOutputContract(empty, subAgentRequestedOutputFindings); err == nil {
-		t.Fatal("expected findings contract error")
 	}
 
 	queued := tools.DelegateSubAgentResult{
@@ -1274,3 +1211,691 @@ func (e fmtErrorWithCode) Error() string {
 }
 
 func (e fmtErrorWithCode) Code() string { return e.code }
+
+func TestPreflightResultName(t *testing.T) {
+	if got := preflightResultName("explorer"); got != "explorer" {
+		t.Fatalf("expected explorer, got %q", got)
+	}
+	if got := preflightResultName("  "); got != "unknown" {
+		t.Fatalf("expected unknown for blank, got %q", got)
+	}
+	if got := preflightResultName(""); got != "unknown" {
+		t.Fatalf("expected unknown for empty, got %q", got)
+	}
+}
+
+func TestSessionIDFromExecutionContext(t *testing.T) {
+	if got := sessionIDFromExecutionContext(nil); got != "" {
+		t.Fatalf("expected empty for nil execCtx, got %q", got)
+	}
+	if got := sessionIDFromExecutionContext(&tools.ExecutionContext{}); got != "" {
+		t.Fatalf("expected empty for nil session, got %q", got)
+	}
+	sess := session.New("/ws")
+	got := sessionIDFromExecutionContext(&tools.ExecutionContext{Session: sess})
+	if got == "" {
+		t.Fatal("expected non-empty session id")
+	}
+}
+
+func TestMapDelegateSubAgentErrorNil(t *testing.T) {
+	if got := mapDelegateSubAgentError(nil, "fallback"); got != nil {
+		t.Fatalf("expected nil for nil error, got %v", got)
+	}
+}
+
+func TestMapDelegateSubAgentErrorPlainError(t *testing.T) {
+	mapped := mapDelegateSubAgentError(errors.New("something broke"), "fallback_code")
+	if mapped == nil {
+		t.Fatal("expected mapped error")
+	}
+	if mapped.Code != "fallback_code" {
+		t.Fatalf("expected fallback code, got %q", mapped.Code)
+	}
+	if !mapped.Retryable {
+		t.Fatal("expected retryable true for plain error")
+	}
+}
+
+func TestMapDelegateSubAgentErrorExecutionError(t *testing.T) {
+	execErr := &subAgentExecutionError{code: "custom_code", message: "exec failed", retryable: false}
+	mapped := mapDelegateSubAgentError(execErr, "fallback")
+	if mapped == nil {
+		t.Fatal("expected mapped error")
+	}
+	if mapped.Code != "custom_code" {
+		t.Fatalf("expected custom code, got %q", mapped.Code)
+	}
+	if mapped.Retryable {
+		t.Fatal("expected retryable false")
+	}
+}
+
+func TestMapDelegateSubAgentErrorExecutionErrorEmptyCode(t *testing.T) {
+	execErr := &subAgentExecutionError{code: "", message: "exec failed", retryable: true}
+	mapped := mapDelegateSubAgentError(execErr, "fallback")
+	if mapped.Code != "fallback" {
+		t.Fatalf("expected fallback code for empty execution error code, got %q", mapped.Code)
+	}
+}
+
+func TestCloneToolSet(t *testing.T) {
+	if got := cloneToolSet(nil); got != nil {
+		t.Fatalf("expected nil for nil input, got %v", got)
+	}
+	if got := cloneToolSet(map[string]struct{}{}); got != nil {
+		t.Fatalf("expected nil for empty input, got %v", got)
+	}
+	src := map[string]struct{}{"a": {}, "b": {}}
+	cloned := cloneToolSet(src)
+	if len(cloned) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(cloned))
+	}
+	// Mutating source should not affect clone
+	src["c"] = struct{}{}
+	if len(cloned) != 2 {
+		t.Fatal("clone was affected by source mutation")
+	}
+}
+
+func TestIsToolVisibleInParent(t *testing.T) {
+	visible := []string{"read_file", "write_file", "task_output", "task_stop"}
+
+	if isToolVisibleInParent("", visible, nil, nil) {
+		t.Fatal("expected empty name to be invisible")
+	}
+	if isToolVisibleInParent("nonexistent", visible, nil, nil) {
+		t.Fatal("expected nonexistent tool to be invisible")
+	}
+	if !isToolVisibleInParent("read_file", visible, nil, nil) {
+		t.Fatal("expected read_file to be visible")
+	}
+
+	// With allowed list
+	allowed := map[string]struct{}{"read_file": {}}
+	if !isToolVisibleInParent("read_file", visible, allowed, nil) {
+		t.Fatal("expected read_file in allowed list")
+	}
+	if isToolVisibleInParent("write_file", visible, allowed, nil) {
+		t.Fatal("expected write_file not in allowed list")
+	}
+
+	// With denied list
+	denied := map[string]struct{}{"read_file": {}}
+	if isToolVisibleInParent("read_file", visible, nil, denied) {
+		t.Fatal("expected read_file to be denied")
+	}
+}
+
+func TestIsReadOnlySubAgentToolset(t *testing.T) {
+	runner := NewRunner(Options{
+		Workspace: t.TempDir(),
+		Registry:  tools.DefaultRegistry(),
+	})
+
+	if runner.isReadOnlySubAgentToolset(nil) {
+		t.Fatal("expected false for nil toolset")
+	}
+	if runner.isReadOnlySubAgentToolset([]string{}) {
+		t.Fatal("expected false for empty toolset")
+	}
+	// read_file is read-only
+	if !runner.isReadOnlySubAgentToolset([]string{"read_file", "search_text"}) {
+		t.Fatal("expected read-only tools to return true")
+	}
+	// write_file is not read-only
+	if runner.isReadOnlySubAgentToolset([]string{"read_file", "write_file"}) {
+		t.Fatal("expected mixed toolset to return false")
+	}
+}
+
+func TestNewSubAgentInvocationID(t *testing.T) {
+	id1 := newSubAgentInvocationID()
+	id2 := newSubAgentInvocationID()
+	if id1 == "" || id2 == "" {
+		t.Fatal("expected non-empty invocation ids")
+	}
+	if id1 == id2 {
+		t.Fatal("expected unique invocation ids")
+	}
+	if !strings.HasPrefix(id1, "subagent-") {
+		t.Fatalf("expected subagent- prefix, got %q", id1)
+	}
+}
+
+func TestMapSubAgentTerminalResultWithErrorCode(t *testing.T) {
+	code, retryable := mapSubAgentTerminalResult(corepkg.TaskKilled, "custom_code")
+	if code != "custom_code" {
+		t.Fatalf("expected custom code, got %q", code)
+	}
+	if retryable {
+		t.Fatal("expected retryable false for killed with custom code")
+	}
+
+	code, retryable = mapSubAgentTerminalResult(corepkg.TaskFailed, "custom_code")
+	if code != "custom_code" {
+		t.Fatalf("expected custom code, got %q", code)
+	}
+	if !retryable {
+		t.Fatal("expected retryable true for failed")
+	}
+}
+
+// runtimeErrorWithEmptyCode implements Code() string returning empty.
+type runtimeErrorWithEmptyCode struct{ msg string }
+
+func (e runtimeErrorWithEmptyCode) Error() string { return e.msg }
+func (e runtimeErrorWithEmptyCode) Code() string   { return "" }
+
+func TestMapDelegateSubAgentErrorRuntimeErrorEmptyCode(t *testing.T) {
+	mapped := mapDelegateSubAgentError(
+		runtimeErrorWithEmptyCode{msg: "runtime exploded"},
+		"fallback_code",
+	)
+	if mapped == nil {
+		t.Fatal("expected mapped error")
+	}
+	if mapped.Code != "fallback_code" {
+		t.Fatalf("expected fallback code for empty Code(), got %q", mapped.Code)
+	}
+	if !mapped.Retryable {
+		t.Fatal("expected retryable true for runtime error with empty code")
+	}
+}
+
+func TestMapSubAgentTerminalResultDefaultStatus(t *testing.T) {
+	code, retryable := mapSubAgentTerminalResult(corepkg.TaskStatus("unknown_status"), "")
+	if code != subAgentErrorCodeRuntimeUnavailable {
+		t.Fatalf("expected runtime unavailable code, got %q", code)
+	}
+	if !retryable {
+		t.Fatal("expected retryable true for unknown status")
+	}
+}
+
+func TestNormalizeDelegateSubAgentResultOKWithError(t *testing.T) {
+	_, err := normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":true,"error":{"code":"x","message":"y"}}`),
+		"inv-1", "explorer", "task-1",
+	)
+	if err == nil || !strings.Contains(err.Error(), "must not include error") {
+		t.Fatalf("expected ok+error rejection, got %v", err)
+	}
+}
+
+func TestNormalizeDelegateSubAgentResultFailedEmptyErrorCode(t *testing.T) {
+	_, err := normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":false,"error":{"code":"","message":"boom"}}`),
+		"inv-1", "explorer", "task-1",
+	)
+	if err == nil || !strings.Contains(err.Error(), "non-empty error code") {
+		t.Fatalf("expected empty code rejection, got %v", err)
+	}
+
+	_, err = normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":false,"error":{"code":"x","message":"  "}}`),
+		"inv-1", "explorer", "task-1",
+	)
+	if err == nil || !strings.Contains(err.Error(), "non-empty error") {
+		t.Fatalf("expected empty message rejection, got %v", err)
+	}
+}
+
+func TestNormalizeDelegateSubAgentResultFailedNonFailedStatus(t *testing.T) {
+	_, err := normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":false,"status":"completed","error":{"code":"x","message":"y"}}`),
+		"inv-1", "explorer", "task-1",
+	)
+	if err == nil || !strings.Contains(err.Error(), "must use status") {
+		t.Fatalf("expected failed+completed rejection, got %v", err)
+	}
+}
+
+func TestEffectiveToolsetHashAllEmpty(t *testing.T) {
+	got := effectiveToolsetHash([]string{"", "  ", ""})
+	if got != "" {
+		t.Fatalf("expected empty hash for all-empty entries, got %q", got)
+	}
+}
+
+func TestEffectiveToolsetHashDedupToEmpty(t *testing.T) {
+	got := effectiveToolsetHash([]string{"  ", "  "})
+	if got != "" {
+		t.Fatalf("expected empty hash for whitespace-only entries, got %q", got)
+	}
+}
+
+func TestExecCtxGetAllowed(t *testing.T) {
+	if got := execCtxGetAllowed(nil); got != nil {
+		t.Fatalf("expected nil for nil execCtx, got %v", got)
+	}
+	if got := execCtxGetAllowed(&tools.ExecutionContext{}); got != nil {
+		t.Fatalf("expected nil for nil AllowedTools, got %v", got)
+	}
+	allowed := map[string]struct{}{"read_file": {}}
+	got := execCtxGetAllowed(&tools.ExecutionContext{AllowedTools: allowed})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got))
+	}
+	if _, ok := got["read_file"]; !ok {
+		t.Fatal("expected read_file in allowed")
+	}
+}
+
+func TestExecCtxGetDenied(t *testing.T) {
+	if got := execCtxGetDenied(nil); got != nil {
+		t.Fatalf("expected nil for nil execCtx, got %v", got)
+	}
+	if got := execCtxGetDenied(&tools.ExecutionContext{}); got != nil {
+		t.Fatalf("expected nil for nil DeniedTools, got %v", got)
+	}
+	denied := map[string]struct{}{"write_file": {}}
+	got := execCtxGetDenied(&tools.ExecutionContext{DeniedTools: denied})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(got))
+	}
+	if _, ok := got["write_file"]; !ok {
+		t.Fatal("expected write_file in denied")
+	}
+}
+
+// flexibleRuntimeGateway allows per-test control of RunSync/RunAsync behavior.
+type flexibleRuntimeGateway struct {
+	mu          sync.Mutex
+	syncResult  RuntimeTaskExecution
+	syncErr     error
+	asyncResult RuntimeTaskLaunch
+	asyncErr    error
+	asyncCalls  []RuntimeTaskRequest
+	syncCalls   []RuntimeTaskRequest
+}
+
+func (g *flexibleRuntimeGateway) RunSync(_ context.Context, req RuntimeTaskRequest) (RuntimeTaskExecution, error) {
+	g.mu.Lock()
+	g.syncCalls = append(g.syncCalls, req)
+	g.mu.Unlock()
+	return g.syncResult, g.syncErr
+}
+
+func (g *flexibleRuntimeGateway) RunAsync(_ context.Context, req RuntimeTaskRequest) (RuntimeTaskLaunch, error) {
+	g.mu.Lock()
+	g.asyncCalls = append(g.asyncCalls, req)
+	g.mu.Unlock()
+	return g.asyncResult, g.asyncErr
+}
+
+func TestDelegateSubAgentRunSyncError(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &flexibleRuntimeGateway{
+		syncResult: RuntimeTaskExecution{TaskID: "task-1"},
+		syncErr:    errors.New("runtime sync failure"),
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test task",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure result")
+	}
+	if result.TaskID != "task-1" {
+		t.Fatalf("expected task id from execution, got %q", result.TaskID)
+	}
+	if result.Error == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestDelegateSubAgentRunSyncEmptyOutput(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &flexibleRuntimeGateway{
+		syncResult: RuntimeTaskExecution{
+			TaskID: "task-1",
+			Result: runtimepkg.TaskResult{
+				TaskID: "task-1",
+				Status: corepkg.TaskCompleted,
+				Output: []byte{},
+			},
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test task",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for empty output")
+	}
+	if result.Error == nil || result.Error.Code != subAgentErrorCodeNotImplemented {
+		t.Fatalf("expected not_implemented code, got %v", result.Error)
+	}
+}
+
+func TestDelegateSubAgentRunSyncInvalidJSONOutput(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &flexibleRuntimeGateway{
+		syncResult: RuntimeTaskExecution{
+			TaskID: "task-1",
+			Result: runtimepkg.TaskResult{
+				TaskID: "task-1",
+				Status: corepkg.TaskCompleted,
+				Output: []byte(`{invalid json`),
+			},
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test task",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for invalid JSON")
+	}
+	if result.Error == nil || result.Error.Code != subAgentErrorCodeInvalidResult {
+		t.Fatalf("expected invalid_result code, got %v", result.Error)
+	}
+}
+
+func TestDelegateSubAgentRunAsyncError(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &flexibleRuntimeGateway{
+		asyncErr: errors.New("async runtime failure"),
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent:           "explorer",
+		Task:            "test task",
+		RunInBackground: true,
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for async error")
+	}
+	if result.Error == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestDelegateSubAgentRunAsyncEmptyTaskID(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &flexibleRuntimeGateway{
+		asyncResult: RuntimeTaskLaunch{TaskID: ""},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent:           "explorer",
+		Task:            "test task",
+		RunInBackground: true,
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for empty task id")
+	}
+	if result.Error == nil || result.Error.Code != subAgentErrorCodeRuntimeUnavailable {
+		t.Fatalf("expected runtime_unavailable code, got %v", result.Error)
+	}
+}
+
+func TestDelegateSubAgentRunSyncExecutionError(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &flexibleRuntimeGateway{
+		syncResult: RuntimeTaskExecution{
+			TaskID:         "task-1",
+			ExecutionError: errors.New("execution exploded"),
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test task",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for execution error")
+	}
+	if result.Error == nil {
+		t.Fatal("expected error")
+	}
+}
+
+// invokingRuntimeGateway calls Execute synchronously and invokes OnTaskStateChanged.
+type invokingRuntimeGateway struct {
+	mu         sync.Mutex
+	calls      []RuntimeTaskRequest
+	result     runtimepkg.TaskResult
+	execErr    error
+	taskStatus corepkg.TaskStatus
+}
+
+func (g *invokingRuntimeGateway) RunSync(_ context.Context, req RuntimeTaskRequest) (RuntimeTaskExecution, error) {
+	g.mu.Lock()
+	g.calls = append(g.calls, req)
+	g.mu.Unlock()
+
+	var output []byte
+	var execErr error
+	if req.Execute != nil {
+		output, execErr = req.Execute(context.Background())
+	}
+
+	status := g.taskStatus
+	if status == "" {
+		status = corepkg.TaskCompleted
+	}
+	result := g.result
+	result.TaskID = "runtime-task-1"
+	result.Status = status
+	if len(result.Output) == 0 && output != nil {
+		result.Output = output
+	}
+
+	if req.OnTaskStateChanged != nil {
+		req.OnTaskStateChanged(runtimepkg.Task{
+			ID:        "runtime-task-1",
+			Status:    status,
+			Output:    result.Output,
+			ErrorCode: result.ErrorCode,
+		})
+	}
+
+	if execErr != nil {
+		return RuntimeTaskExecution{TaskID: "runtime-task-1", Result: result, ExecutionError: execErr}, nil
+	}
+	return RuntimeTaskExecution{TaskID: "runtime-task-1", Result: result}, nil
+}
+
+func (g *invokingRuntimeGateway) RunAsync(_ context.Context, _ RuntimeTaskRequest) (RuntimeTaskLaunch, error) {
+	return RuntimeTaskLaunch{TaskID: "runtime-task-1"}, nil
+}
+
+func TestDelegateSubAgentExecuteCallbackError(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &invokingRuntimeGateway{}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config:    config.Config{Provider: config.ProviderConfig{Model: "test-model"}, MaxIterations: 2},
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for execute error")
+	}
+}
+
+func TestDelegateSubAgentOnTaskStateChangedFailedStatus(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{Role: llm.RoleAssistant, Content: "done"},
+	}}
+	notifier := &defaultSubAgentNotifier{}
+	gateway := &invokingRuntimeGateway{
+		taskStatus: corepkg.TaskFailed,
+		result:     runtimepkg.TaskResult{ErrorCode: "worker_crash"},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config:    config.Config{Provider: config.ProviderConfig{Model: "test-model"}, MaxIterations: 2},
+		Client:    client,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	runner.subAgentNotifier = notifier
+	sess := session.New(workspace)
+	result, _ := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild, Session: sess}, nil)
+	if result.OK {
+		t.Fatal("expected failure for failed task")
+	}
+	// Verify notification was enqueued
+	pending := notifier.DrainPending()
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 notification, got %d", len(pending))
+	}
+	if pending[0].Status != subAgentResultStatusFailed {
+		t.Fatalf("expected failed status in notification, got %q", pending[0].Status)
+	}
+	if pending[0].ErrorCode != "worker_crash" {
+		t.Fatalf("expected worker_crash error code, got %q", pending[0].ErrorCode)
+	}
+}
+
+func TestDelegateSubAgentOnTaskStateChangedCompletedWithSummary(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{Role: llm.RoleAssistant, Content: "done"},
+	}}
+	notifier := &defaultSubAgentNotifier{}
+	gateway := &invokingRuntimeGateway{
+		taskStatus: corepkg.TaskCompleted,
+		result: runtimepkg.TaskResult{
+			Output: []byte(`{"ok":true,"status":"completed","summary":"scan complete"}`),
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config:    config.Config{Provider: config.ProviderConfig{Model: "test-model"}, MaxIterations: 2},
+		Client:    client,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	runner.subAgentNotifier = notifier
+	sess := session.New(workspace)
+	result, _ := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent:  "explorer",
+		Task:   "test",
+		Output: "summary",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild, Session: sess}, nil)
+	if !result.OK {
+		t.Fatalf("expected success, got %#v", result)
+	}
+	pending := notifier.DrainPending()
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 notification, got %d", len(pending))
+	}
+	if pending[0].Status != subAgentResultStatusCompleted {
+		t.Fatalf("expected completed status, got %q", pending[0].Status)
+	}
+	if pending[0].Summary != "scan complete" {
+		t.Fatalf("expected summary in notification, got %q", pending[0].Summary)
+	}
+}
+
+func TestEffectiveToolsetHashNilInput(t *testing.T) {
+	if got := effectiveToolsetHash(nil); got != "" {
+		t.Fatalf("expected empty for nil, got %q", got)
+	}
+	if got := effectiveToolsetHash([]string{}); got != "" {
+		t.Fatalf("expected empty for empty slice, got %q", got)
+	}
+}
+
+// minimalRegistry does not implement toolSpecLookup (no Spec method).
+type minimalRegistry struct{}
+
+func (r *minimalRegistry) DefinitionsForMode(_ planpkg.AgentMode) []llm.ToolDefinition {
+	return nil
+}
+func (r *minimalRegistry) DefinitionsForModeWithFilters(_ planpkg.AgentMode, _, _ []string) []llm.ToolDefinition {
+	return nil
+}
+
+func TestIsReadOnlySubAgentToolsetNonSpecRegistry(t *testing.T) {
+	runner := &Runner{registry: &minimalRegistry{}}
+	if runner.isReadOnlySubAgentToolset([]string{"read_file"}) {
+		t.Fatal("expected false for non-Spec registry")
+	}
+}
+
+func TestDelegateSubAgentNilRunner(t *testing.T) {
+	var r *Runner
+	result, err := r.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test",
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected failure for nil runner")
+	}
+	if result.Error == nil || result.Error.Code != subagentspkg.ErrorCodeSubAgentUnavailable {
+		t.Fatalf("expected subagent_unavailable, got %v", result.Error)
+	}
+}

@@ -132,6 +132,16 @@ func (m *model) appendChat(item chatEntry) {
 	m.chatItems = append(m.chatItems, item)
 }
 
+func (m *model) removeThinkingCard() {
+	for i := len(m.chatItems) - 1; i >= 0; i-- {
+		item := m.chatItems[i]
+		if item.Kind == "assistant" && (item.Status == "thinking" || item.Status == "pending") {
+			m.chatItems = append(m.chatItems[:i], m.chatItems[i+1:]...)
+			return
+		}
+	}
+}
+
 func (m *model) finalizeAssistantTurnForTool(toolName string) {
 	if m.streamingIndex >= 0 && m.streamingIndex < len(m.chatItems) {
 		item := &m.chatItems[m.streamingIndex]
@@ -233,7 +243,13 @@ func (m *model) updateThinkingCard() {
 	}
 	item.Title = thinkingLabel
 	item.Status = "thinking"
-	if strings.TrimSpace(item.Body) == "" {
+	if m.subAgentPending && m.subAgentName != "" {
+		elapsed := "0s"
+		if !m.runStartedAt.IsZero() {
+			elapsed = formatElapsed(time.Since(m.runStartedAt))
+		}
+		item.Body = buildSubAgentThinkingBody(m.subAgentName, m.subAgentTask, m.spinner.View(), elapsed)
+	} else if strings.TrimSpace(item.Body) == "" {
 		item.Body = m.thinkingText()
 	}
 }
@@ -276,6 +292,7 @@ func (m *model) failLatestAssistant(errText string) {
 	}
 	for i := len(m.chatItems) - 1; i >= 0; i-- {
 		if m.chatItems[i].Kind == "assistant" {
+			m.chatItems[i].Title = assistantLabel
 			m.chatItems[i].Body = "Request failed: " + errText
 			m.chatItems[i].Status = "error"
 			return
@@ -287,6 +304,23 @@ func (m *model) failLatestAssistant(errText string) {
 		Body:   "Request failed: " + errText,
 		Status: "error",
 	})
+}
+
+func (m *model) failRunningToolCalls() {
+	for i := range m.chatItems {
+		if m.chatItems[i].Kind == "tool" && m.chatItems[i].Status == "running" {
+			m.chatItems[i].Status = "error"
+		}
+	}
+}
+
+func (m *model) failRunningToolRuns() {
+	for i := range m.toolRuns {
+		if m.toolRuns[i].Status == "running" {
+			m.toolRuns[i].Status = "error"
+			m.toolRuns[i].Summary = "Tool call interrupted by error."
+		}
+	}
 }
 
 func (m model) decorateFinalAnswer(content string) string {

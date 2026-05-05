@@ -284,6 +284,14 @@ type mcpCommandResultMsg struct {
 	Err      error
 }
 
+type subAgentResultMsg struct {
+	Input    string
+	Response string
+	Summary  string
+	Status   string
+	Err      error
+}
+
 type pasteSessionState struct {
 	active       bool
 	startedAt    time.Time
@@ -383,6 +391,11 @@ type model struct {
 	promptSearchOpen           bool
 	mcpCommandPending          bool
 	busy                       bool
+	subAgentPending            bool
+	subAgentName               string
+	subAgentTask               string
+	subAgentStreamItems        []chatEntry
+	subAgentExpanded           bool
 	runStartedAt               time.Time
 	lastRunDuration            time.Duration
 	runIndicatorState          runIndicatorState
@@ -753,6 +766,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.phase = "error"
 			m.llmConnected = false
 			m.failLatestAssistant(msg.Err.Error())
+			m.failRunningToolCalls()
+			m.failRunningToolRuns()
 			m.notifyRunFailed(msg.RunID, msg.Err)
 		default:
 			m.lastRunDuration = 0
@@ -820,6 +835,74 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitForAsync(m.async)
 		}
 		m.appendCommandExchange(msg.Input, msg.Response)
+		if strings.TrimSpace(msg.Status) != "" {
+			m.statusNote = msg.Status
+		}
+		m.refreshViewport()
+		return m, waitForAsync(m.async)
+	case subAgentResultMsg:
+		elapsed := time.Duration(0)
+		if !m.runStartedAt.IsZero() {
+			elapsed = time.Since(m.runStartedAt)
+			if elapsed < 0 {
+				elapsed = 0
+			}
+		}
+		m.runStartedAt = time.Time{}
+		m.lastRunDuration = elapsed
+		m.busy = false
+		m.subAgentPending = false
+		m.subAgentName = ""
+		m.subAgentTask = ""
+		m.phase = "idle"
+		m.streamingIndex = -1
+
+		// Remove the thinking card
+		m.removeThinkingCard()
+
+		if msg.Err != nil {
+			if errors.Is(msg.Err, context.Canceled) {
+				m.runIndicatorState = runIndicatorCanceled
+			} else {
+				m.runIndicatorState = runIndicatorFailed
+			}
+			errBody := "Subagent failed: " + msg.Err.Error()
+			m.appendChat(chatEntry{
+				Kind:   "assistant",
+				Title:  assistantLabel,
+				Body:   errBody,
+				Status: "error",
+			})
+			if m.sess != nil {
+				m.sess.Messages = append(m.sess.Messages, llm.NewAssistantTextMessage(errBody))
+			}
+			m.statusNote = "Subagent error: " + msg.Err.Error()
+			m.subAgentStreamItems = nil
+			m.refreshViewport()
+			return m, waitForAsync(m.async)
+		}
+		m.runIndicatorState = runIndicatorComplete
+
+		// Append accumulated subagent stream items (tool calls, text output)
+		for _, item := range m.subAgentStreamItems {
+			m.appendChat(item)
+		}
+		m.subAgentStreamItems = nil
+
+		// Append the result card
+		m.appendChat(chatEntry{
+			Kind:   "assistant",
+			Title:  assistantLabel,
+			Body:   msg.Response,
+			Status: "final",
+		})
+		if m.sess != nil {
+			summary := strings.TrimSpace(msg.Summary)
+			if summary == "" {
+				summary = "SubAgent task completed."
+			}
+			m.sess.Messages = append(m.sess.Messages, llm.NewAssistantTextMessage(summary))
+		}
 		if strings.TrimSpace(msg.Status) != "" {
 			m.statusNote = msg.Status
 		}

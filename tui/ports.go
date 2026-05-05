@@ -36,6 +36,7 @@ type Event struct {
 	Error         string
 	Plan          planpkg.State
 	Usage         llm.Usage
+	AgentID       string // non-empty when emitted by a subagent
 }
 
 type ApprovalRequest struct {

@@ -125,6 +125,7 @@ func (a testRunnerAdapter) SetObserver(observer Observer) {
 			Error:         event.Error,
 			Plan:          event.Plan,
 			Usage:         event.Usage,
+			AgentID:       event.AgentID,
 		})
 	}))
 }
@@ -139,6 +140,28 @@ func (a testRunnerAdapter) SetApprovalHandler(handler ApprovalHandler) {
 			Reason:  req.Reason,
 		})
 	})
+}
+
+func (a testRunnerAdapter) DispatchSubAgent(ctx context.Context, sess *session.Session, mode string, request tools.DelegateSubAgentRequest, streamObserver Observer) (tools.DelegateSubAgentResult, error) {
+	var agentObserver agent.Observer
+	if streamObserver != nil {
+		agentObserver = agent.ObserverFunc(func(event agent.Event) {
+			streamObserver(Event{
+				Type:          mapTestEventType(event.Type),
+				SessionID:     string(event.SessionID),
+				UserInput:     event.UserInput,
+				Content:       event.Content,
+				ToolName:      event.ToolName,
+				ToolArguments: event.ToolArguments,
+				ToolResult:    event.ToolResult,
+				Error:         event.Error,
+				Plan:          event.Plan,
+				Usage:         event.Usage,
+				AgentID:       event.AgentID,
+			})
+		})
+	}
+	return a.Runner.DispatchSubAgent(ctx, sess, mode, request, agentObserver)
 }
 
 func mapTestEventType(value agent.EventType) EventType {
@@ -3121,6 +3144,12 @@ func TestPasteMsgTransactionConsumesEchoedPlainKeyStream(t *testing.T) {
 		t.Fatalf("expected paste payload to compress into marker, got %q", afterPaste)
 	}
 
+	// Reset the paste transaction timer so the 120ms stale-echo window
+	// starts fresh before the simulated echo key stream. On slow CI runners
+	// the wall-clock gap between handlePastePayload and the first handleKey
+	// can exceed the window, causing the transaction to expire prematurely.
+	updated.pasteTransaction.StartedAt = time.Now()
+
 	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("echo line 1")})
 	updated = got.(model)
 	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -3173,6 +3202,9 @@ func TestPasteKeyTransactionConsumesEchoedPlainKeyStream(t *testing.T) {
 	if afterPaste != "title\nbody" {
 		t.Fatalf("expected paste-key flow to keep preview text visible, got %q", afterPaste)
 	}
+
+	// Reset the paste transaction timer to prevent CI timing flakiness.
+	updated.pasteTransaction.StartedAt = time.Now()
 
 	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("title")})
 	updated = got.(model)
@@ -5202,6 +5234,26 @@ func TestRenderConversationOmitsThinkingRowsFromViewport(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Done.") {
 		t.Fatalf("expected final answer to remain visible, got %q", rendered)
+	}
+}
+
+func TestRenderConversationShowsSubAgentThinkingWhilePending(t *testing.T) {
+	m := model{
+		width: 120,
+		viewport: func() viewport.Model {
+			vp := viewport.New(60, 10)
+			return vp
+		}(),
+		subAgentPending: true,
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "/explorer scan agent module", Status: "final"},
+			{Kind: "assistant", Title: thinkingLabel, Body: "Running subagent explorer...", Status: "thinking"},
+		},
+	}
+
+	rendered := m.renderConversation()
+	if !strings.Contains(strings.ToLower(rendered), "running subagent explorer") {
+		t.Fatalf("expected conversation viewport to show subagent thinking row while pending, got %q", rendered)
 	}
 }
 

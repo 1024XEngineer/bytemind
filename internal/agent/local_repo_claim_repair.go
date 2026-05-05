@@ -149,6 +149,70 @@ For this next turn:
 	}
 }
 
+func buildLocalRepoClaimSoftDowngradeAnswer(kind localRepoClaimRepairKind, reply llm.Message, latestUser string, evidence localRepoClaimEvidence) string {
+	if evidence.LatestUser == "" && evidence.ReplyPreview == "" {
+		evidence = newLocalRepoClaimEvidence(latestUser, reply.Content)
+	}
+
+	paths := formatLocalRepoEvidence(evidence.ReferencedPaths)
+	directConfirmations := formatLocalRepoEvidence(evidence.DirectConfirmations)
+	weakSignals := formatLocalRepoEvidence(evidence.WeakSignals)
+	implementationSignals := formatLocalRepoEvidence(evidence.ImplementationEvidence)
+
+	switch kind {
+	case localRepoClaimRepairPathUnverified:
+		return strings.TrimSpace(fmt.Sprintf(
+			`I need to keep this conservative: I cannot directly confirm the referenced local path or runnable command yet.
+
+Latest user request:
+%s
+
+Referenced path(s) or command targets:
+%s
+
+Direct confirmations so far:
+%s
+
+Weak/documentation signals so far:
+%s
+
+Current status: this may be documented or mentioned, but it is not directly verified in the local repository yet.`,
+			evidence.LatestUser,
+			paths,
+			directConfirmations,
+			weakSignals,
+		))
+	case localRepoClaimRepairImplementationUnverified:
+		return strings.TrimSpace(fmt.Sprintf(
+			`I need to keep this conservative: I cannot conclude the repository already has a runnable implementation yet.
+
+Latest user request:
+%s
+
+Referenced path(s) or command targets:
+%s
+
+Direct confirmations so far:
+%s
+
+Implementation-level evidence so far:
+%s
+
+Current status: path-level or documentation signals exist, but implementation is not directly confirmed yet.`,
+			evidence.LatestUser,
+			paths,
+			directConfirmations,
+			implementationSignals,
+		))
+	default:
+		fallback := strings.TrimSpace(reply.Content)
+		if fallback == "" {
+			return "I need to keep this conservative: I cannot verify this local repository claim yet."
+		}
+		return fallback
+	}
+}
+
 func newLocalRepoClaimEvidence(latestUser, replyText string) localRepoClaimEvidence {
 	latestUser = strings.TrimSpace(latestUser)
 	if latestUser == "" {
