@@ -114,7 +114,6 @@ func DefaultRegistry() *Registry {
 	r.mustRegisterBuiltin(WriteFileTool{})
 	r.mustRegisterBuiltin(ReplaceInFileTool{})
 	r.mustRegisterBuiltin(ApplyPatchTool{})
-	r.mustRegisterBuiltin(UpdatePlanTool{})
 	r.mustRegisterBuiltin(RunShellTool{})
 	r.mustRegisterBuiltin(DelegateSubAgentTool{})
 	r.mustRegisterBuiltin(TaskOutputTool{})

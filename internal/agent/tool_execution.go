@@ -153,7 +153,9 @@ func (e *defaultEngine) executeToolCall(
 			Stdout:            runner.stdout,
 			AllowedTools:      allowedTools,
 			DeniedTools:       deniedTools,
-			DelegateSubAgent:  runner.delegateSubAgent,
+			DelegateSubAgent: func(ctx context.Context, req tools.DelegateSubAgentRequest, execCtx *tools.ExecutionContext) (tools.DelegateSubAgentResult, error) {
+				return runner.delegateSubAgent(ctx, req, execCtx, SubAgentObserver(runner.observer, req.Agent))
+			},
 		})
 	}
 
@@ -284,13 +286,6 @@ func (e *defaultEngine) executeToolCall(
 			return err
 		}
 	}
-	if call.Function.Name == "update_plan" {
-		runner.emit(Event{
-			Type:      EventPlanUpdated,
-			SessionID: sessionID,
-			Plan:      planpkg.CloneState(sess.Plan),
-		})
-	}
 	return nil
 }
 
@@ -317,7 +312,7 @@ func (e *defaultEngine) toolSafetyClass(name string) tools.SafetyClass {
 func shouldExecuteToolDirectly(name string) bool {
 	switch strings.TrimSpace(name) {
 	case "list_files", "read_file", "search_text", "web_search", "web_fetch",
-		"write_file", "replace_in_file", "apply_patch", "update_plan", "delegate_subagent",
+		"write_file", "replace_in_file", "apply_patch", "delegate_subagent",
 		"task_output", "task_stop":
 		return true
 	default:

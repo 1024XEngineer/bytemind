@@ -147,11 +147,18 @@ func (a *tuiRunnerAdapter) DispatchSubAgent(
 	sess *session.Session,
 	mode string,
 	request tools.DelegateSubAgentRequest,
+	streamObserver tui.Observer,
 ) (tools.DelegateSubAgentResult, error) {
 	if a == nil || a.runner == nil {
 		return tools.DelegateSubAgentResult{}, errors.New("runner is unavailable")
 	}
-	return a.runner.DispatchSubAgent(ctx, sess, mode, request)
+	var agentObserver agent.Observer
+	if streamObserver != nil {
+		agentObserver = agent.ObserverFunc(func(event agent.Event) {
+			streamObserver(mapAgentEvent(event))
+		})
+	}
+	return a.runner.DispatchSubAgent(ctx, sess, mode, request, agentObserver)
 }
 
 func mapAgentEvent(event agent.Event) tui.Event {
@@ -167,6 +174,7 @@ func mapAgentEvent(event agent.Event) tui.Event {
 		Error:         event.Error,
 		Plan:          event.Plan,
 		Usage:         event.Usage,
+		AgentID:       event.AgentID,
 	}
 }
 

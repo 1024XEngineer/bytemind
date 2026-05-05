@@ -15,10 +15,8 @@ import (
 	"time"
 
 	corepkg "github.com/1024XEngineer/bytemind/internal/core"
-	"github.com/1024XEngineer/bytemind/internal/llm"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
-	"github.com/1024XEngineer/bytemind/internal/session"
 	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
 	"github.com/1024XEngineer/bytemind/internal/tools"
 )
@@ -37,12 +35,7 @@ const (
 	subAgentResultStatusRunning   = "running"
 	subAgentResultStatusAccepted  = "accepted"
 
-	subAgentRequestedOutputFindings = "findings"
-	subAgentRequestedOutputSummary  = "summary"
-
-	defaultSubAgentMaxIterations = 8
-
-	subAgentResultPolicyCompressed = "Return compressed findings only. Do not include full tool logs."
+	subAgentRequestedOutputSummary = "summary"
 
 	subAgentTaskOutputTool = "task_output"
 	subAgentTaskStopTool   = "task_stop"
@@ -54,14 +47,13 @@ func (r *Runner) delegateSubAgent(
 	ctx context.Context,
 	request tools.DelegateSubAgentRequest,
 	execCtx *tools.ExecutionContext,
+	streamObserver Observer,
 ) (tools.DelegateSubAgentResult, error) {
 	result := tools.DelegateSubAgentResult{
 		OK:           false,
 		Status:       subAgentResultStatusFailed,
 		InvocationID: newSubAgentInvocationID(),
 		Agent:        request.Agent,
-		Findings:     []tools.DelegateSubAgentFinding{},
-		References:   []tools.DelegateSubAgentReference{},
 	}
 
 	if r == nil || r.subAgentManager == nil {
@@ -140,6 +132,7 @@ func (r *Runner) delegateSubAgent(
 		metadata["requested_output"] = preflight.RequestedOutput
 	}
 
+	parentSession := execCtx.Session
 	runtimeRequest := RuntimeTaskRequest{
 		SessionID:  sessionIDFromExecutionContext(execCtx),
 		Name:       "delegate_subagent/" + preflightResultName(result.Agent),
@@ -148,7 +141,18 @@ func (r *Runner) delegateSubAgent(
 		Timeout:    preflight.RequestedTimeoutDuration,
 		Metadata:   metadata,
 		Execute: func(taskCtx context.Context) ([]byte, error) {
-			subAgentResult := r.executeSubAgentTask(taskCtx, request, preflight, result.InvocationID, result.Agent, runMode, execCtx)
+			subAgentResult, execErr := r.subAgentExecutor.Execute(taskCtx, SubAgentExecutionInput{
+				Request:      request,
+				Preflight:    preflight,
+				InvocationID: result.InvocationID,
+				Agent:        result.Agent,
+				RunMode:      runMode,
+				ExecCtx:      execCtx,
+				Observer:     streamObserver,
+			})
+			if execErr != nil {
+				return nil, execErr
+			}
 			output, marshalErr := json.Marshal(subAgentResult)
 			if marshalErr != nil {
 				return nil, &subAgentExecutionError{
@@ -158,6 +162,29 @@ func (r *Runner) delegateSubAgent(
 				}
 			}
 			return output, nil
+		},
+		OnTaskStateChanged: func(task runtimepkg.Task) {
+			if !runtimepkg.IsTerminalTaskStatus(task.Status) || r.subAgentNotifier == nil {
+				return
+			}
+			notification := SubAgentCompletionNotification{
+				ParentSession: parentSession,
+				TaskID:        string(task.ID),
+				Agent:         result.Agent,
+				InvocationID:  result.InvocationID,
+			}
+			if task.Status == corepkg.TaskCompleted {
+				notification.Status = subAgentResultStatusCompleted
+				var parsed tools.DelegateSubAgentResult
+				if jsonErr := json.Unmarshal(task.Output, &parsed); jsonErr == nil {
+					notification.Summary = parsed.Summary
+				}
+			} else {
+				notification.Status = subAgentResultStatusFailed
+				notification.ErrorCode = task.ErrorCode
+				notification.ErrorMessage = fmt.Sprintf("subagent task ended with status %s", task.Status)
+			}
+			r.subAgentNotifier.NotifyCompletion(notification)
 		},
 	}
 
@@ -257,192 +284,6 @@ func (r *Runner) delegateSubAgent(
 		Retryable: true,
 	}
 	return result, nil
-}
-
-func (r *Runner) executeSubAgentTask(
-	ctx context.Context,
-	request tools.DelegateSubAgentRequest,
-	preflight subagentspkg.PreflightResult,
-	invocationID string,
-	agent string,
-	runMode planpkg.AgentMode,
-	execCtx *tools.ExecutionContext,
-) tools.DelegateSubAgentResult {
-	workspace := strings.TrimSpace(r.workspace)
-	if execCtx != nil {
-		if scopedWorkspace := strings.TrimSpace(execCtx.Workspace); scopedWorkspace != "" {
-			workspace = scopedWorkspace
-		}
-	}
-	parentSessionID := ""
-	if execCtx != nil && execCtx.Session != nil {
-		parentSessionID = strings.TrimSpace(execCtx.Session.ID)
-	}
-
-	childRunner := r.newSubAgentChildRunner(workspace, preflight.Definition.MaxTurns)
-	if childRunner == nil || childRunner.client == nil {
-		return subAgentFailureResult(
-			invocationID,
-			agent,
-			subAgentErrorCodeRuntimeUnavailable,
-			"llm client is unavailable for subagent execution",
-			true,
-		)
-	}
-	childSession := newSubAgentSession(workspace, parentSessionID, invocationID, runMode)
-	defer childRunner.clearSessionSkillBridges(childSession)
-
-	if err := childRunner.syncExtensionTools(ctx, false); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return subAgentFailureResult(invocationID, agent, subAgentErrorCodeExecutionFailed, err.Error(), true)
-		}
-	}
-
-	userInput := buildSubAgentTaskInput(request)
-	setup, err := childRunner.prepareRunPrompt(childSession, RunPromptInput{
-		UserMessage: llm.NewUserTextMessage(userInput),
-		DisplayText: userInput,
-		SubAgent:    buildSubAgentPromptInput(request, preflight),
-	}, string(runMode))
-	if err != nil {
-		return subAgentFailureResult(invocationID, agent, subAgentErrorCodeExecutionFailed, err.Error(), true)
-	}
-	applySubAgentPreflightSetup(&setup, preflight)
-
-	answer, runErr := (&defaultEngine{runner: childRunner}).runPromptTurns(ctx, childSession, setup, nil)
-	if runErr != nil {
-		return subAgentFailureResult(invocationID, agent, subAgentErrorCodeExecutionFailed, runErr.Error(), true)
-	}
-
-	summary := strings.TrimSpace(answer)
-	if summary == "" {
-		summary = "SubAgent task completed."
-	}
-	return tools.DelegateSubAgentResult{
-		OK:           true,
-		Status:       subAgentResultStatusCompleted,
-		InvocationID: strings.TrimSpace(invocationID),
-		Agent:        strings.TrimSpace(agent),
-		Summary:      summary,
-		Findings:     []tools.DelegateSubAgentFinding{},
-		References:   []tools.DelegateSubAgentReference{},
-	}
-}
-
-func (r *Runner) newSubAgentChildRunner(workspace string, maxTurns int) *Runner {
-	cfg := r.config
-	cfg.MaxIterations = resolveSubAgentMaxIterations(cfg.MaxIterations, maxTurns)
-	return NewRunner(Options{
-		Workspace:       workspace,
-		Config:          cfg,
-		Client:          r.GetClient(),
-		Registry:        r.registry,
-		Executor:        r.executor,
-		PolicyGateway:   r.policyGateway,
-		TaskManager:     r.taskManager,
-		Runtime:         r.runtime,
-		Extensions:      r.extensions,
-		SubAgentManager: r.subAgentManager,
-		TokenManager:    r.tokenManager,
-		AuditStore:      r.auditStore,
-		PromptStore:     r.promptStore,
-		Observer:        r.observer,
-		Approval:        r.approval,
-		Stdin:           r.stdin,
-		Stdout:          r.stdout,
-	})
-}
-
-func newSubAgentSession(workspace, parentSessionID, invocationID string, runMode planpkg.AgentMode) *session.Session {
-	child := session.New(workspace)
-	base := strings.TrimSpace(parentSessionID)
-	if base == "" {
-		base = "session"
-	}
-	child.ID = fmt.Sprintf("%s/subagent/%s", base, strings.TrimSpace(invocationID))
-	child.Mode = runMode
-	child.ActiveSkill = nil
-	return child
-}
-
-func buildSubAgentTaskInput(request tools.DelegateSubAgentRequest) string {
-	task := strings.TrimSpace(request.Task)
-	if task == "" {
-		task = "Complete the delegated subagent task."
-	}
-	return task
-}
-
-func buildSubAgentPromptInput(request tools.DelegateSubAgentRequest, preflight subagentspkg.PreflightResult) *SubAgentPromptInput {
-	return &SubAgentPromptInput{
-		Name:           strings.TrimSpace(preflight.Definition.Name),
-		Task:           strings.TrimSpace(request.Task),
-		ScopePaths:     normalizeUniqueStrings(request.Scope.Paths),
-		ScopeSymbols:   normalizeUniqueStrings(request.Scope.Symbols),
-		AllowedTools:   append([]string(nil), preflight.EffectiveTools...),
-		Isolation:      strings.TrimSpace(preflight.Isolation),
-		ResultPolicy:   subAgentResultPolicyCompressed,
-		DefinitionBody: strings.TrimSpace(preflight.Definition.Instruction),
-	}
-}
-
-func applySubAgentPreflightSetup(setup *runPromptSetup, preflight subagentspkg.PreflightResult) {
-	if setup == nil {
-		return
-	}
-	setup.AllowedTools = cloneToolSet(preflight.AllowedTools)
-	setup.DeniedTools = cloneToolSet(preflight.DeniedTools)
-	setup.AllowedToolNames = append([]string(nil), preflight.EffectiveTools...)
-	setup.DeniedToolNames = sortedToolSetNames(preflight.DeniedTools)
-	setup.AvailableTools = append([]string(nil), preflight.EffectiveTools...)
-	setup.AvailableSubAgents = nil
-	setup.ActiveSkill = nil
-}
-
-func sortedToolSetNames(set map[string]struct{}) []string {
-	if len(set) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(set))
-	for name := range set {
-		trimmed := strings.TrimSpace(name)
-		if trimmed == "" {
-			continue
-		}
-		names = append(names, trimmed)
-	}
-	if len(names) == 0 {
-		return nil
-	}
-	slices.Sort(names)
-	return names
-}
-
-func resolveSubAgentMaxIterations(parentMaxIterations int, requestedMaxTurns int) int {
-	effectiveParent := parentMaxIterations
-	if effectiveParent <= 0 {
-		effectiveParent = defaultSubAgentMaxIterations
-	}
-	if requestedMaxTurns > 0 && requestedMaxTurns < effectiveParent {
-		return requestedMaxTurns
-	}
-	return effectiveParent
-}
-
-func subAgentFailureResult(invocationID, agent, code, message string, retryable bool) tools.DelegateSubAgentResult {
-	return tools.DelegateSubAgentResult{
-		OK:           false,
-		Status:       subAgentResultStatusFailed,
-		InvocationID: strings.TrimSpace(invocationID),
-		Agent:        strings.TrimSpace(agent),
-		Findings:     []tools.DelegateSubAgentFinding{},
-		References:   []tools.DelegateSubAgentReference{},
-		Error: &tools.DelegateSubAgentError{
-			Code:      strings.TrimSpace(code),
-			Message:   strings.TrimSpace(message),
-			Retryable: retryable,
-		},
-	}
 }
 
 func preflightResultName(agent string) string {
@@ -545,14 +386,6 @@ func normalizeDelegateSubAgentResult(
 	result.Agent = firstNonEmpty(result.Agent, fallbackAgent)
 	result.TaskID = firstNonEmpty(result.TaskID, fallbackTaskID)
 	result.Summary = strings.TrimSpace(result.Summary)
-	if result.Findings == nil {
-		result.Findings = []tools.DelegateSubAgentFinding{}
-	}
-	result.Findings = normalizeDelegateSubAgentFindings(result.Findings)
-	if result.References == nil {
-		result.References = []tools.DelegateSubAgentReference{}
-	}
-	result.References = normalizeDelegateSubAgentReferences(result.References)
 	if result.OK && result.Error != nil {
 		return tools.DelegateSubAgentResult{}, fmt.Errorf("ok result must not include error")
 	}
@@ -625,11 +458,6 @@ func validateDelegateSubAgentOutputContract(result tools.DelegateSubAgentResult,
 			return fmt.Errorf("requested output %q requires non-empty summary", subAgentRequestedOutputSummary)
 		}
 		return nil
-	case subAgentRequestedOutputFindings:
-		if strings.TrimSpace(result.Summary) == "" && len(result.Findings) == 0 {
-			return fmt.Errorf("requested output %q requires summary or findings", subAgentRequestedOutputFindings)
-		}
-		return nil
 	default:
 		return fmt.Errorf("unsupported requested output %q", requestedOutput)
 	}
@@ -642,49 +470,6 @@ func requiresTaskIDForStatus(status string) bool {
 	default:
 		return false
 	}
-}
-
-func normalizeDelegateSubAgentFindings(in []tools.DelegateSubAgentFinding) []tools.DelegateSubAgentFinding {
-	if len(in) == 0 {
-		return []tools.DelegateSubAgentFinding{}
-	}
-	out := make([]tools.DelegateSubAgentFinding, 0, len(in))
-	for _, finding := range in {
-		normalized := tools.DelegateSubAgentFinding{
-			Title: strings.TrimSpace(finding.Title),
-			Body:  strings.TrimSpace(finding.Body),
-		}
-		if normalized.Title == "" && normalized.Body == "" {
-			continue
-		}
-		out = append(out, normalized)
-	}
-	if len(out) == 0 {
-		return []tools.DelegateSubAgentFinding{}
-	}
-	return out
-}
-
-func normalizeDelegateSubAgentReferences(in []tools.DelegateSubAgentReference) []tools.DelegateSubAgentReference {
-	if len(in) == 0 {
-		return []tools.DelegateSubAgentReference{}
-	}
-	out := make([]tools.DelegateSubAgentReference, 0, len(in))
-	for _, reference := range in {
-		normalized := tools.DelegateSubAgentReference{
-			Path: strings.TrimSpace(reference.Path),
-			Line: reference.Line,
-			Note: strings.TrimSpace(reference.Note),
-		}
-		if normalized.Path == "" && normalized.Line <= 0 && normalized.Note == "" {
-			continue
-		}
-		out = append(out, normalized)
-	}
-	if len(out) == 0 {
-		return []tools.DelegateSubAgentReference{}
-	}
-	return out
 }
 
 func effectiveToolsetHash(toolNames []string) string {

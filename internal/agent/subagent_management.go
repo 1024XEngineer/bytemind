@@ -36,6 +36,7 @@ func (r *Runner) DispatchSubAgent(
 	sess *session.Session,
 	mode string,
 	request tools.DelegateSubAgentRequest,
+	streamObserver Observer,
 ) (tools.DelegateSubAgentResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -54,5 +55,5 @@ func (r *Runner) DispatchSubAgent(
 		Session:   sess,
 		Mode:      planpkg.NormalizeMode(mode),
 	}
-	return r.delegateSubAgent(ctx, request, execCtx)
+	return r.delegateSubAgent(ctx, request, execCtx, streamObserver)
 }

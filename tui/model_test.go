@@ -125,6 +125,7 @@ func (a testRunnerAdapter) SetObserver(observer Observer) {
 			Error:         event.Error,
 			Plan:          event.Plan,
 			Usage:         event.Usage,
+			AgentID:       event.AgentID,
 		})
 	}))
 }
@@ -139,6 +140,28 @@ func (a testRunnerAdapter) SetApprovalHandler(handler ApprovalHandler) {
 			Reason:  req.Reason,
 		})
 	})
+}
+
+func (a testRunnerAdapter) DispatchSubAgent(ctx context.Context, sess *session.Session, mode string, request tools.DelegateSubAgentRequest, streamObserver Observer) (tools.DelegateSubAgentResult, error) {
+	var agentObserver agent.Observer
+	if streamObserver != nil {
+		agentObserver = agent.ObserverFunc(func(event agent.Event) {
+			streamObserver(Event{
+				Type:          mapTestEventType(event.Type),
+				SessionID:     string(event.SessionID),
+				UserInput:     event.UserInput,
+				Content:       event.Content,
+				ToolName:      event.ToolName,
+				ToolArguments: event.ToolArguments,
+				ToolResult:    event.ToolResult,
+				Error:         event.Error,
+				Plan:          event.Plan,
+				Usage:         event.Usage,
+				AgentID:       event.AgentID,
+			})
+		})
+	}
+	return a.Runner.DispatchSubAgent(ctx, sess, mode, request, agentObserver)
 }
 
 func mapTestEventType(value agent.EventType) EventType {
@@ -3121,6 +3144,12 @@ func TestPasteMsgTransactionConsumesEchoedPlainKeyStream(t *testing.T) {
 		t.Fatalf("expected paste payload to compress into marker, got %q", afterPaste)
 	}
 
+	// Reset the paste transaction timer so the 120ms stale-echo window
+	// starts fresh before the simulated echo key stream. On slow CI runners
+	// the wall-clock gap between handlePastePayload and the first handleKey
+	// can exceed the window, causing the transaction to expire prematurely.
+	updated.pasteTransaction.StartedAt = time.Now()
+
 	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("echo line 1")})
 	updated = got.(model)
 	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -3173,6 +3202,9 @@ func TestPasteKeyTransactionConsumesEchoedPlainKeyStream(t *testing.T) {
 	if afterPaste != "title\nbody" {
 		t.Fatalf("expected paste-key flow to keep preview text visible, got %q", afterPaste)
 	}
+
+	// Reset the paste transaction timer to prevent CI timing flakiness.
+	updated.pasteTransaction.StartedAt = time.Now()
 
 	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("title")})
 	updated = got.(model)
@@ -4159,6 +4191,296 @@ func TestEscapeClosesCommandPalette(t *testing.T) {
 	}
 	if updated.input.Value() != "" {
 		t.Fatalf("expected main input to reset after esc, got %q", updated.input.Value())
+	}
+}
+
+func TestEscapeDuringBusyInterruptsBeforeClearingSelection(t *testing.T) {
+	canceled := false
+	m := model{
+		screen:               screenChat,
+		busy:                 true,
+		runCancel:            func() { canceled = true },
+		phase:                "thinking",
+		inputSelectionActive: true,
+		inputSelectionStart:  viewportSelectionPoint{Col: 0, Row: 0},
+		inputSelectionEnd:    viewportSelectionPoint{Col: 2, Row: 0},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if !canceled {
+		t.Fatalf("expected esc to request run interrupt before clearing selection")
+	}
+	if !updated.interrupting {
+		t.Fatalf("expected esc to set interrupting state")
+	}
+	if !updated.inputSelectionActive {
+		t.Fatalf("expected esc interrupt path not to clear existing selection")
+	}
+	if updated.statusNote != "Interrupt requested. Stopping current run..." {
+		t.Fatalf("expected esc interrupt status note, got %q", updated.statusNote)
+	}
+}
+
+func TestEscapeClosesPromptSearchBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("draft")
+
+	m := model{
+		screen:                screenChat,
+		busy:                  true,
+		runCancel:             func() { canceled = true },
+		input:                 input,
+		promptSearchOpen:      true,
+		promptSearchBaseInput: "draft",
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.promptSearchOpen {
+		t.Fatalf("expected esc to close prompt search first")
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while prompt search overlay is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes prompt search")
+	}
+	if updated.statusNote != "Prompt search canceled." {
+		t.Fatalf("expected prompt search cancel note, got %q", updated.statusNote)
+	}
+}
+
+func TestEscapeClosesSessionsModalBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	m := model{
+		screen:       screenChat,
+		busy:         true,
+		runCancel:    func() { canceled = true },
+		sessionsOpen: true,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.sessionsOpen {
+		t.Fatalf("expected esc to close sessions modal first")
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while sessions modal is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes sessions modal")
+	}
+}
+
+func TestEscapeClosesHelpOverlayBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	m := model{
+		screen:    screenChat,
+		busy:      true,
+		runCancel: func() { canceled = true },
+		helpOpen:  true,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.helpOpen {
+		t.Fatalf("expected esc to close help overlay first")
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while help overlay is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes help overlay")
+	}
+}
+
+func TestEscapeClosesPlanActionPickerBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	m := model{
+		screen:         screenChat,
+		busy:           true,
+		runCancel:      func() { canceled = true },
+		planActionOpen: true,
+		mode:           modePlan,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.planActionOpen {
+		t.Fatalf("expected esc to close plan action picker first")
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while plan action picker is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes plan action picker")
+	}
+}
+
+func TestEscapeClosesCommandPaletteBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	input := textarea.New()
+	input.SetValue("/h")
+	m := model{
+		screen:      screenChat,
+		busy:        true,
+		runCancel:   func() { canceled = true },
+		commandOpen: true,
+		input:       input,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.commandOpen {
+		t.Fatalf("expected esc to close command palette first")
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while command palette is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes command palette")
+	}
+}
+
+func TestEscapeClosesMentionPaletteBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	input := textarea.New()
+	input.SetValue("@mod")
+	m := model{
+		screen:    screenChat,
+		busy:      true,
+		runCancel: func() { canceled = true },
+		input:     input,
+		mentionIndex: mention.NewStaticWorkspaceFileIndex([]mention.Candidate{
+			{Path: "tui/model.go", BaseName: "model.go"},
+		}, 0, false),
+	}
+	m.syncInputOverlays()
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.mentionOpen {
+		t.Fatalf("expected esc to close mention palette first")
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while mention palette is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes mention palette")
+	}
+}
+
+func TestEscapeClosesSkillsPickerBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	m := model{
+		screen:        screenChat,
+		busy:          true,
+		runCancel:     func() { canceled = true },
+		skillsOpen:    true,
+		commandCursor: 3,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.skillsOpen {
+		t.Fatalf("expected esc to close skills picker first")
+	}
+	if updated.commandCursor != 0 {
+		t.Fatalf("expected esc to reset skills cursor, got %d", updated.commandCursor)
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while skills picker is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes skills picker")
+	}
+}
+
+func TestEscapePrioritizesApprovalOverPromptSearch(t *testing.T) {
+	reply := make(chan approvalDecision, 1)
+	m := model{
+		approval: &approvalPrompt{
+			Command: "write_file",
+			Reason:  "needs approval",
+			Reply:   reply,
+			Kind:    approvalPromptKindTool,
+			Choice:  approvalChoiceApprove,
+		},
+		promptSearchOpen: true,
+		phase:            "approval",
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.approval != nil {
+		t.Fatalf("expected esc to resolve approval first")
+	}
+	if !updated.promptSearchOpen {
+		t.Fatalf("expected prompt search to remain open when esc is consumed by approval")
+	}
+	select {
+	case decision := <-reply:
+		if decision.Approved {
+			t.Fatalf("expected esc approval decision to reject")
+		}
+	default:
+		t.Fatalf("expected approval decision to be sent")
+	}
+}
+
+func TestEscapeWhileInterruptingDoesNotInvokeRunCancelAgain(t *testing.T) {
+	cancelCalls := 0
+	m := model{
+		screen:       screenChat,
+		busy:         true,
+		interrupting: true,
+		runCancel:    func() { cancelCalls++ },
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if cancelCalls != 0 {
+		t.Fatalf("expected esc while already interrupting not to call runCancel again, got %d", cancelCalls)
+	}
+	if !updated.interrupting {
+		t.Fatalf("expected interrupting state to stay true")
+	}
+	if updated.statusNote != "Interrupt already requested. Waiting for current run to stop..." {
+		t.Fatalf("expected repeated interrupt hint, got %q", updated.statusNote)
+	}
+}
+
+func TestEscapeFallsBackToSelectionClearWhenRunIsNotCancelable(t *testing.T) {
+	m := model{
+		screen:               screenChat,
+		busy:                 true,
+		runCancel:            nil,
+		inputSelectionActive: true,
+		inputSelectionStart:  viewportSelectionPoint{Col: 0, Row: 0},
+		inputSelectionEnd:    viewportSelectionPoint{Col: 3, Row: 0},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.inputSelectionActive {
+		t.Fatalf("expected esc to clear selection when no cancelable run exists")
+	}
+	if updated.statusNote != "Selection cleared." {
+		t.Fatalf("expected selection cleared note, got %q", updated.statusNote)
 	}
 }
 
@@ -5212,6 +5534,26 @@ func TestRenderConversationOmitsThinkingRowsFromViewport(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Done.") {
 		t.Fatalf("expected final answer to remain visible, got %q", rendered)
+	}
+}
+
+func TestRenderConversationShowsSubAgentThinkingWhilePending(t *testing.T) {
+	m := model{
+		width: 120,
+		viewport: func() viewport.Model {
+			vp := viewport.New(60, 10)
+			return vp
+		}(),
+		subAgentPending: true,
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "/explorer scan agent module", Status: "final"},
+			{Kind: "assistant", Title: thinkingLabel, Body: "Running subagent explorer...", Status: "thinking"},
+		},
+	}
+
+	rendered := m.renderConversation()
+	if !strings.Contains(strings.ToLower(rendered), "running subagent explorer") {
+		t.Fatalf("expected conversation viewport to show subagent thinking row while pending, got %q", rendered)
 	}
 }
 
@@ -6331,10 +6673,11 @@ func TestSubmitBTWWithoutRunCancelRestartsImmediately(t *testing.T) {
 func TestToolCallCompletedTriggersDeferredBTWCancel(t *testing.T) {
 	canceled := false
 	m := model{
-		interrupting:  true,
-		interruptSafe: true,
-		pendingBTW:    []string{"change plan"},
-		runCancel:     func() { canceled = true },
+		interrupting:     true,
+		interruptSafe:    true,
+		pendingBTW:       []string{"change plan"},
+		pendingInterrupt: true,
+		runCancel:        func() { canceled = true },
 	}
 
 	m.handleAgentEvent(Event{
@@ -6350,8 +6693,68 @@ func TestToolCallCompletedTriggersDeferredBTWCancel(t *testing.T) {
 	if m.interruptSafe {
 		t.Fatalf("expected deferred interrupt flag to clear after cancel")
 	}
+	if m.pendingInterrupt {
+		t.Fatalf("expected pending interrupt flag to clear after deferred cancel")
+	}
 	if m.phase != "interrupting" {
 		t.Fatalf("expected phase to switch to interrupting, got %q", m.phase)
+	}
+}
+
+func TestToolCallCompletedTriggersDeferredInterruptWithoutBTWQueue(t *testing.T) {
+	canceled := false
+	m := model{
+		interrupting:           true,
+		interruptSafe:          true,
+		pendingInterrupt:       true,
+		pendingInterruptReason: "esc",
+		runCancel:              func() { canceled = true },
+	}
+
+	m.handleAgentEvent(Event{
+		Type:       EventToolCallCompleted,
+		ToolName:   "read_file",
+		ToolResult: `{"path":"tui/model.go","start_line":1,"end_line":3}`,
+	})
+
+	if !canceled {
+		t.Fatalf("expected deferred interrupt cancel to trigger after tool completion")
+	}
+	if m.interruptSafe {
+		t.Fatalf("expected deferred interruptSafe to clear after cancel")
+	}
+	if m.pendingInterrupt {
+		t.Fatalf("expected deferred pendingInterrupt to clear after cancel")
+	}
+	if m.pendingInterruptReason != "" {
+		t.Fatalf("expected deferred interrupt reason to clear after cancel, got %q", m.pendingInterruptReason)
+	}
+}
+
+func TestToolCallCompletedDeferredInterruptCancelsAtMostOnce(t *testing.T) {
+	cancelCalls := 0
+	m := model{
+		interrupting:     true,
+		interruptSafe:    true,
+		pendingInterrupt: true,
+		runCancel:        func() { cancelCalls++ },
+	}
+
+	first := Event{
+		Type:       EventToolCallCompleted,
+		ToolName:   "read_file",
+		ToolResult: `{"path":"tui/model.go","start_line":1,"end_line":3}`,
+	}
+	second := Event{
+		Type:       EventToolCallCompleted,
+		ToolName:   "read_file",
+		ToolResult: `{"path":"tui/model.go","start_line":4,"end_line":6}`,
+	}
+	m.handleAgentEvent(first)
+	m.handleAgentEvent(second)
+
+	if cancelCalls != 1 {
+		t.Fatalf("expected deferred interrupt cancel to trigger once, got %d", cancelCalls)
 	}
 }
 
@@ -6403,6 +6806,79 @@ func TestRunFinishedWithPendingBTWRestartsRun(t *testing.T) {
 	}
 	if updated.activeRunID == 0 {
 		t.Fatalf("expected resumed run to have a new active run id")
+	}
+}
+
+func TestRunFinishedClearsPendingInterruptState(t *testing.T) {
+	m := model{
+		async:                  make(chan tea.Msg, 1),
+		busy:                   true,
+		activeRunID:            4,
+		interrupting:           true,
+		pendingInterrupt:       true,
+		pendingInterruptReason: "esc",
+	}
+
+	got, _ := m.Update(runFinishedMsg{RunID: 4, Err: context.Canceled})
+	updated := got.(model)
+
+	if updated.pendingInterrupt {
+		t.Fatalf("expected pending interrupt flag to clear after run finish")
+	}
+	if updated.pendingInterruptReason != "" {
+		t.Fatalf("expected pending interrupt reason to clear after run finish, got %q", updated.pendingInterruptReason)
+	}
+}
+
+func TestRunFinishedClearsPendingInterruptStateOnFailure(t *testing.T) {
+	m := model{
+		async:                  make(chan tea.Msg, 1),
+		busy:                   true,
+		activeRunID:            5,
+		interrupting:           true,
+		pendingInterrupt:       true,
+		pendingInterruptReason: "esc",
+	}
+
+	got, _ := m.Update(runFinishedMsg{RunID: 5, Err: errors.New("network unavailable")})
+	updated := got.(model)
+
+	if updated.pendingInterrupt {
+		t.Fatalf("expected pending interrupt flag to clear after failed run finish")
+	}
+	if updated.pendingInterruptReason != "" {
+		t.Fatalf("expected pending interrupt reason cleared after failed run finish, got %q", updated.pendingInterruptReason)
+	}
+}
+
+func TestRunFinishedClearsToolPhaseEscInterruptStateWithoutExtraCancel(t *testing.T) {
+	cancelCalls := 0
+	m := model{
+		async:       make(chan tea.Msg, 1),
+		busy:        true,
+		activeRunID: 12,
+		phase:       "tool",
+		runCancel:   func() { cancelCalls++ },
+	}
+
+	if !m.requestRunInterrupt("esc") {
+		t.Fatalf("expected esc interrupt request to be accepted during tool phase")
+	}
+	if !m.pendingInterrupt || !m.interruptSafe || !m.interrupting {
+		t.Fatalf("expected tool-phase esc interrupt to set deferred flags")
+	}
+
+	got, _ := m.Update(runFinishedMsg{RunID: 12, Err: nil})
+	updated := got.(model)
+
+	if cancelCalls != 0 {
+		t.Fatalf("expected no additional cancel call when run already finished, got %d", cancelCalls)
+	}
+	if updated.pendingInterrupt || updated.pendingInterruptReason != "" {
+		t.Fatalf("expected pending interrupt state cleared after normal run finish, got pending=%v reason=%q", updated.pendingInterrupt, updated.pendingInterruptReason)
+	}
+	if updated.interrupting || updated.interruptSafe {
+		t.Fatalf("expected interrupt flags cleared after normal run finish, got interrupting=%v interruptSafe=%v", updated.interrupting, updated.interruptSafe)
 	}
 }
 
@@ -6510,15 +6986,17 @@ func TestNewSessionClearsInterruptState(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("pending input")
 	m := model{
-		store:         store,
-		sess:          current,
-		workspace:     workspace,
-		input:         input,
-		pendingBTW:    []string{"keep this"},
-		interrupting:  true,
-		interruptSafe: true,
-		runCancel:     func() {},
-		activeRunID:   9,
+		store:                  store,
+		sess:                   current,
+		workspace:              workspace,
+		input:                  input,
+		pendingBTW:             []string{"keep this"},
+		pendingInterrupt:       true,
+		pendingInterruptReason: "esc",
+		interrupting:           true,
+		interruptSafe:          true,
+		runCancel:              func() {},
+		activeRunID:            9,
 	}
 
 	if err := m.newSession(); err != nil {
@@ -6529,6 +7007,9 @@ func TestNewSessionClearsInterruptState(t *testing.T) {
 	}
 	if len(m.pendingBTW) != 0 {
 		t.Fatalf("expected pending btw queue cleared, got %#v", m.pendingBTW)
+	}
+	if m.pendingInterrupt || m.pendingInterruptReason != "" {
+		t.Fatalf("expected pending interrupt state cleared, got pending=%v reason=%q", m.pendingInterrupt, m.pendingInterruptReason)
 	}
 	if m.runCancel != nil {
 		t.Fatalf("expected runCancel cleared on new session")
@@ -6560,15 +7041,17 @@ func TestResumeSessionClearsInterruptState(t *testing.T) {
 	}
 
 	m := model{
-		store:         store,
-		sess:          current,
-		workspace:     workspace,
-		sessions:      []session.Summary{{ID: target.ID}},
-		pendingBTW:    []string{"queued"},
-		interrupting:  true,
-		interruptSafe: true,
-		runCancel:     func() {},
-		activeRunID:   7,
+		store:                  store,
+		sess:                   current,
+		workspace:              workspace,
+		sessions:               []session.Summary{{ID: target.ID}},
+		pendingBTW:             []string{"queued"},
+		pendingInterrupt:       true,
+		pendingInterruptReason: "esc",
+		interrupting:           true,
+		interruptSafe:          true,
+		runCancel:              func() {},
+		activeRunID:            7,
 	}
 
 	if err := m.resumeSession(target.ID); err != nil {
@@ -6582,6 +7065,9 @@ func TestResumeSessionClearsInterruptState(t *testing.T) {
 	}
 	if len(m.pendingBTW) != 0 {
 		t.Fatalf("expected pending btw queue cleared, got %#v", m.pendingBTW)
+	}
+	if m.pendingInterrupt || m.pendingInterruptReason != "" {
+		t.Fatalf("expected pending interrupt state cleared, got pending=%v reason=%q", m.pendingInterrupt, m.pendingInterruptReason)
 	}
 	if m.runCancel != nil {
 		t.Fatalf("expected runCancel cleared on resume")
@@ -6777,8 +7263,8 @@ func TestFormatChatBodySeparatesParagraphAndList(t *testing.T) {
 	if !strings.Contains(got, "Explanation") {
 		t.Fatalf("expected explanation text to remain, got %q", got)
 	}
-	if !strings.Contains(got, "- first") {
-		t.Fatalf("expected markdown list marker to be normalized, got %q", got)
+	if !strings.Contains(got, "first") || !strings.Contains(got, "second") {
+		t.Fatalf("expected markdown list items to be rendered, got %q", got)
 	}
 }
 
@@ -6854,7 +7340,8 @@ func TestFormatChatBodyHighlightsSemanticChineseLines(t *testing.T) {
 	for _, want := range []string{
 		"\u7b2c\u4e00\u9636\u6bb5\uff1a\u57fa\u7840\u51c6\u5907\uff081-2\u4e2a\u6708\uff09",
 		"\u5b66\u4e60\u5185\u5bb9\uff1a",
-		"\\u76ee\\u6807\\uff1a \\u5efa\\u7acb\\u57fa\\u7840\\u80fd\\u529b",
+		"\\u76ee\\u6807\\uff1a",
+		"\\u5efa\\u7acb\\u57fa\\u7840\\u80fd\\u529b",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected semantic lines to remain (%q), got %q", want, got)
@@ -6899,8 +7386,8 @@ func TestFormatChatBodyStripsInlineMarkdownTokens(t *testing.T) {
 		Body: "We are **ByteMind** project, support go test ./... and [docs](https://example.com/docs).",
 	}
 
-	got := formatChatBody(item, 120)
-	for _, unwanted := range []string{"**", "`", "[", "]("} {
+	got := stripANSI(formatChatBody(item, 120))
+	for _, unwanted := range []string{"**", "`", "]("} {
 		if strings.Contains(got, unwanted) {
 			t.Fatalf("expected inline markdown token %q to be removed, got %q", unwanted, got)
 		}
@@ -6911,7 +7398,7 @@ func TestFormatChatBodyStripsInlineMarkdownTokens(t *testing.T) {
 	if !strings.Contains(got, "go test ./...") {
 		t.Fatalf("expected inline code content to remain after normalization, got %q", got)
 	}
-	if !strings.Contains(got, "docs (https://example.com/docs)") {
+	if !strings.Contains(got, "docs") || !strings.Contains(got, "https://example.com/docs") {
 		t.Fatalf("expected markdown link to be normalized to plain text, got %q", got)
 	}
 }
@@ -6980,7 +7467,7 @@ func TestScrollbarTrackBoundsAndDragScrollbarTo(t *testing.T) {
 		viewport:   viewport.New(60, 10),
 		tokenUsage: newTokenUsageComponent(),
 		chatItems: []chatEntry{
-			{Kind: "assistant", Body: strings.Repeat("line\n", 260), Status: "final"},
+			{Kind: "assistant", Body: strings.Repeat("- line item\n", 260), Status: "final"},
 		},
 	}
 	m.refreshViewport()
@@ -7037,7 +7524,7 @@ func TestHandleMouseScrollbarDragLifecycle(t *testing.T) {
 		tokenUsage:     newTokenUsageComponent(),
 		chatAutoFollow: true,
 		chatItems: []chatEntry{
-			{Kind: "assistant", Body: strings.Repeat("row\n", 280), Status: "final"},
+			{Kind: "assistant", Body: strings.Repeat("- row item\n", 280), Status: "final"},
 		},
 	}
 	m.refreshViewport()

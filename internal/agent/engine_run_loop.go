@@ -2,14 +2,18 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"strconv"
 	"strings"
+	"time"
 
 	contextpkg "github.com/1024XEngineer/bytemind/internal/context"
 	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/provider"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
 )
@@ -31,6 +35,7 @@ func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Sessio
 	sandboxAudit := sandboxAuditFromSetup(setup, runner.config.SandboxEnabled, runner.config.SystemSandboxMode)
 
 	for step := 0; step < runner.config.MaxIterations; step++ {
+		drainSubAgentNotifications(runner, sess)
 		messages, err := e.messagesForStep(ctx, sess, setup, step, out)
 		if err != nil {
 			return "", err
@@ -77,39 +82,95 @@ func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Sessio
 	return e.finishWithSummary(sess, summary, out, false)
 }
 
+const (
+	maxRateLimitRetry      = 8
+	rateLimitBaseDelay     = 3 * time.Second
+	rateLimitMaxDelay      = 60 * time.Second
+)
+
 func (e *defaultEngine) processTurnWithReactiveCompaction(ctx context.Context, setup runPromptSetup, params turnProcessParams) (string, bool, error) {
 	if e == nil || e.runner == nil {
 		return "", false, fmt.Errorf("agent engine is unavailable")
 	}
 
 	runner := e.runner
-	maxRetry := runner.contextBudgetMaxReactiveRetry()
-	for attempt := 0; ; attempt++ {
+	maxCompactionRetry := runner.contextBudgetMaxReactiveRetry()
+	compactionAttempt := 0
+
+	for rateLimitAttempt := 0; ; rateLimitAttempt++ {
 		answer, finished, err := e.processTurn(ctx, params)
-		if err == nil || !isPromptTooLongError(err) {
-			return answer, finished, err
-		}
-		if attempt >= maxRetry {
-			return "", false, err
+		if err == nil {
+			return answer, finished, nil
 		}
 
-		_, compacted, compactErr := runner.compactSession(ctx, params.Session, true, true, "reactive_prompt_too_long")
-		if compactErr != nil {
-			return "", false, compactErr
-		}
-		if !compacted {
-			return "", false, err
-		}
-		if params.Out != nil {
-			fmt.Fprintf(params.Out, "%scontext exceeded model window; compacted and retrying (%d/%d)%s\n", ansiDim, attempt+1, maxRetry, ansiReset)
+		if isPromptTooLongError(err) {
+			if compactionAttempt >= maxCompactionRetry {
+				return "", false, err
+			}
+			compactionAttempt++
+
+			_, compacted, compactErr := runner.compactSession(ctx, params.Session, true, true, "reactive_prompt_too_long")
+			if compactErr != nil {
+				return "", false, compactErr
+			}
+			if !compacted {
+				return "", false, err
+			}
+			if params.Out != nil {
+				fmt.Fprintf(params.Out, "%scontext exceeded model window; compacted and retrying (%d/%d)%s\n", ansiDim, compactionAttempt, maxCompactionRetry, ansiReset)
+			}
+			retryMessages, buildErr := e.buildTurnMessages(params.Session, setup)
+			if buildErr != nil {
+				return "", false, buildErr
+			}
+			params.Messages = retryMessages
+			rateLimitAttempt = -1 // reset rate limit counter after compaction
+			continue
 		}
 
-		retryMessages, buildErr := e.buildTurnMessages(params.Session, setup)
-		if buildErr != nil {
-			return "", false, buildErr
+		if isRetryableRateLimitError(err) {
+			if rateLimitAttempt >= maxRateLimitRetry {
+				return "", false, err
+			}
+			delay := rateLimitBackoffDelay(rateLimitAttempt)
+			if params.Out != nil {
+				fmt.Fprintf(params.Out, "%srate limited; retrying in %s (%d/%d)%s\n", ansiDim, delay.Round(time.Second), rateLimitAttempt+1, maxRateLimitRetry, ansiReset)
+			}
+			select {
+			case <-ctx.Done():
+				return "", false, ctx.Err()
+			case <-time.After(delay):
+			}
+			continue
 		}
-		params.Messages = retryMessages
+
+		return answer, finished, err
 	}
+}
+
+func isRetryableRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var providerErr *provider.Error
+	if errors.As(err, &providerErr) && providerErr != nil {
+		return providerErr.Retryable
+	}
+	var llmErr *llm.ProviderError
+	if errors.As(err, &llmErr) && llmErr != nil {
+		return llmErr.Retryable
+	}
+	return false
+}
+
+func rateLimitBackoffDelay(attempt int) time.Duration {
+	delay := rateLimitBaseDelay * time.Duration(1<<uint(attempt))
+	jitter := time.Duration(rand.Int63n(int64(delay) / 2))
+	delay = delay + jitter
+	if delay > rateLimitMaxDelay {
+		delay = rateLimitMaxDelay
+	}
+	return delay
 }
 
 func (e *defaultEngine) messagesForStep(ctx context.Context, sess *session.Session, setup runPromptSetup, step int, out io.Writer) ([]llm.Message, error) {

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
@@ -138,12 +139,20 @@ func renderStatusBarWithWidthDefault(m model, width int) string {
 	if stepTitle == "" {
 		stepTitle = "-"
 	}
-	left := strings.Join([]string{
+	leftParts := []string{
 		"Mode: " + strings.ToUpper(string(m.mode)),
 		"Phase: " + m.currentPhaseLabel(),
 		"Step: " + stepTitle,
 		"Skill: " + m.currentSkillLabel(),
-	}, "  |  ")
+	}
+	if m.subAgentPending && m.subAgentName != "" {
+		elapsedStr := ""
+		if !m.runStartedAt.IsZero() {
+			elapsedStr = " | " + formatElapsed(time.Since(m.runStartedAt))
+		}
+		leftParts = append(leftParts, "SubAgent: "+accentStyle.Render(m.subAgentName)+elapsedStr)
+	}
+	left := strings.Join(leftParts, "  |  ")
 	right := strings.Join([]string{
 		fmt.Sprintf("%d msgs", len(m.chatItems)),
 		"Session: " + m.currentSessionLabel(),

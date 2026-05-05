@@ -127,24 +127,21 @@ func (m model) submitBTW(value string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	wasToolPhase := m.phase == "tool"
-	m.interrupting = true
-	m.phase = "interrupting"
-	if m.runCancel != nil {
-		if wasToolPhase {
-			m.interruptSafe = true
-			m.statusNote = "BTW queued. Waiting for current tool step to finish..."
-		} else {
-			m.interruptSafe = false
-			m.statusNote = "BTW received. Stopping current run..."
-			m.runCancel()
-		}
-	} else {
+	if m.runCancel == nil {
 		prompt := composeBTWPrompt(m.pendingBTW)
 		m.pendingBTW = nil
 		m.interrupting = false
 		m.interruptSafe = false
+		m.pendingInterrupt = false
+		m.pendingInterruptReason = ""
 		return m, m.beginRun(prompt, string(m.mode), "BTW accepted. Restarting with your update...")
+	}
+	if m.requestRunInterrupt("btw") {
+		if m.pendingInterrupt {
+			m.statusNote = "BTW queued. Waiting for current tool step to finish..."
+		} else {
+			m.statusNote = "BTW received. Stopping current run..."
+		}
 	}
 	if m.width > 0 && m.height > 0 {
 		m.syncLayoutForCurrentScreen()
@@ -153,7 +150,45 @@ func (m model) submitBTW(value string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *model) requestRunInterrupt(source string) bool {
+	if m.interrupting {
+		if strings.EqualFold(strings.TrimSpace(source), "esc") {
+			m.statusNote = "Interrupt already requested. Waiting for current run to stop..."
+		}
+		return true
+	}
+	if m.runCancel == nil || !m.busy {
+		return false
+	}
+
+	wasToolPhase := strings.EqualFold(strings.TrimSpace(m.phase), "tool")
+	m.interrupting = true
+	m.phase = "interrupting"
+	m.pendingInterruptReason = strings.TrimSpace(source)
+	if wasToolPhase {
+		m.interruptSafe = true
+		m.pendingInterrupt = true
+		if strings.EqualFold(strings.TrimSpace(source), "esc") {
+			m.statusNote = "Interrupt requested. Waiting for current tool step to finish..."
+		}
+		return true
+	}
+
+	m.interruptSafe = false
+	m.pendingInterrupt = false
+	m.pendingInterruptReason = ""
+	if strings.EqualFold(strings.TrimSpace(source), "esc") {
+		m.statusNote = "Interrupt requested. Stopping current run..."
+	}
+	m.runCancel()
+	return true
+}
+
 func (m *model) handleAgentEvent(event Event) {
+	if event.AgentID != "" {
+		m.handleSubAgentEvent(event)
+		return
+	}
 	switch event.Type {
 	case EventRunStarted:
 		m.tempEstimatedOutput = 0
@@ -213,10 +248,12 @@ func (m *model) handleAgentEvent(event Event) {
 		}
 		m.statusNote = summary
 		m.phase = "thinking"
-		if m.interruptSafe && m.interrupting && len(m.pendingBTW) > 0 && m.runCancel != nil {
+		if m.interruptSafe && m.interrupting && m.pendingInterrupt && m.runCancel != nil {
 			m.interruptSafe = false
+			m.pendingInterrupt = false
+			m.pendingInterruptReason = ""
 			m.phase = "interrupting"
-			m.statusNote = "BTW received. Stopping current run..."
+			m.statusNote = "Interrupt requested. Stopping current run..."
 			m.runCancel()
 		}
 	case EventPlanUpdated:
@@ -267,5 +304,52 @@ func (m model) startRunCmd(runCtx context.Context, runID int, prompt RunPromptIn
 			m.async <- runFinishedMsg{RunID: runID, Err: err}
 		}()
 		return nil
+	}
+}
+
+func (m *model) handleSubAgentEvent(event Event) {
+	switch event.Type {
+	case EventAssistantDelta:
+		delta := stripStreamControlTags(event.Content)
+		if delta == "" {
+			return
+		}
+		if len(m.subAgentStreamItems) > 0 {
+			last := &m.subAgentStreamItems[len(m.subAgentStreamItems)-1]
+			if last.Kind == "assistant" && last.Status == "streaming" {
+				last.Body += delta
+				return
+			}
+		}
+		m.subAgentStreamItems = append(m.subAgentStreamItems, chatEntry{
+			Kind:   "assistant",
+			Title:  event.AgentID,
+			Body:   delta,
+			Status: "streaming",
+		})
+	case EventToolCallStarted:
+		m.subAgentStreamItems = append(m.subAgentStreamItems, chatEntry{
+			Kind:   "tool",
+			Title:  toolEntryTitle(event.ToolName),
+			Body:   "",
+			Status: "running",
+		})
+	case EventToolCallCompleted:
+		summary, lines, status := summarizeTool(event.ToolName, event.ToolResult)
+		body := joinSummary(summary, lines)
+		for i := len(m.subAgentStreamItems) - 1; i >= 0; i-- {
+			item := &m.subAgentStreamItems[i]
+			if item.Kind == "tool" && item.Status == "running" {
+				item.Body = body
+				item.Status = status
+				return
+			}
+		}
+		m.subAgentStreamItems = append(m.subAgentStreamItems, chatEntry{
+			Kind:   "tool",
+			Title:  toolEntryTitle(event.ToolName),
+			Body:   body,
+			Status: status,
+		})
 	}
 }

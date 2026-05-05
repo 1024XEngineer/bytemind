@@ -288,6 +288,14 @@ type mcpCommandResultMsg struct {
 	Err      error
 }
 
+type subAgentResultMsg struct {
+	Input    string
+	Response string
+	Summary  string
+	Status   string
+	Err      error
+}
+
 type pasteSessionState struct {
 	active       bool
 	startedAt    time.Time
@@ -387,6 +395,11 @@ type model struct {
 	promptSearchOpen           bool
 	mcpCommandPending          bool
 	busy                       bool
+	subAgentPending            bool
+	subAgentName               string
+	subAgentTask               string
+	subAgentStreamItems        []chatEntry
+	subAgentExpanded           bool
 	runStartedAt               time.Time
 	lastRunDuration            time.Duration
 	runIndicatorState          runIndicatorState
@@ -469,6 +482,8 @@ type model struct {
 	runCancel                  context.CancelFunc
 	pendingCommandCmd          tea.Cmd
 	pendingBTW                 []string
+	pendingInterrupt           bool
+	pendingInterruptReason     string
 	interrupting               bool
 	interruptSafe              bool
 	runSeq                     int
@@ -695,6 +710,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.runCancel = nil
 		m.activeRunID = 0
 		m.interruptSafe = false
+		m.pendingInterrupt = false
+		m.pendingInterruptReason = ""
 		shouldResumeBTW := m.interrupting && len(m.pendingBTW) > 0
 		m.interrupting = false
 		finishReason := classifyRunFinish(msg.Err, shouldResumeBTW)
@@ -758,6 +775,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.phase = "error"
 			m.llmConnected = false
 			m.failLatestAssistant(msg.Err.Error())
+			m.failRunningToolCalls()
+			m.failRunningToolRuns()
 			m.notifyRunFailed(msg.RunID, msg.Err)
 		default:
 			m.lastRunDuration = 0
@@ -825,6 +844,74 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitForAsync(m.async)
 		}
 		m.appendCommandExchange(msg.Input, msg.Response)
+		if strings.TrimSpace(msg.Status) != "" {
+			m.statusNote = msg.Status
+		}
+		m.refreshViewport()
+		return m, waitForAsync(m.async)
+	case subAgentResultMsg:
+		elapsed := time.Duration(0)
+		if !m.runStartedAt.IsZero() {
+			elapsed = time.Since(m.runStartedAt)
+			if elapsed < 0 {
+				elapsed = 0
+			}
+		}
+		m.runStartedAt = time.Time{}
+		m.lastRunDuration = elapsed
+		m.busy = false
+		m.subAgentPending = false
+		m.subAgentName = ""
+		m.subAgentTask = ""
+		m.phase = "idle"
+		m.streamingIndex = -1
+
+		// Remove the thinking card
+		m.removeThinkingCard()
+
+		if msg.Err != nil {
+			if errors.Is(msg.Err, context.Canceled) {
+				m.runIndicatorState = runIndicatorCanceled
+			} else {
+				m.runIndicatorState = runIndicatorFailed
+			}
+			errBody := "Subagent failed: " + msg.Err.Error()
+			m.appendChat(chatEntry{
+				Kind:   "assistant",
+				Title:  assistantLabel,
+				Body:   errBody,
+				Status: "error",
+			})
+			if m.sess != nil {
+				m.sess.Messages = append(m.sess.Messages, llm.NewAssistantTextMessage(errBody))
+			}
+			m.statusNote = "Subagent error: " + msg.Err.Error()
+			m.subAgentStreamItems = nil
+			m.refreshViewport()
+			return m, waitForAsync(m.async)
+		}
+		m.runIndicatorState = runIndicatorComplete
+
+		// Append accumulated subagent stream items (tool calls, text output)
+		for _, item := range m.subAgentStreamItems {
+			m.appendChat(item)
+		}
+		m.subAgentStreamItems = nil
+
+		// Append the result card
+		m.appendChat(chatEntry{
+			Kind:   "assistant",
+			Title:  assistantLabel,
+			Body:   msg.Response,
+			Status: "final",
+		})
+		if m.sess != nil {
+			summary := strings.TrimSpace(msg.Summary)
+			if summary == "" {
+				summary = "SubAgent task completed."
+			}
+			m.sess.Messages = append(m.sess.Messages, llm.NewAssistantTextMessage(summary))
+		}
 		if strings.TrimSpace(msg.Status) != "" {
 			m.statusNote = msg.Status
 		}
@@ -1322,9 +1409,55 @@ func (m model) mouseOverLandingInput(y int) bool {
 	return y >= inputTop && y <= inputBottom
 }
 
+func (m model) handleEscKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.approval != nil {
+		m.resolveApprovalDecision(false)
+		return m, nil
+	}
+	if m.promptSearchOpen {
+		return m.handlePromptSearchKey(msg)
+	}
+	if m.planActionOpen {
+		return m.handlePlanActionKey(msg)
+	}
+	if m.helpOpen {
+		m.helpOpen = false
+		return m, nil
+	}
+	if m.commandOpen {
+		return m.handleCommandPaletteKey(msg)
+	}
+	if m.skillsOpen {
+		m.skillsOpen = false
+		m.commandCursor = 0
+		return m, nil
+	}
+	if m.mentionOpen {
+		return m.handleMentionPaletteKey(msg)
+	}
+	if m.sessionsOpen {
+		return m.handleSessionsModalKey(msg)
+	}
+	if m.requestRunInterrupt("esc") {
+		if m.width > 0 && m.height > 0 {
+			m.syncLayoutForCurrentScreen()
+			m.refreshViewport()
+		}
+		return m, nil
+	}
+	if m.hasCopyableSelection() {
+		m.clearMouseSelection()
+		m.clearInputSelection()
+		m.statusNote = "Selection cleared."
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	pasteDebugf("handleKey %s %s", summarizePasteMsg(msg), m.pasteDebugState())
-	switch msg.String() {
+	key := msg.String()
+	switch key {
 	case "ctrl+c":
 		if m.hasCopyableSelection() {
 			return m, m.copyCurrentSelection()
@@ -1336,6 +1469,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.runCancel()
 		}
 		return m, tea.Quit
+	case "esc":
+		return m.handleEscKey(msg)
 	}
 
 	if m.promptSearchOpen {
@@ -1371,14 +1506,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.ingestPasteFragment(fragment, source)
 	}
 
-	switch msg.String() {
-	case "esc":
-		if m.hasCopyableSelection() {
-			m.clearMouseSelection()
-			m.clearInputSelection()
-			m.statusNote = "Selection cleared."
-			return m, nil
-		}
+	switch key {
 	case "tab":
 		if m.commandOpen || m.mentionOpen || m.sessionsOpen || m.helpOpen || m.approval != nil || m.planActionOpen {
 			break
@@ -1433,7 +1561,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.approval != nil {
-		switch msg.String() {
+		switch key {
 		case "left", "h", "up", "k", "shift+tab", "backtab":
 			m.setApprovalChoice(approvalChoiceApprove)
 		case "right", "l", "down", "j", "tab":
@@ -1449,7 +1577,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.helpOpen {
-		if msg.String() == "esc" || msg.String() == "ctrl+g" {
+		if key == "esc" || key == "ctrl+g" {
 			m.helpOpen = false
 		}
 		return m, nil
@@ -1474,7 +1602,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		switch msg.String() {
+		switch key {
 		case "esc":
 			m.skillsOpen = false
 			m.commandCursor = 0
@@ -1554,7 +1682,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	switch msg.String() {
+	switch key {
 	case "ctrl+l":
 		if !m.busy {
 			if err := m.openSessionsModal(); err != nil {

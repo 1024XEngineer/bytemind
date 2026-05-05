@@ -34,7 +34,7 @@ func (m model) renderConversation() string {
 			continue
 		}
 
-		if item.Kind == "assistant" && (item.Status == "thinking" || item.Status == "thinking_done") {
+		if item.Kind == "assistant" && (item.Status == "thinking" || item.Status == "thinking_done") && !m.shouldShowThinkingRowInConversation(item) {
 			i++
 			continue
 		}
@@ -56,6 +56,20 @@ func (m model) renderConversation() string {
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, finalBlocks...)
+}
+
+func (m model) shouldShowThinkingRowInConversation(item chatEntry) bool {
+	if !m.subAgentPending {
+		return false
+	}
+	if item.Kind != "assistant" {
+		return false
+	}
+	if item.Status != "thinking" && item.Status != "thinking_done" {
+		return false
+	}
+	body := strings.ToLower(strings.TrimSpace(item.Body))
+	return strings.Contains(body, "task:") || strings.Contains(body, "running subagent")
 }
 
 func (m model) renderConversationCopy() string {
