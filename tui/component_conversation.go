@@ -21,6 +21,7 @@ func (m model) renderConversation() string {
 		width = m.conversationPanelWidth()
 	}
 	width = max(24, width)
+	runningIndicatorVisible := m.runningToolIndicatorVisible()
 	blocks := make([]string, 0, len(m.chatItems))
 	for i := 0; i < len(m.chatItems); {
 		item := m.chatItems[i]
@@ -43,7 +44,7 @@ func (m model) renderConversation() string {
 		for j < len(m.chatItems) && m.chatItems[j].Kind != "user" {
 			j++
 		}
-		blocks = append(blocks, renderBytemindRunRow(m.chatItems[i:j], width, m.toolDetailExpanded))
+		blocks = append(blocks, renderBytemindRunRow(m.chatItems[i:j], width, m.toolDetailExpanded, runningIndicatorVisible))
 		i = j
 	}
 
@@ -56,6 +57,18 @@ func (m model) renderConversation() string {
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, finalBlocks...)
+}
+
+func (m model) runningToolIndicatorVisible() bool {
+	frame := strings.TrimSpace(m.spinner.View())
+	if frame == "" {
+		return true
+	}
+	sum := 0
+	for _, r := range frame {
+		sum += int(r)
+	}
+	return sum%2 == 0
 }
 
 func (m model) shouldShowThinkingRowInConversation(item chatEntry) bool {
@@ -294,23 +307,23 @@ func renderChatRow(item chatEntry, width int) string {
 		Render(lipgloss.PlaceHorizontal(width, lipgloss.Left, card))
 }
 
-func renderBytemindRunRow(items []chatEntry, width int, toolDetailsExpanded bool) string {
+func renderBytemindRunRow(items []chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool) string {
 	if len(items) == 0 {
 		return ""
 	}
-	card := renderBytemindRunCard(items, width, toolDetailsExpanded)
+	card := renderBytemindRunCard(items, width, toolDetailsExpanded, runningIndicatorVisible)
 	return lipgloss.NewStyle().
 		MarginBottom(1).
 		Render(lipgloss.PlaceHorizontal(width, lipgloss.Left, card))
 }
 
-func renderBytemindRunCard(items []chatEntry, width int, toolDetailsExpanded bool) string {
+func renderBytemindRunCard(items []chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool) string {
 	outer := resolveRunCardStyle(items)
 	contentWidth := max(8, width-outer.GetHorizontalFrameSize())
 	sectionGroups := collapseRunSectionGroupsForView(items, toolDetailsExpanded)
 	sections := make([]string, 0, len(sectionGroups))
 	for _, group := range sectionGroups {
-		sections = append(sections, renderRunSectionGroup(group, contentWidth, toolDetailsExpanded))
+		sections = append(sections, renderRunSectionGroup(group, contentWidth, toolDetailsExpanded, runningIndicatorVisible))
 	}
 	return outer.Width(contentWidth).Render(strings.Join(sections, "\n"))
 }
@@ -402,15 +415,15 @@ func collapsibleParallelToolName(item chatEntry) (string, bool) {
 	return name, true
 }
 
-func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded bool) string {
+func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool) string {
 	if len(group) == 0 {
 		return ""
 	}
 	if len(group) == 1 {
-		return renderRunSection(group[0], width, toolDetailsExpanded)
+		return renderRunSection(group[0], width, toolDetailsExpanded, runningIndicatorVisible)
 	}
 	if !toolDetailsExpanded && isLiveInspectGroup(group) {
-		return renderLiveInspectGroup(group, width)
+		return renderLiveInspectGroup(group, width, runningIndicatorVisible)
 	}
 
 	_, name := toolDisplayParts(group[0].Title)
@@ -429,7 +442,7 @@ func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded boo
 		statusBadge = renderToolTag(status, status)
 	}
 
-	headLine := toolStatusIndicator(status) + label
+	headLine := toolStatusIndicator(status, runningIndicatorVisible) + " " + label
 	if summaryLine != "" {
 		headLine += " " + summaryLine
 	}
@@ -462,9 +475,9 @@ func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded boo
 	return style.Width(contentWidth).Render(body)
 }
 
-func renderRunSection(item chatEntry, width int, toolDetailsExpanded bool) string {
+func renderRunSection(item chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool) string {
 	if item.Kind == "tool" {
-		return renderToolTreeItem(item, width, toolDetailsExpanded)
+		return renderToolTreeItem(item, width, toolDetailsExpanded, runningIndicatorVisible)
 	}
 	if item.Kind == "assistant" && item.Status == "final" {
 		contentWidth := max(8, width-runAnswerSectionStyle.GetHorizontalFrameSize())
@@ -474,7 +487,7 @@ func renderRunSection(item chatEntry, width int, toolDetailsExpanded bool) strin
 }
 
 // renderToolTreeItem renders a single tool entry in tree style.
-func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool) string {
+func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool) string {
 	_, name := toolDisplayParts(item.Title)
 	renderer := GetToolRenderer(name)
 	label := toolDisplayLabel(name)
@@ -492,7 +505,7 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool) str
 		statusBadge = renderToolTag(item.Status, item.Status)
 	}
 
-	headLine := toolStatusIndicator(item.Status) + label
+	headLine := toolStatusIndicator(item.Status, runningIndicatorVisible) + " " + label
 	if compact != "" {
 		headLine += " " + compact
 	}
@@ -560,23 +573,63 @@ func isLiveInspectGroup(group []chatEntry) bool {
 	return true
 }
 
-func renderLiveInspectGroup(group []chatEntry, width int) string {
+func renderLiveInspectGroup(group []chatEntry, width int, runningIndicatorVisible bool) string {
 	status := aggregateToolGroupStatus(group)
-	summary := summarizeLiveInspectGroup(group)
-	headLine := toolStatusIndicator(status) + summary
-	if shouldRenderToolStatusTag(status) && normalizeToolStatus(status) != "running" && normalizeToolStatus(status) != "active" {
-		headLine += "  " + renderToolTag(status, status)
-	}
-	headLine += " " + toolExpandHintStyle.Render("(ctrl+o to expand)")
-
-	if detail := latestLiveInspectHint(group); detail != "" {
-		connectorStyle := lipgloss.NewStyle().Foreground(colorTool)
-		headLine += "\n  " + connectorStyle.Render(toolTreeChar) + " " + detail
-	}
-
 	style := resolveToolRunSectionStyle(status)
 	contentWidth := max(8, width-style.GetHorizontalFrameSize())
+	summary := summarizeLiveInspectGroup(group)
+	hintSuffix := "(ctrl+o to expand)"
+	statusTag := ""
+	if shouldRenderToolStatusTag(status) && normalizeToolStatus(status) != "running" && normalizeToolStatus(status) != "active" {
+		statusTag = renderToolTag(status, status)
+	}
+	headLine := buildLiveInspectHeadline(summary, status, statusTag, contentWidth, hintSuffix, runningIndicatorVisible)
+
+	if isToolGroupRunning(group) {
+		if detail := latestLiveInspectHint(group); detail != "" {
+			connectorStyle := lipgloss.NewStyle().Foreground(colorTool)
+			maxDetailWidth := max(12, contentWidth-6)
+			headLine += "\n  " + connectorStyle.Render(toolTreeChar) + " " + compact(detail, maxDetailWidth)
+		}
+	}
+
 	return style.Width(contentWidth).Render(headLine)
+}
+
+func buildLiveInspectHeadline(summary, status, statusTag string, width int, hintSuffix string, runningIndicatorVisible bool) string {
+	indicator := toolStatusIndicator(status, runningIndicatorVisible) + " "
+	hintText := toolExpandHintStyle.Render(hintSuffix)
+	tagWidth := 0
+	if statusTag != "" {
+		tagWidth = 2 + lipgloss.Width(statusTag)
+	}
+	reservedWithHint := lipgloss.Width(indicator) + tagWidth + 1 + lipgloss.Width(hintText)
+	available := width - reservedWithHint - 2
+	showHint := true
+	if available < 8 {
+		showHint = false
+		available = width - lipgloss.Width(indicator) - tagWidth - 1
+	}
+	available = max(1, available)
+	primary := compact(summary, available)
+	line := indicator + primary
+	if statusTag != "" {
+		line += "  " + statusTag
+	}
+	if showHint {
+		line += " " + hintText
+	}
+	return line
+}
+
+func isToolGroupRunning(group []chatEntry) bool {
+	for _, item := range group {
+		switch normalizeToolStatus(item.Status) {
+		case "running", "active":
+			return true
+		}
+	}
+	return false
 }
 
 func summarizeLiveInspectGroup(group []chatEntry) string {
@@ -837,12 +890,16 @@ func shouldRenderToolStatusTag(status string) bool {
 	}
 }
 
-func toolStatusIndicator(status string) string {
+func toolStatusIndicator(status string, runningIndicatorVisible bool) string {
 	glyph := toolIcon
 	style := lipgloss.NewStyle()
 	switch normalizeToolStatus(status) {
 	case "running", "active":
-		glyph = "○"
+		if runningIndicatorVisible {
+			glyph = "○"
+		} else {
+			glyph = " "
+		}
 		style = style.Foreground(semanticColors.AccentSoft)
 	case "warn", "warning", "pending":
 		style = style.Foreground(semanticColors.Warning)

@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 	"github.com/1024XEngineer/bytemind/internal/session"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // --- toolEntryTitle ---
@@ -571,14 +571,14 @@ func TestRenderRunSectionGroupSingleErrorTool(t *testing.T) {
 		Body:   "Request failed: provider rate limited",
 		Status: "error",
 	}
-	rendered := renderRunSectionGroup([]chatEntry{item}, 80, false)
+	rendered := renderRunSectionGroup([]chatEntry{item}, 80, false, true)
 	if rendered == "" {
 		t.Fatalf("expected non-empty rendering")
 	}
 }
 
 func TestRenderRunSectionGroupEmpty(t *testing.T) {
-	rendered := renderRunSectionGroup(nil, 80, false)
+	rendered := renderRunSectionGroup(nil, 80, false, true)
 	if rendered != "" {
 		t.Fatalf("expected empty rendering, got %q", rendered)
 	}
