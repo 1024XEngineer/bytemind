@@ -231,6 +231,7 @@ func Load(workspace, configPath string) (Config, error) {
 
 func LoadWithMCPConfigPath(workspace, configPath, mcpConfigPath string) (Config, error) {
 	cfg := Default(workspace)
+	var userProviderOverride map[string]json.RawMessage
 
 	if strings.TrimSpace(configPath) != "" {
 		path, err := resolveConfigPath(workspace, configPath)
@@ -247,12 +248,20 @@ func LoadWithMCPConfigPath(workspace, configPath, mcpConfigPath string) (Config,
 			if err := mergeConfigFromFile(userConfig, &cfg); err != nil {
 				return cfg, err
 			}
+			userProviderOverride, err = loadUserProviderOverride(userConfig)
+			if err != nil {
+				return cfg, err
+			}
 		}
 
 		if projectConfig := resolveProjectConfigPath(workspace); projectConfig != "" {
 			if err := mergeConfigFromFile(projectConfig, &cfg); err != nil {
 				return cfg, err
 			}
+		}
+
+		if err := mergeProviderOverride(userProviderOverride, &cfg); err != nil {
+			return cfg, err
 		}
 	}
 
@@ -476,6 +485,84 @@ func mergeConfigFromFile(path string, cfg *Config) error {
 		return err
 	}
 	return nil
+}
+
+func loadUserProviderOverride(path string) (map[string]json.RawMessage, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	if !hasProviderCredential(raw) {
+		return nil, nil
+	}
+	return raw, nil
+}
+
+func mergeProviderOverride(raw map[string]json.RawMessage, cfg *Config) error {
+	if raw == nil || cfg == nil {
+		return nil
+	}
+	providerOverridden := false
+	if providerRaw, ok := raw["provider"]; ok {
+		if err := json.Unmarshal(providerRaw, &cfg.Provider); err != nil {
+			return err
+		}
+		providerOverridden = true
+	}
+	if runtimeRaw, ok := raw["provider_runtime"]; ok {
+		if err := json.Unmarshal(runtimeRaw, &cfg.ProviderRuntime); err != nil {
+			return err
+		}
+	} else if providerOverridden {
+		cfg.ProviderRuntime = ProviderRuntimeConfig{}
+	}
+	return nil
+}
+
+func hasProviderCredential(raw map[string]json.RawMessage) bool {
+	if providerRaw, ok := raw["provider"]; ok && providerRawHasCredential(providerRaw) {
+		return true
+	}
+	runtimeRaw, ok := raw["provider_runtime"]
+	if !ok {
+		return false
+	}
+	var runtime struct {
+		Providers map[string]json.RawMessage `json:"providers"`
+	}
+	if err := json.Unmarshal(runtimeRaw, &runtime); err != nil {
+		return false
+	}
+	for _, providerRaw := range runtime.Providers {
+		if providerRawHasCredential(providerRaw) {
+			return true
+		}
+	}
+	return false
+}
+
+func providerRawHasCredential(raw json.RawMessage) bool {
+	var provider map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &provider); err != nil {
+		return false
+	}
+	if valueRaw, ok := provider["api_key"]; ok {
+		var value string
+		if err := json.Unmarshal(valueRaw, &value); err == nil && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	if valueRaw, ok := provider["api_key_env"]; ok {
+		var value string
+		if err := json.Unmarshal(valueRaw, &value); err == nil && strings.TrimSpace(os.Getenv(strings.TrimSpace(value))) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeMCPConfigFromFile(path string, cfg *MCPConfig) error {

@@ -41,6 +41,12 @@ func TestLoadRuntimeConfigAppliesOverrides(t *testing.T) {
 	if cfg.Provider.Model != "gpt-5.4" {
 		t.Fatalf("unexpected model: %q", cfg.Provider.Model)
 	}
+	if cfg.ProviderRuntime.DefaultModel != "gpt-5.4" {
+		t.Fatalf("unexpected runtime default model: %q", cfg.ProviderRuntime.DefaultModel)
+	}
+	if providerCfg := cfg.ProviderRuntime.Providers["openai"]; providerCfg.Model != "gpt-5.4" {
+		t.Fatalf("unexpected runtime provider model: %q", providerCfg.Model)
+	}
 	if !cfg.Stream {
 		t.Fatal("expected stream=true")
 	}

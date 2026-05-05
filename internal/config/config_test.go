@@ -349,7 +349,7 @@ func TestResolveConfigPathExplicit(t *testing.T) {
 	}
 }
 
-func TestLoadMergesUserAndProjectConfigWithProjectPrecedence(t *testing.T) {
+func TestLoadMergesUserAndProjectConfigWithUserProviderPrecedence(t *testing.T) {
 	workspace := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", home)
@@ -394,11 +394,11 @@ func TestLoadMergesUserAndProjectConfigWithProjectPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Provider.Model != "project-model" {
-		t.Fatalf("expected project model precedence, got %q", cfg.Provider.Model)
+	if cfg.Provider.Model != "user-model" {
+		t.Fatalf("expected user provider model precedence, got %q", cfg.Provider.Model)
 	}
-	if cfg.Provider.ResolveAPIKey() != "project-key" {
-		t.Fatalf("expected project api key precedence, got %q", cfg.Provider.ResolveAPIKey())
+	if cfg.Provider.ResolveAPIKey() != "user-key" {
+		t.Fatalf("expected user provider api key precedence, got %q", cfg.Provider.ResolveAPIKey())
 	}
 	if cfg.ApprovalPolicy != "never" {
 		t.Fatalf("expected project approval policy precedence, got %q", cfg.ApprovalPolicy)
@@ -414,6 +414,186 @@ func TestLoadMergesUserAndProjectConfigWithProjectPrecedence(t *testing.T) {
 	}
 	if cfg.Stream {
 		t.Fatalf("expected project stream value false")
+	}
+}
+
+func TestLoadKeepsUserProviderWhenProjectProviderIsUnconfigured(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "")
+
+	if err := writeConfig(filepath.Join(home, "config.json"), map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.deepseek.com",
+			"model":    "deepseek-reasoner",
+			"api_key":  "user-key",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": map[string]any{
+			"type":        "openai-compatible",
+			"base_url":    "https://api.openai.com/v1",
+			"model":       "gpt-5.4-mini",
+			"api_key":     "",
+			"api_key_env": "",
+		},
+		"approval_policy": "never",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.BaseURL != "https://api.deepseek.com" {
+		t.Fatalf("expected user provider base_url, got %q", cfg.Provider.BaseURL)
+	}
+	if cfg.Provider.Model != "deepseek-reasoner" {
+		t.Fatalf("expected user provider model, got %q", cfg.Provider.Model)
+	}
+	if cfg.Provider.ResolveAPIKey() != "user-key" {
+		t.Fatalf("expected user provider api key, got %q", cfg.Provider.ResolveAPIKey())
+	}
+	if cfg.ApprovalPolicy != "never" {
+		t.Fatalf("expected project policy to still apply, got %q", cfg.ApprovalPolicy)
+	}
+}
+
+func TestLoadAllowsProjectProviderWhenUserConfigHasNoCredential(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "")
+
+	if err := writeConfig(filepath.Join(home, "config.json"), map[string]any{
+		"provider": map[string]any{
+			"type":        "openai-compatible",
+			"base_url":    "https://api.openai.com/v1",
+			"model":       "gpt-5.4-mini",
+			"api_key_env": "BYTEMIND_API_KEY",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.deepseek.com",
+			"model":    "deepseek-chat",
+			"api_key":  "project-key",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Model != "deepseek-chat" {
+		t.Fatalf("expected project provider model, got %q", cfg.Provider.Model)
+	}
+	if cfg.Provider.ResolveAPIKey() != "project-key" {
+		t.Fatalf("expected project provider api key, got %q", cfg.Provider.ResolveAPIKey())
+	}
+}
+
+func TestLoadUsesUserProviderWhenConfiguredThroughEnvKey(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("DEEPSEEK_TEST_KEY", "env-user-key")
+
+	if err := writeConfig(filepath.Join(home, "config.json"), map[string]any{
+		"provider": map[string]any{
+			"type":        "openai-compatible",
+			"base_url":    "https://api.deepseek.com",
+			"model":       "deepseek-reasoner",
+			"api_key_env": "DEEPSEEK_TEST_KEY",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.openai.com/v1",
+			"model":    "gpt-5.4-mini",
+			"api_key":  "",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Model != "deepseek-reasoner" {
+		t.Fatalf("expected user env-key provider model, got %q", cfg.Provider.Model)
+	}
+	if cfg.Provider.ResolveAPIKey() != "env-user-key" {
+		t.Fatalf("expected api key from user env-key provider")
+	}
+}
+
+func TestLoadUserProviderPrecedenceResetsProjectProviderRuntime(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+
+	if err := writeConfig(filepath.Join(home, "config.json"), map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.deepseek.com",
+			"model":    "deepseek-reasoner",
+			"api_key":  "user-key",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider_runtime": map[string]any{
+			"default_provider": "project",
+			"default_model":    "project-model",
+			"providers": map[string]any{
+				"project": map[string]any{
+					"type":     "openai-compatible",
+					"base_url": "https://api.openai.com/v1",
+					"model":    "project-model",
+					"api_key":  "",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ProviderRuntime.DefaultModel != "deepseek-reasoner" {
+		t.Fatalf("expected runtime to be rebuilt from user provider, got default model %q", cfg.ProviderRuntime.DefaultModel)
+	}
+	runtimeProvider, ok := cfg.ProviderRuntime.Providers["openai"]
+	if !ok {
+		t.Fatalf("expected rebuilt legacy openai runtime provider, got %#v", cfg.ProviderRuntime.Providers)
+	}
+	if runtimeProvider.BaseURL != "https://api.deepseek.com" {
+		t.Fatalf("expected user provider base_url in runtime provider, got %q", runtimeProvider.BaseURL)
+	}
+	if runtimeProvider.ResolveAPIKey() != "user-key" {
+		t.Fatalf("expected user api key in runtime provider")
 	}
 }
 
