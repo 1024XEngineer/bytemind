@@ -239,7 +239,7 @@ func (m *model) handleAgentEvent(event Event) {
 			summary, lines, status = summarizeTool(event.ToolName, event.ToolResult)
 			compactBody = summary
 		}
-		m.finishToolCall(event.ToolCallID, joinSummary(summary, lines), status, compactBody, lines)
+		m.finishToolCall(event.ToolCallID, event.ToolName, joinSummary(summary, lines), status, compactBody, lines)
 		if len(m.toolRuns) > 0 {
 			index := len(m.toolRuns) - 1
 			m.toolRuns[index].Summary = summary

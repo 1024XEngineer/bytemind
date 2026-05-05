@@ -133,6 +133,15 @@ type runShellRenderer struct{}
 func (runShellRenderer) DisplayLabel() string { return "SHELL" }
 
 func (runShellRenderer) ResultSummary(payload string) (string, []string, string) {
+	// Check for error envelope first
+	var envelope struct {
+		OK    *bool  `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(payload), &envelope); err == nil && envelope.Error != "" {
+		return compactToolText(envelope.Error, 88), nil, "error"
+	}
+
 	var result struct {
 		OK       bool   `json:"ok"`
 		ExitCode int    `json:"exit_code"`
