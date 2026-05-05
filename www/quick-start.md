@@ -26,22 +26,34 @@ curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
+:::warning Copy the command for your current terminal
+Windows PowerShell users should copy the PowerShell block, not the macOS / Linux `install.sh | bash` command. The bash command starts WSL; if WSL itself is broken, you may see `ext4.vhdx` or `HCS` errors.
+:::
+
 Verify the installation:
 
-```bash
+```powershell
 bytemind --version
 ```
 
 :::tip Install Location
-Defaults to `~/bin` (Linux/macOS) or `%USERPROFILE%\bin` (Windows). If the command is not found, make sure that directory is on your `PATH`.
+Defaults to `~/bin` (Linux/macOS) or `%USERPROFILE%\bin` (Windows). If the command is not found, or an update still shows an older version, make sure that directory is on your `PATH` before older copies. In PowerShell, `Get-Command bytemind -All` shows the binary being resolved.
 :::
 
 ## Step 2: Create a Config
 
 Create a `.bytemind/` directory inside your project:
 
+**macOS / Linux**
+
 ```bash
 mkdir -p .bytemind
+```
+
+**Windows (PowerShell)**
+
+```powershell
+New-Item -ItemType Directory -Force .bytemind | Out-Null
 ```
 
 Create `.bytemind/config.json` with your provider settings:

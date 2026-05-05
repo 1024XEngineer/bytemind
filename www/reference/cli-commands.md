@@ -49,11 +49,11 @@ bytemind run -prompt "Rename Foo to Bar across all Go files" -max-iterations 64
 
 ## `bytemind --version`
 
-Print the installed version and build info, then exit.
+Print the installed version, then exit.
 
 ```bash
 bytemind --version
-# ByteMind v0.4.0 (go1.24.0 darwin/arm64)
+# v0.1.5
 ```
 
 ## Session Slash Commands

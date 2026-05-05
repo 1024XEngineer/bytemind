@@ -49,11 +49,11 @@ bytemind run -prompt "全库重命名 Foo 为 Bar" -max-iterations 64
 
 ## `bytemind --version`
 
-输出已安装的版本和构建信息后退出。
+输出已安装的版本后退出。
 
 ```bash
 bytemind --version
-# ByteMind v0.4.0 (go1.24.0 darwin/arm64)
+# v0.1.5
 ```
 
 ## 会话斜杠命令

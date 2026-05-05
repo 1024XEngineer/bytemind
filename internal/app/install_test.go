@@ -23,6 +23,43 @@ func TestRunInstallRejectsPositionalArgs(t *testing.T) {
 	}
 }
 
+func TestRunInstallWarnsWhenCommandIsShadowedInPath(t *testing.T) {
+	previousLookPath := installCommandLookPath
+	t.Cleanup(func() {
+		installCommandLookPath = previousLookPath
+	})
+
+	root := t.TempDir()
+	targetDir := filepath.Join(root, "bin")
+	shadowDir := filepath.Join(root, "old")
+	shadowPath := filepath.Join(shadowDir, defaultBinaryName(runtime.GOOS))
+	if err := os.MkdirAll(shadowDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shadowPath, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	installCommandLookPath = func(string) (string, error) {
+		return shadowPath, nil
+	}
+	t.Setenv("PATH", strings.Join([]string{shadowDir, targetDir}, string(os.PathListSeparator)))
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := RunInstall([]string{"-to", targetDir}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "not the installed binary") {
+		t.Fatalf("expected PATH shadow warning, got %q", output)
+	}
+	if !strings.Contains(output, targetDir) {
+		t.Fatalf("expected warning to mention target dir %q, got %q", targetDir, output)
+	}
+}
+
 func TestDefaultBinaryName(t *testing.T) {
 	if got := defaultBinaryName("windows"); got != "bytemind.exe" {
 		t.Fatalf("expected windows binary name with .exe, got %q", got)

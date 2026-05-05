@@ -13,8 +13,47 @@ export PATH="$HOME/bin:$PATH"
 将该行写入 `~/.bashrc`、`~/.zshrc` 或 Shell 配置文件以永久生效。Windows 用户执行：
 
 ```powershell
-[Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\bin;" + $env:Path, "User")
+$target = "$env:USERPROFILE\bin"
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if (-not (($userPath -split ";") -contains $target)) {
+  [Environment]::SetEnvironmentVariable("Path", ($target + ";" + $userPath), "User")
+}
+$env:Path = $target + ";" + $env:Path
 ```
+
+## Windows 更新后仍显示旧版本
+
+症状：安装脚本显示下载了最新版本，但 `bytemind --version` 仍输出旧版本。
+
+**修复：** 先确认 PowerShell 实际命中的二进制：
+
+```powershell
+Get-Command bytemind -All | Select-Object Source
+& "$env:USERPROFILE\bin\bytemind.exe" --version
+```
+
+如果第二行输出新版本，而 `Get-Command` 第一行不是 `$env:USERPROFILE\bin\bytemind.exe`，把新安装目录移动到用户 PATH 最前面：
+
+```powershell
+$target = "$env:USERPROFILE\bin"
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$parts = $userPath -split ";" | Where-Object { $_ -and ($_ -ine $target) }
+[Environment]::SetEnvironmentVariable("Path", ($target + ";" + ($parts -join ";")), "User")
+$env:Path = $target + ";" + $env:Path
+bytemind --version
+```
+
+## Windows 运行 bash 安装命令时报 WSL 错误
+
+症状：在 PowerShell 或 CMD 中运行 `curl ... install.sh | bash` 后，出现 `ext4.vhdx`、`HCS`、`Bash/Service/CreateInstance` 或 WSL 挂载错误。
+
+**修复：** 这是 WSL 环境错误，不是 ByteMind 安装包错误。在 Windows 终端中使用 PowerShell 安装脚本：
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
+```
+
+只有在已经进入正常工作的 WSL/Linux 终端时，才使用 `install.sh | bash`。WSL 里的 `~/bin/bytemind` 和 Windows 的 `%USERPROFILE%\bin\bytemind.exe` 是两个不同位置。
 
 ## Provider 鉴权失败
 

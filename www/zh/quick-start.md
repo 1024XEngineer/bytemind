@@ -26,22 +26,34 @@ curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
+:::warning 按当前终端复制命令
+Windows PowerShell 用户请复制 PowerShell 代码块，不要复制 macOS / Linux 的 `install.sh | bash` 命令。那条命令会启动 WSL；如果 WSL 本身损坏，会出现 `ext4.vhdx` 或 `HCS` 错误。
+:::
+
 安装完成后验证：
 
-```bash
+```powershell
 bytemind --version
 ```
 
 :::tip 安装目录
-默认安装到 `~/bin`（Linux/macOS）或 `%USERPROFILE%\bin`（Windows）。如果提示找不到命令，请确认该目录已加入 `PATH`。
+默认安装到 `~/bin`（Linux/macOS）或 `%USERPROFILE%\bin`（Windows）。如果提示找不到命令，或更新后仍显示旧版本，请确认该目录已加入 `PATH` 且排在旧副本之前。PowerShell 中可用 `Get-Command bytemind -All` 查看实际命中的二进制。
 :::
 
 ## 第二步：创建配置
 
 在你的项目根目录下创建 `.bytemind/config.json`：
 
+**macOS / Linux**
+
 ```bash
 mkdir -p .bytemind
+```
+
+**Windows（PowerShell）**
+
+```powershell
+New-Item -ItemType Directory -Force .bytemind | Out-Null
 ```
 
 以 OpenAI 兼容接口为例，写入以下内容：

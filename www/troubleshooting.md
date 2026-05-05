@@ -13,8 +13,47 @@ export PATH="$HOME/bin:$PATH"
 Add this to `~/.bashrc`, `~/.zshrc`, or your shell profile to make it permanent. On Windows, use:
 
 ```powershell
-[Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\bin;" + $env:Path, "User")
+$target = "$env:USERPROFILE\bin"
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if (-not (($userPath -split ";") -contains $target)) {
+  [Environment]::SetEnvironmentVariable("Path", ($target + ";" + $userPath), "User")
+}
+$env:Path = $target + ";" + $env:Path
 ```
+
+## Windows Still Shows the Old Version After Updating
+
+Symptom: the install script downloads the latest version, but `bytemind --version` still prints an older version.
+
+**Fix:** Check which binary PowerShell is resolving:
+
+```powershell
+Get-Command bytemind -All | Select-Object Source
+& "$env:USERPROFILE\bin\bytemind.exe" --version
+```
+
+If the second command prints the new version but the first `Get-Command` result is not `$env:USERPROFILE\bin\bytemind.exe`, move the new install directory to the front of your user `PATH`:
+
+```powershell
+$target = "$env:USERPROFILE\bin"
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$parts = $userPath -split ";" | Where-Object { $_ -and ($_ -ine $target) }
+[Environment]::SetEnvironmentVariable("Path", ($target + ";" + ($parts -join ";")), "User")
+$env:Path = $target + ";" + $env:Path
+bytemind --version
+```
+
+## Windows WSL Error When Running the Bash Install Command
+
+Symptom: after running `curl ... install.sh | bash` in PowerShell or CMD, you see an `ext4.vhdx`, `HCS`, `Bash/Service/CreateInstance`, or WSL mount error.
+
+**Fix:** This is a WSL environment error, not a ByteMind package error. In a Windows terminal, use the PowerShell install script:
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
+```
+
+Only use `install.sh | bash` after you are inside a working WSL/Linux shell. WSL `~/bin/bytemind` and Windows `%USERPROFILE%\bin\bytemind.exe` are different files.
 
 ## Provider Authentication Failed
 

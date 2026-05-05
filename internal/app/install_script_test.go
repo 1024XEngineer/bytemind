@@ -56,3 +56,29 @@ func TestInstallScriptsDefaultToUserHomeBin(t *testing.T) {
 		t.Fatal("install.ps1 should default BYTEMIND_INSTALL_DIR to $HOME\\bin")
 	}
 }
+
+func TestInstallScriptsWarnWhenPathResolutionIsShadowed(t *testing.T) {
+	shellScript := loadInstallScript(t, "install.sh")
+	for _, snippet := range []string{
+		`show_path_resolution_hint`,
+		`command -v bytemind`,
+		`not ${installed_binary}`,
+		`move ${INSTALL_DIR} earlier in PATH`,
+	} {
+		if !strings.Contains(shellScript, snippet) {
+			t.Fatalf("install.sh missing PATH shadow warning snippet: %q", snippet)
+		}
+	}
+
+	powerShellScript := loadInstallScript(t, "install.ps1")
+	for _, snippet := range []string{
+		`Show-PathResolutionHint`,
+		`Get-Command bytemind`,
+		`not $InstalledBinary`,
+		`before the older PATH entry`,
+	} {
+		if !strings.Contains(powerShellScript, snippet) {
+			t.Fatalf("install.ps1 missing PATH shadow warning snippet: %q", snippet)
+		}
+	}
+}
