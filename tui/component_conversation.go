@@ -454,6 +454,10 @@ func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded boo
 	// Build detail lines from each entry's CompactBody.
 	detailLines := make([]string, 0, len(group))
 	connectorStyle := lipgloss.NewStyle().Foreground(colorTool)
+	style := resolveToolRunSectionStyle(status)
+	contentWidth := max(8, width-style.GetHorizontalFrameSize())
+	// Available width for detail text: contentWidth - indent(2) - connector(1)
+	maxDetail := max(12, contentWidth-3)
 	for _, item := range group {
 		compact := item.CompactBody
 		if compact == "" {
@@ -462,12 +466,13 @@ func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded boo
 		if compact == "" {
 			continue
 		}
+		if runewidth.StringWidth(compact) > maxDetail {
+			compact = runewidth.Truncate(compact, maxDetail, "…")
+		}
 		detailLines = append(detailLines, connectorStyle.Render(toolTreeChar)+compact)
 	}
 
 	indent := "  "
-	style := resolveToolRunSectionStyle(status)
-	contentWidth := max(8, width-style.GetHorizontalFrameSize())
 	body := headLine
 	if toolDetailsExpanded && len(detailLines) > 0 {
 		// Truncate headLine to leave room for detail lines so lipgloss
