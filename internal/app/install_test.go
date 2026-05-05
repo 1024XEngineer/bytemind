@@ -60,6 +60,108 @@ func TestRunInstallWarnsWhenCommandIsShadowedInPath(t *testing.T) {
 	}
 }
 
+func TestRunInstallPrintsPathHintWhenPathUpdateDisabled(t *testing.T) {
+	previousLookPath := installCommandLookPath
+	t.Cleanup(func() {
+		installCommandLookPath = previousLookPath
+	})
+	installCommandLookPath = func(string) (string, error) {
+		return "", os.ErrNotExist
+	}
+
+	root := t.TempDir()
+	targetDir := filepath.Join(root, "bin")
+	t.Setenv("PATH", filepath.Join(root, "other"))
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := RunInstall([]string{"-to", targetDir, "-add-to-path=false"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "Add this directory to PATH") {
+		t.Fatalf("expected manual PATH hint, got %q", output)
+	}
+	if !strings.Contains(output, targetDir) {
+		t.Fatalf("expected output to mention target dir %q, got %q", targetDir, output)
+	}
+}
+
+func TestInstallCommandNameFallsBackForEmptyPath(t *testing.T) {
+	if got := installCommandName(""); got != "bytemind" {
+		t.Fatalf("expected empty path to fall back to bytemind, got %q", got)
+	}
+}
+
+func TestSameCommandPathTreatsHardlinksAsSameFile(t *testing.T) {
+	dir := t.TempDir()
+	original := filepath.Join(dir, "bytemind.exe")
+	linked := filepath.Join(dir, "linked-bytemind.exe")
+	if err := os.WriteFile(original, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(original, linked); err != nil {
+		t.Skipf("hardlinks are not available: %v", err)
+	}
+	if !sameCommandPath(original, linked) {
+		t.Fatalf("expected hardlinked paths to be treated as the same command: %q %q", original, linked)
+	}
+}
+
+func TestSameCommandPathBranches(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.exe")
+	second := filepath.Join(dir, "second.exe")
+	if err := os.WriteFile(first, []byte("first"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte("second"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if sameCommandPath("", first) {
+		t.Fatal("expected empty command path not to match")
+	}
+	if !sameCommandPath(first, first) {
+		t.Fatal("expected identical command paths to match")
+	}
+	if sameCommandPath(first, second) {
+		t.Fatal("expected different files not to match")
+	}
+	if sameCommandPath(first, filepath.Join(dir, "missing.exe")) {
+		t.Fatal("expected missing target path not to match")
+	}
+}
+
+func TestPrintPathShadowWarningSkipsWhenLookPathFailsOrMatches(t *testing.T) {
+	previousLookPath := installCommandLookPath
+	t.Cleanup(func() {
+		installCommandLookPath = previousLookPath
+	})
+
+	var stdout bytes.Buffer
+	installCommandLookPath = func(string) (string, error) {
+		return "", os.ErrNotExist
+	}
+	printPathShadowWarning(&stdout, "bytemind", "missing")
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no output when command lookup fails, got %q", stdout.String())
+	}
+
+	target := filepath.Join(t.TempDir(), defaultBinaryName(runtime.GOOS))
+	if err := os.WriteFile(target, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	installCommandLookPath = func(string) (string, error) {
+		return target, nil
+	}
+	printPathShadowWarning(&stdout, "bytemind", target)
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no output when command resolves to target, got %q", stdout.String())
+	}
+}
+
 func TestDefaultBinaryName(t *testing.T) {
 	if got := defaultBinaryName("windows"); got != "bytemind.exe" {
 		t.Fatalf("expected windows binary name with .exe, got %q", got)

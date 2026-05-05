@@ -57,7 +57,7 @@ bytemind run -prompt "全库重命名 Foo 为 Bar" -max-iterations 64
 
 ```bash
 bytemind --version
-# v0.1.5
+# vX.Y.Z
 ```
 
 ## 会话斜杠命令

@@ -20,15 +20,17 @@ export PATH="$HOME/bin:$PATH"
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh \
-  | BYTEMIND_VERSION=v0.1.5 bash
+  | BYTEMIND_VERSION=vX.Y.Z bash
 ```
 
 Windows PowerShell：
 
 ```powershell
-$env:BYTEMIND_VERSION = 'v0.1.5'
+$env:BYTEMIND_VERSION = 'vX.Y.Z'
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
+
+将 `vX.Y.Z` 替换为你要安装的发布标签。
 
 ### 更新后为什么还是旧版本？
 

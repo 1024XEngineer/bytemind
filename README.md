@@ -59,14 +59,14 @@ Windows PowerShell：
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
-安装指定版本（示例 `v0.3.0`）：
+安装指定版本（将 `vX.Y.Z` 替换为要安装的发布标签）：
 
 ```bash
-BYTEMIND_VERSION=v0.3.0 curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=vX.Y.Z bash
 ```
 
 ```powershell
-$env:BYTEMIND_VERSION='v0.3.0'; iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
+$env:BYTEMIND_VERSION='vX.Y.Z'; iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
 更多安装方式见：[docs/installation.md](docs/installation.md)

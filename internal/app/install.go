@@ -91,7 +91,27 @@ func printPathShadowWarning(w io.Writer, commandName, targetPath string) {
 }
 
 func sameCommandPath(a, b string) bool {
-	return normalizeComparablePath(a) == normalizeComparablePath(b)
+	aPath := normalizeComparablePath(a)
+	bPath := normalizeComparablePath(b)
+	if aPath == "" || bPath == "" {
+		return false
+	}
+	if aPath == bPath {
+		return true
+	}
+
+	aInfo, aErr := os.Stat(a)
+	bInfo, bErr := os.Stat(b)
+	if aErr == nil && bErr == nil && os.SameFile(aInfo, bInfo) {
+		return true
+	}
+
+	aReal, aErr := filepath.EvalSymlinks(a)
+	bReal, bErr := filepath.EvalSymlinks(b)
+	if aErr != nil || bErr != nil {
+		return false
+	}
+	return normalizeComparablePath(aReal) == normalizeComparablePath(bReal)
 }
 
 func normalizeComparablePath(path string) string {

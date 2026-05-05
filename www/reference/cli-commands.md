@@ -57,7 +57,7 @@ Print the installed version, then exit.
 
 ```bash
 bytemind --version
-# v0.1.5
+# vX.Y.Z
 ```
 
 ## Session Slash Commands

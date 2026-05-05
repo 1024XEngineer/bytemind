@@ -20,15 +20,17 @@ Add that line to your `~/.bashrc` or `~/.zshrc` to make it permanent.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh \
-  | BYTEMIND_VERSION=v0.1.5 bash
+  | BYTEMIND_VERSION=vX.Y.Z bash
 ```
 
 Windows PowerShell:
 
 ```powershell
-$env:BYTEMIND_VERSION = 'v0.1.5'
+$env:BYTEMIND_VERSION = 'vX.Y.Z'
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
+
+Replace `vX.Y.Z` with the release tag you want to install.
 
 ### Why does the old version still run after updating?
 

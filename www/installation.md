@@ -37,18 +37,18 @@ Pin a version in production environments to avoid unexpected behavior changes fr
 ### macOS / Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=v0.1.5 bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=vX.Y.Z bash
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
-$env:BYTEMIND_VERSION = 'v0.1.5'
+$env:BYTEMIND_VERSION = 'vX.Y.Z'
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
 :::tip Browse available versions
-All releases and their changelogs are listed on the [GitHub Releases](https://github.com/1024XEngineer/bytemind/releases) page.
+Replace `vX.Y.Z` with a release tag from the [GitHub Releases](https://github.com/1024XEngineer/bytemind/releases) page.
 :::
 
 ## Configuring PATH
@@ -89,7 +89,7 @@ Use `BYTEMIND_INSTALL_DIR` to install to a custom location:
 ### macOS / Linux
 
 ```bash
-BYTEMIND_INSTALL_DIR=/usr/local/bin curl -fsSL .../install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_INSTALL_DIR=/usr/local/bin bash
 ```
 
 ### Windows (PowerShell)
@@ -151,7 +151,7 @@ bytemind --version
 Example output:
 
 ```
-v0.1.5
+vX.Y.Z
 ```
 
 ## Updating

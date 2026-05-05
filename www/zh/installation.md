@@ -37,18 +37,18 @@ iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/
 ### macOS / Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=v0.1.5 bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=vX.Y.Z bash
 ```
 
 ### Windows（PowerShell）
 
 ```powershell
-$env:BYTEMIND_VERSION = 'v0.1.5'
+$env:BYTEMIND_VERSION = 'vX.Y.Z'
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
 :::tip 查看可用版本
-在 [GitHub Releases](https://github.com/1024XEngineer/bytemind/releases) 页面可以浏览所有发布版本及 CHANGELOG。
+将 `vX.Y.Z` 替换为 [GitHub Releases](https://github.com/1024XEngineer/bytemind/releases) 页面中的发布标签。
 :::
 
 ## 配置 PATH
@@ -89,7 +89,7 @@ Get-Command bytemind -All
 ### macOS / Linux
 
 ```bash
-BYTEMIND_INSTALL_DIR=/usr/local/bin curl -fsSL .../install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_INSTALL_DIR=/usr/local/bin bash
 ```
 
 ### Windows（PowerShell）
@@ -151,7 +151,7 @@ bytemind --version
 输出示例：
 
 ```
-v0.1.5
+vX.Y.Z
 ```
 
 ## 更新
