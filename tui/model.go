@@ -2084,18 +2084,11 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 				if name == "" {
 					name = "tool"
 				}
-				renderer := GetToolRenderer(name)
-				var summary string
-				var lines []string
-				var status string
-				var compactBody string
-				if renderer != nil {
-					summary, lines, status = renderer.ResultSummary(part.ToolResult.Content)
-					compactBody = renderer.CompactLine(part.ToolResult.Content)
-				} else {
-					summary, lines, status = summarizeTool(name, part.ToolResult.Content)
-					compactBody = summary
-				}
+				rendered := renderToolPayload(name, part.ToolResult.Content)
+				summary := rendered.Summary
+				lines := rendered.DetailLines
+				status := rendered.Status
+				compactBody := rendered.CompactLine
 				items = append(items, chatEntry{
 					Kind:        "tool",
 					Title:       toolEntryTitle(name),
@@ -2122,18 +2115,11 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 			if name == "" {
 				name = "tool"
 			}
-			renderer := GetToolRenderer(name)
-			var summary string
-			var lines []string
-			var status string
-			var compactBody string
-			if renderer != nil {
-				summary, lines, status = renderer.ResultSummary(message.Content)
-				compactBody = renderer.CompactLine(message.Content)
-			} else {
-				summary, lines, status = summarizeTool(name, message.Content)
-				compactBody = summary
-			}
+			rendered := renderToolPayload(name, message.Content)
+			summary := rendered.Summary
+			lines := rendered.DetailLines
+			status := rendered.Status
+			compactBody := rendered.CompactLine
 			items = append(items, chatEntry{
 				Kind:        "tool",
 				Title:       toolEntryTitle(name),

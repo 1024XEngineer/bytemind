@@ -1,28 +1,32 @@
 package tui
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
+
+// ToolRenderResult is the normalized output used by the TUI pipeline.
+type ToolRenderResult struct {
+	Summary     string
+	DetailLines []string
+	Status      string
+	CompactLine string
+}
 
 // ToolRenderer describes how a tool's execution is displayed in the TUI.
-// Each tool registers an implementation; the rendering pipeline calls these
-// methods instead of the old centralized summarizeTool switch-case.
+// Each tool registers an implementation; the rendering pipeline calls Render
+// once so payload parsing is not repeated for summary and compact fields.
 type ToolRenderer interface {
 	// DisplayLabel returns the short tag shown in the tool header (e.g. "READ", "SHELL").
 	DisplayLabel() string
 
-	// ResultSummary parses the tool's JSON payload and returns:
-	//   summary  – one-line description for the collapsed tree node
-	//   lines    – detail lines shown when expanded
-	//   status   – "done", "warn", "error", etc.
-	ResultSummary(payload string) (summary string, lines []string, status string)
-
-	// CompactLine returns a single-line representation for the collapsed tree view.
-	// For example: "model.go (1-50)" for read_file, "3 matches for auth" for search_text.
-	CompactLine(payload string) string
+	// Render parses payload once and returns all fields needed by the TUI.
+	Render(payload string) ToolRenderResult
 }
 
 var (
-	rendererMu   sync.RWMutex
-	rendererReg  = make(map[string]ToolRenderer)
+	rendererMu  sync.RWMutex
+	rendererReg = make(map[string]ToolRenderer)
 )
 
 // RegisterToolRenderer registers a ToolRenderer for the given tool name.
@@ -44,10 +48,32 @@ type defaultRenderer struct{}
 
 func (defaultRenderer) DisplayLabel() string { return "TOOL" }
 
-func (defaultRenderer) ResultSummary(payload string) (string, []string, string) {
-	return compact(payload, 96), nil, "done"
+func (defaultRenderer) Render(payload string) ToolRenderResult {
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "done",
+		CompactLine: compact(payload, 80),
+	}
 }
 
-func (defaultRenderer) CompactLine(payload string) string {
-	return compact(payload, 80)
+func renderToolPayload(name, payload string) ToolRenderResult {
+	renderer := GetToolRenderer(name)
+	if renderer == nil {
+		renderer = defaultRenderer{}
+	}
+	return normalizeToolRenderResult(renderer.Render(payload), payload)
+}
+
+func normalizeToolRenderResult(result ToolRenderResult, payload string) ToolRenderResult {
+	if strings.TrimSpace(result.Status) == "" {
+		result.Status = "done"
+	}
+	if strings.TrimSpace(result.Summary) == "" {
+		result.Summary = compact(payload, 96)
+	}
+	if strings.TrimSpace(result.CompactLine) == "" {
+		result.CompactLine = compact(payload, 80)
+	}
+	return result
 }

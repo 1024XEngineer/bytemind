@@ -14,7 +14,7 @@ type readFileRenderer struct{}
 
 func (readFileRenderer) DisplayLabel() string { return "READ" }
 
-func (readFileRenderer) ResultSummary(payload string) (string, []string, string) {
+func (readFileRenderer) Render(payload string) ToolRenderResult {
 	var result struct {
 		Path      string `json:"path"`
 		StartLine int    `json:"start_line"`
@@ -22,29 +22,27 @@ func (readFileRenderer) ResultSummary(payload string) (string, []string, string)
 	}
 	if json.Unmarshal([]byte(payload), &result) == nil {
 		path := compactDisplayPath(result.Path)
-		summary := "Read " + filepath.Base(result.Path)
-		return summary, []string{
-			fmt.Sprintf("range: %d-%d", result.StartLine, result.EndLine),
-			"path: " + path,
-		}, "done"
-	}
-	return compact(payload, 96), nil, "done"
-}
-
-func (readFileRenderer) CompactLine(payload string) string {
-	var result struct {
-		Path      string `json:"path"`
-		StartLine int    `json:"start_line"`
-		EndLine   int    `json:"end_line"`
-	}
-	if json.Unmarshal([]byte(payload), &result) == nil {
 		name := filepath.Base(result.Path)
+		compactLine := name
 		if result.StartLine > 0 || result.EndLine > 0 {
-			return fmt.Sprintf("%s (%d-%d)", name, result.StartLine, result.EndLine)
+			compactLine = fmt.Sprintf("%s (%d-%d)", name, result.StartLine, result.EndLine)
 		}
-		return name
+		return ToolRenderResult{
+			Summary: "Read " + name,
+			DetailLines: []string{
+				fmt.Sprintf("range: %d-%d", result.StartLine, result.EndLine),
+				"path: " + path,
+			},
+			Status:      "done",
+			CompactLine: compactLine,
+		}
 	}
-	return compact(payload, 80)
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "done",
+		CompactLine: compact(payload, 80),
+	}
 }
 
 // listFilesRenderer handles "list_files" tool.
@@ -52,11 +50,9 @@ type listFilesRenderer struct{}
 
 func (listFilesRenderer) DisplayLabel() string { return "LIST" }
 
-func (listFilesRenderer) ResultSummary(payload string) (string, []string, string) {
+func (listFilesRenderer) Render(payload string) ToolRenderResult {
 	var result struct {
-		Root  string `json:"root"`
 		Items []struct {
-			Path string `json:"path"`
 			Type string `json:"type"`
 		} `json:"items"`
 	}
@@ -70,30 +66,19 @@ func (listFilesRenderer) ResultSummary(payload string) (string, []string, string
 				files++
 			}
 		}
-		return fmt.Sprintf("Read %d files, listed %d directories", files, dirs), []string{}, "done"
-	}
-	return compact(payload, 96), nil, "done"
-}
-
-func (listFilesRenderer) CompactLine(payload string) string {
-	var result struct {
-		Items []struct {
-			Type string `json:"type"`
-		} `json:"items"`
-	}
-	if json.Unmarshal([]byte(payload), &result) == nil {
-		files := 0
-		dirs := 0
-		for _, item := range result.Items {
-			if item.Type == "dir" {
-				dirs++
-			} else {
-				files++
-			}
+		return ToolRenderResult{
+			Summary:     fmt.Sprintf("Read %d files, listed %d directories", files, dirs),
+			DetailLines: []string{},
+			Status:      "done",
+			CompactLine: fmt.Sprintf("%d files, %d dirs", files, dirs),
 		}
-		return fmt.Sprintf("%d files, %d dirs", files, dirs)
 	}
-	return compact(payload, 80)
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "done",
+		CompactLine: compact(payload, 80),
+	}
 }
 
 // searchTextRenderer handles "search_text" tool.
@@ -101,7 +86,7 @@ type searchTextRenderer struct{}
 
 func (searchTextRenderer) DisplayLabel() string { return "SEARCH" }
 
-func (searchTextRenderer) ResultSummary(payload string) (string, []string, string) {
+func (searchTextRenderer) Render(payload string) ToolRenderResult {
 	var result struct {
 		Query   string `json:"query"`
 		Matches []struct {
@@ -111,20 +96,20 @@ func (searchTextRenderer) ResultSummary(payload string) (string, []string, strin
 		} `json:"matches"`
 	}
 	if json.Unmarshal([]byte(payload), &result) == nil {
-		return fmt.Sprintf("%d matches for %q", len(result.Matches), result.Query), []string{}, "done"
+		combined := fmt.Sprintf("%d matches for %q", len(result.Matches), result.Query)
+		return ToolRenderResult{
+			Summary:     combined,
+			DetailLines: []string{},
+			Status:      "done",
+			CompactLine: combined,
+		}
 	}
-	return compact(payload, 96), nil, "done"
-}
-
-func (searchTextRenderer) CompactLine(payload string) string {
-	var result struct {
-		Query   string `json:"query"`
-		Matches []struct{} `json:"matches"`
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "done",
+		CompactLine: compact(payload, 80),
 	}
-	if json.Unmarshal([]byte(payload), &result) == nil {
-		return fmt.Sprintf("%d matches for %q", len(result.Matches), result.Query)
-	}
-	return compact(payload, 80)
 }
 
 // runShellRenderer handles "run_shell" tool.
@@ -132,14 +117,19 @@ type runShellRenderer struct{}
 
 func (runShellRenderer) DisplayLabel() string { return "SHELL" }
 
-func (runShellRenderer) ResultSummary(payload string) (string, []string, string) {
-	// Check for error envelope first
+func (runShellRenderer) Render(payload string) ToolRenderResult {
+	// Check for error envelope first.
 	var envelope struct {
 		OK    *bool  `json:"ok"`
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(payload), &envelope); err == nil && envelope.Error != "" {
-		return compactToolText(envelope.Error, 88), nil, "error"
+		return ToolRenderResult{
+			Summary:     compactToolText(envelope.Error, 88),
+			DetailLines: nil,
+			Status:      "error",
+			CompactLine: compact(payload, 80),
+		}
 	}
 
 	var result struct {
@@ -160,19 +150,19 @@ func (runShellRenderer) ResultSummary(payload string) (string, []string, string)
 		if !result.OK {
 			status = "warn"
 		}
-		return fmt.Sprintf("Shell exited with code %d", result.ExitCode), lines, status
+		return ToolRenderResult{
+			Summary:     fmt.Sprintf("Shell exited with code %d", result.ExitCode),
+			DetailLines: lines,
+			Status:      status,
+			CompactLine: fmt.Sprintf("exit code %d", result.ExitCode),
+		}
 	}
-	return compact(payload, 96), nil, "done"
-}
-
-func (runShellRenderer) CompactLine(payload string) string {
-	var result struct {
-		ExitCode int `json:"exit_code"`
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "done",
+		CompactLine: compact(payload, 80),
 	}
-	if json.Unmarshal([]byte(payload), &result) == nil {
-		return fmt.Sprintf("exit code %d", result.ExitCode)
-	}
-	return compact(payload, 80)
 }
 
 // writeFileRenderer handles "write_file" tool.
@@ -180,27 +170,28 @@ type writeFileRenderer struct{}
 
 func (writeFileRenderer) DisplayLabel() string { return "WRITE" }
 
-func (writeFileRenderer) ResultSummary(payload string) (string, []string, string) {
+func (writeFileRenderer) Render(payload string) ToolRenderResult {
 	var result struct {
 		Path         string `json:"path"`
 		BytesWritten int    `json:"bytes_written"`
 	}
 	if json.Unmarshal([]byte(payload), &result) == nil {
-		return "创建 " + filepath.Base(result.Path), []string{
-			fmt.Sprintf("写入 %d 字节", result.BytesWritten),
-		}, "done"
+		name := filepath.Base(result.Path)
+		return ToolRenderResult{
+			Summary: "Created " + name,
+			DetailLines: []string{
+				fmt.Sprintf("wrote %d bytes", result.BytesWritten),
+			},
+			Status:      "done",
+			CompactLine: name,
+		}
 	}
-	return compact(payload, 96), nil, "done"
-}
-
-func (writeFileRenderer) CompactLine(payload string) string {
-	var result struct {
-		Path string `json:"path"`
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "done",
+		CompactLine: compact(payload, 80),
 	}
-	if json.Unmarshal([]byte(payload), &result) == nil {
-		return filepath.Base(result.Path)
-	}
-	return compact(payload, 80)
 }
 
 // replaceInFileRenderer handles "replace_in_file" tool.
@@ -208,29 +199,29 @@ type replaceInFileRenderer struct{}
 
 func (replaceInFileRenderer) DisplayLabel() string { return "EDIT" }
 
-func (replaceInFileRenderer) ResultSummary(payload string) (string, []string, string) {
+func (replaceInFileRenderer) Render(payload string) ToolRenderResult {
 	var result struct {
 		Path     string `json:"path"`
 		Replaced int    `json:"replaced"`
 		OldCount int    `json:"old_count"`
 	}
 	if json.Unmarshal([]byte(payload), &result) == nil {
-		return "改动 " + filepath.Base(result.Path), []string{
-			fmt.Sprintf("改动 %d 行", result.Replaced),
-		}, "done"
+		name := filepath.Base(result.Path)
+		return ToolRenderResult{
+			Summary: "Updated " + name,
+			DetailLines: []string{
+				fmt.Sprintf("replaced %d lines", result.Replaced),
+			},
+			Status:      "done",
+			CompactLine: fmt.Sprintf("%s (%d lines)", name, result.Replaced),
+		}
 	}
-	return compact(payload, 96), nil, "done"
-}
-
-func (replaceInFileRenderer) CompactLine(payload string) string {
-	var result struct {
-		Path     string `json:"path"`
-		Replaced int    `json:"replaced"`
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "done",
+		CompactLine: compact(payload, 80),
 	}
-	if json.Unmarshal([]byte(payload), &result) == nil {
-		return fmt.Sprintf("%s (%d lines)", filepath.Base(result.Path), result.Replaced)
-	}
-	return compact(payload, 80)
 }
 
 // applyPatchRenderer handles "apply_patch" tool.
@@ -238,7 +229,7 @@ type applyPatchRenderer struct{}
 
 func (applyPatchRenderer) DisplayLabel() string { return "PATCH" }
 
-func (applyPatchRenderer) ResultSummary(payload string) (string, []string, string) {
+func (applyPatchRenderer) Render(payload string) ToolRenderResult {
 	var result struct {
 		Operations []struct {
 			Type string `json:"type"`
@@ -253,25 +244,23 @@ func (applyPatchRenderer) ResultSummary(payload string) (string, []string, strin
 		if len(result.Operations) > 10 {
 			operationLines = append(operationLines, "...")
 		}
-		return fmt.Sprintf("改动 %d 个文件", len(result.Operations)), operationLines, "done"
-	}
-	return compact(payload, 96), nil, "done"
-}
-
-func (applyPatchRenderer) CompactLine(payload string) string {
-	var result struct {
-		Operations []struct {
-			Type string `json:"type"`
-			Path string `json:"path"`
-		} `json:"operations"`
-	}
-	if json.Unmarshal([]byte(payload), &result) == nil {
+		compactLine := fmt.Sprintf("%d files", len(result.Operations))
 		if len(result.Operations) == 1 {
-			return filepath.Base(result.Operations[0].Path)
+			compactLine = filepath.Base(result.Operations[0].Path)
 		}
-		return fmt.Sprintf("%d files", len(result.Operations))
+		return ToolRenderResult{
+			Summary:     fmt.Sprintf("Updated %d files", len(result.Operations)),
+			DetailLines: operationLines,
+			Status:      "done",
+			CompactLine: compactLine,
+		}
 	}
-	return compact(payload, 80)
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "done",
+		CompactLine: compact(payload, 80),
+	}
 }
 
 // updatePlanRenderer handles "update_plan" tool.
@@ -279,7 +268,7 @@ type updatePlanRenderer struct{}
 
 func (updatePlanRenderer) DisplayLabel() string { return "PLAN" }
 
-func (updatePlanRenderer) ResultSummary(payload string) (string, []string, string) {
+func (updatePlanRenderer) Render(payload string) ToolRenderResult {
 	var result struct {
 		Plan planpkg.State `json:"plan"`
 	}
@@ -289,19 +278,19 @@ func (updatePlanRenderer) ResultSummary(payload string) (string, []string, strin
 			step := result.Plan.Steps[i]
 			lines = append(lines, fmt.Sprintf("[%s] %s", step.Status, step.Title))
 		}
-		return fmt.Sprintf("Updated plan with %d step(s)", len(result.Plan.Steps)), lines, "done"
+		return ToolRenderResult{
+			Summary:     fmt.Sprintf("Updated plan with %d step(s)", len(result.Plan.Steps)),
+			DetailLines: lines,
+			Status:      "done",
+			CompactLine: fmt.Sprintf("%d step(s)", len(result.Plan.Steps)),
+		}
 	}
-	return compact(payload, 96), nil, "done"
-}
-
-func (updatePlanRenderer) CompactLine(payload string) string {
-	var result struct {
-		Plan planpkg.State `json:"plan"`
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "done",
+		CompactLine: compact(payload, 80),
 	}
-	if json.Unmarshal([]byte(payload), &result) == nil {
-		return fmt.Sprintf("%d step(s)", len(result.Plan.Steps))
-	}
-	return compact(payload, 80)
 }
 
 // webSearchRenderer handles "web_search" tool.
@@ -309,7 +298,7 @@ type webSearchRenderer struct{}
 
 func (webSearchRenderer) DisplayLabel() string { return "SEARCH" }
 
-func (webSearchRenderer) ResultSummary(payload string) (string, []string, string) {
+func (webSearchRenderer) Render(payload string) ToolRenderResult {
 	var result struct {
 		Query   string `json:"query"`
 		Results []struct {
@@ -327,20 +316,19 @@ func (webSearchRenderer) ResultSummary(payload string) (string, []string, string
 			}
 			lines = append(lines, title+" - "+compact(item.URL, 52))
 		}
-		return fmt.Sprintf("Web search for %q", result.Query), lines, "done"
+		return ToolRenderResult{
+			Summary:     fmt.Sprintf("Web search for %q", result.Query),
+			DetailLines: lines,
+			Status:      "done",
+			CompactLine: fmt.Sprintf("%d results for %q", len(result.Results), result.Query),
+		}
 	}
-	return compact(payload, 96), nil, "done"
-}
-
-func (webSearchRenderer) CompactLine(payload string) string {
-	var result struct {
-		Query   string   `json:"query"`
-		Results []struct{} `json:"results"`
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "done",
+		CompactLine: compact(payload, 80),
 	}
-	if json.Unmarshal([]byte(payload), &result) == nil {
-		return fmt.Sprintf("%d results for %q", len(result.Results), result.Query)
-	}
-	return compact(payload, 80)
 }
 
 // webFetchRenderer handles "web_fetch" tool.
@@ -348,7 +336,7 @@ type webFetchRenderer struct{}
 
 func (webFetchRenderer) DisplayLabel() string { return "FETCH" }
 
-func (webFetchRenderer) ResultSummary(payload string) (string, []string, string) {
+func (webFetchRenderer) Render(payload string) ToolRenderResult {
 	var result struct {
 		URL        string `json:"url"`
 		StatusCode int    `json:"status_code"`
@@ -367,17 +355,17 @@ func (webFetchRenderer) ResultSummary(payload string) (string, []string, string)
 		if result.Truncated {
 			lines = append(lines, "content: truncated")
 		}
-		return "Fetched " + compact(result.URL, 56), lines, "done"
+		return ToolRenderResult{
+			Summary:     "Fetched " + compact(result.URL, 56),
+			DetailLines: lines,
+			Status:      "done",
+			CompactLine: compact(result.URL, 60),
+		}
 	}
-	return compact(payload, 96), nil, "done"
-}
-
-func (webFetchRenderer) CompactLine(payload string) string {
-	var result struct {
-		URL string `json:"url"`
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "done",
+		CompactLine: compact(payload, 80),
 	}
-	if json.Unmarshal([]byte(payload), &result) == nil {
-		return compact(result.URL, 60)
-	}
-	return compact(payload, 80)
 }

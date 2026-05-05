@@ -232,18 +232,11 @@ func (m *model) handleAgentEvent(event Event) {
 		})
 		m.statusNote = "Running tool: " + event.ToolName
 	case EventToolCallCompleted:
-		renderer := GetToolRenderer(event.ToolName)
-		var summary string
-		var lines []string
-		var status string
-		var compactBody string
-		if renderer != nil {
-			summary, lines, status = renderer.ResultSummary(event.ToolResult)
-			compactBody = renderer.CompactLine(event.ToolResult)
-		} else {
-			summary, lines, status = summarizeTool(event.ToolName, event.ToolResult)
-			compactBody = summary
-		}
+		rendered := renderToolPayload(event.ToolName, event.ToolResult)
+		summary := rendered.Summary
+		lines := rendered.DetailLines
+		status := rendered.Status
+		compactBody := rendered.CompactLine
 		m.finishToolCall(event.ToolCallID, event.ToolName, joinSummary(summary, lines), status, compactBody, lines)
 		if len(m.toolRuns) > 0 {
 			index := len(m.toolRuns) - 1
@@ -387,7 +380,10 @@ func (m *model) handleSubAgentEvent(event Event) {
 			Status: "running",
 		})
 	case EventToolCallCompleted:
-		summary, lines, status := summarizeTool(event.ToolName, event.ToolResult)
+		rendered := renderToolPayload(event.ToolName, event.ToolResult)
+		summary := rendered.Summary
+		lines := rendered.DetailLines
+		status := rendered.Status
 		body := joinSummary(summary, lines)
 		for i := len(m.subAgentStreamItems) - 1; i >= 0; i-- {
 			item := &m.subAgentStreamItems[i]
