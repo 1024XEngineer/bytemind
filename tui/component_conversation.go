@@ -473,14 +473,15 @@ func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded boo
 	}
 
 	indent := "  "
+
+	// Always truncate headLine to fit within contentWidth so lipgloss
+	// doesn't wrap it at an ugly word boundary.
+	if runewidth.StringWidth(headLine) > contentWidth {
+		headLine = runewidth.Truncate(headLine, contentWidth, "…")
+	}
+
 	body := headLine
 	if toolDetailsExpanded && len(detailLines) > 0 {
-		// Truncate headLine to leave room for detail lines so lipgloss
-		// doesn't wrap it at an ugly word boundary.
-		maxHead := contentWidth - 4 // indent + connector prefix
-		if maxHead > 0 && runewidth.StringWidth(headLine) > maxHead {
-			headLine = runewidth.Truncate(headLine, maxHead, "…")
-		}
 		body = headLine + "\n" + indent + strings.Join(detailLines, "\n"+indent)
 	}
 	return style.Width(contentWidth).Render(body)
@@ -524,6 +525,15 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 		headLine += "  " + statusBadge
 	}
 
+	style := resolveToolRunSectionStyle(item.Status)
+	contentWidth := max(8, width-style.GetHorizontalFrameSize())
+
+	// Always truncate headLine to fit within contentWidth so lipgloss
+	// doesn't wrap it at an ugly word boundary.
+	if runewidth.StringWidth(headLine) > contentWidth {
+		headLine = runewidth.Truncate(headLine, contentWidth, "…")
+	}
+
 	indent := "  "
 	body := headLine
 	if toolDetailsExpanded && len(item.DetailLines) > 0 {
@@ -541,8 +551,6 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 		}
 	}
 
-	style := resolveToolRunSectionStyle(item.Status)
-	contentWidth := max(8, width-style.GetHorizontalFrameSize())
 	return style.Width(contentWidth).Render(body)
 }
 
