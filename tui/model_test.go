@@ -6377,6 +6377,27 @@ func TestRunFinishedClearsPendingInterruptState(t *testing.T) {
 	}
 }
 
+func TestRunFinishedClearsPendingInterruptStateOnFailure(t *testing.T) {
+	m := model{
+		async:                  make(chan tea.Msg, 1),
+		busy:                   true,
+		activeRunID:            5,
+		interrupting:           true,
+		pendingInterrupt:       true,
+		pendingInterruptReason: "esc",
+	}
+
+	got, _ := m.Update(runFinishedMsg{RunID: 5, Err: errors.New("network unavailable")})
+	updated := got.(model)
+
+	if updated.pendingInterrupt {
+		t.Fatalf("expected pending interrupt flag to clear after failed run finish")
+	}
+	if updated.pendingInterruptReason != "" {
+		t.Fatalf("expected pending interrupt reason cleared after failed run finish, got %q", updated.pendingInterruptReason)
+	}
+}
+
 func TestClassifyRunFinish(t *testing.T) {
 	if got := classifyRunFinish(nil, false); got != runFinishReasonCompleted {
 		t.Fatalf("expected completed, got %q", got)
