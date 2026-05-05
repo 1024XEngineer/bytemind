@@ -174,7 +174,8 @@ func (m model) renderFooterInfoLine() string {
 	if modelName == "-" {
 		modelName = ""
 	}
-	right := renderFooterInfoRight(modelName, 1<<30)
+	hints := m.footerShortcutHints()
+	right := renderFooterInfoRight(modelName, hints, 1<<30)
 
 	leftW := lipgloss.Width(left)
 	rightW := lipgloss.Width(right)
@@ -182,9 +183,9 @@ func (m model) renderFooterInfoLine() string {
 	if gap < 2 {
 		available := max(10, width-leftW-2)
 		if available <= 10 {
-			return lipgloss.NewStyle().Width(width).Render(renderFooterInfoRight(modelName, width))
+			return lipgloss.NewStyle().Width(width).Render(renderFooterInfoRight(modelName, hints, width))
 		}
-		compacted := renderFooterInfoRight(modelName, available)
+		compacted := renderFooterInfoRight(modelName, hints, available)
 		gap = width - leftW - lipgloss.Width(compacted)
 		return lipgloss.NewStyle().Width(width).Render(left + strings.Repeat(" ", max(2, gap)) + compacted)
 	}
@@ -192,11 +193,20 @@ func (m model) renderFooterInfoLine() string {
 	return lipgloss.NewStyle().Width(width).Render(left + strings.Repeat(" ", gap) + right)
 }
 
-func renderFooterInfoRight(modelName string, maxWidth int) string {
+func (m model) footerShortcutHints() []footerShortcutHint {
+	hints := make([]footerShortcutHint, 0, len(footerShortcutHints)+1)
+	hints = append(hints, footerShortcutHints...)
+	if m.busy && m.runCancel != nil {
+		hints = append(hints, footerShortcutHint{Key: "Esc", Label: "interrupt"})
+	}
+	return hints
+}
+
+func renderFooterInfoRight(modelName string, hints []footerShortcutHint, maxWidth int) string {
 	maxWidth = max(1, maxWidth)
 	modelName = strings.TrimSpace(modelName)
 	if modelName == "" {
-		return renderInlineShortcutHintsCompacted(footerShortcutHints, maxWidth)
+		return renderInlineShortcutHintsCompacted(hints, maxWidth)
 	}
 	modelText := compact(modelName, maxWidth)
 	modelWidth := runewidth.StringWidth(modelText)
@@ -209,11 +219,11 @@ func renderFooterInfoRight(modelName string, maxWidth int) string {
 	if remaining <= 0 {
 		return mutedStyle.Render(modelText)
 	}
-	hints := renderInlineShortcutHintsCompacted(footerShortcutHints, remaining)
-	if strings.TrimSpace(hints) == "" {
+	hintsText := renderInlineShortcutHintsCompacted(hints, remaining)
+	if strings.TrimSpace(hintsText) == "" {
 		return mutedStyle.Render(modelText)
 	}
-	return mutedStyle.Render(modelText) + footerHintDividerStyle.Render(dividerPlain) + hints
+	return mutedStyle.Render(modelText) + footerHintDividerStyle.Render(dividerPlain) + hintsText
 }
 
 func renderFooterShortcutHints() string {
