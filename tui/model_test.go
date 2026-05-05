@@ -4143,6 +4143,100 @@ func TestEscapeClosesCommandPalette(t *testing.T) {
 	}
 }
 
+func TestEscapeDuringBusyInterruptsBeforeClearingSelection(t *testing.T) {
+	canceled := false
+	m := model{
+		screen:               screenChat,
+		busy:                 true,
+		runCancel:            func() { canceled = true },
+		phase:                "thinking",
+		inputSelectionActive: true,
+		inputSelectionStart:  viewportSelectionPoint{Col: 0, Row: 0},
+		inputSelectionEnd:    viewportSelectionPoint{Col: 2, Row: 0},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if !canceled {
+		t.Fatalf("expected esc to request run interrupt before clearing selection")
+	}
+	if !updated.interrupting {
+		t.Fatalf("expected esc to set interrupting state")
+	}
+	if !updated.inputSelectionActive {
+		t.Fatalf("expected esc interrupt path not to clear existing selection")
+	}
+	if updated.statusNote != "Interrupt requested. Stopping current run..." {
+		t.Fatalf("expected esc interrupt status note, got %q", updated.statusNote)
+	}
+}
+
+func TestEscapeClosesPromptSearchBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("draft")
+
+	m := model{
+		screen:                screenChat,
+		busy:                  true,
+		runCancel:             func() { canceled = true },
+		input:                 input,
+		promptSearchOpen:      true,
+		promptSearchBaseInput: "draft",
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.promptSearchOpen {
+		t.Fatalf("expected esc to close prompt search first")
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while prompt search overlay is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes prompt search")
+	}
+	if updated.statusNote != "Prompt search canceled." {
+		t.Fatalf("expected prompt search cancel note, got %q", updated.statusNote)
+	}
+}
+
+func TestEscapePrioritizesApprovalOverPromptSearch(t *testing.T) {
+	reply := make(chan approvalDecision, 1)
+	m := model{
+		approval: &approvalPrompt{
+			Command: "write_file",
+			Reason:  "needs approval",
+			Reply:   reply,
+			Kind:    approvalPromptKindTool,
+			Choice:  approvalChoiceApprove,
+		},
+		promptSearchOpen: true,
+		phase:            "approval",
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.approval != nil {
+		t.Fatalf("expected esc to resolve approval first")
+	}
+	if !updated.promptSearchOpen {
+		t.Fatalf("expected prompt search to remain open when esc is consumed by approval")
+	}
+	select {
+	case decision := <-reply:
+		if decision.Approved {
+			t.Fatalf("expected esc approval decision to reject")
+		}
+	default:
+		t.Fatalf("expected approval decision to be sent")
+	}
+}
+
 func TestCommandPaletteEnterOnQuitReturnsQuitCmd(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("/quit")

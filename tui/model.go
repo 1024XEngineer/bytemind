@@ -1278,9 +1278,55 @@ func (m model) mouseOverLandingInput(y int) bool {
 	return y >= inputTop && y <= inputBottom
 }
 
+func (m model) handleEscKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.approval != nil {
+		m.resolveApprovalDecision(false)
+		return m, nil
+	}
+	if m.promptSearchOpen {
+		return m.handlePromptSearchKey(msg)
+	}
+	if m.planActionOpen {
+		return m.handlePlanActionKey(msg)
+	}
+	if m.helpOpen {
+		m.helpOpen = false
+		return m, nil
+	}
+	if m.commandOpen {
+		return m.handleCommandPaletteKey(msg)
+	}
+	if m.skillsOpen {
+		m.skillsOpen = false
+		m.commandCursor = 0
+		return m, nil
+	}
+	if m.mentionOpen {
+		return m.handleMentionPaletteKey(msg)
+	}
+	if m.sessionsOpen {
+		return m.handleSessionsModalKey(msg)
+	}
+	if m.requestRunInterrupt("esc") {
+		if m.width > 0 && m.height > 0 {
+			m.syncLayoutForCurrentScreen()
+			m.refreshViewport()
+		}
+		return m, nil
+	}
+	if m.hasCopyableSelection() {
+		m.clearMouseSelection()
+		m.clearInputSelection()
+		m.statusNote = "Selection cleared."
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	pasteDebugf("handleKey %s %s", summarizePasteMsg(msg), m.pasteDebugState())
-	switch msg.String() {
+	key := msg.String()
+	switch key {
 	case "ctrl+c":
 		if m.hasCopyableSelection() {
 			return m, m.copyCurrentSelection()
@@ -1292,6 +1338,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.runCancel()
 		}
 		return m, tea.Quit
+	case "esc":
+		return m.handleEscKey(msg)
 	}
 
 	if m.promptSearchOpen {
@@ -1327,14 +1375,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.ingestPasteFragment(fragment, source)
 	}
 
-	switch msg.String() {
-	case "esc":
-		if m.hasCopyableSelection() {
-			m.clearMouseSelection()
-			m.clearInputSelection()
-			m.statusNote = "Selection cleared."
-			return m, nil
-		}
+	switch key {
 	case "tab":
 		if m.commandOpen || m.mentionOpen || m.sessionsOpen || m.helpOpen || m.approval != nil || m.planActionOpen {
 			break
@@ -1366,7 +1407,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.approval != nil {
-		switch msg.String() {
+		switch key {
 		case "left", "h", "up", "k", "shift+tab", "backtab":
 			m.setApprovalChoice(approvalChoiceApprove)
 		case "right", "l", "down", "j", "tab":
@@ -1382,7 +1423,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.helpOpen {
-		if msg.String() == "esc" || msg.String() == "ctrl+g" {
+		if key == "esc" || key == "ctrl+g" {
 			m.helpOpen = false
 		}
 		return m, nil
@@ -1407,7 +1448,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		switch msg.String() {
+		switch key {
 		case "esc":
 			m.skillsOpen = false
 			m.commandCursor = 0
@@ -1487,7 +1528,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	switch msg.String() {
+	switch key {
 	case "ctrl+l":
 		if !m.busy {
 			if err := m.openSessionsModal(); err != nil {
