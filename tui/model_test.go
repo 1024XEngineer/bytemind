@@ -4237,6 +4237,50 @@ func TestEscapePrioritizesApprovalOverPromptSearch(t *testing.T) {
 	}
 }
 
+func TestEscapeWhileInterruptingDoesNotInvokeRunCancelAgain(t *testing.T) {
+	cancelCalls := 0
+	m := model{
+		screen:       screenChat,
+		busy:         true,
+		interrupting: true,
+		runCancel:    func() { cancelCalls++ },
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if cancelCalls != 0 {
+		t.Fatalf("expected esc while already interrupting not to call runCancel again, got %d", cancelCalls)
+	}
+	if !updated.interrupting {
+		t.Fatalf("expected interrupting state to stay true")
+	}
+	if updated.statusNote != "Interrupt already requested. Waiting for current run to stop..." {
+		t.Fatalf("expected repeated interrupt hint, got %q", updated.statusNote)
+	}
+}
+
+func TestEscapeFallsBackToSelectionClearWhenRunIsNotCancelable(t *testing.T) {
+	m := model{
+		screen:               screenChat,
+		busy:                 true,
+		runCancel:            nil,
+		inputSelectionActive: true,
+		inputSelectionStart:  viewportSelectionPoint{Col: 0, Row: 0},
+		inputSelectionEnd:    viewportSelectionPoint{Col: 3, Row: 0},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.inputSelectionActive {
+		t.Fatalf("expected esc to clear selection when no cancelable run exists")
+	}
+	if updated.statusNote != "Selection cleared." {
+		t.Fatalf("expected selection cleared note, got %q", updated.statusNote)
+	}
+}
+
 func TestCommandPaletteEnterOnQuitReturnsQuitCmd(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("/quit")
