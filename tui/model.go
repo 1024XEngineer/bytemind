@@ -686,7 +686,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
-		if strings.EqualFold(strings.TrimSpace(m.phase), "thinking") || m.streamingIndex >= 0 {
+		if strings.EqualFold(strings.TrimSpace(m.phase), "thinking") || strings.EqualFold(strings.TrimSpace(m.phase), "tool") || m.streamingIndex >= 0 {
 			m.updateThinkingCard()
 			m.refreshViewport()
 		}

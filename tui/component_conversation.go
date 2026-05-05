@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 )
 
 const (
@@ -465,13 +466,18 @@ func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded boo
 	}
 
 	indent := "  "
-	body := headLine
-	if toolDetailsExpanded && len(detailLines) > 0 {
-		body = headLine + "\n" + indent + strings.Join(detailLines, "\n"+indent)
-	}
-
 	style := resolveToolRunSectionStyle(status)
 	contentWidth := max(8, width-style.GetHorizontalFrameSize())
+	body := headLine
+	if toolDetailsExpanded && len(detailLines) > 0 {
+		// Truncate headLine to leave room for detail lines so lipgloss
+		// doesn't wrap it at an ugly word boundary.
+		maxHead := contentWidth - 4 // indent + connector prefix
+		if maxHead > 0 && runewidth.StringWidth(headLine) > maxHead {
+			headLine = runewidth.Truncate(headLine, maxHead, "…")
+		}
+		body = headLine + "\n" + indent + strings.Join(detailLines, "\n"+indent)
+	}
 	return style.Width(contentWidth).Render(body)
 }
 
@@ -583,7 +589,14 @@ func renderLiveInspectGroup(group []chatEntry, width int, runningIndicatorVisibl
 	if shouldRenderToolStatusTag(status) && normalizeToolStatus(status) != "running" && normalizeToolStatus(status) != "active" {
 		statusTag = renderToolTag(status, status)
 	}
-	headLine := buildLiveInspectHeadline(summary, status, statusTag, contentWidth, hintSuffix, runningIndicatorVisible)
+	// Reserve space for detail line prefix (indent + connector + space) when tool is running.
+	reservedForDetail := 0
+	if isToolGroupRunning(group) {
+		if detail := latestLiveInspectHint(group); detail != "" {
+			reservedForDetail = 4 // "  ├ " prefix width
+		}
+	}
+	headLine := buildLiveInspectHeadline(summary, status, statusTag, contentWidth, hintSuffix, runningIndicatorVisible, reservedForDetail)
 
 	if isToolGroupRunning(group) {
 		if detail := latestLiveInspectHint(group); detail != "" {
@@ -596,7 +609,7 @@ func renderLiveInspectGroup(group []chatEntry, width int, runningIndicatorVisibl
 	return style.Width(contentWidth).Render(headLine)
 }
 
-func buildLiveInspectHeadline(summary, status, statusTag string, width int, hintSuffix string, runningIndicatorVisible bool) string {
+func buildLiveInspectHeadline(summary, status, statusTag string, width int, hintSuffix string, runningIndicatorVisible bool, reservedForDetail int) string {
 	indicator := toolStatusIndicator(status, runningIndicatorVisible) + " "
 	hintText := toolExpandHintStyle.Render(hintSuffix)
 	tagWidth := 0
@@ -604,11 +617,11 @@ func buildLiveInspectHeadline(summary, status, statusTag string, width int, hint
 		tagWidth = 2 + lipgloss.Width(statusTag)
 	}
 	reservedWithHint := lipgloss.Width(indicator) + tagWidth + 1 + lipgloss.Width(hintText)
-	available := width - reservedWithHint - 2
+	available := width - reservedWithHint - reservedForDetail - 2
 	showHint := true
 	if available < 8 {
 		showHint = false
-		available = width - lipgloss.Width(indicator) - tagWidth - 1
+		available = width - lipgloss.Width(indicator) - tagWidth - reservedForDetail - 1
 	}
 	available = max(1, available)
 	primary := compact(summary, available)
