@@ -13,6 +13,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/agent"
 	"github.com/1024XEngineer/bytemind/internal/config"
 	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/provider"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	"github.com/1024XEngineer/bytemind/internal/skills"
 	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
@@ -56,6 +57,10 @@ func (s *subAgentCommandRunnerStub) ClearActiveSkill(*session.Session) error {
 
 func (s *subAgentCommandRunnerStub) ClearSkill(string) (skills.ClearResult, error) {
 	return skills.ClearResult{}, nil
+}
+
+func (s *subAgentCommandRunnerStub) ListModels(context.Context) ([]provider.ModelInfo, []provider.Warning, error) {
+	return nil, nil, nil
 }
 
 func (s *subAgentCommandRunnerStub) ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic) {

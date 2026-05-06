@@ -46,6 +46,8 @@ func (m *model) handleSlashCommand(input string) error {
 		return m.runBuiltinSubAgentCommand(input, fields[0])
 	case "/mcp":
 		return m.runMCPCommandDispatch(input, fields)
+	case "/models":
+		return m.runModelsCommand(input, fields)
 	case "/new":
 		return m.newSession()
 	case "/compact":

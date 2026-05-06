@@ -8,6 +8,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/agent"
 	"github.com/1024XEngineer/bytemind/internal/config"
 	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/provider"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	"github.com/1024XEngineer/bytemind/internal/skills"
 	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
@@ -124,6 +125,13 @@ func (a *tuiRunnerAdapter) CompactSession(ctx context.Context, sess *session.Ses
 		return "", false, errors.New("runner is unavailable")
 	}
 	return a.runner.CompactSession(ctx, sess)
+}
+
+func (a *tuiRunnerAdapter) ListModels(ctx context.Context) ([]provider.ModelInfo, []provider.Warning, error) {
+	if a == nil || a.runner == nil {
+		return nil, nil, errors.New("runner is unavailable")
+	}
+	return a.runner.ListModels(ctx)
 }
 
 func (a *tuiRunnerAdapter) ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic) {

@@ -230,6 +230,31 @@ func (r *Runner) GetConfig() config.Config {
 	return r.config
 }
 
+func (r *Runner) ListModels(ctx context.Context) ([]provider.ModelInfo, []provider.Warning, error) {
+	if r == nil || r.client == nil {
+		return nil, nil, fmt.Errorf("client is unavailable")
+	}
+	runtimeCfg := r.config.ProviderRuntime
+	if len(runtimeCfg.Providers) == 0 {
+		runtimeCfg = config.LegacyProviderRuntimeConfig(r.config.Provider)
+	}
+	baseClient := r.GetClient()
+	if _, ok := baseClient.(provider.Client); !ok {
+		return nil, nil, fmt.Errorf("provider runtime is unavailable")
+	}
+	registry, err := provider.NewRegistry(runtimeCfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	models, warnings, err := provider.ListModels(ctx, registry)
+	if err != nil {
+		return nil, nil, err
+	}
+	registryView := provider.NewModelRegistry(runtimeCfg, models)
+	return registryView.Models(), warnings, nil
+}
+
+
 func (r *Runner) modelID() string {
 	if r == nil {
 		return ""

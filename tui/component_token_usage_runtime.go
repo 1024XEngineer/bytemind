@@ -23,6 +23,7 @@ func (m *model) applyUsage(usage llm.Usage) {
 	if used == 0 && input == 0 && output == 0 && context == 0 {
 		return
 	}
+	m.refreshTokenBudget()
 
 	// Replace provisional stream estimate with provider-confirmed usage.
 	if m.tempEstimatedOutput > 0 {
@@ -35,7 +36,7 @@ func (m *model) applyUsage(usage llm.Usage) {
 	m.tokenInput += input
 	m.tokenOutput += output
 	m.tokenContext += context
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, 0)
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
 	m.tokenUsage.SetUnavailable(false)
 	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 }
@@ -43,7 +44,11 @@ func (m *model) applyUsage(usage llm.Usage) {
 func (m *model) SetUsage(used, total int) tea.Cmd {
 	m.tokenHasOfficialUsage = true
 	m.tokenUsage.SetUnavailable(false)
-	return m.tokenUsage.SetUsage(used, 0)
+	m.refreshTokenBudget()
+	if total > 0 {
+		m.tokenBudget = total
+	}
+	return m.tokenUsage.SetUsage(used, m.tokenBudget)
 }
 
 func (m model) renderStartupGuidePanel() string {
@@ -109,6 +114,7 @@ func (m *model) restoreTokenUsageFromSession(sess *session.Session) {
 	if sess != nil {
 		m.accumulateTokenUsage(sess.Messages)
 	}
+	m.refreshTokenBudget()
 }
 
 func (m *model) accumulateTokenUsage(messages []llm.Message) {
@@ -125,5 +131,19 @@ func (m *model) accumulateTokenUsage(messages []llm.Message) {
 		m.tokenInput += max(0, msg.Usage.InputTokens)
 		m.tokenOutput += max(0, msg.Usage.OutputTokens)
 		m.tokenContext += max(0, msg.Usage.ContextTokens)
+	}
+}
+
+func (m *model) refreshTokenBudget() {
+	if m == nil {
+		return
+	}
+	budget := max(1, m.cfg.TokenQuota)
+	if m.cfg.ProviderRuntime.DefaultModel == "" {
+		m.tokenBudget = budget
+		return
+	}
+	if strings.TrimSpace(m.cfg.ProviderRuntime.DefaultModel) != "" {
+		m.tokenBudget = budget
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	"github.com/1024XEngineer/bytemind/internal/mcpctl"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/provider"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	"github.com/1024XEngineer/bytemind/internal/skills"
 )
@@ -97,6 +98,7 @@ type Runner interface {
 	ActivateSkill(sess *session.Session, name string, args map[string]string) (skills.Skill, error)
 	ClearActiveSkill(sess *session.Session) error
 	ClearSkill(name string) (skills.ClearResult, error)
+	ListModels(ctx context.Context) ([]provider.ModelInfo, []provider.Warning, error)
 }
 
 type SessionStore interface {
