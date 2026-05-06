@@ -76,6 +76,7 @@ func TestRenderToolPayloadNormalizesEmptyRendererOutput(t *testing.T) {
 }
 
 func TestReadFileRendererRenderStructuredPayload(t *testing.T) {
+	const filePath = "E:/repo/src/main.go"
 	payload := `{"path":"E:/repo/src/main.go","start_line":10,"end_line":42}`
 
 	got := readFileRenderer{}.Render(payload)
@@ -94,8 +95,9 @@ func TestReadFileRendererRenderStructuredPayload(t *testing.T) {
 	if got.DetailLines[0] != "range: 10-42" {
 		t.Fatalf("expected range detail, got %q", got.DetailLines[0])
 	}
-	if !strings.Contains(got.DetailLines[1], "path: E:/repo/src/main.go") {
-		t.Fatalf("expected path detail, got %q", got.DetailLines[1])
+	wantPathDetail := "path: " + compactDisplayPath(filePath)
+	if got.DetailLines[1] != wantPathDetail {
+		t.Fatalf("expected path detail %q, got %q", wantPathDetail, got.DetailLines[1])
 	}
 }
 
