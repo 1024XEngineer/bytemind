@@ -115,19 +115,33 @@ func (m *model) syncMentionPalette() {
 	}
 	results := m.mentionIndex.SearchWithRecency(token.Query, mentionSearchLimit, m.mentionRecent)
 
-	// Merge agent candidates (only when user has typed a query)
+	// Merge agent candidates with scoring (only when user has typed a query)
 	if m.agentSource != nil && token.Query != "" {
+		q := strings.ToLower(token.Query)
 		for _, a := range m.agentSource.ListAgents() {
-			if matchesQuery(a.Name, token.Query) {
-				results = append(results, mention.Candidate{
-					Path:        a.Name,
-					BaseName:    a.Name,
-					Kind:        "agent",
-					Description: a.Description,
-				})
+			nameLower := strings.ToLower(a.Name)
+			score := agentMatchScore(q, nameLower)
+			if score < 0 {
+				continue
 			}
+			results = append(results, mention.Candidate{
+				Path:        a.Name,
+				BaseName:    a.Name,
+				Kind:        "agent",
+				Description: a.Description,
+				Score:       score,
+			})
 		}
 	}
+
+	// Mixed sort: file scores (0=best) and agent scores (0=best) are comparable
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].Score < results[j].Score
+	})
+	if len(results) > mentionSearchLimit {
+		results = results[:mentionSearchLimit]
+	}
+
 	m.mentionOpen = true
 	m.mentionQuery = token.Query
 	m.mentionToken = token
@@ -312,22 +326,33 @@ func (m model) selectedPromptSearchEntry() (history.PromptEntry, bool) {
 }
 
 func matchesQuery(name, query string) bool {
+	return agentMatchScore(strings.ToLower(query), strings.ToLower(name)) >= 0
+}
+
+func agentMatchScore(query, nameLower string) float64 {
 	if query == "" {
-		return false
+		return -1
 	}
-	name = strings.ToLower(name)
-	query = strings.ToLower(query)
-	if strings.Contains(name, query) {
-		return true
+	if nameLower == query {
+		return 0.0
 	}
-	// Fuzzy subsequence match
+	if strings.HasPrefix(nameLower, query) {
+		return 0.05
+	}
+	if strings.Contains(nameLower, query) {
+		return 0.15
+	}
+	// Fuzzy subsequence
 	qi := 0
-	for _, r := range name {
+	for _, r := range nameLower {
 		if qi < len(query) && r == []rune(query)[qi] {
 			qi++
 		}
 	}
-	return qi == len([]rune(query))
+	if qi == len([]rune(query)) {
+		return 0.3
+	}
+	return -1
 }
 
 func (m model) visiblePromptSearchEntriesPage() []history.PromptEntry {
