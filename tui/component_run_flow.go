@@ -39,8 +39,8 @@ func (m *model) beginRunWithInput(promptInput RunPromptInput, mode, note string)
 	m.lastRunDuration = 0
 	m.runIndicatorState = runIndicatorRunning
 	m.chatAutoFollow = true
+	m.suppressedAssistantDelta = ""
 	spinnerTick := m.resetThinkingSpinner()
-	m.ensureThinkingCard()
 	if m.width > 0 && m.height > 0 {
 		m.syncLayoutForCurrentScreen()
 		m.refreshViewport()
@@ -203,6 +203,7 @@ func (m *model) handleAgentEvent(event Event) {
 	case EventToolCallStarted:
 		m.phase = "tool"
 		m.llmConnected = true
+		m.suppressedAssistantDelta = ""
 		m.finalizeAssistantTurnForTool(event.ToolName)
 		m.populateLatestThinkingToolStep(event.ToolName, "", "running")
 		m.appendChat(chatEntry{

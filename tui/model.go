@@ -408,6 +408,7 @@ type model struct {
 	lastRunDuration            time.Duration
 	runIndicatorState          runIndicatorState
 	streamingIndex             int
+	suppressedAssistantDelta   string
 	statusNote                 string
 	phase                      string
 	llmConnected               bool
