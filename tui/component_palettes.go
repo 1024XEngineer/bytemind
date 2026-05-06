@@ -119,48 +119,40 @@ func (m model) renderMentionPalette() string {
 	}
 
 	selected, _ := m.selectedMentionCandidate()
-	nameWidth := min(26, max(12, width/4))
-	descWidth := max(12, width-commandPaletteStyle.GetHorizontalFrameSize()-nameWidth-4)
+	rowWidth := max(1, width-commandPaletteStyle.GetHorizontalFrameSize())
 	pageSize := m.mentionPageSize()
 	rows := make([]string, 0, pageSize+1)
 	for _, item := range m.visibleMentionItemsPage() {
 		rowStyle := commandPaletteRowStyle
-		nameStyle := commandPaletteNameStyle
-		descStyle := commandPaletteDescStyle
+		textStyle := commandPaletteNameStyle
 		if item.Path == selected.Path {
 			rowStyle = commandPaletteSelectedRowStyle
-			nameStyle = commandPaletteSelectedNameStyle
-			descStyle = commandPaletteSelectedDescStyle
+			textStyle = commandPaletteSelectedNameStyle
 		}
 
-		var nameText string
-		var descText string
+		var displayText string
 		switch item.Kind {
 		case "agent":
-			nameText = "* " + item.BaseName
-			if m.hasRecentMention(item.Path) {
-				nameText = "* " + nameText
+			displayText = "* " + item.BaseName
+			if desc := strings.TrimSpace(item.Description); desc != "" {
+				displayText += "  " + desc
 			}
-			descText = strings.TrimSpace(item.Description)
-			if descText == "" {
-				descText = item.BaseName
+			if m.hasRecentMention(item.Path) {
+				displayText = "* " + displayText
 			}
 		default:
-			nameText = "+ " + item.BaseName
+			displayText = "+ " + item.Path
 			if m.hasRecentMention(item.Path) {
-				nameText = "* " + nameText
+				displayText = "* " + displayText
 			}
-			descText = truncatePathMiddle(item.Path, descWidth)
 		}
 
-		name := nameStyle.Width(nameWidth).Render(compact(nameText, max(12, nameWidth)))
-		desc := descStyle.Width(descWidth).Render(compact(descText, max(12, descWidth)))
-		rows = append(rows, rowStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render(
-			lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", desc),
+		rows = append(rows, rowStyle.Width(rowWidth).Render(
+			textStyle.Render(truncatePathMiddle(displayText, rowWidth)),
 		))
 	}
 	for len(rows) < pageSize {
-		rows = append(rows, commandPaletteRowStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render(""))
+		rows = append(rows, commandPaletteRowStyle.Width(rowWidth).Render(""))
 	}
 	metaText := "* recent  + file  * agent  Type @query  Up/Down  Enter/Tab insert  Esc close"
 	if m.mentionIndex != nil {
