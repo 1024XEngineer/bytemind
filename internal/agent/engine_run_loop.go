@@ -62,6 +62,7 @@ func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Sessio
 			Approval:         approvalHandler,
 			SandboxAudit:     sandboxAudit,
 			TaskReport:       taskReport,
+			WebRequirement:   setup.WebLookupRequirement,
 			Out:              out,
 		})
 		if err != nil {
@@ -83,9 +84,9 @@ func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Sessio
 }
 
 const (
-	maxRateLimitRetry      = 8
-	rateLimitBaseDelay     = 3 * time.Second
-	rateLimitMaxDelay      = 60 * time.Second
+	maxRateLimitRetry  = 8
+	rateLimitBaseDelay = 3 * time.Second
+	rateLimitMaxDelay  = 60 * time.Second
 )
 
 func (e *defaultEngine) processTurnWithReactiveCompaction(ctx context.Context, setup runPromptSetup, params turnProcessParams) (string, bool, error) {

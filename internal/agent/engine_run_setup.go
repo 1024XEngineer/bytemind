@@ -105,6 +105,7 @@ func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptI
 		SubAgentDefinition:           promptSubAgentDefinition(input.SubAgent),
 		InstructionText:              loadAGENTSInstruction(runner.workspace),
 		WebLookupInstruction:         promptHint.Instruction,
+		WebLookupRequirement:         promptHint.Requirement,
 		PromptTokens:                 contextpkg.EstimateRequestTokens([]llm.Message{input.UserMessage}),
 	}, nil
 }

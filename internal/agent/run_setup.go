@@ -6,6 +6,7 @@ import (
 
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	policypkg "github.com/1024XEngineer/bytemind/internal/policy"
 	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
@@ -34,6 +35,7 @@ type runPromptSetup struct {
 	SubAgentDefinition           string
 	InstructionText              string
 	WebLookupInstruction         string
+	WebLookupRequirement         policypkg.WebLookupRequirement
 	PromptTokens                 int
 }
 

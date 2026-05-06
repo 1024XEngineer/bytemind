@@ -12,6 +12,7 @@ import (
 	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	policypkg "github.com/1024XEngineer/bytemind/internal/policy"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	"github.com/1024XEngineer/bytemind/internal/tokenusage"
 	"github.com/1024XEngineer/bytemind/internal/tools"
@@ -32,6 +33,7 @@ type turnProcessParams struct {
 	Approval         tools.ApprovalHandler
 	SandboxAudit     sandboxAuditContext
 	TaskReport       *TaskReport
+	WebRequirement   policypkg.WebLookupRequirement
 	Out              io.Writer
 }
 
@@ -74,6 +76,54 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 	if len(reply.ToolCalls) == 0 {
 		// No tool calls — finalize the turn. Safety nets only for specific claim patterns.
 		latestUser := latestHumanUserMessageText(p.Session.Messages)
+		if shouldRepairMissingRequiredWebLookup(p.WebRequirement, p.ExecutedTools) {
+			if !webLookupToolsAvailable(availableToolNames) {
+				if p.TaskReport != nil {
+					p.TaskReport.RecordEscalation("web lookup was required but web_search/web_fetch were unavailable under the current tool policy")
+				}
+				summary := BuildStopSummary(StopSummaryInput{
+					SessionID:     corepkg.SessionID(p.Session.ID),
+					Reason:        "I paused because this request requires current or external web evidence, but web_search/web_fetch are unavailable in the current run.",
+					ExecutedTools: executedToolNamesSnapshot(p.ExecutedTools),
+					TaskReport:    p.TaskReport,
+				})
+				answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+				return answer, true, summaryErr
+			}
+
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("required_web_lookup_missing")
+				p.TaskReport.RecordStrategyAdjustment("assistant tried to finalize without required web_search/web_fetch evidence; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("required web lookup repair retries exceeded while waiting for web_search/web_fetch")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because this request requires current or external web evidence, but the assistant kept trying to answer without web_search/web_fetch (attempts=%d).", attempt),
+						ExecutedTools: executedToolNamesSnapshot(p.ExecutedTools),
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildRequiredWebLookupRepairInstruction(latestUser, attempt, maxAttempts, availableToolNames))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%srequired web evidence missing; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
 		if shouldRepairUnexecutedToolClaimTurn(p.RunMode, reply, p.Session.Messages, availableToolNames) {
 			attempt := 0
 			maxAttempts := 0

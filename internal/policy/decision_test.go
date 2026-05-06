@@ -18,6 +18,9 @@ func TestEvaluatePromptHintInjected(t *testing.T) {
 	if result.Instruction == "" {
 		t.Fatalf("expected non-empty instruction, got %#v", result)
 	}
+	if result.Requirement != WebLookupRequirementMust {
+		t.Fatalf("expected must web lookup requirement, got %#v", result)
+	}
 }
 
 func TestEvaluatePromptHintSkipped(t *testing.T) {
@@ -27,6 +30,9 @@ func TestEvaluatePromptHintSkipped(t *testing.T) {
 	}
 	if result.ReasonCode != ReasonPromptHintSkipped {
 		t.Fatalf("expected hint skipped reason code, got %#v", result)
+	}
+	if result.Requirement != WebLookupRequirementNone {
+		t.Fatalf("expected no web lookup requirement, got %#v", result)
 	}
 }
 

@@ -49,6 +49,7 @@ type PromptHintResult struct {
 	ReasonCode  ReasonCode
 	Reason      string
 	Instruction string
+	Requirement WebLookupRequirement
 }
 
 type Evaluation struct {
@@ -146,19 +147,21 @@ func needsApproval(policy string) bool {
 }
 
 func EvaluatePromptHint(userInput string) PromptHintResult {
-	instruction := ExplicitWebLookupInstruction(userInput)
-	if strings.TrimSpace(instruction) == "" {
+	requirement := EvaluateWebLookupRequirement(userInput)
+	if strings.TrimSpace(requirement.Instruction) == "" {
 		return PromptHintResult{
-			Decision:   PromptHintDecisionNone,
-			ReasonCode: ReasonPromptHintSkipped,
-			Reason:     "no explicit web lookup request detected",
+			Decision:    PromptHintDecisionNone,
+			ReasonCode:  ReasonPromptHintSkipped,
+			Reason:      strings.TrimSpace(requirement.Reason),
+			Requirement: requirement.Requirement,
 		}
 	}
 	return PromptHintResult{
 		Decision:    PromptHintDecisionHint,
 		ReasonCode:  ReasonWebLookupHintInjected,
-		Reason:      "explicit web lookup request detected",
-		Instruction: instruction,
+		Reason:      strings.TrimSpace(requirement.Reason),
+		Instruction: requirement.Instruction,
+		Requirement: requirement.Requirement,
 	}
 }
 
