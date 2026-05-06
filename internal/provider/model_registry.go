@@ -76,6 +76,14 @@ func (r ModelRegistry) Lookup(providerID ProviderID, modelID ModelID) (ModelInfo
 	return info, ok
 }
 
+func (r ModelRegistry) ContextWindow(providerID ProviderID, modelID ModelID) int {
+	info, ok := r.Lookup(providerID, modelID)
+	if !ok {
+		return 0
+	}
+	return info.ModelMetadata().ContextWindow
+}
+
 func normalizeModelInfo(model ModelInfo) ModelInfo {
 	model.ProviderID = ProviderID(strings.ToLower(strings.TrimSpace(string(model.ProviderID))))
 	model.ModelID = ModelID(strings.TrimSpace(string(model.ModelID)))

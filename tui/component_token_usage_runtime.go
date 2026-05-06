@@ -6,7 +6,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/1024XEngineer/bytemind/internal/config"
 	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/provider"
 	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
@@ -139,11 +141,20 @@ func (m *model) refreshTokenBudget() {
 		return
 	}
 	budget := max(1, m.cfg.TokenQuota)
-	if m.cfg.ProviderRuntime.DefaultModel == "" {
-		m.tokenBudget = budget
-		return
+	runtimeCfg := m.cfg.ProviderRuntime
+	if len(runtimeCfg.Providers) == 0 {
+		runtimeCfg = config.LegacyProviderRuntimeConfig(m.cfg.Provider)
 	}
-	if strings.TrimSpace(m.cfg.ProviderRuntime.DefaultModel) != "" {
-		m.tokenBudget = budget
+	providerID := strings.TrimSpace(runtimeCfg.DefaultProvider)
+	modelID := strings.TrimSpace(runtimeCfg.DefaultModel)
+	if modelID == "" {
+		modelID = strings.TrimSpace(m.cfg.Provider.Model)
 	}
+	if providerID != "" && modelID != "" {
+		registry := provider.NewModelRegistry(runtimeCfg, nil)
+		if contextWindow := registry.ContextWindow(provider.ProviderID(providerID), provider.ModelID(modelID)); contextWindow > 0 {
+			budget = contextWindow
+		}
+	}
+	m.tokenBudget = budget
 }

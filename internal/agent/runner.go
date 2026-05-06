@@ -117,6 +117,11 @@ type Runner struct {
 	extensionSyncDirty bool
 	extensionSyncGen   uint64
 	extensionToolKeys  map[string]map[string]struct{}
+
+	modelsCacheMu       sync.RWMutex
+	modelsCacheAt       time.Time
+	modelsCache         []provider.ModelInfo
+	modelsCacheWarnings []provider.Warning
 }
 
 func NewRunner(opts Options) *Runner {
@@ -234,6 +239,9 @@ func (r *Runner) ListModels(ctx context.Context) ([]provider.ModelInfo, []provid
 	if r == nil || r.client == nil {
 		return nil, nil, fmt.Errorf("client is unavailable")
 	}
+	if cachedModels, cachedWarnings, ok := r.listModelsFromCache(); ok {
+		return cachedModels, cachedWarnings, nil
+	}
 	runtimeCfg := r.config.ProviderRuntime
 	if len(runtimeCfg.Providers) == 0 {
 		runtimeCfg = config.LegacyProviderRuntimeConfig(r.config.Provider)
@@ -251,7 +259,32 @@ func (r *Runner) ListModels(ctx context.Context) ([]provider.ModelInfo, []provid
 		return nil, nil, err
 	}
 	registryView := provider.NewModelRegistry(runtimeCfg, models)
-	return registryView.Models(), warnings, nil
+	resolved := registryView.Models()
+	r.storeModelsCache(resolved, warnings)
+	return resolved, warnings, nil
+}
+
+func (r *Runner) listModelsFromCache() ([]provider.ModelInfo, []provider.Warning, bool) {
+	if r == nil {
+		return nil, nil, false
+	}
+	r.modelsCacheMu.RLock()
+	defer r.modelsCacheMu.RUnlock()
+	if r.modelsCacheAt.IsZero() || time.Since(r.modelsCacheAt) > 30*time.Second {
+		return nil, nil, false
+	}
+	return append([]provider.ModelInfo(nil), r.modelsCache...), append([]provider.Warning(nil), r.modelsCacheWarnings...), true
+}
+
+func (r *Runner) storeModelsCache(models []provider.ModelInfo, warnings []provider.Warning) {
+	if r == nil {
+		return
+	}
+	r.modelsCacheMu.Lock()
+	defer r.modelsCacheMu.Unlock()
+	r.modelsCacheAt = time.Now()
+	r.modelsCache = append([]provider.ModelInfo(nil), models...)
+	r.modelsCacheWarnings = append([]provider.Warning(nil), warnings...)
 }
 
 
