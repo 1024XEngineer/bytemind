@@ -146,9 +146,6 @@ func (m model) renderMentionPalette() string {
 			}
 		default:
 			nameText = "+ " + item.BaseName
-			if tag := strings.TrimSpace(item.TypeTag); tag != "" {
-				nameText = "+ [" + tag + "] " + item.BaseName
-			}
 			if m.hasRecentMention(item.Path) {
 				nameText = "* " + nameText
 			}
