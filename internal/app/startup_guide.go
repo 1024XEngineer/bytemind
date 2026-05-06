@@ -37,6 +37,11 @@ func ConfigPathHint(workspace, explicit string) string {
 		return explicit
 	}
 
+	home, err := config.ResolveHomeDir()
+	if err == nil {
+		return filepath.Join(home, "config.json")
+	}
+
 	candidates := []string{
 		filepath.Join(workspace, "config.json"),
 		filepath.Join(workspace, ".bytemind", "config.json"),
@@ -47,11 +52,7 @@ func ConfigPathHint(workspace, explicit string) string {
 			return candidate
 		}
 	}
-	home, err := config.ResolveHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, "config.json")
+	return ""
 }
 
 func CompactLine(raw string, limit int) string {

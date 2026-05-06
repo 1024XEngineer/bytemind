@@ -10,6 +10,7 @@ import (
 
 func writeProviderRuntimeConfigFile(t *testing.T, workspace string, cfg map[string]any) {
 	t.Helper()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)

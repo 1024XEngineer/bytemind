@@ -349,7 +349,7 @@ func TestResolveConfigPathExplicit(t *testing.T) {
 	}
 }
 
-func TestLoadMergesUserAndProjectConfigWithProjectPrecedence(t *testing.T) {
+func TestLoadMergesUserAndProjectConfigWithUserProviderPrecedence(t *testing.T) {
 	workspace := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", home)
@@ -394,11 +394,11 @@ func TestLoadMergesUserAndProjectConfigWithProjectPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Provider.Model != "project-model" {
-		t.Fatalf("expected project model precedence, got %q", cfg.Provider.Model)
+	if cfg.Provider.Model != "user-model" {
+		t.Fatalf("expected user provider model precedence, got %q", cfg.Provider.Model)
 	}
-	if cfg.Provider.ResolveAPIKey() != "project-key" {
-		t.Fatalf("expected project api key precedence, got %q", cfg.Provider.ResolveAPIKey())
+	if cfg.Provider.ResolveAPIKey() != "user-key" {
+		t.Fatalf("expected user provider api key precedence, got %q", cfg.Provider.ResolveAPIKey())
 	}
 	if cfg.ApprovalPolicy != "never" {
 		t.Fatalf("expected project approval policy precedence, got %q", cfg.ApprovalPolicy)
@@ -414,6 +414,352 @@ func TestLoadMergesUserAndProjectConfigWithProjectPrecedence(t *testing.T) {
 	}
 	if cfg.Stream {
 		t.Fatalf("expected project stream value false")
+	}
+}
+
+func TestLoadKeepsUserProviderWhenProjectProviderIsUnconfigured(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "")
+
+	if err := writeConfig(filepath.Join(home, "config.json"), map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.deepseek.com",
+			"model":    "deepseek-reasoner",
+			"api_key":  "user-key",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": map[string]any{
+			"type":        "openai-compatible",
+			"base_url":    "https://api.openai.com/v1",
+			"model":       "gpt-5.4-mini",
+			"api_key":     "",
+			"api_key_env": "",
+		},
+		"approval_policy": "never",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.BaseURL != "https://api.deepseek.com" {
+		t.Fatalf("expected user provider base_url, got %q", cfg.Provider.BaseURL)
+	}
+	if cfg.Provider.Model != "deepseek-reasoner" {
+		t.Fatalf("expected user provider model, got %q", cfg.Provider.Model)
+	}
+	if cfg.Provider.ResolveAPIKey() != "user-key" {
+		t.Fatalf("expected user provider api key, got %q", cfg.Provider.ResolveAPIKey())
+	}
+	if cfg.ApprovalPolicy != "never" {
+		t.Fatalf("expected project policy to still apply, got %q", cfg.ApprovalPolicy)
+	}
+}
+
+func TestLoadAllowsProjectProviderWhenUserConfigHasNoCredential(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_API_KEY", "")
+
+	if err := writeConfig(filepath.Join(home, "config.json"), map[string]any{
+		"provider": map[string]any{
+			"type":        "openai-compatible",
+			"base_url":    "https://api.openai.com/v1",
+			"model":       "gpt-5.4-mini",
+			"api_key_env": "BYTEMIND_API_KEY",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.deepseek.com",
+			"model":    "deepseek-chat",
+			"api_key":  "project-key",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Model != "deepseek-chat" {
+		t.Fatalf("expected project provider model, got %q", cfg.Provider.Model)
+	}
+	if cfg.Provider.ResolveAPIKey() != "project-key" {
+		t.Fatalf("expected project provider api key, got %q", cfg.Provider.ResolveAPIKey())
+	}
+}
+
+func TestLoadUsesUserProviderWhenConfiguredThroughEnvKey(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("DEEPSEEK_TEST_KEY", "env-user-key")
+
+	if err := writeConfig(filepath.Join(home, "config.json"), map[string]any{
+		"provider": map[string]any{
+			"type":        "openai-compatible",
+			"base_url":    "https://api.deepseek.com",
+			"model":       "deepseek-reasoner",
+			"api_key_env": "DEEPSEEK_TEST_KEY",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.openai.com/v1",
+			"model":    "gpt-5.4-mini",
+			"api_key":  "",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Model != "deepseek-reasoner" {
+		t.Fatalf("expected user env-key provider model, got %q", cfg.Provider.Model)
+	}
+	if cfg.Provider.ResolveAPIKey() != "env-user-key" {
+		t.Fatalf("expected api key from user env-key provider")
+	}
+}
+
+func TestLoadUserProviderPrecedenceResetsProjectProviderRuntime(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+
+	if err := writeConfig(filepath.Join(home, "config.json"), map[string]any{
+		"provider": map[string]any{
+			"type":     "openai-compatible",
+			"base_url": "https://api.deepseek.com",
+			"model":    "deepseek-reasoner",
+			"api_key":  "user-key",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeConfig(projectConfigPath(workspace), map[string]any{
+		"provider_runtime": map[string]any{
+			"default_provider": "project",
+			"default_model":    "project-model",
+			"providers": map[string]any{
+				"project": map[string]any{
+					"type":     "openai-compatible",
+					"base_url": "https://api.openai.com/v1",
+					"model":    "project-model",
+					"api_key":  "",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ProviderRuntime.DefaultModel != "deepseek-reasoner" {
+		t.Fatalf("expected runtime to be rebuilt from user provider, got default model %q", cfg.ProviderRuntime.DefaultModel)
+	}
+	runtimeProvider, ok := cfg.ProviderRuntime.Providers["openai"]
+	if !ok {
+		t.Fatalf("expected rebuilt legacy openai runtime provider, got %#v", cfg.ProviderRuntime.Providers)
+	}
+	if runtimeProvider.BaseURL != "https://api.deepseek.com" {
+		t.Fatalf("expected user provider base_url in runtime provider, got %q", runtimeProvider.BaseURL)
+	}
+	if runtimeProvider.ResolveAPIKey() != "user-key" {
+		t.Fatalf("expected user api key in runtime provider")
+	}
+}
+
+func TestLoadUserProviderOverrideHandlesMissingMalformedAndRuntimeOnlyConfigs(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BYTEMIND_TEST_MISSING_PROVIDER_KEY", "")
+
+	_, err := loadUserProviderOverride(filepath.Join(dir, "missing.json"))
+	if err == nil {
+		t.Fatal("expected missing user provider override to fail")
+	}
+
+	malformedPath := filepath.Join(dir, "malformed.json")
+	if err := os.WriteFile(malformedPath, []byte(`{"provider":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = loadUserProviderOverride(malformedPath)
+	if err == nil {
+		t.Fatal("expected malformed user provider override to fail")
+	}
+
+	uncredentialedPath := filepath.Join(dir, "uncredentialed.json")
+	if err := writeConfig(uncredentialedPath, map[string]any{
+		"provider": map[string]any{
+			"type":        "openai-compatible",
+			"model":       "gpt-5.4-mini",
+			"api_key":     " ",
+			"api_key_env": "BYTEMIND_TEST_MISSING_PROVIDER_KEY",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := loadUserProviderOverride(uncredentialedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw != nil {
+		t.Fatalf("expected uncredentialed user provider override to be ignored, got %#v", raw)
+	}
+
+	runtimeOnlyPath := filepath.Join(dir, "runtime-only.json")
+	if err := writeConfig(runtimeOnlyPath, map[string]any{
+		"provider_runtime": map[string]any{
+			"default_provider": "deepseek",
+			"default_model":    "deepseek-chat",
+			"providers": map[string]any{
+				"deepseek": map[string]any{
+					"type":     "openai-compatible",
+					"base_url": "https://api.deepseek.com",
+					"model":    "deepseek-chat",
+					"api_key":  "runtime-key",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = loadUserProviderOverride(runtimeOnlyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw == nil {
+		t.Fatal("expected credentialed runtime provider override")
+	}
+	if _, ok := raw["provider_runtime"]; !ok {
+		t.Fatalf("expected provider_runtime in raw override, got %#v", raw)
+	}
+}
+
+func TestMergeProviderOverrideAppliesRuntimeAndReportsMalformedSections(t *testing.T) {
+	if err := mergeProviderOverride(nil, &Config{}); err != nil {
+		t.Fatalf("nil override should not fail: %v", err)
+	}
+	if err := mergeProviderOverride(map[string]json.RawMessage{}, nil); err != nil {
+		t.Fatalf("nil config should not fail: %v", err)
+	}
+	if err := mergeProviderOverride(map[string]json.RawMessage{
+		"provider": json.RawMessage(`{"api_key":`),
+	}, &Config{}); err == nil {
+		t.Fatal("expected malformed provider override to fail")
+	}
+	if err := mergeProviderOverride(map[string]json.RawMessage{
+		"provider_runtime": json.RawMessage(`{"providers":`),
+	}, &Config{}); err == nil {
+		t.Fatal("expected malformed provider_runtime override to fail")
+	}
+
+	cfg := Config{
+		ProviderRuntime: ProviderRuntimeConfig{
+			DefaultProvider: "project",
+			DefaultModel:    "project-model",
+			Providers: map[string]ProviderConfig{
+				"project": {Model: "project-model", APIKey: "project-key"},
+			},
+		},
+	}
+	raw := map[string]json.RawMessage{
+		"provider": json.RawMessage(`{
+			"type": "openai-compatible",
+			"base_url": "https://api.deepseek.com",
+			"model": "deepseek-chat",
+			"api_key": "user-key"
+		}`),
+		"provider_runtime": json.RawMessage(`{
+			"default_provider": "deepseek",
+			"default_model": "deepseek-chat",
+			"providers": {
+				"deepseek": {
+					"type": "openai-compatible",
+					"base_url": "https://api.deepseek.com",
+					"model": "deepseek-chat",
+					"api_key": "runtime-key"
+				}
+			}
+		}`),
+	}
+	if err := mergeProviderOverride(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Model != "deepseek-chat" || cfg.Provider.ResolveAPIKey() != "user-key" {
+		t.Fatalf("expected user provider override, got %#v", cfg.Provider)
+	}
+	if cfg.ProviderRuntime.DefaultProvider != "deepseek" {
+		t.Fatalf("expected runtime default provider deepseek, got %q", cfg.ProviderRuntime.DefaultProvider)
+	}
+	if provider := cfg.ProviderRuntime.Providers["deepseek"]; provider.ResolveAPIKey() != "runtime-key" {
+		t.Fatalf("expected runtime provider override key, got %#v", provider)
+	}
+}
+
+func TestProviderCredentialDetection(t *testing.T) {
+	t.Setenv("BYTEMIND_TEST_PROVIDER_KEY", "env-key")
+	t.Setenv("BYTEMIND_TEST_MISSING_PROVIDER_KEY", "")
+
+	tests := []struct {
+		name string
+		raw  json.RawMessage
+		want bool
+	}{
+		{name: "malformed provider", raw: json.RawMessage(`{"api_key":`), want: false},
+		{name: "literal api key", raw: json.RawMessage(`{"api_key":"literal-key"}`), want: true},
+		{name: "blank api key", raw: json.RawMessage(`{"api_key":" "}`), want: false},
+		{name: "env api key", raw: json.RawMessage(`{"api_key_env":"BYTEMIND_TEST_PROVIDER_KEY"}`), want: true},
+		{name: "missing env api key", raw: json.RawMessage(`{"api_key_env":"BYTEMIND_TEST_MISSING_PROVIDER_KEY"}`), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := providerRawHasCredential(tt.raw); got != tt.want {
+				t.Fatalf("providerRawHasCredential() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	if hasProviderCredential(map[string]json.RawMessage{
+		"provider_runtime": json.RawMessage(`{"providers":`),
+	}) {
+		t.Fatal("expected malformed provider_runtime to have no credential")
+	}
+	if !hasProviderCredential(map[string]json.RawMessage{
+		"provider_runtime": json.RawMessage(`{
+			"providers": {
+				"deepseek": {"api_key_env": "BYTEMIND_TEST_PROVIDER_KEY"}
+			}
+		}`),
+	}) {
+		t.Fatal("expected provider_runtime env credential to be detected")
 	}
 }
 
