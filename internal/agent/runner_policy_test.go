@@ -195,15 +195,16 @@ func TestRunPromptPolicyGatewayAskRequestsApprovalAndExecutesTool(t *testing.T) 
 			if execCtx == nil || execCtx.Approval == nil {
 				t.Fatal("expected approval handler in execution context")
 			}
-			approved, approvalErr := execCtx.Approval(tools.ApprovalRequest{
-				Command: "ask_tool",
-				Reason:  "high-risk tool requires approval",
+			decision, approvalErr := execCtx.Approval(tools.ApprovalRequest{
+				ToolName: "ask_tool",
+				Command:  "ask_tool",
+				Reason:   "high-risk tool requires approval",
 			})
 			if approvalErr != nil {
 				t.Fatalf("unexpected approval error: %v", approvalErr)
 			}
 			approvalRequested = true
-			if !approved {
+			if !decision.Approved() {
 				t.Fatal("expected approval handler to approve execution")
 			}
 			executed = true
@@ -260,11 +261,11 @@ func TestRunPromptPolicyGatewayAskRequestsApprovalAndExecutesTool(t *testing.T) 
 			}, nil
 		}),
 		AuditStore: auditStore,
-		Approval: func(req tools.ApprovalRequest) (bool, error) {
+		Approval: func(req tools.ApprovalRequest) (tools.ApprovalDecision, error) {
 			if req.Command != "ask_tool" {
 				t.Fatalf("unexpected approval command: %q", req.Command)
 			}
-			return true, nil
+			return tools.ApprovalDecision{Disposition: tools.ApprovalApproveOnce}, nil
 		},
 		Stdin:  strings.NewReader(""),
 		Stdout: io.Discard,

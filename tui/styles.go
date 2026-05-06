@@ -457,6 +457,16 @@ var (
 	approvalHintStyle = lipgloss.NewStyle().
 				Foreground(semanticColors.TextMuted)
 
+	approvalOptionStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextBase)
+
+	approvalOptionSelectedStyle = lipgloss.NewStyle().
+					Foreground(semanticColors.Accent).
+					Bold(true)
+
+	approvalOptionDescriptionStyle = lipgloss.NewStyle().
+					Foreground(semanticColors.TextMuted)
+
 	approvalOptionIdleStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#9BA7BC")).
 				Background(lipgloss.Color("#111824")).

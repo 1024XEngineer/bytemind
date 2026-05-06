@@ -848,14 +848,15 @@ func escalateWorkerApproval(toolName string, decision sandboxpkg.DecisionResult,
 		}
 		return nil
 	}
-	approved, err := execCtx.Approval(ApprovalRequest{
-		Command: toolName,
-		Reason:  decision.Message,
+	decisionResult, err := execCtx.Approval(ApprovalRequest{
+		ToolName: toolName,
+		Command:  toolName,
+		Reason:   decision.Message,
 	})
 	if err != nil {
 		return NewToolExecError(ToolErrorPermissionDenied, err.Error(), false, err)
 	}
-	if !approved {
+	if !NormalizeApprovalDecision(decisionResult).Approved() {
 		return NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q was not run because approval was denied", toolName), false, nil)
 	}
 	return nil

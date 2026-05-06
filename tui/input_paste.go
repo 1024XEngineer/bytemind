@@ -205,6 +205,9 @@ func (m *model) shouldPromoteImplicitPasteCandidate(msg tea.KeyMsg) bool {
 	if m.approval != nil || m.helpOpen || m.sessionsOpen || m.commandOpen || m.skillsOpen || m.mentionOpen || m.promptSearchOpen {
 		return false
 	}
+	if _, hasMarker := extractLeadingCompressedMarker(m.input.Value()); hasMarker {
+		return false
+	}
 	if m.pasteBurstCandidate.lastEventAt.IsZero() || time.Since(m.pasteBurstCandidate.lastEventAt) > 250*time.Millisecond {
 		return false
 	}
@@ -291,6 +294,9 @@ func (m *model) shouldCaptureImplicitPasteSpecialKey(msg tea.KeyMsg) bool {
 		return false
 	}
 	value := m.input.Value()
+	if _, hasMarker := extractLeadingCompressedMarker(value); hasMarker {
+		return false
+	}
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" || strings.Contains(trimmed, "[Paste #") || strings.Contains(trimmed, "[Pasted #") {
 		return false
@@ -585,7 +591,7 @@ func (m *model) finalizePasteSession(id int) {
 		m.syncInputOverlays()
 		return
 	}
-	if chain, ok := extractLeadingCompressedMarker(base); ok && shouldMergeIntoLatestMarker(source, m.lastCompressedPasteAt) {
+	if chain, ok := extractLeadingCompressedMarker(base); ok && m.shouldMergeIntoLatestMarker(source) {
 		if merged, mergedOK, err := m.mergeTailIntoLatestMarker(chain, candidate); err != nil {
 			m.statusNote = err.Error()
 			m.setInputValue(base)
@@ -1221,7 +1227,7 @@ func (m *model) applyLongPastedTextPipeline(before, after, source string) (strin
 				if strings.HasPrefix(after, chainValue) {
 					visibleTail := strings.TrimPrefix(after, chainValue)
 					if strings.TrimSpace(visibleTail) == "" &&
-						shouldHoldCompressedMarker(before, after, source, m.lastPasteAt, m.inputBurstSize) {
+						m.shouldHoldCompressedMarkerTail(before, after, source) {
 						return chainValue, ""
 					}
 				}
@@ -1231,7 +1237,7 @@ func (m *model) applyLongPastedTextPipeline(before, after, source string) (strin
 					len(extractInlineImagePathSpans(tail)) == 0
 				// Some terminals split one clipboard paste into multiple non-paste rune bursts.
 				// Merge those bursts into the latest marker to avoid leaking trailing raw text.
-				if safeTail && shouldMergeIntoLatestMarker(source, m.lastCompressedPasteAt) {
+				if safeTail && m.shouldMergeIntoLatestMarker(source) {
 					merged, ok, err := m.mergeTailIntoLatestMarker(chain, rawTail)
 					if err != nil {
 						return after, err.Error()
@@ -1241,7 +1247,8 @@ func (m *model) applyLongPastedTextPipeline(before, after, source string) (strin
 						return merged, ""
 					}
 				}
-				if safeTail && (m.shouldCompressPastedText(tail, source) || m.isLongPastedText(tail)) {
+				if safeTail && m.hasCompressedMarkerTailPasteEvidence(source) &&
+					(m.shouldCompressPastedText(tail, source) || m.isLongPastedText(tail)) {
 					marker, content, err := m.compressPastedText(tail)
 					if err != nil {
 						return after, err.Error()
@@ -1252,7 +1259,7 @@ func (m *model) applyLongPastedTextPipeline(before, after, source string) (strin
 					m.markPasteConfirmPending(time.Now())
 					return updated, note
 				}
-				if shouldHoldCompressedMarker(before, after, source, m.lastPasteAt, m.inputBurstSize) {
+				if m.shouldHoldCompressedMarkerTail(before, after, source) {
 					// Hide transient continuation tails so split paste chunks do not
 					// visibly appear/disappear before marker coalescing completes.
 					return strings.TrimSpace(chain), ""
@@ -1300,14 +1307,28 @@ func countCompressedMarkers(value string) int {
 	return len(compressedPasteMarkerAnyPattern.FindAllString(value, -1))
 }
 
-func shouldMergeIntoLatestMarker(source string, lastCompressedAt time.Time) bool {
-	if lastCompressedAt.IsZero() {
+func (m *model) hasCompressedMarkerTailPasteEvidence(source string) bool {
+	source = strings.ToLower(strings.TrimSpace(source))
+	if source != "paste-enter" && isPasteLikeSource(source) {
+		return true
+	}
+	if m == nil {
+		return false
+	}
+	return m.hasActivePasteSession() || m.pasteTransaction.Active
+}
+
+func (m *model) shouldMergeIntoLatestMarker(source string) bool {
+	if m == nil || m.lastCompressedPasteAt.IsZero() {
 		return false
 	}
 	if isPasteLikeSource(source) {
 		return false
 	}
-	return time.Since(lastCompressedAt) <= 500*time.Millisecond
+	if !m.hasCompressedMarkerTailPasteEvidence(source) {
+		return false
+	}
+	return time.Since(m.lastCompressedPasteAt) <= 500*time.Millisecond
 }
 
 func (m *model) mergeTailIntoLatestMarker(chain, tail string) (string, bool, error) {
@@ -1376,7 +1397,10 @@ func latestCompressedMarkerInChain(chain string) compressedMarkerLoc {
 	}
 }
 
-func shouldHoldCompressedMarker(before, after, source string, lastPasteAt time.Time, burst int) bool {
+func (m *model) shouldHoldCompressedMarkerTail(before, after, source string) bool {
+	if m == nil || !m.hasCompressedMarkerTailPasteEvidence(source) {
+		return false
+	}
 	rawAfter := after
 	before = strings.TrimSpace(before)
 	after = strings.TrimSpace(after)
@@ -1387,12 +1411,7 @@ func shouldHoldCompressedMarker(before, after, source string, lastPasteAt time.T
 	if strings.HasPrefix(rawAfter, marker) {
 		rawTail := strings.TrimPrefix(rawAfter, marker)
 		if rawTail != "" && strings.TrimSpace(rawTail) == "" {
-			if isPasteLikeSource(source) || burst >= 8 {
-				return true
-			}
-			if !lastPasteAt.IsZero() && time.Since(lastPasteAt) <= pasteContinuationWindow {
-				return true
-			}
+			return true
 		}
 	}
 	if len(after) <= len(marker) || !strings.HasPrefix(after, marker) {
@@ -1405,22 +1424,7 @@ func shouldHoldCompressedMarker(before, after, source string, lastPasteAt time.T
 	if compressedPasteMarkerPattern.MatchString(tail) || compressedPasteMarkerChainPrefixPattern.MatchString(tail) {
 		return false
 	}
-	if len(tail) >= 24 || strings.Contains(tail, "\n") {
-		if isPasteLikeSource(source) || burst >= 8 {
-			return true
-		}
-		if !lastPasteAt.IsZero() && time.Since(lastPasteAt) <= pasteContinuationWindow {
-			return true
-		}
-		return false
-	}
-	if isPasteLikeSource(source) || burst >= 8 {
-		return true
-	}
-	if !lastPasteAt.IsZero() && time.Since(lastPasteAt) <= pasteContinuationWindow {
-		return true
-	}
-	return false
+	return true
 }
 
 func extractLeadingCompressedMarker(value string) (string, bool) {

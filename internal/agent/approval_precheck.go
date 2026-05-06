@@ -60,42 +60,50 @@ func (r *Runner) prepareRunApprovalHandler(setup runPromptSetup, out io.Writer) 
 
 	grants := runApprovalGrants{}
 	if requestShell {
-		approved, err := base(tools.ApprovalRequest{
-			Command: "run_shell (session pre-approval)",
-			Reason:  "pre-approve approval-required run_shell commands for this run",
+		decision, err := base(tools.ApprovalRequest{
+			ToolName: "run_shell",
+			Command:  "run_shell (session pre-approval)",
+			Reason:   "pre-approve approval-required run_shell commands for this run",
 		})
+		approved := tools.NormalizeApprovalDecision(decision).Approved()
 		writePreapprovalResult(out, "run_shell", approved, err)
 		if err == nil && approved {
 			grants.Shell = true
 		}
 	}
 	if requestDestructive {
-		approved, err := base(tools.ApprovalRequest{
-			Command: "workspace-modifying tools (session pre-approval)",
-			Reason:  fmt.Sprintf("pre-approve destructive tool calls for this run: %s", strings.Join(destructive, ", ")),
+		decision, err := base(tools.ApprovalRequest{
+			ToolName: "destructive_tools",
+			Command:  "workspace-modifying tools (session pre-approval)",
+			Reason:   fmt.Sprintf("pre-approve destructive tool calls for this run: %s", strings.Join(destructive, ", ")),
 		})
+		approved := tools.NormalizeApprovalDecision(decision).Approved()
 		writePreapprovalResult(out, "workspace-modifying tools", approved, err)
 		if err == nil && approved {
 			grants.Destructive = true
 		}
 	}
-	return func(req tools.ApprovalRequest) (bool, error) {
+	return func(req tools.ApprovalRequest) (tools.ApprovalDecision, error) {
 		if grants.Destructive && isDestructiveToolApprovalRequest(req) {
-			return true, nil
+			return tools.ApprovalDecision{Disposition: tools.ApprovalApproveOnce}, nil
 		}
 		if grants.Shell && isRunShellApprovalRequest(req) {
-			return true, nil
+			return tools.ApprovalDecision{Disposition: tools.ApprovalApproveOnce}, nil
 		}
-		approved, err := base(req)
-		if err != nil || !approved {
-			return approved, err
+		decision, err := base(req)
+		normalized := tools.NormalizeApprovalDecision(decision)
+		if err != nil || !normalized.Approved() {
+			return normalized, err
 		}
-		if isDestructiveToolApprovalRequest(req) {
+		if normalized.ReusableForAllTools() {
 			grants.Destructive = true
-		} else if isRunShellApprovalRequest(req) {
+			grants.Shell = true
+		} else if normalized.ReusableForSameTool() && isDestructiveToolApprovalRequest(req) {
+			grants.Destructive = true
+		} else if normalized.ReusableForSameTool() && isRunShellApprovalRequest(req) {
 			grants.Shell = true
 		}
-		return true, nil
+		return normalized, nil
 	}
 }
 
@@ -110,7 +118,7 @@ func (r *Runner) resolveRunApprovalBaseHandler() (tools.ApprovalHandler, bool) {
 		return unavailableRunApprovalHandler(), false
 	}
 	reader := bufio.NewReader(r.stdin)
-	return func(req tools.ApprovalRequest) (bool, error) {
+	return func(req tools.ApprovalRequest) (tools.ApprovalDecision, error) {
 		command := strings.TrimSpace(req.Command)
 		if command == "" {
 			command = "unknown action"
@@ -125,20 +133,23 @@ func (r *Runner) resolveRunApprovalBaseHandler() (tools.ApprovalHandler, bool) {
 		}
 		line, err := reader.ReadString('\n')
 		if err != nil && err != io.EOF {
-			return false, err
+			return tools.ApprovalDecision{Disposition: tools.ApprovalDeny}, err
 		}
 		answer := strings.ToLower(strings.TrimSpace(line))
-		return answer == "y" || answer == "yes", nil
+		if answer == "y" || answer == "yes" {
+			return tools.ApprovalDecision{Disposition: tools.ApprovalApproveOnce}, nil
+		}
+		return tools.ApprovalDecision{Disposition: tools.ApprovalDeny}, nil
 	}, true
 }
 
 func unavailableRunApprovalHandler() tools.ApprovalHandler {
-	return func(req tools.ApprovalRequest) (bool, error) {
+	return func(req tools.ApprovalRequest) (tools.ApprovalDecision, error) {
 		command := strings.TrimSpace(req.Command)
 		if command == "" {
 			command = "unknown action"
 		}
-		return false, fmt.Errorf("approval channel unavailable for %q: missing TUI approval bridge and stdin fallback", command)
+		return tools.ApprovalDecision{Disposition: tools.ApprovalDeny}, fmt.Errorf("approval channel unavailable for %q: missing TUI approval bridge and stdin fallback", command)
 	}
 }
 
