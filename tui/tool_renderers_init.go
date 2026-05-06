@@ -11,4 +11,5 @@ func init() {
 	RegisterToolRenderer("update_plan", updatePlanRenderer{})
 	RegisterToolRenderer("web_search", webSearchRenderer{})
 	RegisterToolRenderer("web_fetch", webFetchRenderer{})
+	RegisterToolRenderer("delegate_subagent", delegateSubAgentRenderer{})
 }

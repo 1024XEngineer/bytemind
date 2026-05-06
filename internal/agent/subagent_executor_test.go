@@ -121,7 +121,7 @@ func TestBuildSubAgentTaskInputNormal(t *testing.T) {
 }
 
 func TestBuildSubAgentResultFromAnswerEmpty(t *testing.T) {
-	result := buildSubAgentResultFromAnswer("", "inv-1", "explorer")
+	result := buildSubAgentResultFromAnswer("", "inv-1", "explorer", nil)
 	if !result.OK {
 		t.Fatal("expected OK true")
 	}
@@ -137,7 +137,7 @@ func TestBuildSubAgentResultFromAnswerEmpty(t *testing.T) {
 }
 
 func TestBuildSubAgentResultFromAnswerWithJSON(t *testing.T) {
-	result := buildSubAgentResultFromAnswer(`{"summary":"scan done"}`, "inv-1", "explorer")
+	result := buildSubAgentResultFromAnswer(`{"summary":"scan done"}`, "inv-1", "explorer", nil)
 	if !result.OK {
 		t.Fatal("expected OK true")
 	}
@@ -147,7 +147,7 @@ func TestBuildSubAgentResultFromAnswerWithJSON(t *testing.T) {
 }
 
 func TestBuildSubAgentResultFromAnswerPlainText(t *testing.T) {
-	result := buildSubAgentResultFromAnswer("just plain text", "inv-1", "explorer")
+	result := buildSubAgentResultFromAnswer("just plain text", "inv-1", "explorer", nil)
 	if !result.OK {
 		t.Fatal("expected OK true")
 	}
@@ -157,7 +157,7 @@ func TestBuildSubAgentResultFromAnswerPlainText(t *testing.T) {
 }
 
 func TestBuildSubAgentResultFromAnswerJSONWithEmptySummary(t *testing.T) {
-	result := buildSubAgentResultFromAnswer(`{"ok":true,"summary":"  "}`, "inv-1", "explorer")
+	result := buildSubAgentResultFromAnswer(`{"ok":true,"summary":"  "}`, "inv-1", "explorer", nil)
 	if !result.OK {
 		t.Fatal("expected OK true")
 	}
@@ -168,7 +168,7 @@ func TestBuildSubAgentResultFromAnswerJSONWithEmptySummary(t *testing.T) {
 }
 
 func TestBuildSubAgentResultFromAnswerJSONWithoutSummary(t *testing.T) {
-	result := buildSubAgentResultFromAnswer(`{"ok":true}`, "inv-1", "explorer")
+	result := buildSubAgentResultFromAnswer(`{"ok":true}`, "inv-1", "explorer", nil)
 	if !result.OK {
 		t.Fatal("expected OK true")
 	}
@@ -412,7 +412,7 @@ func TestExecuteWithStreamObserver(t *testing.T) {
 func TestBuildSubAgentResultFromAnswerUnmarshalableJSON(t *testing.T) {
 	// Valid JSON but summary is a number, not a string — Unmarshal fails
 	input := `{"ok":true,"summary":123}`
-	result := buildSubAgentResultFromAnswer(input, "inv-1", "explorer")
+	result := buildSubAgentResultFromAnswer(input, "inv-1", "explorer", nil)
 	if !result.OK {
 		t.Fatal("expected OK true")
 	}

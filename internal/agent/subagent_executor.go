@@ -39,7 +39,8 @@ type SubAgentExecutionInput struct {
 	Agent        string
 	RunMode      planpkg.AgentMode
 	ExecCtx      *tools.ExecutionContext
-	Observer     Observer // optional: receives streaming events from the child runner
+	Observer     Observer    // optional: receives streaming events from the child runner
+	Store        SessionStore // optional: used to persist child session transcript
 }
 
 type defaultSubAgentExecutor struct {
@@ -77,7 +78,23 @@ func (e *defaultSubAgentExecutor) Execute(
 			true,
 		), nil
 	}
-	childSession := newSubAgentSession(workspace, parentSessionID, input.InvocationID, input.RunMode)
+
+	// Resume path: load existing child session instead of creating a new one.
+	var childSession *session.Session
+	if resumeID := strings.TrimSpace(input.Request.ResumeSessionID); resumeID != "" && input.Store != nil {
+		flattenedID := session.FlattenSubAgentSessionID(resumeID)
+		loaded, loadErr := input.Store.Load(flattenedID)
+		if loadErr != nil {
+			return subAgentFailureResult(input.InvocationID, input.Agent, subAgentErrorCodeExecutionFailed,
+				fmt.Sprintf("failed to load subagent session %s: %v", resumeID, loadErr), false), nil
+		}
+		childSession = loaded
+		childSession.ID = resumeID
+		// Append the new task as a continuation user message.
+		childSession.Messages = append(childSession.Messages, llm.NewUserTextMessage(buildSubAgentTaskInput(input.Request)))
+	} else {
+		childSession = newSubAgentSession(workspace, parentSessionID, input.InvocationID, input.RunMode)
+	}
 	defer childRunner.clearSessionSkillBridges(childSession)
 
 	if err := childRunner.syncExtensionTools(ctx, false); err != nil {
@@ -102,7 +119,17 @@ func (e *defaultSubAgentExecutor) Execute(
 		return subAgentFailureResult(input.InvocationID, input.Agent, subAgentErrorCodeExecutionFailed, runErr.Error(), true), nil
 	}
 
-	return buildSubAgentResultFromAnswer(answer, input.InvocationID, input.Agent), nil
+	result := buildSubAgentResultFromAnswer(answer, input.InvocationID, input.Agent, childSession.Messages)
+
+	// Persist child session transcript (best-effort).
+	if input.Store != nil && childSession != nil {
+		persistedID := session.FlattenSubAgentSessionID(childSession.ID)
+		clone := cloneSessionForPersist(childSession, persistedID, workspace)
+		_ = input.Store.Save(clone)
+		result.TranscriptSessionID = persistedID
+	}
+
+	return result, nil
 }
 
 func (e *defaultSubAgentExecutor) newSubAgentChildRunner(workspace string, maxTurns int, streamObserver Observer) *Runner {
@@ -205,7 +232,7 @@ func sortedToolSetNames(set map[string]struct{}) []string {
 	return names
 }
 
-func buildSubAgentResultFromAnswer(answer, invocationID, agent string) tools.DelegateSubAgentResult {
+func buildSubAgentResultFromAnswer(answer, invocationID, agent string, messages []llm.Message) tools.DelegateSubAgentResult {
 	trimmed := strings.TrimSpace(answer)
 	if trimmed == "" {
 		trimmed = "SubAgent task completed."
@@ -220,18 +247,21 @@ func buildSubAgentResultFromAnswer(answer, invocationID, agent string) tools.Del
 	jsonStr := extractJSONFromAnswer(trimmed)
 	if jsonStr == "" {
 		base.Summary = trimmed
+		base.Transcript = messagesToTranscript(messages)
 		return base
 	}
 
 	var parsed tools.DelegateSubAgentResult
 	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
 		base.Summary = trimmed
+		base.Transcript = messagesToTranscript(messages)
 		return base
 	}
 
 	hasStructuredData := strings.TrimSpace(parsed.Summary) != ""
 	if !hasStructuredData {
 		base.Summary = trimmed
+		base.Transcript = messagesToTranscript(messages)
 		return base
 	}
 
@@ -239,6 +269,7 @@ func buildSubAgentResultFromAnswer(answer, invocationID, agent string) tools.Del
 	if base.Summary == "" {
 		base.Summary = trimmed
 	}
+	base.Transcript = messagesToTranscript(messages)
 	return base
 }
 
@@ -306,4 +337,33 @@ func subAgentFailureResult(invocationID, agent, code, message string, retryable 
 			Retryable: retryable,
 		},
 	}
+}
+
+func messagesToTranscript(messages []llm.Message) []tools.TranscriptMessage {
+	result := make([]tools.TranscriptMessage, 0, len(messages))
+	for _, msg := range messages {
+		content := strings.TrimSpace(msg.Text())
+		if content == "" {
+			continue
+		}
+		result = append(result, tools.TranscriptMessage{
+			Role:    string(msg.Role),
+			Content: content,
+		})
+	}
+	return result
+}
+
+func cloneSessionForPersist(src *session.Session, flattenedID, workspace string) *session.Session {
+	data, err := json.Marshal(src)
+	if err != nil {
+		return src
+	}
+	var clone session.Session
+	if err := json.Unmarshal(data, &clone); err != nil {
+		return src
+	}
+	clone.ID = flattenedID
+	clone.Workspace = workspace
+	return &clone
 }

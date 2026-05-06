@@ -23,6 +23,7 @@ type DelegateSubAgentRequest struct {
 	Isolation       string                `json:"isolation"`
 	Output          string                `json:"output"`
 	RunInBackground bool                  `json:"run_in_background"`
+	ResumeSessionID string                `json:"resume_session_id,omitempty"`
 }
 
 type DelegateSubAgentError struct {
@@ -31,16 +32,24 @@ type DelegateSubAgentError struct {
 	Retryable bool   `json:"retryable"`
 }
 
+// TranscriptMessage represents a single message in a subagent's transcript.
+type TranscriptMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 type DelegateSubAgentResult struct {
-	OK             bool                   `json:"ok"`
-	Status         string                 `json:"status,omitempty"`
-	InvocationID   string                 `json:"invocation_id"`
-	Agent          string                 `json:"agent"`
-	TaskID         string                 `json:"task_id,omitempty"`
-	ResultReadTool string                 `json:"result_read_tool,omitempty"`
-	StopTool       string                 `json:"stop_tool,omitempty"`
-	Summary        string                 `json:"summary,omitempty"`
-	Error          *DelegateSubAgentError `json:"error,omitempty"`
+	OK                 bool                   `json:"ok"`
+	Status             string                 `json:"status,omitempty"`
+	InvocationID       string                 `json:"invocation_id"`
+	Agent              string                 `json:"agent"`
+	TaskID             string                 `json:"task_id,omitempty"`
+	ResultReadTool     string                 `json:"result_read_tool,omitempty"`
+	StopTool           string                 `json:"stop_tool,omitempty"`
+	Summary            string                 `json:"summary,omitempty"`
+	Error              *DelegateSubAgentError `json:"error,omitempty"`
+	Transcript         []TranscriptMessage    `json:"transcript,omitempty"`
+	TranscriptSessionID string                `json:"transcript_session_id,omitempty"`
 }
 
 type DelegateSubAgentHandler func(context.Context, DelegateSubAgentRequest, *ExecutionContext) (DelegateSubAgentResult, error)
@@ -113,6 +122,10 @@ func (t DelegateSubAgentTool) Definition() llm.ToolDefinition {
 					"run_in_background": map[string]any{
 						"type":        "boolean",
 						"description": "When true, launch asynchronously and return a task handle.",
+					},
+					"resume_session_id": map[string]any{
+						"type":        "string",
+						"description": "Optional session ID of a previously completed subagent to resume. The new task is appended as a continuation.",
 					},
 				},
 				"required": []string{"agent", "task"},

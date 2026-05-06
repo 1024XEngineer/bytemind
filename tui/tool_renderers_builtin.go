@@ -331,6 +331,71 @@ func (webSearchRenderer) Render(payload string) ToolRenderResult {
 	}
 }
 
+// delegateSubAgentRenderer handles "delegate_subagent" tool.
+type delegateSubAgentRenderer struct{}
+
+func (delegateSubAgentRenderer) DisplayLabel() string { return "SUBAGENT" }
+
+func (delegateSubAgentRenderer) Render(payload string) ToolRenderResult {
+	var result struct {
+		OK       bool   `json:"ok"`
+		Status   string `json:"status,omitempty"`
+		Agent    string `json:"agent"`
+		Summary  string `json:"summary,omitempty"`
+		Error    *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error,omitempty"`
+		Transcript []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"transcript,omitempty"`
+	}
+	if json.Unmarshal([]byte(payload), &result) == nil {
+		summary := fmt.Sprintf("SubAgent %s", result.Agent)
+		if text := strings.TrimSpace(result.Summary); text != "" {
+			summary += ": " + compact(text, 72)
+		}
+
+		status := "done"
+		if !result.OK {
+			status = "error"
+		} else if result.Status == "running" || result.Status == "accepted" {
+			status = "running"
+		}
+
+		detailLines := make([]string, 0, len(result.Transcript))
+		for _, msg := range result.Transcript {
+			role := msg.Role
+			if role == "assistant" {
+				role = "agent"
+			}
+			text := compactToolText(msg.Content, 72)
+			if text != "" {
+				detailLines = append(detailLines, fmt.Sprintf("[%s] %s", role, text))
+			}
+		}
+
+		compactLine := result.Agent
+		if text := strings.TrimSpace(result.Summary); text != "" {
+			compactLine += ": " + compact(text, 60)
+		}
+
+		return ToolRenderResult{
+			Summary:     summary,
+			DetailLines: detailLines,
+			Status:      status,
+			CompactLine: compactLine,
+		}
+	}
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "done",
+		CompactLine: compact(payload, 80),
+	}
+}
+
 // webFetchRenderer handles "web_fetch" tool.
 type webFetchRenderer struct{}
 

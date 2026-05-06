@@ -149,6 +149,7 @@ func (r *Runner) delegateSubAgent(
 				RunMode:      runMode,
 				ExecCtx:      execCtx,
 				Observer:     streamObserver,
+				Store:        r.store,
 			})
 			if execErr != nil {
 				return nil, execErr
