@@ -1564,6 +1564,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.planActionOpen {
 		return m.handlePlanActionKey(msg)
 	}
+	if next, cmd, handled := m.handleStartupGuideKey(msg); handled {
+		return next, cmd
+	}
 	if m.consumePasteEchoKey(msg) {
 		return m, nil
 	}
@@ -1885,12 +1888,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		value := strings.TrimSpace(rawValue)
 		if m.startupGuide.Active && !strings.HasPrefix(value, "/") {
-			previousScreen := m.screen
-			if err := m.handleStartupGuideSubmission(rawValue); err != nil {
-				m.statusNote = err.Error()
-			}
-			m.screen = screenLanding
-			return m, m.startLandingGlowOnTransition(previousScreen)
+			return m.submitStartupGuideInput()
 		}
 		if value == "" {
 			return m, nil
@@ -1977,6 +1975,100 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.syncInputOverlays()
 	return m, cmd
+}
+
+func (m model) shouldSubmitStartupGuideInput(msg tea.KeyMsg) bool {
+	if !m.startupGuide.Active || msg.Paste || msg.Type != tea.KeyEnter || isInputNewlineKey(msg) {
+		return false
+	}
+	if m.commandOpen || m.skillsOpen || m.mentionOpen || m.sessionsOpen || m.promptSearchOpen || m.planActionOpen || m.approval != nil {
+		return false
+	}
+	return !strings.HasPrefix(strings.TrimSpace(m.input.Value()), "/")
+}
+
+func (m model) handleStartupGuideKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
+	if !m.startupGuide.Active {
+		return m, nil, false
+	}
+	if m.commandOpen || m.skillsOpen || m.mentionOpen || m.sessionsOpen || m.promptSearchOpen || m.planActionOpen || m.approval != nil {
+		return m, nil, false
+	}
+	if msg.Type != tea.KeyEnter && m.consumePasteEchoKey(msg) {
+		return m, nil, true
+	}
+	if m.shouldSubmitStartupGuideInput(msg) {
+		next, cmd := m.submitStartupGuideInput()
+		return next, cmd, true
+	}
+	if isInputNewlineKey(msg) {
+		next, cmd := m.updateStartupGuideInput(tea.KeyMsg{Type: tea.KeyEnter})
+		return next, cmd, true
+	}
+	if isCtrlVPasteKey(msg) {
+		if payload, ok := m.readClipboardTextForPaste(); ok {
+			next := m.insertStartupGuideText(payload)
+			next.beginPasteTransaction(payload, "startup-ctrl+v")
+			return next, nil, true
+		}
+		return m, nil, true
+	}
+	if isStartupGuideTextInputKey(msg) {
+		next, cmd := m.updateStartupGuideInput(msg)
+		return next, cmd, true
+	}
+	return m, nil, false
+}
+
+func isStartupGuideTextInputKey(msg tea.KeyMsg) bool {
+	if msg.Paste {
+		return true
+	}
+	switch msg.Type {
+	case tea.KeyRunes, tea.KeySpace, tea.KeyBackspace, tea.KeyDelete, tea.KeyCtrlH:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m model) updateStartupGuideInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	m.clearStartupGuidePasteState()
+	return m, cmd
+}
+
+func (m model) insertStartupGuideText(payload string) model {
+	if payload == "" {
+		return m
+	}
+	m.input.SetValue(m.input.Value() + normalizeNewlines(payload))
+	m.input.CursorEnd()
+	m.clearStartupGuidePasteState()
+	return m
+}
+
+func (m *model) clearStartupGuidePasteState() {
+	m.clearPasteTransaction()
+	m.clearPasteSession()
+	m.clearHiddenPasteProbe()
+	m.releasePasteSubmitSuppression()
+	m.clearVirtualPasteParts()
+	m.clearPasteConfirmPending()
+	m.clearPasteBurstCapture()
+	m.clearPasteBurstCandidate()
+}
+
+func (m model) submitStartupGuideInput() (tea.Model, tea.Cmd) {
+	previousScreen := m.screen
+	rawValue := m.input.Value()
+	m.clearStartupGuidePasteState()
+	if err := m.handleStartupGuideSubmission(rawValue); err != nil {
+		m.statusNote = err.Error()
+	}
+	m.screen = screenLanding
+	return m, m.startLandingGlowOnTransition(previousScreen)
 }
 
 func (m model) shouldSuppressEnterAfterPaste() bool {

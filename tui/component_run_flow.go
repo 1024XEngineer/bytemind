@@ -54,6 +54,10 @@ func (m model) submitPrompt(value string) (tea.Model, tea.Cmd) {
 		m.statusNote = err.Error()
 		return m, nil
 	}
+	if err := validatePromptImageSupport(promptInput.UserMessage, m.currentModelLabel()); err != nil {
+		m.statusNote = err.Error()
+		return m, nil
+	}
 	return m.submitPreparedPrompt(promptInput, displayText)
 }
 

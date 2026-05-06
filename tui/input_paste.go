@@ -656,6 +656,9 @@ func (m *model) ingestPasteFragment(fragment, source string) tea.Cmd {
 }
 
 func (m model) handlePastePayload(payload string) (tea.Model, tea.Cmd) {
+	if m.startupGuide.Active {
+		return m.insertStartupGuideText(payload), nil
+	}
 	cleaned := trimTrailingPasteTerminators(payload)
 	candidate := strings.ReplaceAll(normalizeNewlines(cleaned), ctrlVMarkerRune, "")
 	if strings.TrimSpace(candidate) == "" {

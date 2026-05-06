@@ -1468,6 +1468,252 @@ func TestStartupGuideAcceptsValidKeyAndDisablesGuide(t *testing.T) {
 	}
 }
 
+func TestStartupGuideAPIKeyEnterBypassesPasteGuards(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"provider":{"type":"openai-compatible","base_url":"`+server.URL+`","model":"gpt-5.4"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("test-key")
+	m := model{
+		input: input,
+		cfg: config.Config{
+			Provider: config.ProviderConfig{
+				Type:      "openai-compatible",
+				BaseURL:   server.URL,
+				Model:     "gpt-5.4",
+				APIKeyEnv: "BYTEMIND_API_KEY",
+			},
+		},
+		startupGuide: StartupGuide{
+			Active:       true,
+			Status:       "Bytemind needs a working API key before chat can start.",
+			ConfigPath:   configPath,
+			CurrentField: startupFieldAPIKey,
+		},
+	}
+	now := time.Now()
+	m.beginPasteTransaction("test-key", "paste-key")
+	m.lastPasteAt = now
+	m.lastInputAt = now
+	m.inputBurstSize = len("test-key")
+	m.armPasteSubmitGuard(now)
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	if updated.startupGuide.Active {
+		t.Fatalf("expected startup guide to submit API key despite paste guard")
+	}
+	if !strings.Contains(updated.statusNote, "Provider configured and verified") {
+		t.Fatalf("unexpected status after setup: %q", updated.statusNote)
+	}
+}
+
+func TestStartupGuideEndpointFailureReturnsToBaseURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"provider":{"type":"openai-compatible","base_url":"`+server.URL+`","model":"gpt-5.4"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("test-key")
+	m := model{
+		input: input,
+		cfg: config.Config{
+			Provider: config.ProviderConfig{
+				Type:    "openai-compatible",
+				BaseURL: server.URL,
+				Model:   "gpt-5.4",
+			},
+		},
+		startupGuide: StartupGuide{
+			Active:       true,
+			Status:       "Bytemind needs a working API key before chat can start.",
+			ConfigPath:   configPath,
+			CurrentField: startupFieldAPIKey,
+		},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	if !updated.startupGuide.Active {
+		t.Fatalf("expected startup guide to stay active after endpoint failure")
+	}
+	if updated.startupGuide.CurrentField != startupFieldBaseURL {
+		t.Fatalf("expected endpoint failure to return to base_url step, got %q", updated.startupGuide.CurrentField)
+	}
+	if updated.cfg.Provider.APIKey != "test-key" {
+		t.Fatalf("expected API key to remain available in memory, got %q", updated.cfg.Provider.APIKey)
+	}
+	if updated.input.Value() != "" {
+		t.Fatalf("expected input to be cleared before base_url retry, got %q", updated.input.Value())
+	}
+	if !strings.Contains(updated.statusNote, "Provider endpoint path looks incorrect") {
+		t.Fatalf("expected endpoint issue hint, got %q", updated.statusNote)
+	}
+}
+
+func TestStartupGuideAPIKeyStepRetriesCurrentKeyOnEmptyEnter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"provider":{"type":"openai-compatible","base_url":"`+server.URL+`","model":"gpt-5.4","api_key":"test-key"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input := textarea.New()
+	input.Focus()
+	m := model{
+		input: input,
+		cfg: config.Config{
+			Provider: config.ProviderConfig{
+				Type:    "openai-compatible",
+				BaseURL: server.URL,
+				Model:   "gpt-5.4",
+				APIKey:  "test-key",
+			},
+		},
+		startupGuide: StartupGuide{
+			Active:       true,
+			Status:       "Bytemind needs a working API key before chat can start.",
+			ConfigPath:   configPath,
+			CurrentField: startupFieldAPIKey,
+		},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	if updated.startupGuide.Active {
+		t.Fatalf("expected startup guide to verify current API key on empty Enter")
+	}
+	if !strings.Contains(updated.statusNote, "Provider configured and verified") {
+		t.Fatalf("unexpected status after setup: %q", updated.statusNote)
+	}
+}
+
+func TestStartupGuidePastePayloadKeepsAPIKeyLiteral(t *testing.T) {
+	apiKey := "sk-" + strings.Repeat("abcdef0123456789", 12)
+	input := textarea.New()
+	input.Focus()
+	m := model{
+		input: input,
+		startupGuide: StartupGuide{
+			Active:       true,
+			CurrentField: startupFieldAPIKey,
+		},
+	}
+
+	got, cmd := m.handlePastePayload(apiKey)
+	updated := got.(model)
+	if cmd != nil {
+		t.Fatalf("expected startup guide paste to avoid paste compression timers")
+	}
+	if updated.input.Value() != apiKey {
+		t.Fatalf("expected API key paste to stay literal, got %q", updated.input.Value())
+	}
+	if strings.Contains(updated.input.Value(), "[Paste #") || len(updated.pastedOrder) != 0 {
+		t.Fatalf("expected no compressed paste marker, got input=%q pasted=%v", updated.input.Value(), updated.pastedOrder)
+	}
+}
+
+func TestStartupGuideBulkRunesKeepAPIKeyLiteral(t *testing.T) {
+	apiKey := "sk-" + strings.Repeat("0123456789abcdef", 12)
+	input := textarea.New()
+	input.Focus()
+	m := model{
+		input: input,
+		startupGuide: StartupGuide{
+			Active:       true,
+			CurrentField: startupFieldAPIKey,
+		},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(apiKey)})
+	updated := got.(model)
+	if updated.input.Value() != apiKey {
+		t.Fatalf("expected bulk API key input to stay literal, got %q", updated.input.Value())
+	}
+	if strings.Contains(updated.input.Value(), "[Paste #") || len(updated.pastedOrder) != 0 {
+		t.Fatalf("expected no compressed paste marker, got input=%q pasted=%v", updated.input.Value(), updated.pastedOrder)
+	}
+}
+
+func TestStartupGuideConsumesCtrlVPasteEchoWithoutDuplicatingKey(t *testing.T) {
+	apiKey := "sk-" + strings.Repeat("fedcba9876543210", 8)
+	input := textarea.New()
+	input.Focus()
+	input.SetValue(apiKey)
+	m := model{
+		input: input,
+		startupGuide: StartupGuide{
+			Active:       true,
+			CurrentField: startupFieldAPIKey,
+		},
+	}
+	m.beginPasteTransaction(apiKey, "startup-ctrl+v")
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(apiKey)})
+	updated := got.(model)
+	if updated.input.Value() != apiKey {
+		t.Fatalf("expected echoed Ctrl+V paste payload to be consumed, got %q", updated.input.Value())
+	}
+}
+
+func TestStartupGuideCtrlJInsertsNewline(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("first line")
+	input.CursorEnd()
+	m := model{
+		input: input,
+		startupGuide: StartupGuide{
+			Active:       true,
+			CurrentField: startupFieldAPIKey,
+		},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	updated := got.(model)
+	if !strings.Contains(updated.input.Value(), "\n") {
+		t.Fatalf("expected Ctrl+J to insert newline in startup guide, got %q", updated.input.Value())
+	}
+	if !updated.startupGuide.Active {
+		t.Fatalf("expected newline shortcut not to submit startup guide")
+	}
+}
+
 func TestStartupGuideSupportsModelAndBaseURLInput(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(configPath, []byte(`{
@@ -2540,6 +2786,31 @@ func TestEnterSubmitsPrompt(t *testing.T) {
 	}
 	if updated.chatItems[0].Body != "ship this prompt" {
 		t.Fatalf("expected submitted user prompt to match input, got %q", updated.chatItems[0].Body)
+	}
+}
+
+func TestSubmitPromptImageUnsupportedKeepsInput(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	m.cfg.Provider.Model = "text-only-model"
+	_ = mustIngestTestImage(t, m, "image")
+	assetID := findAssetIDByImageID(t, m, 1)
+	m.bindMentionImageAsset("image.png", assetID)
+	m.input.SetWidth(40)
+	m.input.SetHeight(3)
+	m.input.SetValue("please read @image.png")
+	m.input.CursorEnd()
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	if len(updated.chatItems) != 0 {
+		t.Fatalf("expected unsupported image prompt not to submit, got %d chat items", len(updated.chatItems))
+	}
+	if strings.TrimSpace(updated.input.Value()) != "please read @image.png" {
+		t.Fatalf("expected unsupported image prompt to keep input, got %q", updated.input.Value())
+	}
+	if !strings.Contains(strings.ToLower(updated.statusNote), "does not support image input") {
+		t.Fatalf("expected image support error, got %q", updated.statusNote)
 	}
 }
 

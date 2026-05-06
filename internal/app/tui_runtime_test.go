@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	notifypkg "github.com/1024XEngineer/bytemind/internal/notify"
+	"github.com/1024XEngineer/bytemind/internal/config"
 	"testing"
 	"time"
 )
@@ -15,6 +16,19 @@ func TestResolveTUIStartupPolicyInteractiveDisablesGuideAndAPIKeyRequirement(t *
 	}
 	if requireAPIKey {
 		t.Fatal("expected interactive tui to allow startup without API key")
+	}
+}
+
+func TestCheckTUIProviderAvailabilityReportsMissingKey(t *testing.T) {
+	check := checkTUIProviderAvailability(config.Config{
+		Provider: config.ProviderConfig{
+			Type:    "openai-compatible",
+			BaseURL: "https://api.openai.com/v1",
+			Model:   "gpt-5.4-mini",
+		},
+	})
+	if check.Ready {
+		t.Fatal("expected provider availability to fail when api key is missing")
 	}
 }
 
