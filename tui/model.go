@@ -48,7 +48,7 @@ const (
 	thinkingLabel              = "thinking"
 	chatTitleLabel             = "Bytemind Chat"
 	tuiTitleLabel              = "Bytemind TUI"
-	footerHintText             = "tab agents | / commands | drag select | Ctrl+A full-access | Ctrl+C copy/quit | Ctrl+L sessions"
+	footerHintText             = "tab agents | / commands | drag select | Ctrl+O tools | Ctrl+A full-access | Ctrl+C copy/quit | Ctrl+L sessions"
 	conversationViewportZoneID = "bytemind:conversation:viewport"
 	inputEditorZoneID          = "bytemind:input:editor"
 	thinkingSpinnerFPS         = 80 * time.Millisecond
@@ -66,6 +66,7 @@ type footerShortcutHint struct {
 var footerShortcutHints = []footerShortcutHint{
 	{Key: "tab", Label: "agents"},
 	{Key: "/", Label: "commands"},
+	{Key: "Ctrl+O", Label: "tools"},
 	{Key: "Ctrl+C", Label: "copy/quit"},
 	{Key: "Ctrl+L", Label: "sessions"},
 	{Key: "Ctrl+A", Label: "full-access"},
@@ -122,11 +123,14 @@ var startupFieldOrder = []string{
 }
 
 type chatEntry struct {
-	Kind   string
-	Title  string
-	Meta   string
-	Body   string
-	Status string
+	Kind        string
+	Title       string
+	Meta        string
+	Body        string
+	Status      string
+	ToolCallID  string   // precise matching for tool call completion
+	CompactBody string   // collapsed tree view text (e.g. "Read model.go (1-50)")
+	DetailLines []string // expanded detail lines
 }
 
 type viewportSelectionPoint struct {
@@ -155,13 +159,6 @@ type commandItem struct {
 
 func (c commandItem) FilterValue() string {
 	return strings.ToLower(strings.TrimPrefix(c.Usage, "/") + " " + c.Description)
-}
-
-type toolRun struct {
-	Name    string
-	Summary string
-	Lines   []string
-	Status  string
 }
 
 type approvalPrompt struct {
@@ -380,7 +377,6 @@ type model struct {
 	viewportContentCache       string
 	viewportTopCache           viewportTopLookupCache
 	chatItems                  []chatEntry
-	toolRuns                   []toolRun
 	plan                       planpkg.State
 	planAction                 *planActionPicker
 	planActionOpen             bool
@@ -406,6 +402,8 @@ type model struct {
 	subAgentExpanded           bool
 	runStartedAt               time.Time
 	lastRunDuration            time.Duration
+	lastTokenReceivedAt        time.Time
+	stalled                    bool
 	runIndicatorState          runIndicatorState
 	streamingIndex             int
 	suppressedAssistantDelta   string
@@ -429,6 +427,7 @@ type model struct {
 	pasteBurstCandidate        pasteBurstCandidateState
 	clipboardCaptureArmedUntil time.Time
 	chatAutoFollow             bool
+	toolDetailExpanded         bool
 	draggingScrollbar          bool
 	scrollbarDragOffset        int
 	mouseSelecting             bool
@@ -531,7 +530,7 @@ func newModel(opts Options) model {
 	planVP.MouseWheelEnabled = true
 	planVP.MouseWheelDelta = scrollStep
 
-	chatItems, toolRuns := rebuildSessionTimeline(opts.Session)
+	chatItems := rebuildSessionTimeline(opts.Session)
 
 	if opts.Runner != nil {
 		opts.Runner.SetObserver(func(event Event) {
@@ -562,7 +561,6 @@ func newModel(opts Options) model {
 		input:                input,
 		spinner:              spin,
 		chatItems:            chatItems,
-		toolRuns:             toolRuns,
 		plan:                 copyPlanState(opts.Session.Plan),
 		sessions:             nil,
 		sessionLimit:         defaultSessionLimit,
@@ -760,9 +758,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.busy {
 			return m, nil
 		}
+		// Stall detection: no activity for >3 seconds
+		if !m.lastTokenReceivedAt.IsZero() && time.Since(m.lastTokenReceivedAt) > 3*time.Second {
+			m.stalled = true
+		} else {
+			m.stalled = false
+		}
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
-		if strings.EqualFold(strings.TrimSpace(m.phase), "thinking") || m.streamingIndex >= 0 {
+		if strings.EqualFold(strings.TrimSpace(m.phase), "thinking") || strings.EqualFold(strings.TrimSpace(m.phase), "tool") || m.streamingIndex >= 0 {
 			m.updateThinkingCard()
 			m.refreshViewport()
 		}
@@ -852,7 +856,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.llmConnected = false
 			m.failLatestAssistant(msg.Err.Error())
 			m.failRunningToolCalls()
-			m.failRunningToolRuns()
 			m.notifyRunFailed(msg.RunID, msg.Err)
 		default:
 			m.lastRunDuration = 0
@@ -862,6 +865,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusNote = "Ready."
 			m.phase = "idle"
 		}
+		m.stalled = false
+		m.lastTokenReceivedAt = time.Time{}
 		m.refreshViewport()
 		return m, tea.Batch(waitForAsync(m.async), m.loadSessionsCmd())
 	case approvalRequestMsg:
@@ -1638,6 +1643,18 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, func() tea.Msg { return togglePasteExpandAllMsg{} }
+	case "ctrl+o":
+		m.toolDetailExpanded = !m.toolDetailExpanded
+		if m.toolDetailExpanded {
+			m.statusNote = "Tool details expanded."
+		} else {
+			m.statusNote = "Tool details collapsed."
+		}
+		if m.width > 0 && m.height > 0 {
+			m.syncLayoutForCurrentScreen()
+			m.refreshViewport()
+		}
+		return m, nil
 	}
 
 	if m.approval != nil {
@@ -2181,9 +2198,8 @@ func waitForAsync(ch <-chan tea.Msg) tea.Cmd {
 	}
 }
 
-func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
+func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 	items := make([]chatEntry, 0, len(sess.Messages))
-	runs := make([]toolRun, 0, 8)
 	callNames := map[string]string{}
 
 	for _, message := range sess.Messages {
@@ -2202,14 +2218,19 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 				if name == "" {
 					name = "tool"
 				}
-				summary, lines, status := summarizeTool(name, part.ToolResult.Content)
+				rendered := renderToolPayload(name, part.ToolResult.Content)
+				summary := rendered.Summary
+				lines := rendered.DetailLines
+				status := rendered.Status
+				compactBody := rendered.CompactLine
 				items = append(items, chatEntry{
-					Kind:   "tool",
-					Title:  toolEntryTitle(name),
-					Body:   joinSummary(summary, lines),
-					Status: status,
+					Kind:        "tool",
+					Title:       toolEntryTitle(name),
+					Body:        joinSummary(summary, lines),
+					Status:      status,
+					CompactBody: compactBody,
+					DetailLines: lines,
 				})
-				runs = append(runs, toolRun{Name: name, Summary: summary, Lines: lines, Status: status})
 			}
 			userText := strings.Join(userTextParts, "")
 			if strings.TrimSpace(userText) != "" {
@@ -2227,17 +2248,22 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 			if name == "" {
 				name = "tool"
 			}
-			summary, lines, status := summarizeTool(name, message.Content)
+			rendered := renderToolPayload(name, message.Content)
+			summary := rendered.Summary
+			lines := rendered.DetailLines
+			status := rendered.Status
+			compactBody := rendered.CompactLine
 			items = append(items, chatEntry{
-				Kind:   "tool",
-				Title:  toolEntryTitle(name),
-				Body:   joinSummary(summary, lines),
-				Status: status,
+				Kind:        "tool",
+				Title:       toolEntryTitle(name),
+				Body:        joinSummary(summary, lines),
+				Status:      status,
+				CompactBody: compactBody,
+				DetailLines: lines,
 			})
-			runs = append(runs, toolRun{Name: name, Summary: summary, Lines: lines, Status: status})
 		}
 	}
-	return items, runs
+	return items
 }
 
 func chatBubbleWidth(item chatEntry, width int) int {

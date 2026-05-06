@@ -97,11 +97,15 @@ func (m model) runIndicatorText() string {
 			spin = "..."
 		}
 		detail := fmt.Sprintf("%s %s (%s)", spin, runIndicatorPhaseText(m.phase), formatElapsedClock(m.runStartedAt, time.Now()))
+		spinStyle := thinkingIndicatorStyle
+		if m.stalled {
+			spinStyle = lipgloss.NewStyle().Foreground(semanticColors.Warning)
+		}
 		return lipgloss.JoinHorizontal(
 			lipgloss.Left,
 			renderPillBadge("Thinking", "running"),
 			" ",
-			thinkingIndicatorStyle.Render(detail),
+			spinStyle.Render(detail),
 		)
 	case runIndicatorComplete:
 		detail := "Complete"

@@ -173,6 +173,7 @@ func mapAgentEvent(event agent.Event) tui.Event {
 		UserInput:     event.UserInput,
 		Content:       event.Content,
 		ToolName:      event.ToolName,
+		ToolCallID:    event.ToolCallID,
 		ToolArguments: event.ToolArguments,
 		ToolResult:    event.ToolResult,
 		Error:         event.Error,

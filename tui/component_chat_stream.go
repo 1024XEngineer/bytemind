@@ -233,6 +233,48 @@ func (m *model) finishLatestToolCall(name, body, status string) {
 	})
 }
 
+// finishToolCall finds the tool chatEntry by ToolCallID (precise match)
+// and updates its Body, Status, CompactBody, and DetailLines.
+// Falls back to title-based matching when ToolCallID is empty.
+func (m *model) finishToolCall(toolCallID, name, body, status string, compactBody string, detailLines []string) {
+	// Try precise ToolCallID match first
+	if toolCallID != "" {
+		for i := len(m.chatItems) - 1; i >= 0; i-- {
+			if m.chatItems[i].Kind == "tool" && m.chatItems[i].ToolCallID == toolCallID {
+				m.chatItems[i].Body = body
+				m.chatItems[i].Status = status
+				m.chatItems[i].CompactBody = compactBody
+				m.chatItems[i].DetailLines = detailLines
+				return
+			}
+		}
+	}
+	// Fallback: match by title (same as finishLatestToolCall)
+	title := toolEntryTitle(name)
+	for i := len(m.chatItems) - 1; i >= 0; i-- {
+		if m.chatItems[i].Kind != "tool" {
+			continue
+		}
+		if m.chatItems[i].Title != title && strings.TrimSpace(name) != "" {
+			continue
+		}
+		m.chatItems[i].Body = body
+		m.chatItems[i].Status = status
+		m.chatItems[i].CompactBody = compactBody
+		m.chatItems[i].DetailLines = detailLines
+		return
+	}
+	// Last resort: append as new entry
+	m.appendChat(chatEntry{
+		Kind:        "tool",
+		Title:       title,
+		Body:        body,
+		Status:      status,
+		CompactBody: compactBody,
+		DetailLines: detailLines,
+	})
+}
+
 func (m *model) updateThinkingCard() {
 	if !m.busy || m.streamingIndex < 0 || m.streamingIndex >= len(m.chatItems) {
 		return
@@ -308,17 +350,8 @@ func (m *model) failLatestAssistant(errText string) {
 
 func (m *model) failRunningToolCalls() {
 	for i := range m.chatItems {
-		if m.chatItems[i].Kind == "tool" && m.chatItems[i].Status == "running" {
+		if m.chatItems[i].Kind == "tool" && (m.chatItems[i].Status == "running" || m.chatItems[i].Status == "queued") {
 			m.chatItems[i].Status = "error"
-		}
-	}
-}
-
-func (m *model) failRunningToolRuns() {
-	for i := range m.toolRuns {
-		if m.toolRuns[i].Status == "running" {
-			m.toolRuns[i].Status = "error"
-			m.toolRuns[i].Summary = "Tool call interrupted by error."
 		}
 	}
 }
