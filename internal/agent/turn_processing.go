@@ -158,20 +158,6 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 			}
 			return "", false, nil
 		}
-		localRepoRepairKind, _ := evaluateLocalRepoClaimRepairTurn(p.RunMode, latestUser, reply, p.Session.Messages)
-		if localRepoRepairKind != localRepoClaimRepairNone {
-			if p.TaskReport != nil {
-				switch localRepoRepairKind {
-				case localRepoClaimRepairPathUnverified:
-					p.TaskReport.RecordStrategyAdjustment("assistant made a concrete local repo claim without directly confirming the referenced path; finalized as-is")
-				case localRepoClaimRepairImplementationUnverified:
-					p.TaskReport.RecordStrategyAdjustment("assistant concluded the repo already had a runnable implementation based only on weak signals; finalized as-is")
-				}
-			}
-			if p.AdaptiveState != nil {
-				p.AdaptiveState.recordProgress()
-			}
-		}
 		if p.AdaptiveState != nil {
 			p.AdaptiveState.recordProgress()
 		}

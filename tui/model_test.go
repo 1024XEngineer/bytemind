@@ -5189,15 +5189,12 @@ func TestRebuildSessionTimelineParsesUserToolResultParts(t *testing.T) {
 		},
 	}
 
-	items, runs := rebuildSessionTimeline(sess)
+	items := rebuildSessionTimeline(sess)
 	if len(items) != 2 {
 		t.Fatalf("expected user + tool items, got %#v", items)
 	}
 	if items[1].Kind != "tool" || items[1].Title != toolEntryTitle("read_file") {
 		t.Fatalf("expected tool item from tool_result part, got %#v", items[1])
-	}
-	if len(runs) != 1 || runs[0].Name != "read_file" {
-		t.Fatalf("expected tool run reconstructed, got %#v", runs)
 	}
 }
 
@@ -5208,15 +5205,12 @@ func TestRebuildSessionTimelineFallsBackToGenericToolNameForUnknownToolUseID(t *
 		},
 	}
 
-	items, runs := rebuildSessionTimeline(sess)
+	items := rebuildSessionTimeline(sess)
 	if len(items) != 1 {
 		t.Fatalf("expected only one tool item, got %#v", items)
 	}
 	if items[0].Kind != "tool" || items[0].Title != toolEntryTitle("tool") {
 		t.Fatalf("expected fallback tool title for unknown tool use id, got %#v", items[0])
-	}
-	if len(runs) != 1 || runs[0].Name != "tool" {
-		t.Fatalf("expected fallback tool run name, got %#v", runs)
 	}
 }
 
@@ -5232,7 +5226,7 @@ func TestRebuildSessionTimelineParsesLegacyToolRoleMessage(t *testing.T) {
 		},
 	}
 
-	items, runs := rebuildSessionTimeline(sess)
+	items := rebuildSessionTimeline(sess)
 	if len(items) != 2 {
 		t.Fatalf("expected assistant + tool items, got %#v", items)
 	}
@@ -5241,9 +5235,6 @@ func TestRebuildSessionTimelineParsesLegacyToolRoleMessage(t *testing.T) {
 	}
 	if items[1].Kind != "tool" || items[1].Title != toolEntryTitle("tool") {
 		t.Fatalf("expected fallback tool title for legacy tool message, got %#v", items[1])
-	}
-	if len(runs) != 1 || runs[0].Name != "tool" {
-		t.Fatalf("expected tool run reconstructed from legacy tool message, got %#v", runs)
 	}
 }
 
@@ -5259,6 +5250,7 @@ func TestHandleAgentEventShowsToolProgressInChat(t *testing.T) {
 	m.handleAgentEvent(Event{
 		Type:          EventToolCallStarted,
 		ToolName:      "read_file",
+		ToolCallID:    "call-1",
 		ToolArguments: `{"path":"tui/model.go"}`,
 	})
 	if len(m.chatItems) != 2 {
@@ -5267,6 +5259,9 @@ func TestHandleAgentEventShowsToolProgressInChat(t *testing.T) {
 	if m.chatItems[1].Kind != "tool" || m.chatItems[1].Status != "running" || m.chatItems[1].Title != toolEntryTitle("read_file") {
 		t.Fatalf("expected running tool call chat item, got %+v", m.chatItems[1])
 	}
+	if m.chatItems[1].ToolCallID != "call-1" {
+		t.Fatalf("expected tool call ID to be set, got %q", m.chatItems[1].ToolCallID)
+	}
 	if strings.TrimSpace(m.chatItems[1].Body) != "" {
 		t.Fatalf("expected tool call body to hide params, got %q", m.chatItems[1].Body)
 	}
@@ -5274,6 +5269,7 @@ func TestHandleAgentEventShowsToolProgressInChat(t *testing.T) {
 	m.handleAgentEvent(Event{
 		Type:       EventToolCallCompleted,
 		ToolName:   "read_file",
+		ToolCallID: "call-1",
 		ToolResult: `{"path":"tui/model.go","start_line":1,"end_line":20}`,
 	})
 	if len(m.chatItems) != 2 {
@@ -5315,6 +5311,7 @@ func TestHandleAgentEventTracksRunLifecyclePhases(t *testing.T) {
 	m.handleAgentEvent(Event{
 		Type:          EventToolCallStarted,
 		ToolName:      "read_file",
+		ToolCallID:    "call-2",
 		ToolArguments: `{"path":"tui/model.go","start_line":1,"end_line":5}`,
 	})
 	if m.phase != "tool" || m.statusNote != "Running tool: read_file" {
@@ -5324,6 +5321,7 @@ func TestHandleAgentEventTracksRunLifecyclePhases(t *testing.T) {
 	m.handleAgentEvent(Event{
 		Type:       EventToolCallCompleted,
 		ToolName:   "read_file",
+		ToolCallID: "call-2",
 		ToolResult: `{"path":"tui/model.go","start_line":1,"end_line":5}`,
 	})
 	if m.phase != "thinking" {
@@ -5354,6 +5352,7 @@ func TestToolStartDropsStreamedAssistantReasoning(t *testing.T) {
 	m.handleAgentEvent(Event{
 		Type:          EventToolCallStarted,
 		ToolName:      "list_files",
+		ToolCallID:    "call-4",
 		ToolArguments: `{"path":"."}`,
 	})
 
@@ -5376,6 +5375,7 @@ func TestToolStartWithoutAssistantDeltaDoesNotInjectThinkingCard(t *testing.T) {
 	m.handleAgentEvent(Event{
 		Type:          EventToolCallStarted,
 		ToolName:      "list_files",
+		ToolCallID:    "call-5",
 		ToolArguments: `{"path":"."}`,
 	})
 
@@ -5402,6 +5402,7 @@ func TestToolStartWithGenericToolIntentDoesNotShowThinkingCard(t *testing.T) {
 	m.handleAgentEvent(Event{
 		Type:          EventToolCallStarted,
 		ToolName:      "list_files",
+		ToolCallID:    "call-6",
 		ToolArguments: `{"path":"."}`,
 	})
 
@@ -6127,6 +6128,28 @@ func TestTogglePasteExpandMessagesAndCtrlE(t *testing.T) {
 	}
 }
 
+func TestCtrlOTogglesToolDetailExpansion(t *testing.T) {
+	m := model{}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
+	expanded := got.(model)
+	if !expanded.toolDetailExpanded {
+		t.Fatalf("expected Ctrl+O to expand tool details")
+	}
+	if expanded.statusNote != "Tool details expanded." {
+		t.Fatalf("expected expanded status note, got %q", expanded.statusNote)
+	}
+
+	got, _ = expanded.handleKey(tea.KeyMsg{Type: tea.KeyCtrlO})
+	collapsed := got.(model)
+	if collapsed.toolDetailExpanded {
+		t.Fatalf("expected second Ctrl+O to collapse tool details")
+	}
+	if collapsed.statusNote != "Tool details collapsed." {
+		t.Fatalf("expected collapsed status note, got %q", collapsed.statusNote)
+	}
+}
+
 func TestUpdateRunFinishedMsgResetsBusyState(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		m := model{
@@ -6701,6 +6724,7 @@ func TestToolCallCompletedTriggersDeferredBTWCancel(t *testing.T) {
 	m.handleAgentEvent(Event{
 		Type:       EventToolCallCompleted,
 		ToolName:   "read_file",
+		ToolCallID: "call-7",
 		ToolResult: `{"path":"tui/model.go","start_line":1,"end_line":3}`,
 	})
 
