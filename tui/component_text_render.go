@@ -486,25 +486,22 @@ func renderAssistantBodyLegacy(text string, width int) string {
 	lines := strings.Split(text, "\n")
 	out := make([]string, 0, len(lines))
 	inCodeBlock := false
+	codeLines := make([]string, 0, 8)
 	prevBlank := true
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") {
+			if inCodeBlock {
+				out = append(out, renderLegacyFencedCodeBlock(codeLines, width))
+				codeLines = codeLines[:0]
+			}
 			inCodeBlock = !inCodeBlock
 			continue
 		}
 
 		if inCodeBlock {
-			codeLine := strings.TrimRight(wrapPlainText(line, width), "\n")
-			if strings.TrimSpace(codeLine) == "" {
-				if !prevBlank {
-					out = append(out, "")
-				}
-				prevBlank = true
-				continue
-			}
-			out = append(out, codeStyle.Render(codeLine))
+			codeLines = append(codeLines, line)
 			prevBlank = false
 			continue
 		}
@@ -529,7 +526,29 @@ func renderAssistantBodyLegacy(text string, width int) string {
 		prevBlank = false
 	}
 
+	if inCodeBlock {
+		out = append(out, renderLegacyFencedCodeBlock(codeLines, width))
+	}
+
 	return strings.Join(out, "\n")
+}
+
+func renderLegacyFencedCodeBlock(codeLines []string, width int) string {
+	if len(codeLines) == 0 {
+		return enhancedCodeStyle.Render("")
+	}
+
+	innerWidth := max(8, width-enhancedCodeStyle.GetHorizontalFrameSize())
+	wrapped := make([]string, 0, len(codeLines))
+	for _, line := range codeLines {
+		if line == "" {
+			wrapped = append(wrapped, "")
+			continue
+		}
+		wrapped = append(wrapped, strings.Split(wrapPlainText(line, innerWidth), "\n")...)
+	}
+
+	return enhancedCodeStyle.Render(strings.Join(wrapped, "\n"))
 }
 
 func stripAssistantStructuralTags(text string) string {
