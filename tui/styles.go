@@ -4,8 +4,8 @@ import "github.com/charmbracelet/lipgloss"
 
 const (
 	landingBuildAccent = "#4CB7FF"
-	landingPlanAccent  = "#D86BFF"
-	landingPlanBg      = "#2C123D"
+	landingPlanAccent  = "#9D8AC8"
+	landingPlanBg      = "#231421"
 )
 
 type semanticColorTokens struct {
@@ -459,6 +459,16 @@ var (
 
 	approvalHintStyle = lipgloss.NewStyle().
 				Foreground(semanticColors.TextMuted)
+
+	approvalOptionStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextBase)
+
+	approvalOptionSelectedStyle = lipgloss.NewStyle().
+					Foreground(semanticColors.Accent).
+					Bold(true)
+
+	approvalOptionDescriptionStyle = lipgloss.NewStyle().
+					Foreground(semanticColors.TextMuted)
 
 	approvalOptionIdleStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#9BA7BC")).

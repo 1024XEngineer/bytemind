@@ -20,7 +20,35 @@ export PATH="$HOME/bin:$PATH"
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh \
-  | BYTEMIND_VERSION=v0.3.0 bash
+  | BYTEMIND_VERSION=vX.Y.Z bash
+```
+
+Windows PowerShell：
+
+```powershell
+$env:BYTEMIND_VERSION = 'vX.Y.Z'
+iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
+```
+
+将 `vX.Y.Z` 替换为你要安装的发布标签。
+
+### 更新后为什么还是旧版本？
+
+PowerShell 可能先找到了 PATH 中更靠前的旧 `bytemind.exe`。运行：
+
+```powershell
+Get-Command bytemind -All | Select-Object Source
+& "$env:USERPROFILE\bin\bytemind.exe" --version
+```
+
+如果第二行是新版本，把 `%USERPROFILE%\bin` 移到用户 PATH 最前面；详见[故障排查](/zh/troubleshooting#windows-更新后仍显示旧版本)。
+
+### Windows 里运行 bash 安装命令为什么报 WSL 错误？
+
+`install.sh | bash` 只适用于 macOS、Linux 或正常工作的 WSL。在 Windows PowerShell 中请使用：
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
 ## Provider 问题
@@ -54,7 +82,7 @@ curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts
 提高 `max_iterations`：
 
 ```bash
-bytemind chat -max-iterations 64
+bytemind -max-iterations 64
 ```
 
 或在配置文件中永久设置：

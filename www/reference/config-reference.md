@@ -1,6 +1,6 @@
 # Config Reference
 
-Full reference for all fields in `.bytemind/config.json`.
+Full reference for all fields in `~/.bytemind/config.json` and project-level `.bytemind/config.json`.
 
 For a working example see [`config.example.json`](https://github.com/1024XEngineer/bytemind/blob/main/config.example.json).
 

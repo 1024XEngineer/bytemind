@@ -225,14 +225,15 @@ func promptForApproval(command, reason string, execCtx *ExecutionContext) error 
 		return approvalChannelUnavailableError("shell command", command)
 	}
 	if execCtx.Approval != nil {
-		approved, err := execCtx.Approval(ApprovalRequest{
-			Command: command,
-			Reason:  reason,
+		decision, err := execCtx.Approval(ApprovalRequest{
+			ToolName: "run_shell",
+			Command:  command,
+			Reason:   reason,
 		})
 		if err != nil {
 			return err
 		}
-		if !approved {
+		if !NormalizeApprovalDecision(decision).Approved() {
 			return errors.New("shell command was not run because approval was denied")
 		}
 		return nil

@@ -454,7 +454,7 @@ func TestRunFailedWithMixedToolStates(t *testing.T) {
 
 // --- finalizeAssistantTurnForTool ---
 
-func TestFinalizeAssistantTurnForToolConvertsEmptyThinkingToThinkingCard(t *testing.T) {
+func TestFinalizeAssistantTurnForToolRemovesEmptyThinkingCard(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
 			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "pending"},
@@ -466,11 +466,8 @@ func TestFinalizeAssistantTurnForToolConvertsEmptyThinkingToThinkingCard(t *test
 	if m.streamingIndex != -1 {
 		t.Fatalf("expected streamingIndex=-1, got %d", m.streamingIndex)
 	}
-	if m.chatItems[0].Status != "thinking" {
-		t.Fatalf("expected thinking status, got %q", m.chatItems[0].Status)
-	}
-	if m.chatItems[0].Title != thinkingLabel {
-		t.Fatalf("expected thinking title, got %q", m.chatItems[0].Title)
+	if len(m.chatItems) != 0 {
+		t.Fatalf("expected empty thinking card removed, got %d items", len(m.chatItems))
 	}
 }
 
@@ -491,7 +488,7 @@ func TestFinalizeAssistantTurnForToolRemovesGenericThinking(t *testing.T) {
 	}
 }
 
-func TestFinalizeAssistantTurnForToolKeepsMeaningfulThinking(t *testing.T) {
+func TestFinalizeAssistantTurnForToolRemovesMeaningfulThinking(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
 			{Kind: "assistant", Title: thinkingLabel, Body: "Analyzing the repository structure to understand the codebase layout", Status: "streaming"},
@@ -503,11 +500,8 @@ func TestFinalizeAssistantTurnForToolKeepsMeaningfulThinking(t *testing.T) {
 	if m.streamingIndex != -1 {
 		t.Fatalf("expected streamingIndex=-1, got %d", m.streamingIndex)
 	}
-	if len(m.chatItems) != 1 {
-		t.Fatalf("expected meaningful thinking preserved, got %d items", len(m.chatItems))
-	}
-	if m.chatItems[0].Status != "thinking" {
-		t.Fatalf("expected thinking status, got %q", m.chatItems[0].Status)
+	if len(m.chatItems) != 0 {
+		t.Fatalf("expected meaningful thinking removed from chat timeline, got %d items", len(m.chatItems))
 	}
 }
 

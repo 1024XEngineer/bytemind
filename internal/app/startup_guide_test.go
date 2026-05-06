@@ -38,6 +38,9 @@ func TestStartupIssueHint(t *testing.T) {
 
 func TestConfigPathHint(t *testing.T) {
 	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+
 	explicit := filepath.Join(workspace, "custom.json")
 	got := ConfigPathHint(workspace, explicit)
 	if !strings.HasSuffix(got, "custom.json") {
@@ -49,8 +52,9 @@ func TestConfigPathHint(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = ConfigPathHint(workspace, "")
-	if filepath.Clean(got) != filepath.Clean(defaultPath) {
-		t.Fatalf("expected workspace config path %q, got %q", defaultPath, got)
+	userConfig := filepath.Join(home, "config.json")
+	if filepath.Clean(got) != filepath.Clean(userConfig) {
+		t.Fatalf("expected user config path %q, got %q", userConfig, got)
 	}
 }
 

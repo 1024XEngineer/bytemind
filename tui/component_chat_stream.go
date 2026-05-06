@@ -35,6 +35,17 @@ func (m *model) appendAssistantDelta(delta string) {
 	if delta == "" {
 		return
 	}
+	if m.streamingIndex < 0 {
+		candidate := m.suppressedAssistantDelta + delta
+		if shouldRenderThinkingFromDelta(candidate) {
+			m.suppressedAssistantDelta = candidate
+			return
+		}
+		if m.suppressedAssistantDelta != "" {
+			delta = m.suppressedAssistantDelta + delta
+			m.suppressedAssistantDelta = ""
+		}
+	}
 	if m.streamingIndex >= 0 && m.streamingIndex < len(m.chatItems) {
 		current := m.chatItems[m.streamingIndex].Body
 		if m.chatItems[m.streamingIndex].Status == "pending" ||
@@ -75,6 +86,7 @@ func (m *model) applyAssistantDeltaPresentation(item *chatEntry) {
 }
 
 func (m *model) finishAssistantMessage(content string) {
+	m.suppressedAssistantDelta = ""
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return
@@ -92,10 +104,7 @@ func (m *model) finishAssistantMessage(content string) {
 	if m.streamingIndex >= 0 && m.streamingIndex < len(m.chatItems) {
 		current := &m.chatItems[m.streamingIndex]
 		if current.Kind == "assistant" && (current.Status == "thinking" || current.Status == "pending") {
-			current.Title = thinkingLabel
-			current.Status = "thinking_done"
-			current.Body = m.thinkingDoneText()
-			m.streamingIndex = -1
+			m.removeStreamingAssistantPlaceholder()
 			m.chatItems = append(m.chatItems, chatEntry{
 				Kind:   "assistant",
 				Title:  assistantLabel,
@@ -142,24 +151,15 @@ func (m *model) removeThinkingCard() {
 	}
 }
 
-func (m *model) finalizeAssistantTurnForTool(toolName string) {
+func (m *model) finalizeAssistantTurnForTool(_ string) {
+	m.suppressedAssistantDelta = ""
 	if m.streamingIndex >= 0 && m.streamingIndex < len(m.chatItems) {
 		item := &m.chatItems[m.streamingIndex]
 		if item.Kind == "assistant" {
-			if strings.TrimSpace(item.Body) == "" && (item.Status == "thinking" || item.Status == "pending") {
-				item.Title = thinkingLabel
-				item.Status = "thinking"
-				m.streamingIndex = -1
-				return
-			}
-			if !isMeaningfulThinking(item.Body, toolName) {
+			if item.Status == "thinking" || item.Status == "pending" || item.Status == "streaming" {
 				m.removeStreamingAssistantPlaceholder()
 				return
 			}
-			item.Title = thinkingLabel
-			item.Status = "thinking"
-			m.streamingIndex = -1
-			return
 		}
 	}
 }

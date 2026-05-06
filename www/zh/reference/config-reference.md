@@ -1,6 +1,6 @@
 # 配置参考
 
-`.bytemind/config.json` 所有字段的完整说明。
+`~/.bytemind/config.json` 和项目级 `.bytemind/config.json` 所有字段的完整说明。
 
 可用示例参考 [`config.example.json`](https://github.com/1024XEngineer/bytemind/blob/main/config.example.json)。
 

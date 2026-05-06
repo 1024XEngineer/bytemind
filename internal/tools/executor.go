@@ -303,14 +303,15 @@ func promptDestructiveApproval(toolName string, execCtx *ExecutionContext) error
 	}
 	reason := fmt.Sprintf("destructive tool may modify workspace files: %s", toolName)
 	if execCtx.Approval != nil {
-		approved, err := execCtx.Approval(ApprovalRequest{
-			Command: toolName,
-			Reason:  reason,
+		decision, err := execCtx.Approval(ApprovalRequest{
+			ToolName: toolName,
+			Command:  toolName,
+			Reason:   reason,
 		})
 		if err != nil {
 			return NewToolExecError(ToolErrorPermissionDenied, err.Error(), false, err)
 		}
-		if !approved {
+		if !NormalizeApprovalDecision(decision).Approved() {
 			return NewToolExecError(ToolErrorPermissionDenied, fmt.Sprintf("tool %q was not run because approval was denied", toolName), false, nil)
 		}
 		return nil

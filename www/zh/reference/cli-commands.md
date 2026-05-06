@@ -1,29 +1,33 @@
 # CLI 命令
 
-ByteMind 提供两个顶级命令：`chat` 和 `run`。
+ByteMind 默认不带子命令即可启动交互界面；`chat` 是兼容别名，`run` 用于单次非交互任务。
 
-## `bytemind chat`
+## `bytemind`
 
 启动交互式多轮会话。
 
 ```bash
-bytemind chat [参数]
+bytemind [参数]
 ```
 
 | 参数                  | 说明                   | 默认值   |
 | --------------------- | ---------------------- | -------- |
 | `-config <路径>`      | 指定配置文件路径       | 自动检测 |
 | `-max-iterations <n>` | 单任务最大工具调用轮次 | 32       |
+| `-workspace <路径>`   | 指定工作区目录         | 当前目录 |
 | `-v`                  | 开启详细/调试输出      | false    |
 
 **示例：**
 
 ```bash
-bytemind chat
-bytemind chat -max-iterations 64
-bytemind chat -config ~/.bytemind/work.json
-bytemind chat -v
+bytemind
+bytemind -max-iterations 64
+bytemind -config ~/.bytemind/work.json
+bytemind -workspace D:\code\my-project
+bytemind -v
 ```
+
+`bytemind chat` 与 `bytemind tui` 仍可使用，行为等同于默认交互界面。
 
 ## `bytemind run`
 
@@ -49,16 +53,16 @@ bytemind run -prompt "全库重命名 Foo 为 Bar" -max-iterations 64
 
 ## `bytemind --version`
 
-输出已安装的版本和构建信息后退出。
+输出已安装的版本后退出。
 
 ```bash
 bytemind --version
-# ByteMind v0.4.0 (go1.24.0 darwin/arm64)
+# vX.Y.Z
 ```
 
 ## 会话斜杠命令
 
-以下命令在 `bytemind chat` 会话内输入，不是在 Shell 中执行：
+以下命令在 `bytemind` 交互会话内输入，不是在 Shell 中执行：
 
 | 命令                                          | 说明                         |
 | --------------------------------------------- | ---------------------------- |
@@ -80,7 +84,7 @@ bytemind --version
 
 ### `/commit <message>`
 
-在 `bytemind chat` 会话里使用 `/commit`，可以让 ByteMind 把当前工作区改动保存为一个本地 Git commit。
+在 `bytemind` 会话里使用 `/commit`，可以让 ByteMind 把当前工作区改动保存为一个本地 Git commit。
 
 ```text
 /commit fix(/commit): 调整 /commit 的反馈形式
@@ -100,11 +104,10 @@ ByteMind 只会在当前 `HEAD` 仍然是这次会话提交、工作区没有更
 
 ## 配置加载顺序
 
-未指定 `-config` 时，ByteMind 按以下顺序查找配置：
+未指定 `-config` 时，ByteMind 会先加载全局配置，再加载项目覆盖配置：
 
-1. 当前目录的 `.bytemind/config.json`
-2. 当前目录的 `config.json`
-3. 主目录的 `~/.bytemind/config.json`
+1. 用户目录的 `~/.bytemind/config.json`
+2. 当前工作区的 `.bytemind/config.json`（可选，覆盖全局配置）
 
 ## 相关页面
 

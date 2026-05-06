@@ -199,12 +199,12 @@ func TestInProcessWorkerEscalatesRunShellWhenCommandNotInAllowlist(t *testing.T)
 			},
 			ApprovalPolicy: "on-request",
 			ApprovalMode:   "interactive",
-			Approval: func(req ApprovalRequest) (bool, error) {
+			Approval: func(req ApprovalRequest) (ApprovalDecision, error) {
 				approvalCalls++
 				if !strings.Contains(strings.ToLower(req.Reason), "outside lease scope") {
 					t.Fatalf("expected escalation reason to explain outside lease scope, got %q", req.Reason)
 				}
-				return true, nil
+				return ApprovalDecision{Disposition: ApprovalApproveOnce}, nil
 			},
 		},
 	})

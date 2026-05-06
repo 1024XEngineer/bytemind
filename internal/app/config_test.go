@@ -41,6 +41,12 @@ func TestLoadRuntimeConfigAppliesOverrides(t *testing.T) {
 	if cfg.Provider.Model != "gpt-5.4" {
 		t.Fatalf("unexpected model: %q", cfg.Provider.Model)
 	}
+	if cfg.ProviderRuntime.DefaultModel != "gpt-5.4" {
+		t.Fatalf("unexpected runtime default model: %q", cfg.ProviderRuntime.DefaultModel)
+	}
+	if providerCfg := cfg.ProviderRuntime.Providers["openai"]; providerCfg.Model != "gpt-5.4" {
+		t.Fatalf("unexpected runtime provider model: %q", providerCfg.Model)
+	}
 	if !cfg.Stream {
 		t.Fatal("expected stream=true")
 	}
@@ -58,6 +64,66 @@ func TestLoadRuntimeConfigAppliesOverrides(t *testing.T) {
 	}
 	if cfg.SystemSandboxMode != "required" {
 		t.Fatalf("expected system sandbox mode override to apply, got %q", cfg.SystemSandboxMode)
+	}
+}
+
+func TestApplyModelOverrideHandlesEmptyAndSingleProviderRuntime(t *testing.T) {
+	applyModelOverride(nil, "gpt-5.4")
+
+	cfg := config.Config{
+		Provider: config.ProviderConfig{Model: "base-model"},
+		ProviderRuntime: config.ProviderRuntimeConfig{
+			DefaultModel: "base-model",
+			Providers: map[string]config.ProviderConfig{
+				"deepseek": {Model: "deepseek-old"},
+			},
+		},
+	}
+	applyModelOverride(&cfg, " ")
+	if cfg.Provider.Model != "base-model" {
+		t.Fatalf("blank model override should be ignored, got %q", cfg.Provider.Model)
+	}
+	if cfg.ProviderRuntime.Providers["deepseek"].Model != "deepseek-old" {
+		t.Fatalf("blank model override should not change runtime provider, got %#v", cfg.ProviderRuntime.Providers["deepseek"])
+	}
+
+	applyModelOverride(&cfg, "deepseek-chat")
+	if cfg.Provider.Model != "deepseek-chat" {
+		t.Fatalf("expected provider model override, got %q", cfg.Provider.Model)
+	}
+	if cfg.ProviderRuntime.DefaultModel != "deepseek-chat" {
+		t.Fatalf("expected runtime default model override, got %q", cfg.ProviderRuntime.DefaultModel)
+	}
+	if cfg.ProviderRuntime.Providers["deepseek"].Model != "deepseek-chat" {
+		t.Fatalf("expected single runtime provider model override, got %#v", cfg.ProviderRuntime.Providers["deepseek"])
+	}
+}
+
+func TestApplyModelOverrideLeavesMultipleRuntimeProvidersWhenDefaultMissing(t *testing.T) {
+	cfg := config.Config{
+		Provider: config.ProviderConfig{Model: "base-model"},
+		ProviderRuntime: config.ProviderRuntimeConfig{
+			DefaultProvider: "missing",
+			DefaultModel:    "base-model",
+			Providers: map[string]config.ProviderConfig{
+				"openai":   {Model: "gpt-5.4-mini"},
+				"deepseek": {Model: "deepseek-chat"},
+			},
+		},
+	}
+
+	applyModelOverride(&cfg, "gpt-5.4")
+	if cfg.Provider.Model != "gpt-5.4" {
+		t.Fatalf("expected legacy provider model override, got %q", cfg.Provider.Model)
+	}
+	if cfg.ProviderRuntime.DefaultModel != "gpt-5.4" {
+		t.Fatalf("expected runtime default model override, got %q", cfg.ProviderRuntime.DefaultModel)
+	}
+	if cfg.ProviderRuntime.Providers["openai"].Model != "gpt-5.4-mini" {
+		t.Fatalf("expected non-default openai provider model to remain unchanged, got %#v", cfg.ProviderRuntime.Providers["openai"])
+	}
+	if cfg.ProviderRuntime.Providers["deepseek"].Model != "deepseek-chat" {
+		t.Fatalf("expected non-default deepseek provider model to remain unchanged, got %#v", cfg.ProviderRuntime.Providers["deepseek"])
 	}
 }
 
