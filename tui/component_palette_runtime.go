@@ -113,7 +113,7 @@ func (m *model) syncMentionPalette() {
 	if m.mentionIndex == nil {
 		m.mentionIndex = mention.NewWorkspaceFileIndex(m.workspace)
 	}
-	results := m.mentionIndex.SearchWithRecency(token.Query, mentionPageSize*3, m.mentionRecent)
+	results := m.mentionIndex.SearchWithRecency(token.Query, mentionSearchLimit, m.mentionRecent)
 
 	// Merge agent candidates (only when user has typed a query)
 	if m.agentSource != nil && token.Query != "" {
@@ -128,10 +128,6 @@ func (m *model) syncMentionPalette() {
 			}
 		}
 	}
-	if len(results) > mentionPageSize {
-		results = results[:mentionPageSize]
-	}
-
 	m.mentionOpen = true
 	m.mentionQuery = token.Query
 	m.mentionToken = token
