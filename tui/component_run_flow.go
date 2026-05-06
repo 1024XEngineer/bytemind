@@ -194,17 +194,27 @@ func (m *model) handleAgentEvent(event Event) {
 	switch event.Type {
 	case EventRunStarted:
 		m.tempEstimatedOutput = 0
+		m.lastTokenReceivedAt = time.Now()
 	case EventAssistantDelta:
 		m.phase = "responding"
 		m.statusNote = "LLM is responding..."
 		m.llmConnected = true
+		m.lastTokenReceivedAt = time.Now()
 		m.appendAssistantDelta(event.Content)
 	case EventAssistantMessage:
 		m.llmConnected = true
+		m.lastTokenReceivedAt = time.Now()
 		m.finishAssistantMessage(event.Content)
 	case EventToolCallStarted:
 		m.phase = "tool"
 		m.llmConnected = true
+		m.lastTokenReceivedAt = time.Now()
+		// Demote previously running tools to queued
+		for i := range m.chatItems {
+			if m.chatItems[i].Kind == "tool" && m.chatItems[i].Status == "running" {
+				m.chatItems[i].Status = "queued"
+			}
+		}
 		m.finalizeAssistantTurnForTool(event.ToolName)
 		m.populateLatestThinkingToolStep(event.ToolName, "", "running")
 		renderer := GetToolRenderer(event.ToolName)
@@ -225,11 +235,6 @@ func (m *model) handleAgentEvent(event Event) {
 			DetailLines: detailLines,
 			ToolCallID:  event.ToolCallID,
 		})
-		m.toolRuns = append(m.toolRuns, toolRun{
-			Name:    event.ToolName,
-			Summary: "Tool call started.",
-			Status:  "running",
-		})
 		m.statusNote = "Running tool: " + event.ToolName
 	case EventToolCallCompleted:
 		rendered := renderToolPayload(event.ToolName, event.ToolResult)
@@ -238,12 +243,6 @@ func (m *model) handleAgentEvent(event Event) {
 		status := rendered.Status
 		compactBody := rendered.CompactLine
 		m.finishToolCall(event.ToolCallID, event.ToolName, joinSummary(summary, lines), status, compactBody, lines)
-		if len(m.toolRuns) > 0 {
-			index := len(m.toolRuns) - 1
-			m.toolRuns[index].Summary = summary
-			m.toolRuns[index].Lines = lines
-			m.toolRuns[index].Status = status
-		}
 		m.statusNote = summary
 		m.phase = "thinking"
 		if m.interruptSafe && m.interrupting && m.pendingInterrupt && m.runCancel != nil {

@@ -5188,15 +5188,12 @@ func TestRebuildSessionTimelineParsesUserToolResultParts(t *testing.T) {
 		},
 	}
 
-	items, runs := rebuildSessionTimeline(sess)
+	items := rebuildSessionTimeline(sess)
 	if len(items) != 2 {
 		t.Fatalf("expected user + tool items, got %#v", items)
 	}
 	if items[1].Kind != "tool" || items[1].Title != toolEntryTitle("read_file") {
 		t.Fatalf("expected tool item from tool_result part, got %#v", items[1])
-	}
-	if len(runs) != 1 || runs[0].Name != "read_file" {
-		t.Fatalf("expected tool run reconstructed, got %#v", runs)
 	}
 }
 
@@ -5207,15 +5204,12 @@ func TestRebuildSessionTimelineFallsBackToGenericToolNameForUnknownToolUseID(t *
 		},
 	}
 
-	items, runs := rebuildSessionTimeline(sess)
+	items := rebuildSessionTimeline(sess)
 	if len(items) != 1 {
 		t.Fatalf("expected only one tool item, got %#v", items)
 	}
 	if items[0].Kind != "tool" || items[0].Title != toolEntryTitle("tool") {
 		t.Fatalf("expected fallback tool title for unknown tool use id, got %#v", items[0])
-	}
-	if len(runs) != 1 || runs[0].Name != "tool" {
-		t.Fatalf("expected fallback tool run name, got %#v", runs)
 	}
 }
 
@@ -5231,7 +5225,7 @@ func TestRebuildSessionTimelineParsesLegacyToolRoleMessage(t *testing.T) {
 		},
 	}
 
-	items, runs := rebuildSessionTimeline(sess)
+	items := rebuildSessionTimeline(sess)
 	if len(items) != 2 {
 		t.Fatalf("expected assistant + tool items, got %#v", items)
 	}
@@ -5240,9 +5234,6 @@ func TestRebuildSessionTimelineParsesLegacyToolRoleMessage(t *testing.T) {
 	}
 	if items[1].Kind != "tool" || items[1].Title != toolEntryTitle("tool") {
 		t.Fatalf("expected fallback tool title for legacy tool message, got %#v", items[1])
-	}
-	if len(runs) != 1 || runs[0].Name != "tool" {
-		t.Fatalf("expected tool run reconstructed from legacy tool message, got %#v", runs)
 	}
 }
 

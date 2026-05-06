@@ -350,17 +350,8 @@ func (m *model) failLatestAssistant(errText string) {
 
 func (m *model) failRunningToolCalls() {
 	for i := range m.chatItems {
-		if m.chatItems[i].Kind == "tool" && m.chatItems[i].Status == "running" {
+		if m.chatItems[i].Kind == "tool" && (m.chatItems[i].Status == "running" || m.chatItems[i].Status == "queued") {
 			m.chatItems[i].Status = "error"
-		}
-	}
-}
-
-func (m *model) failRunningToolRuns() {
-	for i := range m.toolRuns {
-		if m.toolRuns[i].Status == "running" {
-			m.toolRuns[i].Status = "error"
-			m.toolRuns[i].Summary = "Tool call interrupted by error."
 		}
 	}
 }

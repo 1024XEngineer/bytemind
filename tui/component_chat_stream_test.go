@@ -8,6 +8,7 @@ import (
 	"time"
 
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -387,53 +388,6 @@ func TestFailRunningToolCallsNoOpWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestFailRunningToolRunsMarksRunningAsError(t *testing.T) {
-	m := model{
-		toolRuns: []toolRun{
-			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
-			{Name: "read_file", Summary: "Read file.", Status: "done"},
-			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
-		},
-	}
-	m.failRunningToolRuns()
-
-	running := 0
-	errorCount := 0
-	done := 0
-	for _, tr := range m.toolRuns {
-		switch tr.Status {
-		case "running":
-			running++
-		case "error":
-			errorCount++
-		case "done":
-			done++
-		}
-	}
-	if running != 0 {
-		t.Fatalf("expected 0 running, got %d", running)
-	}
-	if errorCount != 2 {
-		t.Fatalf("expected 2 error, got %d", errorCount)
-	}
-	if done != 1 {
-		t.Fatalf("expected 1 done preserved, got %d", done)
-	}
-}
-
-func TestFailRunningToolRunsUpdatesSummary(t *testing.T) {
-	m := model{
-		toolRuns: []toolRun{
-			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
-		},
-	}
-	m.failRunningToolRuns()
-
-	if m.toolRuns[0].Summary != "Tool call interrupted by error." {
-		t.Fatalf("expected interrupted summary, got %q", m.toolRuns[0].Summary)
-	}
-}
-
 func TestRunFailedMarksRunningToolCallsAsError(t *testing.T) {
 	m := model{
 		async:          make(chan tea.Msg, 1),
@@ -447,9 +401,6 @@ func TestRunFailedMarksRunningToolCallsAsError(t *testing.T) {
 			{Kind: "assistant", Title: thinkingLabel, Body: "Running...", Status: "thinking"},
 			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
 		},
-		toolRuns: []toolRun{
-			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
-		},
 	}
 
 	got, _ := m.Update(runFinishedMsg{Err: errors.New("provider rate limited: 429")})
@@ -462,13 +413,6 @@ func TestRunFailedMarksRunningToolCallsAsError(t *testing.T) {
 	toolItem := updated.chatItems[2]
 	if toolItem.Status != "error" {
 		t.Fatalf("expected tool card status \"error\", got %q", toolItem.Status)
-	}
-
-	if len(updated.toolRuns) != 1 {
-		t.Fatalf("expected 1 tool run, got %d", len(updated.toolRuns))
-	}
-	if updated.toolRuns[0].Status != "error" {
-		t.Fatalf("expected tool run status \"error\", got %q", updated.toolRuns[0].Status)
 	}
 }
 
@@ -485,10 +429,6 @@ func TestRunFailedWithMixedToolStates(t *testing.T) {
 			{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "file content", Status: "done"},
 			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
 			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
-		},
-		toolRuns: []toolRun{
-			{Name: "read_file", Summary: "Read file.", Status: "done"},
-			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
 		},
 	}
 
@@ -509,15 +449,6 @@ func TestRunFailedWithMixedToolStates(t *testing.T) {
 	}
 	if updated.chatItems[3].Title != assistantLabel {
 		t.Fatalf("expected error card title %q, got %q", assistantLabel, updated.chatItems[3].Title)
-	}
-
-	// Done toolRun should remain done
-	if updated.toolRuns[0].Status != "done" {
-		t.Fatalf("expected done toolRun to remain done, got %q", updated.toolRuns[0].Status)
-	}
-	// Running toolRun should become error
-	if updated.toolRuns[1].Status != "error" {
-		t.Fatalf("expected running toolRun to become error, got %q", updated.toolRuns[1].Status)
 	}
 }
 
@@ -871,9 +802,6 @@ func TestHandleAgentEventToolCallStartedAppendsToolCard(t *testing.T) {
 	if !found {
 		t.Fatalf("expected running tool card")
 	}
-	if len(m.toolRuns) != 1 {
-		t.Fatalf("expected 1 tool run, got %d", len(m.toolRuns))
-	}
 }
 
 func TestHandleAgentEventToolCallStartedCapturesCompactHint(t *testing.T) {
@@ -907,9 +835,6 @@ func TestHandleAgentEventToolCallCompletedUpdatesToolCard(t *testing.T) {
 		chatItems: []chatEntry{
 			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
 		},
-		toolRuns: []toolRun{
-			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
-		},
 	}
 	m.handleAgentEvent(Event{
 		Type:       EventToolCallCompleted,
@@ -919,9 +844,6 @@ func TestHandleAgentEventToolCallCompletedUpdatesToolCard(t *testing.T) {
 
 	if m.chatItems[0].Status != "done" {
 		t.Fatalf("expected done status, got %q", m.chatItems[0].Status)
-	}
-	if m.toolRuns[0].Status != "done" {
-		t.Fatalf("expected tool run done, got %q", m.toolRuns[0].Status)
 	}
 	if m.phase != "thinking" {
 		t.Fatalf("expected thinking phase after tool completion, got %q", m.phase)
@@ -987,9 +909,6 @@ func TestRunFailedWithToolResultErrorContent(t *testing.T) {
 			{Kind: "tool", Title: toolEntryTitle("search_text"), Body: "Request failed: provider rate limited: 429 You have requ", Status: "error"},
 			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
 		},
-		toolRuns: []toolRun{
-			{Name: "search_text", Summary: "Request failed: provider rate limited", Status: "error"},
-		},
 	}
 
 	got, _ := m.Update(runFinishedMsg{Err: errors.New("provider rate limited: 429")})
@@ -1027,11 +946,6 @@ func TestRunFailedAfterMultipleToolCalls(t *testing.T) {
 			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
 			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
 		},
-		toolRuns: []toolRun{
-			{Name: "list_files", Summary: "Listed files.", Status: "done"},
-			{Name: "read_file", Summary: "Read file.", Status: "done"},
-			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
-		},
 	}
 
 	got, _ := m.Update(runFinishedMsg{Err: errors.New("provider rate limited")})
@@ -1054,14 +968,6 @@ func TestRunFailedAfterMultipleToolCalls(t *testing.T) {
 	}
 	if updated.chatItems[4].Title != assistantLabel {
 		t.Fatalf("expected error card title %q, got %q", assistantLabel, updated.chatItems[4].Title)
-	}
-	// Done toolRuns should remain done
-	if updated.toolRuns[0].Status != "done" {
-		t.Fatalf("expected list_files toolRun done, got %q", updated.toolRuns[0].Status)
-	}
-	// Running toolRun should become error
-	if updated.toolRuns[2].Status != "error" {
-		t.Fatalf("expected run_shell toolRun error, got %q", updated.toolRuns[2].Status)
 	}
 }
 
@@ -1120,9 +1026,6 @@ func TestHandleAgentEventToolCallCompletedWithRateLimitError(t *testing.T) {
 		chatItems: []chatEntry{
 			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
 		},
-		toolRuns: []toolRun{
-			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
-		},
 	}
 	m.handleAgentEvent(Event{
 		Type:       EventToolCallCompleted,
@@ -1132,9 +1035,6 @@ func TestHandleAgentEventToolCallCompletedWithRateLimitError(t *testing.T) {
 
 	if m.chatItems[0].Status != "error" {
 		t.Fatalf("expected error status, got %q", m.chatItems[0].Status)
-	}
-	if m.toolRuns[0].Status != "error" {
-		t.Fatalf("expected tool run error, got %q", m.toolRuns[0].Status)
 	}
 	if m.phase != "thinking" {
 		t.Fatalf("expected thinking phase, got %q", m.phase)
@@ -1148,9 +1048,6 @@ func TestToolResultCardShowsOnlyToolResult(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
 			{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "", Status: "running"},
-		},
-		toolRuns: []toolRun{
-			{Name: "read_file", Summary: "Tool call started.", Status: "running"},
 		},
 	}
 	m.handleAgentEvent(Event{
@@ -1182,9 +1079,6 @@ func TestRunFailedEmptyRunningToolCardBecomesError(t *testing.T) {
 			{Kind: "user", Title: "You", Body: "do something", Status: "final"},
 			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
 		},
-		toolRuns: []toolRun{
-			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
-		},
 	}
 
 	got, _ := m.Update(runFinishedMsg{Err: errors.New("provider rate limited: 429")})
@@ -1192,9 +1086,6 @@ func TestRunFailedEmptyRunningToolCardBecomesError(t *testing.T) {
 
 	if updated.chatItems[1].Status != "error" {
 		t.Fatalf("expected empty running tool card to become error, got %q", updated.chatItems[1].Status)
-	}
-	if updated.toolRuns[0].Status != "error" {
-		t.Fatalf("expected tool run to become error, got %q", updated.toolRuns[0].Status)
 	}
 }
 
@@ -1211,10 +1102,6 @@ func TestRunFailedCompletedToolThenRunningTool(t *testing.T) {
 			{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read main.go\nrange: 1-50", Status: "done"},
 			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
 			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
-		},
-		toolRuns: []toolRun{
-			{Name: "read_file", Summary: "Read main.go", Status: "done"},
-			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
 		},
 	}
 
@@ -1241,15 +1128,6 @@ func TestRunFailedCompletedToolThenRunningTool(t *testing.T) {
 	if updated.chatItems[3].Title != assistantLabel {
 		t.Fatalf("expected assistant label, got %q", updated.chatItems[3].Title)
 	}
-
-	// Done toolRun should remain done
-	if updated.toolRuns[0].Status != "done" {
-		t.Fatalf("expected read_file toolRun done, got %q", updated.toolRuns[0].Status)
-	}
-	// Running toolRun should become error
-	if updated.toolRuns[1].Status != "error" {
-		t.Fatalf("expected run_shell toolRun error, got %q", updated.toolRuns[1].Status)
-	}
 }
 
 func TestRunFailedToolResultWithEmbeddedErrorText(t *testing.T) {
@@ -1265,9 +1143,6 @@ func TestRunFailedToolResultWithEmbeddedErrorText(t *testing.T) {
 			{Kind: "user", Title: "You", Body: "read file", Status: "final"},
 			{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read main.go\nrange: 1-50\npath: /project/main.go\nRequest failed: provider rate limited: 429 You have requ", Status: "error"},
 			{Kind: "assistant", Title: thinkingLabel, Body: "", Status: "thinking"},
-		},
-		toolRuns: []toolRun{
-			{Name: "read_file", Summary: "Read main.go", Status: "error"},
 		},
 	}
 
@@ -1302,11 +1177,6 @@ func TestMultipleRunningToolCardsAllBecomeError(t *testing.T) {
 			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
 			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
 		},
-		toolRuns: []toolRun{
-			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
-			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
-			{Name: "run_shell", Summary: "Tool call started.", Status: "running"},
-		},
 	}
 
 	got, _ := m.Update(runFinishedMsg{Err: errors.New("provider rate limited")})
@@ -1317,9 +1187,43 @@ func TestMultipleRunningToolCardsAllBecomeError(t *testing.T) {
 			t.Fatalf("expected tool card %d to be error, got %q", i, item.Status)
 		}
 	}
-	for i, tr := range updated.toolRuns {
-		if tr.Status != "error" {
-			t.Fatalf("expected tool run %d to be error, got %q", i, tr.Status)
+}
+
+func TestToolCallStartedMarksPreviousRunningAsQueued(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "", Status: "running"},
+		},
+	}
+	m.handleAgentEvent(Event{Type: EventToolCallStarted, ToolName: "run_shell"})
+
+	if m.chatItems[0].Status != "queued" {
+		t.Fatalf("expected previous running tool to become queued, got %q", m.chatItems[0].Status)
+	}
+	found := false
+	for _, item := range m.chatItems {
+		if item.Kind == "tool" && item.Status == "running" && item.Title == toolEntryTitle("run_shell") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected new running tool card for run_shell")
+	}
+}
+
+func TestFailRunningToolCallsAlsoMarksQueuedAsError(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "", Status: "queued"},
+			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
+		},
+	}
+	m.failRunningToolCalls()
+
+	for _, item := range m.chatItems {
+		if item.Status != "error" {
+			t.Fatalf("expected all queued/running tools to become error, got %q for %s", item.Status, item.Title)
 		}
 	}
 }
@@ -1473,5 +1377,43 @@ func TestAppendAssistantToolFollowUpEmptyChatItems(t *testing.T) {
 	m.appendAssistantToolFollowUp("read_file", "read file.go", "done")
 	if len(m.chatItems) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(m.chatItems))
+	}
+}
+
+// --- stall detection ---
+
+func TestStallDetectionSetsStalledAfterTimeout(t *testing.T) {
+	m := model{busy: true}
+	m.spinner = newThinkingSpinner()
+	m.lastTokenReceivedAt = time.Now().Add(-5 * time.Second)
+
+	result, _ := m.Update(spinner.TickMsg{})
+	got := result.(model)
+	if !got.stalled {
+		t.Fatal("expected stalled=true after >3s without activity")
+	}
+}
+
+func TestStallDetectionClearsOnActivity(t *testing.T) {
+	m := model{busy: true, stalled: true}
+	m.spinner = newThinkingSpinner()
+	m.lastTokenReceivedAt = time.Now()
+
+	result, _ := m.Update(spinner.TickMsg{})
+	got := result.(model)
+	if got.stalled {
+		t.Fatal("expected stalled=false after fresh activity")
+	}
+}
+
+func TestStallDetectionSkipsWhenNotBusy(t *testing.T) {
+	m := model{busy: false}
+	m.spinner = newThinkingSpinner()
+	m.lastTokenReceivedAt = time.Now().Add(-10 * time.Second)
+
+	result, _ := m.Update(spinner.TickMsg{})
+	got := result.(model)
+	if got.stalled {
+		t.Fatal("expected stalled=false when not busy")
 	}
 }

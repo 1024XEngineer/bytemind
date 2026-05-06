@@ -778,6 +778,7 @@ func summarizeParallelReadGroup(group []chatEntry) string {
 func aggregateToolGroupStatus(group []chatEntry) string {
 	hasDone := false
 	hasRunning := false
+	hasQueued := false
 	hasWarn := false
 	for _, item := range group {
 		switch strings.TrimSpace(strings.ToLower(item.Status)) {
@@ -787,6 +788,8 @@ func aggregateToolGroupStatus(group []chatEntry) string {
 			hasWarn = true
 		case "running", "active":
 			hasRunning = true
+		case "queued":
+			hasQueued = true
 		case "done", "success":
 			hasDone = true
 		}
@@ -796,6 +799,8 @@ func aggregateToolGroupStatus(group []chatEntry) string {
 		return "warn"
 	case hasRunning:
 		return "running"
+	case hasQueued:
+		return "queued"
 	case hasDone:
 		return "done"
 	default:
@@ -876,7 +881,11 @@ func (m model) renderThinkingHeadline(status string) string {
 		}
 		index = sum % len(dots)
 	}
-	return "thinking" + dots[index]
+	text := "thinking" + dots[index]
+	if m.stalled {
+		return lipgloss.NewStyle().Foreground(semanticColors.Warning).Render(text)
+	}
+	return text
 }
 
 func renderAssistantPhaseBadge(status string) string {
@@ -901,6 +910,8 @@ func renderToolTag(text, tagType string) string {
 	switch strings.TrimSpace(strings.ToLower(tagType)) {
 	case "active", "running", "accent", "info":
 		style = style.Foreground(semanticColors.AccentSoft)
+	case "queued":
+		style = style.Foreground(semanticColors.TextMuted)
 	case "success", "done":
 		style = style.Foreground(semanticColors.Success)
 	case "warning", "pending", "warn":
@@ -932,11 +943,18 @@ func toolStatusIndicator(status string, runningIndicatorVisible bool) string {
 	switch normalizeToolStatus(status) {
 	case "running", "active":
 		if runningIndicatorVisible {
-			glyph = "○"
+			glyph = "●"
 		} else {
 			glyph = " "
 		}
 		style = style.Foreground(semanticColors.AccentSoft)
+	case "queued":
+		if runningIndicatorVisible {
+			glyph = "○"
+		} else {
+			glyph = " "
+		}
+		style = style.Foreground(semanticColors.TextMuted)
 	case "warn", "warning", "pending":
 		style = style.Foreground(semanticColors.Warning)
 	case "error", "failed":
