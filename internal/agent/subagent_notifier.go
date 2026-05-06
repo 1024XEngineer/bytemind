@@ -94,6 +94,11 @@ func drainSubAgentNotifications(runner *Runner, sess *session.Session) {
 			continue
 		}
 		msg := buildNotificationMessage(notification)
-		sess.Messages = append(sess.Messages, llm.NewUserTextMessage(msg))
+		m := llm.NewUserTextMessage(msg)
+		if m.Meta == nil {
+			m.Meta = llm.MessageMeta{}
+		}
+		m.Meta["ephemeral"] = true
+		sess.Messages = append(sess.Messages, m)
 	}
 }

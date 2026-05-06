@@ -555,8 +555,18 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 	if len(item.SubAgentTools) > 0 {
 		connectorStyle := lipgloss.NewStyle().Foreground(colorTool)
 		if toolDetailsExpanded {
-			subLines := make([]string, 0, len(item.SubAgentTools))
-			for _, st := range item.SubAgentTools {
+			const maxSubAgentToolsDisplay = 5
+			tools := item.SubAgentTools
+			hidden := 0
+			if len(tools) > maxSubAgentToolsDisplay {
+				hidden = len(tools) - maxSubAgentToolsDisplay
+				tools = tools[len(tools)-maxSubAgentToolsDisplay:]
+			}
+			subLines := make([]string, 0, len(tools)+1)
+			if hidden > 0 {
+				subLines = append(subLines, connectorStyle.Render(fmt.Sprintf("+%d more", hidden)))
+			}
+			for _, st := range tools {
 				indicator := toolTreeChar
 				if st.Status == "running" {
 					indicator = "⋰"
