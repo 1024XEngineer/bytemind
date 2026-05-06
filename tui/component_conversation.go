@@ -551,6 +551,46 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 		}
 	}
 
+	// Render subagent tool call tree.
+	if len(item.SubAgentTools) > 0 {
+		connectorStyle := lipgloss.NewStyle().Foreground(colorTool)
+		if toolDetailsExpanded {
+			subLines := make([]string, 0, len(item.SubAgentTools))
+			for _, st := range item.SubAgentTools {
+				indicator := toolTreeChar
+				if st.Status == "running" {
+					indicator = "⋰"
+				}
+				text := st.ToolName
+				if st.CompactBody != "" {
+					text += ": " + st.CompactBody
+				} else if st.Summary != "" {
+					summaryText := st.Summary
+					if runewidth.StringWidth(summaryText) > 56 {
+						summaryText = runewidth.Truncate(summaryText, 56, "…")
+					}
+					text += ": " + summaryText
+				}
+				subLines = append(subLines, connectorStyle.Render(indicator)+" "+text)
+			}
+			if len(subLines) > 0 {
+				body += "\n" + indent + strings.Join(subLines, "\n"+indent)
+			}
+		} else {
+			running := 0
+			for _, st := range item.SubAgentTools {
+				if st.Status == "running" {
+					running++
+				}
+			}
+			hint := fmt.Sprintf("%d tool uses", len(item.SubAgentTools))
+			if running > 0 {
+				hint += fmt.Sprintf(" (%d running)", running)
+			}
+			body += "  " + connectorStyle.Render(hint)
+		}
+	}
+
 	return style.Width(contentWidth).Render(body)
 }
 

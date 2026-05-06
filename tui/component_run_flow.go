@@ -188,6 +188,7 @@ func (m *model) requestRunInterrupt(source string) bool {
 
 func (m *model) handleAgentEvent(event Event) {
 	if event.AgentID != "" {
+		m.handleSubAgentEvent(event)
 		return
 	}
 	switch event.Type {
@@ -288,6 +289,46 @@ func (m *model) handleAgentEvent(event Event) {
 			m.closePlanActionPicker()
 		}
 	}
+}
+
+func (m *model) handleSubAgentEvent(event Event) {
+	switch event.Type {
+	case EventToolCallStarted:
+		entry := m.findActiveSubAgentEntry()
+		if entry == nil {
+			return
+		}
+		compactBody, _ := summarizeToolCallStart(event.ToolName, event.ToolArguments)
+		entry.SubAgentTools = append(entry.SubAgentTools, SubAgentToolCall{
+			ToolName:    event.ToolName,
+			CompactBody: compactBody,
+			Status:      "running",
+		})
+	case EventToolCallCompleted:
+		entry := m.findActiveSubAgentEntry()
+		if entry == nil {
+			return
+		}
+		for i := len(entry.SubAgentTools) - 1; i >= 0; i-- {
+			if entry.SubAgentTools[i].Status == "running" && entry.SubAgentTools[i].ToolName == event.ToolName {
+				rendered := renderToolPayload(event.ToolName, event.ToolResult)
+				entry.SubAgentTools[i].Status = rendered.Status
+				entry.SubAgentTools[i].Summary = rendered.Summary
+				return
+			}
+		}
+	}
+}
+
+func (m *model) findActiveSubAgentEntry() *chatEntry {
+	for i := len(m.chatItems) - 1; i >= 0; i-- {
+		if m.chatItems[i].Kind == "tool" &&
+			strings.Contains(m.chatItems[i].Title, "delegate_subagent") &&
+			m.chatItems[i].Status == "running" {
+			return &m.chatItems[i]
+		}
+	}
+	return nil
 }
 
 func summarizeToolCallStart(toolName, rawArgs string) (string, []string) {
