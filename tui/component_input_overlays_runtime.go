@@ -157,12 +157,12 @@ func (m model) handleMentionPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isPageUpKey(msg):
 		if len(items) > 0 {
-			m.mentionCursor = max(0, m.mentionCursor-mentionPageSize)
+			m.mentionCursor = max(0, m.mentionCursor-m.mentionPageSize())
 		}
 		return m, nil
 	case isPageDownKey(msg):
 		if len(items) > 0 {
-			m.mentionCursor = min(len(items)-1, m.mentionCursor+mentionPageSize)
+			m.mentionCursor = min(len(items)-1, m.mentionCursor+m.mentionPageSize())
 		}
 		return m, nil
 	}

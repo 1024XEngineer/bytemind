@@ -37,7 +37,6 @@ const (
 	scrollbarWidth             = 1
 	mouseZoneAutoProbeMaxDelta = 4
 	commandPageSize            = 5
-	mentionPageSize            = 5
 	mentionSearchLimit         = 15
 	maxPendingBTW              = 5
 	promptSearchPageSize       = 5
@@ -3152,6 +3151,26 @@ func emptyDot(path string) string {
 		return "."
 	}
 	return path
+}
+
+func truncatePathMiddle(path string, limit int) string {
+	if runewidth.StringWidth(path) <= limit {
+		return path
+	}
+	dir := filepath.Dir(path)
+	name := filepath.Base(path)
+	nameW := runewidth.StringWidth(name)
+	if nameW+4 >= limit {
+		return compact(path, limit)
+	}
+	available := limit - nameW - 3
+	if available <= 0 {
+		return compact(path, limit)
+	}
+	if runewidth.StringWidth(dir) <= available {
+		return path
+	}
+	return compact(dir, available) + "/..." + name
 }
 
 func clamp(v, lo, hi int) int {

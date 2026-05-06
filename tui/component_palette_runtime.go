@@ -285,13 +285,21 @@ func (m model) selectedMentionCandidate() (mention.Candidate, bool) {
 	return m.mentionResults[index], true
 }
 
+func (m model) mentionPageSize() int {
+	available := m.height - 3
+	return clamp(available, 3, 8)
+}
+
 func (m model) visibleMentionItemsPage() []mention.Candidate {
-	if len(m.mentionResults) == 0 {
+	n := len(m.mentionResults)
+	if n == 0 {
 		return nil
 	}
-	cursor := clamp(m.mentionCursor, 0, len(m.mentionResults)-1)
-	start := (cursor / mentionPageSize) * mentionPageSize
-	end := min(len(m.mentionResults), start+mentionPageSize)
+	pageSize := m.mentionPageSize()
+	cursor := clamp(m.mentionCursor, 0, n-1)
+	start := cursor - pageSize/2
+	start = clamp(start, 0, max(0, n-pageSize))
+	end := min(n, start+pageSize)
 	return m.mentionResults[start:end]
 }
 

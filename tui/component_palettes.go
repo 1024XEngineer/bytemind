@@ -121,7 +121,8 @@ func (m model) renderMentionPalette() string {
 	selected, _ := m.selectedMentionCandidate()
 	nameWidth := min(26, max(12, width/4))
 	descWidth := max(12, width-commandPaletteStyle.GetHorizontalFrameSize()-nameWidth-4)
-	rows := make([]string, 0, mentionPageSize+1)
+	pageSize := m.mentionPageSize()
+	rows := make([]string, 0, pageSize+1)
 	for _, item := range m.visibleMentionItemsPage() {
 		rowStyle := commandPaletteRowStyle
 		nameStyle := commandPaletteNameStyle
@@ -149,7 +150,7 @@ func (m model) renderMentionPalette() string {
 			if m.hasRecentMention(item.Path) {
 				nameText = "* " + nameText
 			}
-			descText = item.Path
+			descText = truncatePathMiddle(item.Path, descWidth)
 		}
 
 		name := nameStyle.Width(nameWidth).Render(compact(nameText, max(12, nameWidth)))
@@ -158,7 +159,7 @@ func (m model) renderMentionPalette() string {
 			lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", desc),
 		))
 	}
-	for len(rows) < mentionPageSize {
+	for len(rows) < pageSize {
 		rows = append(rows, commandPaletteRowStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render(""))
 	}
 	metaText := "* recent  + file  * agent  Type @query  Up/Down  Enter/Tab insert  Esc close"
