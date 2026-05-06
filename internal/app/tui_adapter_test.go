@@ -212,8 +212,8 @@ func TestTUIRunnerAdapterObserverAndProviderPath(t *testing.T) {
 	adapter.SetObserver(func(event tui.Event) {
 		events = append(events, event)
 	})
-	adapter.SetApprovalHandler(func(tui.ApprovalRequest) (bool, error) {
-		return false, errors.New("not expected")
+	adapter.SetApprovalHandler(func(tui.ApprovalRequest) (tui.ApprovalDecision, error) {
+		return tui.ApprovalDecision{Disposition: tui.ApprovalDeny}, errors.New("not expected")
 	})
 	adapter.UpdateProvider(config.ProviderConfig{Model: "test-model"}, &subAgentAdapterTestClient{})
 	adapter.UpdateApprovalMode("on-request")

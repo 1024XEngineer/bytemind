@@ -13,7 +13,7 @@ func TestNonInteractiveApprovalAlwaysApproves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if !approved {
+	if !approved.Approved() {
 		t.Fatal("expected auto-approval")
 	}
 }

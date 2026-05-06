@@ -161,23 +161,18 @@ func (c commandItem) FilterValue() string {
 	return strings.ToLower(strings.TrimPrefix(c.Usage, "/") + " " + c.Description)
 }
 
-type toolRun struct {
-	Name    string
-	Summary string
-	Lines   []string
-	Status  string
-}
-
 type approvalPrompt struct {
-	Command string
-	Reason  string
-	Reply   chan approvalDecision
-	Kind    string
-	Choice  int
+	ToolName string
+	Command  string
+	Reason   string
+	Cursor   int
+	Reply    chan approvalDecision
+	Kind     string
+	Choice   int
 }
 
 type approvalDecision struct {
-	Approved bool
+	Decision ApprovalDecision
 	Err      error
 }
 
@@ -223,6 +218,12 @@ const (
 type approvalRequestMsg struct {
 	Request ApprovalRequest
 	Reply   chan approvalDecision
+}
+
+type approvalOption struct {
+	Label       string
+	Description string
+	Decision    ApprovalDisposition
 }
 
 type promptHistoryLoadedMsg struct {
@@ -366,7 +367,6 @@ type model struct {
 	viewportContentCache       string
 	viewportTopCache           viewportTopLookupCache
 	chatItems                  []chatEntry
-	toolRuns                   []toolRun
 	plan                       planpkg.State
 	planAction                 *planActionPicker
 	planActionOpen             bool
@@ -387,12 +387,17 @@ type model struct {
 	busy                       bool
 	runStartedAt               time.Time
 	lastRunDuration            time.Duration
+	lastTokenReceivedAt        time.Time
+	stalled                    bool
 	runIndicatorState          runIndicatorState
 	streamingIndex             int
+	suppressedAssistantDelta   string
 	statusNote                 string
 	phase                      string
 	llmConnected               bool
 	approval                   *approvalPrompt
+	sessionApprovalAll         bool
+	sessionApprovedTools       map[string]struct{}
 	mentionQuery               string
 	mentionToken               mention.Token
 	mentionResults             []mention.Candidate
@@ -511,17 +516,17 @@ func newModel(opts Options) model {
 	planVP.MouseWheelEnabled = true
 	planVP.MouseWheelDelta = scrollStep
 
-	chatItems, toolRuns := rebuildSessionTimeline(opts.Session)
+	chatItems := rebuildSessionTimeline(opts.Session)
 
 	if opts.Runner != nil {
 		opts.Runner.SetObserver(func(event Event) {
 			async <- agentEventMsg{Event: event}
 		})
-		opts.Runner.SetApprovalHandler(func(req ApprovalRequest) (bool, error) {
+		opts.Runner.SetApprovalHandler(func(req ApprovalRequest) (ApprovalDecision, error) {
 			reply := make(chan approvalDecision, 1)
 			async <- approvalRequestMsg{Request: req, Reply: reply}
 			decision := <-reply
-			return decision.Approved, decision.Err
+			return NormalizeApprovalDecision(decision.Decision), decision.Err
 		})
 	}
 
@@ -542,7 +547,6 @@ func newModel(opts Options) model {
 		input:                input,
 		spinner:              spin,
 		chatItems:            chatItems,
-		toolRuns:             toolRuns,
 		plan:                 copyPlanState(opts.Session.Plan),
 		sessions:             nil,
 		sessionLimit:         defaultSessionLimit,
@@ -553,6 +557,7 @@ func newModel(opts Options) model {
 		statusNote:           "Ready.",
 		phase:                "idle",
 		llmConnected:         true,
+		sessionApprovedTools: make(map[string]struct{}),
 		chatAutoFollow:       true,
 		mentionIndex:         mention.NewWorkspaceFileIndex(opts.Workspace),
 		agentSource:          opts.AgentSource,
@@ -601,11 +606,11 @@ func (m *model) installApprovalBridge() {
 		return
 	}
 	async := m.async
-	m.runner.SetApprovalHandler(func(req ApprovalRequest) (bool, error) {
+	m.runner.SetApprovalHandler(func(req ApprovalRequest) (ApprovalDecision, error) {
 		reply := make(chan approvalDecision, 1)
 		async <- approvalRequestMsg{Request: req, Reply: reply}
 		decision := <-reply
-		return decision.Approved, decision.Err
+		return NormalizeApprovalDecision(decision.Decision), decision.Err
 	})
 }
 
@@ -625,6 +630,75 @@ func resolveMouseYOffset() int {
 		return 0
 	}
 	return clamp(value, -10, 10)
+}
+
+func approvalToolKey(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func (m model) approvalOptions() []approvalOption {
+	return []approvalOption{
+		{
+			Label:       "Approve this operation only",
+			Description: "Allow just the current request; the same tool will ask again the next time approval is needed.",
+			Decision:    ApprovalApproveOnce,
+		},
+		{
+			Label:       "Approve later requests from this tool",
+			Description: "Auto-approve later approval requests from the same tool for the rest of this TUI session.",
+			Decision:    ApprovalApproveSameToolSession,
+		},
+		{
+			Label:       "Disable approvals for this TUI session",
+			Description: "Auto-approve all later approval requests in this TUI session without changing global config.",
+			Decision:    ApprovalApproveAllSession,
+		},
+	}
+}
+
+func (m *model) resetSessionApprovalState() {
+	if m == nil {
+		return
+	}
+	m.sessionApprovalAll = false
+	m.sessionApprovedTools = make(map[string]struct{})
+}
+
+func (m *model) cachedApprovalDecision(req ApprovalRequest) (ApprovalDecision, bool) {
+	if m == nil {
+		return ApprovalDecision{}, false
+	}
+	if m.sessionApprovalAll {
+		return ApprovalDecision{Disposition: ApprovalApproveAllSession}, true
+	}
+	toolKey := approvalToolKey(req.ToolName)
+	if toolKey == "" {
+		return ApprovalDecision{}, false
+	}
+	if _, ok := m.sessionApprovedTools[toolKey]; ok {
+		return ApprovalDecision{Disposition: ApprovalApproveSameToolSession}, true
+	}
+	return ApprovalDecision{}, false
+}
+
+func (m *model) rememberApprovalDecision(req ApprovalRequest, decision ApprovalDecision) {
+	if m == nil {
+		return
+	}
+	decision = NormalizeApprovalDecision(decision)
+	switch decision.Disposition {
+	case ApprovalApproveAllSession:
+		m.sessionApprovalAll = true
+	case ApprovalApproveSameToolSession:
+		toolKey := approvalToolKey(req.ToolName)
+		if toolKey == "" {
+			return
+		}
+		if m.sessionApprovedTools == nil {
+			m.sessionApprovedTools = make(map[string]struct{})
+		}
+		m.sessionApprovedTools[toolKey] = struct{}{}
+	}
 }
 
 func (m model) Init() tea.Cmd {
@@ -670,6 +744,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinner.TickMsg:
 		if !m.busy {
 			return m, nil
+		}
+		// Stall detection: no activity for >3 seconds
+		if !m.lastTokenReceivedAt.IsZero() && time.Since(m.lastTokenReceivedAt) > 3*time.Second {
+			m.stalled = true
+		} else {
+			m.stalled = false
 		}
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -763,7 +843,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.llmConnected = false
 			m.failLatestAssistant(msg.Err.Error())
 			m.failRunningToolCalls()
-			m.failRunningToolRuns()
 			m.notifyRunFailed(msg.RunID, msg.Err)
 		default:
 			m.lastRunDuration = 0
@@ -773,15 +852,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusNote = "Ready."
 			m.phase = "idle"
 		}
+		m.stalled = false
+		m.lastTokenReceivedAt = time.Time{}
 		m.refreshViewport()
 		return m, tea.Batch(waitForAsync(m.async), m.loadSessionsCmd())
 	case approvalRequestMsg:
+		if decision, ok := m.cachedApprovalDecision(msg.Request); ok {
+			msg.Reply <- approvalDecision{Decision: decision}
+			return m, waitForAsync(m.async)
+		}
 		m.approval = &approvalPrompt{
-			Command: msg.Request.Command,
-			Reason:  msg.Request.Reason,
-			Reply:   msg.Reply,
-			Kind:    approvalPromptKindTool,
-			Choice:  approvalChoiceApprove,
+			ToolName: msg.Request.ToolName,
+			Command:  msg.Request.Command,
+			Reason:   msg.Request.Reason,
+			Cursor:   0,
+			Reply:    msg.Reply,
+			Kind:     approvalPromptKindTool,
+			Choice:   approvalChoiceApprove,
 		}
 		m.statusNote = "Approval required."
 		m.phase = "approval"
@@ -1141,6 +1228,9 @@ func (m *model) tryStartImplicitClipboardPasteFromKey(msg tea.KeyMsg) tea.Cmd {
 	if msg.Type != tea.KeyRunes || len(msg.Runes) == 0 {
 		return nil
 	}
+	if _, hasMarker := extractLeadingCompressedMarker(m.input.Value()); hasMarker {
+		return nil
+	}
 	fragment := normalizeNewlines(strings.ReplaceAll(string(msg.Runes), ctrlVMarkerRune, ""))
 	if strings.TrimSpace(fragment) == "" {
 		return nil
@@ -1406,6 +1496,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	if !msg.Paste && !m.hasActivePasteBurst() && m.hasActivePasteSession() {
+		if _, hasMarker := extractLeadingCompressedMarker(m.input.Value()); hasMarker {
+			m.clearPasteSession()
+			m.clearPasteBurstCapture()
+		}
+	}
+
 	if cmd := m.tryStartImplicitClipboardPasteFromKey(msg); cmd != nil {
 		return m, cmd
 	}
@@ -1480,17 +1577,54 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.approval != nil {
-		switch key {
-		case "left", "h", "up", "k", "shift+tab", "backtab":
-			m.setApprovalChoice(approvalChoiceApprove)
-		case "right", "l", "down", "j", "tab":
-			m.setApprovalChoice(approvalChoiceReject)
-		case "enter":
-			m.resolveApprovalDecision(m.currentApprovalChoice() == approvalChoiceApprove)
-		case "y", "Y":
-			m.resolveApprovalDecision(true)
-		case "n", "N", "esc":
-			m.resolveApprovalDecision(false)
+		switch m.approval.Kind {
+		case approvalPromptKindEnableFullAccess:
+			switch key {
+			case "left", "h", "up", "k", "shift+tab", "backtab":
+				m.setApprovalChoice(approvalChoiceApprove)
+			case "right", "l", "down", "j", "tab":
+				m.setApprovalChoice(approvalChoiceReject)
+			case "enter":
+				m.resolveApprovalDecision(m.currentApprovalChoice() == approvalChoiceApprove)
+			case "y", "Y":
+				m.resolveApprovalDecision(true)
+			case "n", "N", "esc":
+				m.resolveApprovalDecision(false)
+			}
+		default:
+			switch key {
+			case "up", "k":
+				m.approval.Cursor = clamp(m.approval.Cursor-1, 0, len(m.approvalOptions())-1)
+			case "down", "j":
+				m.approval.Cursor = clamp(m.approval.Cursor+1, 0, len(m.approvalOptions())-1)
+			case "y", "Y":
+				m.rememberApprovalDecision(ApprovalRequest{ToolName: m.approval.ToolName, Command: m.approval.Command, Reason: m.approval.Reason}, ApprovalDecision{Disposition: ApprovalApproveOnce})
+				m.approval.Reply <- approvalDecision{Decision: ApprovalDecision{Disposition: ApprovalApproveOnce}}
+				m.statusNote = "Approved current operation."
+				m.phase = "tool"
+				m.approval = nil
+			case "enter":
+				options := m.approvalOptions()
+				selected := options[clamp(m.approval.Cursor, 0, len(options)-1)]
+				decision := ApprovalDecision{Disposition: selected.Decision}
+				m.rememberApprovalDecision(ApprovalRequest{ToolName: m.approval.ToolName, Command: m.approval.Command, Reason: m.approval.Reason}, decision)
+				m.approval.Reply <- approvalDecision{Decision: decision}
+				switch selected.Decision {
+				case ApprovalApproveAllSession:
+					m.statusNote = "Session approvals disabled for this TUI session."
+				case ApprovalApproveSameToolSession:
+					m.statusNote = "Future approvals for this tool will auto-pass in this session."
+				default:
+					m.statusNote = "Approved current operation."
+				}
+				m.phase = "tool"
+				m.approval = nil
+			case "n", "N", "esc":
+				m.approval.Reply <- approvalDecision{Decision: ApprovalDecision{Disposition: ApprovalDeny}}
+				m.statusNote = "Operation rejected."
+				m.phase = "thinking"
+				m.approval = nil
+			}
 		}
 		return m, nil
 	}
@@ -1648,7 +1782,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if markerChain, ok := extractLeadingCompressedMarker(rawValue); ok {
 			tail := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rawValue), markerChain))
 			if tail != "" {
-				if m.shouldCompressPastedText(tail, "paste-enter") {
+				if m.hasCompressedMarkerTailPasteEvidence("paste-enter") && m.shouldCompressPastedText(tail, "paste-enter") {
 					marker, content, err := m.compressPastedText(tail)
 					if err != nil {
 						m.statusNote = err.Error()
@@ -1661,7 +1795,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.statusNote = fmt.Sprintf("Detected another pasted block and compressed it as %s (%d lines). Press Enter again to send.", marker, content.Lines)
 					return m, nil
 				}
-				if len(tail) >= 24 || strings.Contains(tail, "\n") {
+				if m.hasCompressedMarkerTailPasteEvidence("paste-enter") && (len(tail) >= 24 || strings.Contains(tail, "\n")) {
 					m.setInputValue(strings.TrimSpace(markerChain))
 					m.syncInputOverlays()
 					m.statusNote = "Detected continued paste chunk after compressed marker. Kept compressed markers only; press Enter again to send."
@@ -1904,7 +2038,8 @@ func (m model) handleSuppressedPasteEnter(rawValue string) (tea.Model, bool) {
 	if markerChain, ok := extractLeadingCompressedMarker(rawValue); ok {
 		tail := strings.TrimSpace(strings.TrimPrefix(rawValue, markerChain))
 		if tail != "" {
-			if m.shouldCompressPastedText(tail, "paste-enter") || m.isLongPastedText(tail) {
+			if m.hasCompressedMarkerTailPasteEvidence("paste-enter") &&
+				(m.shouldCompressPastedText(tail, "paste-enter") || m.isLongPastedText(tail)) {
 				marker, content, err := m.compressPastedText(tail)
 				if err != nil {
 					m.statusNote = err.Error()
@@ -1917,7 +2052,7 @@ func (m model) handleSuppressedPasteEnter(rawValue string) (tea.Model, bool) {
 				m.statusNote = fmt.Sprintf("Detected another pasted block and compressed it as %s (%d lines). Press Enter again to send.", marker, content.Lines)
 				return m, true
 			}
-			if len(tail) >= 24 || strings.Contains(tail, "\n") {
+			if m.hasCompressedMarkerTailPasteEvidence("paste-enter") && (len(tail) >= 24 || strings.Contains(tail, "\n")) {
 				m.setInputValue(strings.TrimSpace(markerChain))
 				m.syncInputOverlays()
 				m.statusNote = "Detected continued paste chunk after compressed marker. Kept compressed markers only; press Enter again to send."
@@ -1982,9 +2117,8 @@ func waitForAsync(ch <-chan tea.Msg) tea.Cmd {
 	}
 }
 
-func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
+func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 	items := make([]chatEntry, 0, len(sess.Messages))
-	runs := make([]toolRun, 0, 8)
 	callNames := map[string]string{}
 
 	for _, message := range sess.Messages {
@@ -2016,7 +2150,6 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 					CompactBody: compactBody,
 					DetailLines: lines,
 				})
-				runs = append(runs, toolRun{Name: name, Summary: summary, Lines: lines, Status: status})
 			}
 			userText := strings.Join(userTextParts, "")
 			if strings.TrimSpace(userText) != "" {
@@ -2047,10 +2180,9 @@ func rebuildSessionTimeline(sess *session.Session) ([]chatEntry, []toolRun) {
 				CompactBody: compactBody,
 				DetailLines: lines,
 			})
-			runs = append(runs, toolRun{Name: name, Summary: summary, Lines: lines, Status: status})
 		}
 	}
-	return items, runs
+	return items
 }
 
 func chatBubbleWidth(item chatEntry, width int) int {
@@ -2915,8 +3047,12 @@ func (m *model) resolveApprovalDecision(approved bool) {
 		return
 	}
 	current := m.approval
+	decision := ApprovalDecision{Disposition: ApprovalDeny}
+	if approved {
+		decision = ApprovalDecision{Disposition: ApprovalApproveOnce}
+	}
 	if current.Reply != nil {
-		current.Reply <- approvalDecision{Approved: approved}
+		current.Reply <- approvalDecision{Decision: decision}
 	}
 	switch current.Kind {
 	case approvalPromptKindEnableFullAccess:
@@ -2929,10 +3065,10 @@ func (m *model) resolveApprovalDecision(approved bool) {
 		m.phase = "idle"
 	case approvalPromptKindTool, "":
 		if approved {
-			m.statusNote = "Shell command approved."
+			m.statusNote = "Approved current operation."
 			m.phase = "tool"
 		} else {
-			m.statusNote = "Shell command rejected."
+			m.statusNote = "Operation rejected."
 			m.phase = "thinking"
 		}
 	default:

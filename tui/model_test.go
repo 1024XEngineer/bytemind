@@ -131,14 +131,19 @@ func (a testRunnerAdapter) SetObserver(observer Observer) {
 }
 
 func (a testRunnerAdapter) SetApprovalHandler(handler ApprovalHandler) {
-	a.Runner.SetApprovalHandler(func(req tools.ApprovalRequest) (bool, error) {
+	a.Runner.SetApprovalHandler(func(req tools.ApprovalRequest) (tools.ApprovalDecision, error) {
 		if handler == nil {
-			return false, nil
+			return tools.ApprovalDecision{Disposition: tools.ApprovalDeny}, nil
 		}
-		return handler(ApprovalRequest{
-			Command: req.Command,
-			Reason:  req.Reason,
+		decision, err := handler(ApprovalRequest{
+			ToolName: req.ToolName,
+			Command:  req.Command,
+			Reason:   req.Reason,
 		})
+		if err != nil {
+			return tools.ApprovalDecision{}, err
+		}
+		return tools.ApprovalDecision{Disposition: tools.ApprovalDisposition(decision.Disposition)}, nil
 	})
 }
 
@@ -3447,7 +3452,7 @@ func TestRenderFooterShowsCompletedRunIndicator(t *testing.T) {
 	}
 }
 
-func TestBeginRunShowsThinkingCardInConversation(t *testing.T) {
+func TestBeginRunUsesStatusInsteadOfThinkingCard(t *testing.T) {
 	m := model{
 		screen:         screenChat,
 		width:          120,
@@ -3465,18 +3470,14 @@ func TestBeginRunShowsThinkingCardInConversation(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("expected beginRunWithInput to return command batch")
 	}
-	if len(m.chatItems) == 0 {
-		t.Fatalf("expected beginRunWithInput to append thinking card")
+	if len(m.chatItems) != 0 {
+		t.Fatalf("expected beginRunWithInput not to append thinking card, got %d items", len(m.chatItems))
 	}
-	last := m.chatItems[len(m.chatItems)-1]
-	if last.Kind != "assistant" || last.Status != "pending" || last.Title != thinkingLabel {
-		t.Fatalf("expected pending assistant thinking card, got %+v", last)
+	if m.streamingIndex != -1 {
+		t.Fatalf("expected streamingIndex to remain unset, got %d", m.streamingIndex)
 	}
-	if !strings.Contains(last.Body, "thinking...") {
-		t.Fatalf("expected thinking card body to include thinking text, got %q", last.Body)
-	}
-	if m.streamingIndex != len(m.chatItems)-1 {
-		t.Fatalf("expected streamingIndex to point to thinking card, got %d", m.streamingIndex)
+	if m.phase != "thinking" || m.statusNote != "Request sent to LLM. Waiting for response..." {
+		t.Fatalf("expected run status to carry thinking state, got phase=%q note=%q", m.phase, m.statusNote)
 	}
 }
 
@@ -4414,7 +4415,7 @@ func TestEscapePrioritizesApprovalOverPromptSearch(t *testing.T) {
 	}
 	select {
 	case decision := <-reply:
-		if decision.Approved {
+		if decision.Decision.Approved() {
 			t.Fatalf("expected esc approval decision to reject")
 		}
 	default:
@@ -5071,15 +5072,12 @@ func TestRebuildSessionTimelineParsesUserToolResultParts(t *testing.T) {
 		},
 	}
 
-	items, runs := rebuildSessionTimeline(sess)
+	items := rebuildSessionTimeline(sess)
 	if len(items) != 2 {
 		t.Fatalf("expected user + tool items, got %#v", items)
 	}
 	if items[1].Kind != "tool" || items[1].Title != toolEntryTitle("read_file") {
 		t.Fatalf("expected tool item from tool_result part, got %#v", items[1])
-	}
-	if len(runs) != 1 || runs[0].Name != "read_file" {
-		t.Fatalf("expected tool run reconstructed, got %#v", runs)
 	}
 }
 
@@ -5090,15 +5088,12 @@ func TestRebuildSessionTimelineFallsBackToGenericToolNameForUnknownToolUseID(t *
 		},
 	}
 
-	items, runs := rebuildSessionTimeline(sess)
+	items := rebuildSessionTimeline(sess)
 	if len(items) != 1 {
 		t.Fatalf("expected only one tool item, got %#v", items)
 	}
 	if items[0].Kind != "tool" || items[0].Title != toolEntryTitle("tool") {
 		t.Fatalf("expected fallback tool title for unknown tool use id, got %#v", items[0])
-	}
-	if len(runs) != 1 || runs[0].Name != "tool" {
-		t.Fatalf("expected fallback tool run name, got %#v", runs)
 	}
 }
 
@@ -5114,7 +5109,7 @@ func TestRebuildSessionTimelineParsesLegacyToolRoleMessage(t *testing.T) {
 		},
 	}
 
-	items, runs := rebuildSessionTimeline(sess)
+	items := rebuildSessionTimeline(sess)
 	if len(items) != 2 {
 		t.Fatalf("expected assistant + tool items, got %#v", items)
 	}
@@ -5123,9 +5118,6 @@ func TestRebuildSessionTimelineParsesLegacyToolRoleMessage(t *testing.T) {
 	}
 	if items[1].Kind != "tool" || items[1].Title != toolEntryTitle("tool") {
 		t.Fatalf("expected fallback tool title for legacy tool message, got %#v", items[1])
-	}
-	if len(runs) != 1 || runs[0].Name != "tool" {
-		t.Fatalf("expected tool run reconstructed from legacy tool message, got %#v", runs)
 	}
 }
 
@@ -5144,20 +5136,17 @@ func TestHandleAgentEventShowsToolProgressInChat(t *testing.T) {
 		ToolCallID:    "call-1",
 		ToolArguments: `{"path":"tui/model.go"}`,
 	})
-	if len(m.chatItems) != 3 {
-		t.Fatalf("expected tool start to keep assistant step then append tool call, got %d items", len(m.chatItems))
+	if len(m.chatItems) != 2 {
+		t.Fatalf("expected tool start to drop assistant thinking and append tool call, got %d items", len(m.chatItems))
 	}
-	if m.chatItems[1].Kind != "assistant" || m.chatItems[1].Title != thinkingLabel || m.chatItems[1].Status != "thinking" || strings.TrimSpace(m.chatItems[1].Body) == "" {
-		t.Fatalf("expected assistant step before tool call, got %+v", m.chatItems[1])
+	if m.chatItems[1].Kind != "tool" || m.chatItems[1].Status != "running" || m.chatItems[1].Title != toolEntryTitle("read_file") {
+		t.Fatalf("expected running tool call chat item, got %+v", m.chatItems[1])
 	}
-	if m.chatItems[2].Kind != "tool" || m.chatItems[2].Status != "running" || m.chatItems[2].Title != toolEntryTitle("read_file") {
-		t.Fatalf("expected running tool call chat item, got %+v", m.chatItems[2])
+	if m.chatItems[1].ToolCallID != "call-1" {
+		t.Fatalf("expected tool call ID to be set, got %q", m.chatItems[1].ToolCallID)
 	}
-	if m.chatItems[2].ToolCallID != "call-1" {
-		t.Fatalf("expected tool call ID to be set, got %q", m.chatItems[2].ToolCallID)
-	}
-	if strings.TrimSpace(m.chatItems[2].Body) != "" {
-		t.Fatalf("expected tool call body to hide params, got %q", m.chatItems[2].Body)
+	if strings.TrimSpace(m.chatItems[1].Body) != "" {
+		t.Fatalf("expected tool call body to hide params, got %q", m.chatItems[1].Body)
 	}
 
 	m.handleAgentEvent(Event{
@@ -5166,17 +5155,17 @@ func TestHandleAgentEventShowsToolProgressInChat(t *testing.T) {
 		ToolCallID: "call-1",
 		ToolResult: `{"path":"tui/model.go","start_line":1,"end_line":20}`,
 	})
-	if len(m.chatItems) != 3 {
+	if len(m.chatItems) != 2 {
 		t.Fatalf("expected completed tool to update existing tool call, got %d", len(m.chatItems))
 	}
-	if m.chatItems[2].Kind != "tool" || m.chatItems[2].Title != toolEntryTitle("read_file") {
-		t.Fatalf("expected tool call entry after completion, got %+v", m.chatItems[2])
+	if m.chatItems[1].Kind != "tool" || m.chatItems[1].Title != toolEntryTitle("read_file") {
+		t.Fatalf("expected tool call entry after completion, got %+v", m.chatItems[1])
 	}
-	if m.chatItems[2].Status != "done" {
-		t.Fatalf("expected completed tool call status to be done, got %q", m.chatItems[2].Status)
+	if m.chatItems[1].Status != "done" {
+		t.Fatalf("expected completed tool call status to be done, got %q", m.chatItems[1].Status)
 	}
-	if !strings.Contains(m.chatItems[2].Body, "Read model.go") || !strings.Contains(m.chatItems[2].Body, "range: 1-20") {
-		t.Fatalf("expected completed tool summary in tool call item, got %q", m.chatItems[2].Body)
+	if !strings.Contains(m.chatItems[1].Body, "Read model.go") || !strings.Contains(m.chatItems[1].Body, "range: 1-20") {
+		t.Fatalf("expected completed tool summary in tool call item, got %q", m.chatItems[1].Body)
 	}
 }
 
@@ -5234,7 +5223,7 @@ func TestHandleAgentEventTracksRunLifecyclePhases(t *testing.T) {
 	}
 }
 
-func TestToolStartKeepsStreamedAssistantReasoning(t *testing.T) {
+func TestToolStartDropsStreamedAssistantReasoning(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
 			{Kind: "user", Title: "You", Body: "what project is this", Status: "final"},
@@ -5250,14 +5239,11 @@ func TestToolStartKeepsStreamedAssistantReasoning(t *testing.T) {
 		ToolArguments: `{"path":"."}`,
 	})
 
-	if len(m.chatItems) != 3 {
-		t.Fatalf("expected tool start to append only tool call after streamed assistant turn, got %d items", len(m.chatItems))
+	if len(m.chatItems) != 2 {
+		t.Fatalf("expected tool start to drop streamed assistant reasoning and append only tool call, got %d items", len(m.chatItems))
 	}
-	if !strings.Contains(m.chatItems[1].Body, "inspect the repo structure first") || m.chatItems[1].Status != "thinking" || m.chatItems[1].Title != thinkingLabel {
-		t.Fatalf("expected streamed assistant turn to preserve reasoning content, got %+v", m.chatItems[1])
-	}
-	if m.chatItems[2].Title != toolEntryTitle("list_files") {
-		t.Fatalf("expected tool call entry, got %+v", m.chatItems[2])
+	if m.chatItems[1].Title != toolEntryTitle("list_files") {
+		t.Fatalf("expected tool call entry, got %+v", m.chatItems[1])
 	}
 }
 
@@ -5354,28 +5340,29 @@ func TestFormatChatBodyHighlightsSearchToolSummaryAndMatches(t *testing.T) {
 	}
 }
 
-func TestAssistantDeltaPlanningTextRendersAsThinking(t *testing.T) {
+func TestAssistantDeltaPlanningTextStaysOutOfChatTimeline(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
 			{Kind: "user", Title: "You", Body: "please inspect this project", Status: "final"},
 		},
 		streamingIndex: -1,
 	}
+	planningText := "I will first inspect structure and config, then code organization and dependencies, and finally verify with build and tests."
 
 	m.handleAgentEvent(Event{
 		Type:    EventAssistantDelta,
-		Content: "I will first inspect structure and config, then code organization and dependencies, and finally verify with build and tests.",
+		Content: planningText,
 	})
 
-	if len(m.chatItems) != 2 {
-		t.Fatalf("expected assistant delta to append one assistant item, got %d", len(m.chatItems))
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected planning delta to stay out of chat timeline, got %d items", len(m.chatItems))
 	}
-	if m.chatItems[1].Title != thinkingLabel || m.chatItems[1].Status != "thinking" {
-		t.Fatalf("expected planning delta to render as thinking, got %+v", m.chatItems[1])
+	if m.suppressedAssistantDelta != planningText {
+		t.Fatalf("expected planning delta to be suppressed, got %q", m.suppressedAssistantDelta)
 	}
 }
 
-func TestFinishAssistantMessageAppendsFinalCardAfterThinking(t *testing.T) {
+func TestFinishAssistantMessageReplacesThinkingWithFinalCard(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
 			{Kind: "user", Title: "You", Body: "what project is this", Status: "final"},
@@ -5386,14 +5373,11 @@ func TestFinishAssistantMessageAppendsFinalCardAfterThinking(t *testing.T) {
 
 	m.finishAssistantMessage("This is a Go TUI project.")
 
-	if len(m.chatItems) != 3 {
-		t.Fatalf("expected final answer to be appended after thinking, got %d items", len(m.chatItems))
+	if len(m.chatItems) != 2 {
+		t.Fatalf("expected final answer to replace thinking card, got %d items", len(m.chatItems))
 	}
-	if m.chatItems[1].Title != thinkingLabel || m.chatItems[1].Status != "thinking_done" {
-		t.Fatalf("expected thinking card to remain visible as done, got %+v", m.chatItems[1])
-	}
-	if m.chatItems[2].Title != assistantLabel || m.chatItems[2].Status != "final" || m.chatItems[2].Body != "This is a Go TUI project." {
-		t.Fatalf("expected final assistant card after thinking, got %+v", m.chatItems[2])
+	if m.chatItems[1].Title != assistantLabel || m.chatItems[1].Status != "final" || m.chatItems[1].Body != "This is a Go TUI project." {
+		t.Fatalf("expected final assistant card, got %+v", m.chatItems[1])
 	}
 }
 
@@ -5436,9 +5420,8 @@ func TestApprovalBannerRendersAboveInput(t *testing.T) {
 		"Approval required",
 		"go test ./tui",
 		"run tests",
-		"Approve",
-		"Reject",
-		"Enter to confirm",
+		"Approve this operation only",
+		"Disable approvals for this TUI session",
 	} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("expected approval banner to contain %q", want)
@@ -5455,15 +5438,16 @@ func TestApprovalBannerUsesCompactSingleNormalBorder(t *testing.T) {
 		width: 64,
 		input: input,
 		approval: &approvalPrompt{
-			Command: "write_file_with_a_very_long_tool_name_to_force_truncation",
-			Reason:  "destructive tool may modify workspace files: write_file_with_a_very_long_tool_name_to_force_truncation",
+			ToolName: "write_file",
+			Command:  "write_file_with_a_very_long_tool_name_to_force_truncation",
+			Reason:   "destructive tool may modify workspace files: write_file_with_a_very_long_tool_name_to_force_truncation",
 		},
 	}
 
 	banner := m.renderApprovalBanner()
 	lines := strings.Split(banner, "\n")
-	if len(lines) < 6 {
-		t.Fatalf("expected boxed approval banner with action buttons and hint lines, got %d lines: %q", len(lines), banner)
+	if len(lines) < 10 {
+		t.Fatalf("expected taller boxed approval panel with selectable options, got %d lines: %q", len(lines), banner)
 	}
 	expectedWidth := max(24, m.chatPanelInnerWidth())
 	for i, line := range lines {
@@ -5471,7 +5455,7 @@ func TestApprovalBannerUsesCompactSingleNormalBorder(t *testing.T) {
 			t.Fatalf("expected banner line %d width %d, got %d (%q)", i, expectedWidth, got, line)
 		}
 	}
-	for _, want := range []string{"Tool:", "Approve", "Reject", "Enter to confirm"} {
+	for _, want := range []string{"Tool: write_file", "Approve later requests from this tool", "Disable approvals for this TUI session"} {
 		if !strings.Contains(banner, want) {
 			t.Fatalf("expected compact approval banner to contain %q", want)
 		}
@@ -5493,10 +5477,10 @@ func TestApprovalBannerDefaultsWhenCommandAndReasonEmpty(t *testing.T) {
 	if !strings.Contains(banner, "Approval required") {
 		t.Fatalf("expected approval title in banner, got %q", banner)
 	}
-	if !strings.Contains(banner, "Tool: -") {
-		t.Fatalf("expected empty command to fallback to '-', got %q", banner)
+	if !strings.Contains(banner, "Tool: unknown") {
+		t.Fatalf("expected empty tool name to fallback to 'unknown', got %q", banner)
 	}
-	if !strings.Contains(banner, "Approve") || !strings.Contains(banner, "Reject") {
+	if !strings.Contains(banner, "Command: -") || !strings.Contains(banner, "Enter confirm") {
 		t.Fatalf("expected approval actions to render, got %q", banner)
 	}
 }
@@ -5520,7 +5504,7 @@ func TestApprovalBannerNarrowWidthFallbackKeepsAlignedHint(t *testing.T) {
 			t.Fatalf("expected banner line %d width %d under narrow layout, got %d (%q)", i, expectedWidth, got, line)
 		}
 	}
-	for _, want := range []string{"Approve", "Reject", "Enter to", "confirm"} {
+	for _, want := range []string{"Up/Down", "Enter", "confirm", "Y approve", "once", "N/Esc", "reject"} {
 		if !strings.Contains(banner, want) {
 			t.Fatalf("expected narrow-layout fallback to keep action hint token %q, got %q", want, banner)
 		}
@@ -5555,8 +5539,9 @@ func TestUpdateApprovalRequestMsgSetsApprovalPhase(t *testing.T) {
 
 	got, cmd := m.Update(approvalRequestMsg{
 		Request: ApprovalRequest{
-			Command: "go test ./tui",
-			Reason:  "run focused tests",
+			ToolName: "run_shell",
+			Command:  "go test ./tui",
+			Reason:   "run focused tests",
 		},
 		Reply: reply,
 	})
@@ -5570,6 +5555,9 @@ func TestUpdateApprovalRequestMsgSetsApprovalPhase(t *testing.T) {
 	}
 	if updated.approval.Command != "go test ./tui" || updated.approval.Reason != "run focused tests" {
 		t.Fatalf("expected approval prompt contents to be preserved, got %+v", updated.approval)
+	}
+	if updated.approval.ToolName != "run_shell" || updated.approval.Cursor != 0 {
+		t.Fatalf("expected approval prompt metadata to be initialized, got %+v", updated.approval)
 	}
 	if updated.approval.Kind != approvalPromptKindTool {
 		t.Fatalf("expected tool approval kind, got %q", updated.approval.Kind)
@@ -5663,14 +5651,14 @@ func TestApprovalKeysTransitionStateAndSendDecision(t *testing.T) {
 		if updated.approval != nil {
 			t.Fatalf("expected approval prompt to clear after approval")
 		}
-		if updated.phase != "tool" || updated.statusNote != "Shell command approved." {
+		if updated.phase != "tool" || updated.statusNote != "Approved current operation." {
 			t.Fatalf("expected approval to move UI into tool phase, got phase=%q note=%q", updated.phase, updated.statusNote)
 		}
 
 		select {
 		case decision := <-reply:
-			if !decision.Approved {
-				t.Fatalf("expected approval decision to be true")
+			if !decision.Decision.Approved() || decision.Decision.Disposition != ApprovalApproveOnce {
+				t.Fatalf("expected approve-once decision, got %+v", decision)
 			}
 		default:
 			t.Fatalf("expected approval decision to be sent")
@@ -5694,28 +5682,78 @@ func TestApprovalKeysTransitionStateAndSendDecision(t *testing.T) {
 		if updated.approval != nil {
 			t.Fatalf("expected approval prompt to clear after rejection")
 		}
-		if updated.phase != "thinking" || updated.statusNote != "Shell command rejected." {
+		if updated.phase != "thinking" || updated.statusNote != "Operation rejected." {
 			t.Fatalf("expected rejection to return UI to thinking phase, got phase=%q note=%q", updated.phase, updated.statusNote)
 		}
 
 		select {
 		case decision := <-reply:
-			if decision.Approved {
-				t.Fatalf("expected rejection decision to be false")
+			if decision.Decision.Approved() || decision.Decision.Disposition != ApprovalDeny {
+				t.Fatalf("expected rejection decision, got %+v", decision)
 			}
 		default:
 			t.Fatalf("expected rejection decision to be sent")
 		}
 	})
 
-	t.Run("arrow-select-reject-and-enter", func(t *testing.T) {
+	t.Run("approve same tool session caches future requests", func(t *testing.T) {
 		reply := make(chan approvalDecision, 1)
 		m := model{
 			approval: &approvalPrompt{
-				Command: "go test ./tui",
-				Reason:  "run focused tests",
+				ToolName: "run_shell",
+				Command:  "go test ./tui",
+				Reason:   "run focused tests",
+				Cursor:   1,
+				Reply:    reply,
+			},
+			sessionApprovedTools: make(map[string]struct{}),
+			phase:                "approval",
+			async:                make(chan tea.Msg, 1),
+		}
+
+		got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+		updated := got.(model)
+		if _, ok := updated.sessionApprovedTools["run_shell"]; !ok {
+			t.Fatalf("expected same-tool approval to be cached, got %#v", updated.sessionApprovedTools)
+		}
+		select {
+		case decision := <-reply:
+			if decision.Decision.Disposition != ApprovalApproveSameToolSession {
+				t.Fatalf("expected same-tool session decision, got %+v", decision)
+			}
+		default:
+			t.Fatal("expected approval decision to be sent")
+		}
+
+		reply2 := make(chan approvalDecision, 1)
+		got, cmd := updated.Update(approvalRequestMsg{
+			Request: ApprovalRequest{ToolName: "run_shell", Command: "go test ./...", Reason: "same tool"},
+			Reply:   reply2,
+		})
+		updated = got.(model)
+		if cmd == nil {
+			t.Fatal("expected async wait command after cached approval")
+		}
+		if updated.approval != nil {
+			t.Fatalf("expected cached same-tool request to skip prompt, got %+v", updated.approval)
+		}
+		select {
+		case decision := <-reply2:
+			if decision.Decision.Disposition != ApprovalApproveSameToolSession {
+				t.Fatalf("expected cached same-tool decision, got %+v", decision)
+			}
+		default:
+			t.Fatal("expected cached approval reply")
+		}
+	})
+	t.Run("arrow-select-cancel-and-enter-for-full-access", func(t *testing.T) {
+		reply := make(chan approvalDecision, 1)
+		m := model{
+			approval: &approvalPrompt{
+				Command: "approval_mode=full_access",
+				Reason:  "Enable full access?",
 				Reply:   reply,
-				Kind:    approvalPromptKindTool,
+				Kind:    approvalPromptKindEnableFullAccess,
 				Choice:  approvalChoiceApprove,
 			},
 			phase: "approval",
@@ -5732,17 +5770,20 @@ func TestApprovalKeysTransitionStateAndSendDecision(t *testing.T) {
 		if updated.approval != nil {
 			t.Fatalf("expected approval prompt to clear after confirming selection")
 		}
-		if updated.phase != "thinking" || updated.statusNote != "Shell command rejected." {
-			t.Fatalf("expected selected rejection to return to thinking phase, got phase=%q note=%q", updated.phase, updated.statusNote)
+		if updated.phase != "idle" || updated.statusNote != "Full access request canceled." {
+			t.Fatalf("expected selected cancellation to return to idle phase, got phase=%q note=%q", updated.phase, updated.statusNote)
+		}
+		if updated.cfg.ApprovalMode != "" {
+			t.Fatalf("expected approval mode to remain unchanged after cancel, got %q", updated.cfg.ApprovalMode)
 		}
 
 		select {
 		case decision := <-reply:
-			if decision.Approved {
-				t.Fatalf("expected rejection decision to be false")
+			if decision.Decision.Approved() {
+				t.Fatalf("expected cancellation decision to be false")
 			}
 		default:
-			t.Fatalf("expected rejection decision to be sent")
+			t.Fatalf("expected cancellation decision to be sent")
 		}
 	})
 }
@@ -7777,6 +7818,60 @@ func TestCompressedPasteRequiresExplicitConfirmationBeforeSubmit(t *testing.T) {
 	}
 	if !strings.Contains(afterSecondEnter.chatItems[0].Body, "[Paste #") {
 		t.Fatalf("expected submitted body to include compressed marker, got %q", afterSecondEnter.chatItems[0].Body)
+	}
+}
+
+func TestManualTypedTailAfterCompressedPasteSubmitsLiterally(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	longPaste := strings.Join([]string{
+		"line 1", "line 2", "line 3", "line 4", "line 5", "line 6",
+		"line 7", "line 8", "line 9", "line 10", "line 11", "line 12",
+	}, "\n")
+
+	got, _ := m.handlePastePayload(longPaste + "\n")
+	afterPaste := got.(model)
+	afterPaste.pasteBurstLastEventAt = time.Now().Add(-time.Second)
+	got, _ = afterPaste.Update(pasteBurstSettleMsg{Generation: afterPaste.pasteBurstGeneration})
+	afterPaste = got.(model)
+
+	marker := afterPaste.input.Value()
+	typedTail := " typed note from me"
+	afterTyped := afterPaste
+	for _, r := range typedTail {
+		got, _ = afterTyped.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		afterTyped = got.(model)
+	}
+
+	if afterTyped.input.Value() != marker+typedTail {
+		t.Fatalf("expected manual tail to stay literal after marker, got %q", afterTyped.input.Value())
+	}
+	if len(afterTyped.pastedContents) != 1 {
+		t.Fatalf("expected manual tail not to create extra pasted content, got %d", len(afterTyped.pastedContents))
+	}
+	if afterTyped.hasActivePasteSession() {
+		t.Fatalf("expected manual tail not to leave an active paste session")
+	}
+	if afterTyped.pasteTransaction.Active {
+		t.Fatalf("expected manual tail not to keep paste transaction active")
+	}
+
+	got, _ = afterTyped.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	afterFirstEnter := got.(model)
+	if len(afterFirstEnter.chatItems) != 0 {
+		t.Fatalf("expected first enter after typed tail not to submit, got %d chat items", len(afterFirstEnter.chatItems))
+	}
+	if afterFirstEnter.input.Value() != marker+typedTail {
+		t.Fatalf("expected first enter to keep manual tail intact, got %q", afterFirstEnter.input.Value())
+	}
+
+	got, _ = afterFirstEnter.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	afterSecondEnter := got.(model)
+	if len(afterSecondEnter.chatItems) == 0 {
+		t.Fatalf("expected second enter after typed tail to submit")
+	}
+	if body := afterSecondEnter.chatItems[0].Body; body != marker+typedTail {
+		t.Fatalf("expected submitted body to keep literal manual tail, got %q", body)
 	}
 }
 

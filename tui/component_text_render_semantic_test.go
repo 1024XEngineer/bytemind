@@ -64,9 +64,9 @@ func TestApplyLineIntentStyleColorsInfoWarningAndError(t *testing.T) {
 }
 
 func TestRenderSemanticAssistantLineDoesNotAccentGenericColonLabels(t *testing.T) {
-	got := renderSemanticAssistantLine("- 工具调用: 读写文件、搜索、打补丁", 80)
+	got := renderSemanticAssistantLine("- Tool call: read files, search, patch", 80)
 	plain := stripANSI(got)
-	if !strings.Contains(plain, "- 工具调用: 读写文件、搜索、打补丁") {
+	if !strings.Contains(plain, "- Tool call: read files, search, patch") {
 		t.Fatalf("expected generic label text to be preserved, got %q", plain)
 	}
 	if got != plain {
@@ -85,5 +85,71 @@ func TestRenderSemanticAssistantLineKeepsIntentLabelsStyled(t *testing.T) {
 	}
 	if !strings.HasPrefix(lines[1], strings.Repeat(" ", len("Tip: "))) {
 		t.Fatalf("expected wrapped intent label body to align after label prefix, got %q", got)
+	}
+}
+
+func TestRenderLegacyFencedCodeBlockHandlesEmptyBlock(t *testing.T) {
+	got := renderLegacyFencedCodeBlock(nil, 24)
+	plain := stripANSI(got)
+	topLeft := string(rune(0x256d))
+	bottomLeft := string(rune(0x2570))
+	if !strings.Contains(plain, topLeft) || !strings.Contains(plain, bottomLeft) {
+		t.Fatalf("expected framed empty code block, got %q", plain)
+	}
+}
+
+func TestRenderLegacyFencedCodeBlockPreservesBlankLinesAndWrapsLongLines(t *testing.T) {
+	got := renderLegacyFencedCodeBlock([]string{
+		"short",
+		"",
+		"this is a very long code line that should wrap in the legacy fenced renderer",
+	}, 16)
+	plain := stripANSI(got)
+
+	if !strings.Contains(plain, "short") {
+		t.Fatalf("expected first code line, got %q", plain)
+	}
+	if !strings.Contains(plain, "very long") || !strings.Contains(plain, "legacy") || !strings.Contains(plain, "fenced") {
+		t.Fatalf("expected wrapped long line fragments, got %q", plain)
+	}
+}
+
+func TestRenderAssistantBodyLegacyRendersFencedCodeAsSingleFrame(t *testing.T) {
+	input := strings.Join([]string{
+		"before",
+		"```go",
+		"line one",
+		"",
+		"line two is very very long and should wrap",
+		"```",
+		"after",
+	}, "\n")
+	got := stripANSI(renderAssistantBodyLegacy(input, 20))
+
+	topLeft := string(rune(0x256d))
+	bottomLeft := string(rune(0x2570))
+	if strings.Count(got, topLeft) != 1 || strings.Count(got, bottomLeft) != 1 {
+		t.Fatalf("expected a single code frame, got %q", got)
+	}
+	if !strings.Contains(got, "before") || !strings.Contains(got, "after") {
+		t.Fatalf("expected non-code content to be preserved, got %q", got)
+	}
+}
+
+func TestRenderAssistantBodyLegacyUnclosedFenceFlushesAtEOF(t *testing.T) {
+	input := strings.Join([]string{
+		"```",
+		"alpha",
+		"beta",
+	}, "\n")
+	got := stripANSI(renderAssistantBodyLegacy(input, 24))
+
+	if !strings.Contains(got, "alpha") || !strings.Contains(got, "beta") {
+		t.Fatalf("expected unclosed fenced code content rendered, got %q", got)
+	}
+	topLeft := string(rune(0x256d))
+	bottomLeft := string(rune(0x2570))
+	if strings.Count(got, topLeft) != 1 || strings.Count(got, bottomLeft) != 1 {
+		t.Fatalf("expected single framed block for unclosed fence, got %q", got)
 	}
 }

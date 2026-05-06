@@ -21,20 +21,20 @@ iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/
 ### macOS / Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=v0.3.0 bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=vX.Y.Z bash
 ```
 
 ### Windows PowerShell
 
 ```powershell
-$env:BYTEMIND_VERSION='v0.3.0'; iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
+$env:BYTEMIND_VERSION='vX.Y.Z'; iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
 ## Optional Environment Variables
 
 - `BYTEMIND_REPO`: GitHub repository in the format `owner/repo` (default: `1024XEngineer/bytemind`).
-- `BYTEMIND_VERSION`: Release tag to install (for example `v0.3.0`).
-- `BYTEMIND_INSTALL_DIR`: Target install directory (default: `~/.bytemind/bin`).
+- `BYTEMIND_VERSION`: Release tag to install (for example `vX.Y.Z` from GitHub Releases).
+- `BYTEMIND_INSTALL_DIR`: Target install directory (default: `~/bin`).
 
 ## Manual Installation from Release Assets
 

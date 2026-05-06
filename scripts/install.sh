@@ -109,6 +109,36 @@ verify_checksum() {
   fi
 }
 
+canonical_file_path() {
+  local path="$1"
+  local dir base
+  dir="$(dirname "${path}")"
+  base="$(basename "${path}")"
+  if [[ -d "${dir}" ]]; then
+    (
+      cd "${dir}"
+      printf "%s/%s\n" "$(pwd -P)" "${base}"
+    )
+    return
+  fi
+  printf "%s\n" "${path}"
+}
+
+show_path_resolution_hint() {
+  local installed_binary="$1"
+  local resolved_command resolved_installed
+  if ! command -v bytemind >/dev/null 2>&1; then
+    return
+  fi
+
+  resolved_command="$(canonical_file_path "$(command -v bytemind)")"
+  resolved_installed="$(canonical_file_path "${installed_binary}")"
+  if [[ "${resolved_command}" != "${resolved_installed}" ]]; then
+    echo "warning: bytemind on PATH resolves to $(command -v bytemind), not ${installed_binary}" >&2
+    echo "warning: run \"${installed_binary}\" --version directly, or move ${INSTALL_DIR} earlier in PATH" >&2
+  fi
+}
+
 append_path_profile() {
   local install_dir="$1"
   if [[ ":${PATH}:" == *":${install_dir}:"* ]]; then
@@ -178,6 +208,7 @@ main() {
 
   "${extracted_binary}" install -to "${INSTALL_DIR}" -add-to-path=false
   append_path_profile "${INSTALL_DIR}"
+  show_path_resolution_hint "${INSTALL_DIR%/}/bytemind"
 
   echo
   echo "Bytemind is installed."

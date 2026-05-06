@@ -1,11 +1,13 @@
 # Configuration
 
-ByteMind loads config from the first path it finds, in this order:
+ByteMind normally loads the global user config first, then an optional project config for the current workspace. Matching fields in the project config override the global config. New users should start with the global config: `~/.bytemind/config.json`.
 
-1. Path passed via `-config <path>` flag
-2. `.bytemind/config.json` in the current working directory
-3. `config.json` in the current working directory
-4. `~/.bytemind/config.json` in your home directory
+Automatic load order:
+
+1. `~/.bytemind/config.json` in your home directory
+2. `.bytemind/config.json` in the current workspace (optional project overrides)
+
+If you pass `-config <path>`, ByteMind uses that file for this run.
 
 ## OpenAI-Compatible Providers
 
@@ -40,7 +42,7 @@ Pass the API key via environment variable (recommended 閳?keeps secrets out of 
 
 ```bash
 export OPENAI_API_KEY="sk-..."
-bytemind chat
+bytemind
 ```
 
 ## Anthropic
@@ -121,7 +123,7 @@ When sandbox is enabled, file and shell tools are restricted to the declared wri
 You can also enable it via environment variables:
 
 ```bash
-BYTEMIND_SANDBOX_ENABLED=true BYTEMIND_WRITABLE_ROOTS=./src bytemind chat
+BYTEMIND_SANDBOX_ENABLED=true BYTEMIND_WRITABLE_ROOTS=./src bytemind
 ```
 
 ## Iteration Budget

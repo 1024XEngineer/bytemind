@@ -27,7 +27,7 @@ func LoadRuntimeConfig(req ConfigRequest) (config.Config, error) {
 		return cfg, err
 	}
 	if req.ModelOverride != "" {
-		cfg.Provider.Model = req.ModelOverride
+		applyModelOverride(&cfg, req.ModelOverride)
 	}
 	if req.StreamOverride != "" {
 		parsed, err := strconv.ParseBool(req.StreamOverride)
@@ -85,4 +85,33 @@ func LoadRuntimeConfig(req ConfigRequest) (config.Config, error) {
 		return cfg, fmt.Errorf("system_sandbox_mode requires sandbox_enabled=true (set -sandbox-enabled true)")
 	}
 	return cfg, nil
+}
+
+func applyModelOverride(cfg *config.Config, model string) {
+	if cfg == nil {
+		return
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return
+	}
+	cfg.Provider.Model = model
+	cfg.ProviderRuntime.DefaultModel = model
+	if len(cfg.ProviderRuntime.Providers) == 0 {
+		return
+	}
+	defaultProvider := strings.ToLower(strings.TrimSpace(cfg.ProviderRuntime.DefaultProvider))
+	if defaultProvider != "" {
+		if providerCfg, ok := cfg.ProviderRuntime.Providers[defaultProvider]; ok {
+			providerCfg.Model = model
+			cfg.ProviderRuntime.Providers[defaultProvider] = providerCfg
+			return
+		}
+	}
+	if len(cfg.ProviderRuntime.Providers) == 1 {
+		for id, providerCfg := range cfg.ProviderRuntime.Providers {
+			providerCfg.Model = model
+			cfg.ProviderRuntime.Providers[id] = providerCfg
+		}
+	}
 }

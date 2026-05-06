@@ -11,8 +11,8 @@ import (
 // This is safe for subagents because their toolset is already narrowed by Gateway.Preflight()
 // to only include tools the parent has authorized.
 func nonInteractiveApproval() tools.ApprovalHandler {
-	return func(req tools.ApprovalRequest) (bool, error) {
-		return true, nil
+	return func(req tools.ApprovalRequest) (tools.ApprovalDecision, error) {
+		return tools.ApprovalDecision{Disposition: tools.ApprovalApproveOnce}, nil
 	}
 }
 

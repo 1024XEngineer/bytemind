@@ -71,6 +71,46 @@ function Get-ExpectedChecksum {
     return ([string]($line -split "\s+")[0]).ToLowerInvariant()
 }
 
+function Resolve-ComparablePath {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+    try {
+        $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
+        return [System.IO.Path]::GetFullPath([string]$resolved.ProviderPath).TrimEnd("\", "/")
+    }
+    catch {
+        try {
+            return [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/")
+        }
+        catch {
+            return $Path.Trim()
+        }
+    }
+}
+
+function Show-PathResolutionHint {
+    param(
+        [string]$InstalledBinary,
+        [string]$InstallDir
+    )
+
+    try {
+        $command = Get-Command bytemind -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    }
+    catch {
+        return
+    }
+
+    $resolvedCommand = Resolve-ComparablePath -Path $command.Source
+    $resolvedInstalled = Resolve-ComparablePath -Path $InstalledBinary
+    if ($resolvedCommand -and $resolvedInstalled -and -not [string]::Equals($resolvedCommand, $resolvedInstalled, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Write-Warning "bytemind on PATH resolves to $($command.Source), not $InstalledBinary."
+        Write-Warning "Run `"$InstalledBinary`" --version directly, or move $InstallDir before the older PATH entry."
+    }
+}
+
 $repo = if ($env:BYTEMIND_REPO) { $env:BYTEMIND_REPO } else { "1024XEngineer/bytemind" }
 $version = Normalize-Version -Version $env:BYTEMIND_VERSION
 if ([string]::IsNullOrWhiteSpace($version)) {
@@ -110,6 +150,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "bytemind install failed with exit code $LASTEXITCODE"
     }
+    Show-PathResolutionHint -InstalledBinary (Join-Path $installDir "bytemind.exe") -InstallDir $installDir
 
     Write-Output ""
     Write-Output "Bytemind is installed."

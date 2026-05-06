@@ -38,7 +38,7 @@ func (m *model) runCompactCommand(input string) error {
 	if strings.TrimSpace(preview) != "" {
 		response += "\nSummary preview: " + preview
 	}
-	m.chatItems, m.toolRuns = rebuildSessionTimeline(m.sess)
+	m.chatItems = rebuildSessionTimeline(m.sess)
 	m.appendCommandExchange(input, response)
 	m.statusNote = "Conversation compacted."
 	return nil
