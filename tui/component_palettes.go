@@ -133,14 +133,16 @@ func (m model) renderMentionPalette() string {
 		}
 
 		var nameText string
+		var descText string
 		switch item.Kind {
 		case "agent":
 			nameText = "* " + item.BaseName
-			if desc := strings.TrimSpace(item.Description); desc != "" {
-				nameText += " - " + desc
-			}
 			if m.hasRecentMention(item.Path) {
 				nameText = "* " + nameText
+			}
+			descText = strings.TrimSpace(item.Description)
+			if descText == "" {
+				descText = item.BaseName
 			}
 		default:
 			nameText = "+ " + item.BaseName
@@ -150,10 +152,11 @@ func (m model) renderMentionPalette() string {
 			if m.hasRecentMention(item.Path) {
 				nameText = "* " + nameText
 			}
+			descText = item.Path
 		}
 
 		name := nameStyle.Width(nameWidth).Render(compact(nameText, max(12, nameWidth)))
-		desc := descStyle.Width(descWidth).Render(compact(item.Path, max(12, descWidth)))
+		desc := descStyle.Width(descWidth).Render(compact(descText, max(12, descWidth)))
 		rows = append(rows, rowStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render(
 			lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", desc),
 		))

@@ -37,7 +37,7 @@ const (
 	scrollbarWidth             = 1
 	mouseZoneAutoProbeMaxDelta = 4
 	commandPageSize            = 5
-	mentionPageSize            = 5
+	mentionPageSize            = 15
 	maxPendingBTW              = 5
 	promptSearchPageSize       = 5
 	promptSearchLoadLimit      = 50000
