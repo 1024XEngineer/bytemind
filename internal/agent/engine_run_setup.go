@@ -24,6 +24,28 @@ func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptI
 
 	input = normalizeRunPromptInput(input)
 	userInput := input.DisplayText
+
+	// Enhance user message with agent mentions
+	if input.SubAgent == nil && runner.subAgentManager != nil {
+		agents, _ := runner.subAgentManager.List()
+		if len(agents) > 0 {
+			knownAgents := make(map[string]struct{}, len(agents))
+			agentDescs := make(map[string]string, len(agents))
+			for _, a := range agents {
+				name := strings.TrimSpace(a.Name)
+				if name != "" {
+					knownAgents[name] = struct{}{}
+					agentDescs[name] = strings.TrimSpace(a.Description)
+				}
+			}
+			enhanced := enhanceUserMessageWithAgentMentions(userInput, knownAgents, agentDescs)
+			if enhanced != userInput {
+				input.UserMessage = llm.NewUserTextMessage(enhanced)
+				input.PersistDisplayTextAsUserMessage = true
+			}
+		}
+	}
+
 	persistedUserMessage := input.UserMessage
 	if input.PersistDisplayTextAsUserMessage && strings.TrimSpace(userInput) != "" {
 		persistedUserMessage = llm.NewUserTextMessage(userInput)

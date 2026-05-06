@@ -114,7 +114,7 @@ func (m model) renderMentionPalette() string {
 	items := m.mentionResults
 	if len(items) == 0 {
 		return commandPaletteStyle.Width(width).Render(
-			commandPaletteMetaStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render("No matching files in workspace."),
+			commandPaletteMetaStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render("No matching results."),
 		)
 	}
 
@@ -132,14 +132,24 @@ func (m model) renderMentionPalette() string {
 			descStyle = commandPaletteSelectedDescStyle
 		}
 
-		nameText := item.BaseName
-		if tag := strings.TrimSpace(item.TypeTag); tag != "" {
-			nameText = "[" + tag + "] " + nameText
-		}
-		if m.hasRecentMention(item.Path) {
-			nameText = "* " + nameText
-		} else {
-			nameText = "  " + nameText
+		var nameText string
+		switch item.Kind {
+		case "agent":
+			nameText = "* " + item.BaseName
+			if desc := strings.TrimSpace(item.Description); desc != "" {
+				nameText += " - " + desc
+			}
+			if m.hasRecentMention(item.Path) {
+				nameText = "* " + nameText
+			}
+		default:
+			nameText = "+ " + item.BaseName
+			if tag := strings.TrimSpace(item.TypeTag); tag != "" {
+				nameText = "+ [" + tag + "] " + item.BaseName
+			}
+			if m.hasRecentMention(item.Path) {
+				nameText = "* " + nameText
+			}
 		}
 
 		name := nameStyle.Width(nameWidth).Render(compact(nameText, max(12, nameWidth)))
@@ -151,7 +161,7 @@ func (m model) renderMentionPalette() string {
 	for len(rows) < mentionPageSize {
 		rows = append(rows, commandPaletteRowStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render(""))
 	}
-	metaText := "* recent  Type @query to search  Up/Down move  Enter/Tab insert  Esc close"
+	metaText := "* recent  + file  * agent  Type @query  Up/Down  Enter/Tab insert  Esc close"
 	if m.mentionIndex != nil {
 		stats := m.mentionIndex.Stats()
 		if stats.Truncated && stats.MaxFiles > 0 {

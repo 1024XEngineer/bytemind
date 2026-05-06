@@ -121,6 +121,13 @@ func (a *tuiRunnerAdapter) CompactSession(ctx context.Context, sess *session.Ses
 	return a.runner.CompactSession(ctx, sess)
 }
 
+func (a *tuiRunnerAdapter) SubAgentManager() *subagentspkg.Manager {
+	if a == nil || a.runner == nil {
+		return nil
+	}
+	return a.runner.SubAgentManager()
+}
+
 func (a *tuiRunnerAdapter) ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic) {
 	if a == nil || a.runner == nil {
 		return nil, nil

@@ -121,6 +121,7 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 			Workspace:    runtimeBundle.Session.Workspace,
 			Version:      CurrentVersion(),
 			StartupGuide: guide,
+			AgentSource:  &tuiRunnerAgentSource{runner: newTUIRunnerAdapter(runner)},
 		},
 		close: chainTUIRuntimeClose(runner.Close, notifier),
 	}, nil

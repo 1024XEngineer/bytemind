@@ -73,17 +73,7 @@ func (m model) runningToolIndicatorVisible() bool {
 }
 
 func (m model) shouldShowThinkingRowInConversation(item chatEntry) bool {
-	if !m.subAgentPending {
-		return false
-	}
-	if item.Kind != "assistant" {
-		return false
-	}
-	if item.Status != "thinking" && item.Status != "thinking_done" {
-		return false
-	}
-	body := strings.ToLower(strings.TrimSpace(item.Body))
-	return strings.Contains(body, "task:") || strings.Contains(body, "running subagent")
+	return false
 }
 
 func (m model) renderConversationCopy() string {

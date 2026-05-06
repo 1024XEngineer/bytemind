@@ -45,14 +45,35 @@ type DelegateSubAgentResult struct {
 
 type DelegateSubAgentHandler func(context.Context, DelegateSubAgentRequest, *ExecutionContext) (DelegateSubAgentResult, error)
 
-type DelegateSubAgentTool struct{}
+type AgentInfo struct {
+	Name        string
+	Description string
+}
 
-func (DelegateSubAgentTool) Definition() llm.ToolDefinition {
+type DelegateSubAgentTool struct {
+	agents []AgentInfo
+}
+
+func NewDelegateSubAgentTool(agents []AgentInfo) DelegateSubAgentTool {
+	return DelegateSubAgentTool{agents: agents}
+}
+
+func (t DelegateSubAgentTool) Definition() llm.ToolDefinition {
+	desc := "Delegate a clear, bounded subtask to a registered SubAgent and return a structured result."
+	if len(t.agents) > 0 {
+		desc += " Available agents:\n"
+		for _, a := range t.agents {
+			desc += fmt.Sprintf("- %s: %s\n", a.Name, a.Description)
+		}
+	}
+	desc += "\nUse this tool when the user explicitly requests an agent (via @mention) or when a task matches an agent's specialization."
+	desc += "\nWrite a detailed, self-contained task description including context, constraints, and expected output format."
+
 	return llm.ToolDefinition{
 		Type: "function",
 		Function: llm.FunctionDefinition{
 			Name:        "delegate_subagent",
-			Description: "Delegate a clear, bounded subtask to a registered SubAgent and return a structured result.",
+			Description: desc,
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

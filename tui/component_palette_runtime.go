@@ -114,6 +114,24 @@ func (m *model) syncMentionPalette() {
 		m.mentionIndex = mention.NewWorkspaceFileIndex(m.workspace)
 	}
 	results := m.mentionIndex.SearchWithRecency(token.Query, mentionPageSize*3, m.mentionRecent)
+
+	// Merge agent candidates (only when user has typed a query)
+	if m.agentSource != nil && token.Query != "" {
+		for _, a := range m.agentSource.ListAgents() {
+			if matchesQuery(a.Name, token.Query) {
+				results = append(results, mention.Candidate{
+					Path:        a.Name,
+					BaseName:    a.Name,
+					Kind:        "agent",
+					Description: a.Description,
+				})
+			}
+		}
+	}
+	if len(results) > mentionPageSize {
+		results = results[:mentionPageSize]
+	}
+
 	m.mentionOpen = true
 	m.mentionQuery = token.Query
 	m.mentionToken = token
@@ -287,6 +305,25 @@ func (m model) selectedPromptSearchEntry() (history.PromptEntry, bool) {
 	}
 	index := clamp(m.promptSearchCursor, 0, len(m.promptSearchMatches)-1)
 	return m.promptSearchMatches[index], true
+}
+
+func matchesQuery(name, query string) bool {
+	if query == "" {
+		return false
+	}
+	name = strings.ToLower(name)
+	query = strings.ToLower(query)
+	if strings.Contains(name, query) {
+		return true
+	}
+	// Fuzzy subsequence match
+	qi := 0
+	for _, r := range name {
+		if qi < len(query) && r == []rune(query)[qi] {
+			qi++
+		}
+	}
+	return qi == len([]rune(query))
 }
 
 func (m model) visiblePromptSearchEntriesPage() []history.PromptEntry {

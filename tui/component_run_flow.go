@@ -188,7 +188,6 @@ func (m *model) requestRunInterrupt(source string) bool {
 
 func (m *model) handleAgentEvent(event Event) {
 	if event.AgentID != "" {
-		m.handleSubAgentEvent(event)
 		return
 	}
 	switch event.Type {
@@ -352,52 +351,3 @@ func (m model) startRunCmd(runCtx context.Context, runID int, prompt RunPromptIn
 	}
 }
 
-func (m *model) handleSubAgentEvent(event Event) {
-	switch event.Type {
-	case EventAssistantDelta:
-		delta := stripStreamControlTags(event.Content)
-		if delta == "" {
-			return
-		}
-		if len(m.subAgentStreamItems) > 0 {
-			last := &m.subAgentStreamItems[len(m.subAgentStreamItems)-1]
-			if last.Kind == "assistant" && last.Status == "streaming" {
-				last.Body += delta
-				return
-			}
-		}
-		m.subAgentStreamItems = append(m.subAgentStreamItems, chatEntry{
-			Kind:   "assistant",
-			Title:  event.AgentID,
-			Body:   delta,
-			Status: "streaming",
-		})
-	case EventToolCallStarted:
-		m.subAgentStreamItems = append(m.subAgentStreamItems, chatEntry{
-			Kind:   "tool",
-			Title:  toolEntryTitle(event.ToolName),
-			Body:   "",
-			Status: "running",
-		})
-	case EventToolCallCompleted:
-		rendered := renderToolPayload(event.ToolName, event.ToolResult)
-		summary := rendered.Summary
-		lines := rendered.DetailLines
-		status := rendered.Status
-		body := joinSummary(summary, lines)
-		for i := len(m.subAgentStreamItems) - 1; i >= 0; i-- {
-			item := &m.subAgentStreamItems[i]
-			if item.Kind == "tool" && item.Status == "running" {
-				item.Body = body
-				item.Status = status
-				return
-			}
-		}
-		m.subAgentStreamItems = append(m.subAgentStreamItems, chatEntry{
-			Kind:   "tool",
-			Title:  toolEntryTitle(event.ToolName),
-			Body:   body,
-			Status: status,
-		})
-	}
-}

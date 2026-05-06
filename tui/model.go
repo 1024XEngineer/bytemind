@@ -288,14 +288,6 @@ type mcpCommandResultMsg struct {
 	Err      error
 }
 
-type subAgentResultMsg struct {
-	Input    string
-	Response string
-	Summary  string
-	Status   string
-	Err      error
-}
-
 type pasteSessionState struct {
 	active       bool
 	startedAt    time.Time
@@ -335,9 +327,7 @@ type hiddenPasteProbeState struct {
 var commandItems = []commandItem{
 	{Name: "/help", Usage: "/help", Description: "Show usage and supported commands.", Kind: "command"},
 	{Name: "/session", Usage: "/session", Description: "Open the recent session list.", Kind: "command"},
-	{Name: "/agents", Usage: "/agents [name]", Description: "List available subagents or show one definition.", Kind: "command"},
-	{Name: "/review", Usage: "/review", Description: "Delegate a focused code review task to the builtin review subagent.", Kind: "command"},
-	{Name: "/explorer", Usage: "/explorer", Description: "Delegate a focused repository exploration task to the builtin explorer subagent.", Kind: "command"},
+	{Name: "/agents", Usage: "/agents", Description: "List available subagents.", Kind: "command"},
 	{Name: "/skills-select", Usage: "/skills-select", Description: "Open the loaded skills picker.", Kind: "command"},
 	{Name: "/mcp list", Usage: "/mcp list", Description: "List configured MCP servers and current status.", Kind: "command"},
 	{Name: "/mcp help", Usage: "/mcp help", Description: "Show MCP command help.", Kind: "command"},
@@ -395,11 +385,6 @@ type model struct {
 	promptSearchOpen           bool
 	mcpCommandPending          bool
 	busy                       bool
-	subAgentPending            bool
-	subAgentName               string
-	subAgentTask               string
-	subAgentStreamItems        []chatEntry
-	subAgentExpanded           bool
 	runStartedAt               time.Time
 	lastRunDuration            time.Duration
 	runIndicatorState          runIndicatorState
@@ -412,6 +397,7 @@ type model struct {
 	mentionToken               mention.Token
 	mentionResults             []mention.Candidate
 	mentionIndex               *mention.WorkspaceFileIndex
+	agentSource                mention.AgentSource
 	mentionRecent              map[string]int
 	mentionSeq                 int
 	lastPasteAt                time.Time
@@ -569,6 +555,7 @@ func newModel(opts Options) model {
 		llmConnected:         true,
 		chatAutoFollow:       true,
 		mentionIndex:         mention.NewWorkspaceFileIndex(opts.Workspace),
+		agentSource:          opts.AgentSource,
 		tokenUsage:           newTokenUsageComponent(),
 		tokenBudget:          max(1, opts.Config.TokenQuota),
 		tokenEstimator:       newRealtimeTokenEstimator(opts.Config.Provider.Model),
@@ -844,74 +831,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitForAsync(m.async)
 		}
 		m.appendCommandExchange(msg.Input, msg.Response)
-		if strings.TrimSpace(msg.Status) != "" {
-			m.statusNote = msg.Status
-		}
-		m.refreshViewport()
-		return m, waitForAsync(m.async)
-	case subAgentResultMsg:
-		elapsed := time.Duration(0)
-		if !m.runStartedAt.IsZero() {
-			elapsed = time.Since(m.runStartedAt)
-			if elapsed < 0 {
-				elapsed = 0
-			}
-		}
-		m.runStartedAt = time.Time{}
-		m.lastRunDuration = elapsed
-		m.busy = false
-		m.subAgentPending = false
-		m.subAgentName = ""
-		m.subAgentTask = ""
-		m.phase = "idle"
-		m.streamingIndex = -1
-
-		// Remove the thinking card
-		m.removeThinkingCard()
-
-		if msg.Err != nil {
-			if errors.Is(msg.Err, context.Canceled) {
-				m.runIndicatorState = runIndicatorCanceled
-			} else {
-				m.runIndicatorState = runIndicatorFailed
-			}
-			errBody := "Subagent failed: " + msg.Err.Error()
-			m.appendChat(chatEntry{
-				Kind:   "assistant",
-				Title:  assistantLabel,
-				Body:   errBody,
-				Status: "error",
-			})
-			if m.sess != nil {
-				m.sess.Messages = append(m.sess.Messages, llm.NewAssistantTextMessage(errBody))
-			}
-			m.statusNote = "Subagent error: " + msg.Err.Error()
-			m.subAgentStreamItems = nil
-			m.refreshViewport()
-			return m, waitForAsync(m.async)
-		}
-		m.runIndicatorState = runIndicatorComplete
-
-		// Append accumulated subagent stream items (tool calls, text output)
-		for _, item := range m.subAgentStreamItems {
-			m.appendChat(item)
-		}
-		m.subAgentStreamItems = nil
-
-		// Append the result card
-		m.appendChat(chatEntry{
-			Kind:   "assistant",
-			Title:  assistantLabel,
-			Body:   msg.Response,
-			Status: "final",
-		})
-		if m.sess != nil {
-			summary := strings.TrimSpace(msg.Summary)
-			if summary == "" {
-				summary = "SubAgent task completed."
-			}
-			m.sess.Messages = append(m.sess.Messages, llm.NewAssistantTextMessage(summary))
-		}
 		if strings.TrimSpace(msg.Status) != "" {
 			m.statusNote = msg.Status
 		}

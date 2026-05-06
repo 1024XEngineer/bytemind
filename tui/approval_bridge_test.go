@@ -10,6 +10,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	"github.com/1024XEngineer/bytemind/internal/skills"
+	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -48,6 +49,10 @@ func (r *approvalBridgeRunnerStub) ClearActiveSkill(_ *session.Session) error {
 
 func (r *approvalBridgeRunnerStub) ClearSkill(_ string) (skills.ClearResult, error) {
 	return skills.ClearResult{}, nil
+}
+
+func (r *approvalBridgeRunnerStub) SubAgentManager() *subagentspkg.Manager {
+	return nil
 }
 
 func TestInstallApprovalBridgeRoutesRunnerApprovalsToAsyncChannel(t *testing.T) {

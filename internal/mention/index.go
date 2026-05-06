@@ -37,9 +37,11 @@ type Token struct {
 }
 
 type Candidate struct {
-	Path     string
-	BaseName string
-	TypeTag  string
+	Path        string
+	BaseName    string
+	TypeTag     string
+	Kind        string // "file" or "agent"
+	Description string // agent description, empty for files
 }
 
 type IndexStats struct {

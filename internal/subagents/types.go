@@ -26,6 +26,7 @@ type Agent struct {
 	Output          string
 	Isolation       string
 	Aliases         []string
+	WhenToUse       string
 	DiscoveredAt    time.Time
 }
 

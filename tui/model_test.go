@@ -4156,24 +4156,6 @@ func TestCommandPaletteFiltersAsUserTypes(t *testing.T) {
 	}
 }
 
-func TestFilteredCommandsFallbackToCommandTokenWhenArgsPresent(t *testing.T) {
-	input := textarea.New()
-	input.SetValue("/explorer 分析一下agent模块的功能")
-	m := model{input: input}
-
-	items := m.filteredCommands()
-	foundExplorer := false
-	for _, item := range items {
-		if item.Name == "/explorer" {
-			foundExplorer = true
-			break
-		}
-	}
-	if !foundExplorer {
-		t.Fatalf("expected command fallback to keep /explorer visible, got %+v", items)
-	}
-}
-
 func TestEscapeClosesCommandPalette(t *testing.T) {
 	input := textarea.New()
 	input.SetValue("/h")
@@ -4497,105 +4479,6 @@ func TestCommandPaletteEnterOnQuitReturnsQuitCmd(t *testing.T) {
 	_, cmd := m.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatalf("expected /quit from command palette to return a quit command")
-	}
-}
-
-func TestCommandPaletteEnterExecutesSlashCommandWithArgs(t *testing.T) {
-	workspace := t.TempDir()
-	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "explorer.md"), `---
-name: explorer
-description: builtin explorer
-tools: [list_files, read_file, search_text]
----
-explore files
-`)
-	client := &compactCommandTestClient{
-		replies: []llm.Message{
-			{Role: llm.RoleAssistant, Content: "explorer run ok"},
-		},
-	}
-	base := newSubAgentCommandModel(t, workspace, client)
-	input := textarea.New()
-	input.SetValue("/explorer analyze agent module capabilities")
-	base.input = input
-	base.commandOpen = true
-	base.syncCommandPalette()
-
-	got, cmd := base.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
-	updated := got.(model)
-
-	if updated.commandOpen {
-		t.Fatalf("expected command palette to close after executing slash command")
-	}
-	if cmd == nil {
-		t.Fatalf("expected slash command execution to return run command batch")
-	}
-	if !updated.busy {
-		t.Fatalf("expected slash command execution to enter busy run state")
-	}
-	if len(updated.chatItems) == 0 {
-		t.Fatalf("expected slash command to append user entry into chat")
-	}
-	foundSlashUserEntry := false
-	for _, item := range updated.chatItems {
-		if item.Kind != "user" {
-			continue
-		}
-		if strings.Contains(item.Body, "/explorer analyze agent module capabilities") {
-			foundSlashUserEntry = true
-			break
-		}
-	}
-	if !foundSlashUserEntry {
-		t.Fatalf("expected slash input to remain visible in user chat entry, got %#v", updated.chatItems)
-	}
-	for _, item := range updated.chatItems {
-		if strings.Contains(strings.ToLower(item.Body), "subagent explorer completed") {
-			t.Fatalf("expected no direct subagent dispatch summary in slash path, got %#v", updated.chatItems)
-		}
-	}
-}
-
-func TestCommandPaletteEnterExplorerDoesNotUseDirectSubAgentAsyncPath(t *testing.T) {
-	workspace := t.TempDir()
-	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "explorer.md"), `---
-name: explorer
-description: builtin explorer
-tools: [list_files, read_file, search_text]
----
-explore files
-`)
-	client := &compactCommandTestClient{
-		replies: []llm.Message{
-			{Role: llm.RoleAssistant, Content: "explorer async ok"},
-		},
-	}
-	base := newSubAgentCommandModel(t, workspace, client)
-	base.async = make(chan tea.Msg, 8)
-	input := textarea.New()
-	input.SetValue("/explorer analyze agent module behavior")
-	base.input = input
-	base.commandOpen = true
-	base.syncCommandPalette()
-
-	got, cmd := base.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
-	updated := got.(model)
-
-	if updated.commandOpen {
-		t.Fatalf("expected command palette to close after slash execution")
-	}
-	if cmd == nil {
-		t.Fatalf("expected slash command execution to return a run command batch")
-	}
-	if !updated.busy {
-		t.Fatalf("expected slash command execution to enter busy run state")
-	}
-	if len(updated.chatItems) == 0 {
-		t.Fatalf("expected slash command to append user entry")
-	}
-	last := updated.chatItems[len(updated.chatItems)-1].Body
-	if strings.Contains(last, "Subagent `explorer` started.") {
-		t.Fatalf("expected slash path to avoid direct subagent async start banner, got %q", last)
 	}
 }
 
@@ -5534,26 +5417,6 @@ func TestRenderConversationOmitsThinkingRowsFromViewport(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Done.") {
 		t.Fatalf("expected final answer to remain visible, got %q", rendered)
-	}
-}
-
-func TestRenderConversationShowsSubAgentThinkingWhilePending(t *testing.T) {
-	m := model{
-		width: 120,
-		viewport: func() viewport.Model {
-			vp := viewport.New(60, 10)
-			return vp
-		}(),
-		subAgentPending: true,
-		chatItems: []chatEntry{
-			{Kind: "user", Title: "You", Body: "/explorer scan agent module", Status: "final"},
-			{Kind: "assistant", Title: thinkingLabel, Body: "Running subagent explorer...", Status: "thinking"},
-		},
-	}
-
-	rendered := m.renderConversation()
-	if !strings.Contains(strings.ToLower(rendered), "running subagent explorer") {
-		t.Fatalf("expected conversation viewport to show subagent thinking row while pending, got %q", rendered)
 	}
 }
 

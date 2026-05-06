@@ -211,6 +211,16 @@ func (m model) handleMentionPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *model) applyMentionSelection(selected mention.Candidate) {
 	m.recordRecentMention(selected.Path)
 
+	// Agent mention: insert @agentName into input
+	if selected.Kind == "agent" {
+		nextValue := mention.InsertIntoInput(m.input.Value(), m.mentionToken, selected.BaseName)
+		m.setInputValue(nextValue)
+		m.statusNote = "Inserted agent mention: @" + selected.BaseName
+		m.closeMentionPalette()
+		m.syncInputOverlays()
+		return
+	}
+
 	if assetID, note, isImage := m.ingestMentionImageCandidate(selected.Path); isImage {
 		if strings.TrimSpace(string(assetID)) != "" {
 			m.bindMentionImageAsset(selected.Path, assetID)

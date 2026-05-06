@@ -285,13 +285,7 @@ func (m *model) updateThinkingCard() {
 	}
 	item.Title = thinkingLabel
 	item.Status = "thinking"
-	if m.subAgentPending && m.subAgentName != "" {
-		elapsed := "0s"
-		if !m.runStartedAt.IsZero() {
-			elapsed = formatElapsed(time.Since(m.runStartedAt))
-		}
-		item.Body = buildSubAgentThinkingBody(m.subAgentName, m.subAgentTask, m.spinner.View(), elapsed)
-	} else if strings.TrimSpace(item.Body) == "" {
+	if strings.TrimSpace(item.Body) == "" {
 		item.Body = m.thinkingText()
 	}
 }

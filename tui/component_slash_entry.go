@@ -10,9 +10,6 @@ import (
 
 func (m *model) handleSlashCommand(input string) error {
 	raw := strings.TrimSpace(input)
-	if normalized, builtinName, ok := normalizeBuiltinSubAgentCommandInput(raw); ok {
-		return m.runBuiltinSubAgentCommand(normalized, builtinName)
-	}
 
 	fields := strings.Fields(raw)
 	if len(fields) == 0 {
@@ -41,9 +38,7 @@ func (m *model) handleSlashCommand(input string) error {
 	case "/skill":
 		return m.runSkillCommand(input, fields)
 	case "/agents":
-		return m.runAgentsCommand(input, fields)
-	case "/explorer", "/exploer", "/review":
-		return m.runBuiltinSubAgentCommand(input, fields[0])
+		return m.runAgentsCommand(input)
 	case "/mcp":
 		return m.runMCPCommandDispatch(input, fields)
 	case "/new":
