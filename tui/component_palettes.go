@@ -154,7 +154,7 @@ func (m model) renderMentionPalette() string {
 	for len(rows) < pageSize {
 		rows = append(rows, commandPaletteRowStyle.Width(rowWidth).Render(""))
 	}
-	metaText := "* recent  + file  * agent  Type @query  Up/Down  Enter/Tab insert  Esc close"
+	metaText := "* recent  + file/dir  * agent  Type @query  Up/Down  Enter/Tab insert  Esc close"
 	if m.mentionIndex != nil {
 		stats := m.mentionIndex.Stats()
 		if stats.Truncated && stats.MaxFiles > 0 {

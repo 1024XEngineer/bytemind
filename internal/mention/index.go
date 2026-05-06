@@ -340,6 +340,13 @@ func buildMentionIndex(root string, maxFiles int, matcher mentionIgnoreMatcher) 
 			if shouldSkipMentionDir(name) || matcher.SkipDir(name, rel) {
 				return filepath.SkipDir
 			}
+			if rel != "" && rel != "." {
+				files = append(files, Candidate{
+					Path:     rel + "/",
+					BaseName: name,
+					Kind:     "dir",
+				})
+			}
 			return nil
 		}
 		if d.Type()&fs.ModeSymlink != 0 {
