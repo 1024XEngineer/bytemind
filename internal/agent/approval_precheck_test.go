@@ -143,9 +143,9 @@ func TestPrepareRunApprovalHandlerPreApprovesRunShellAndDestructive(t *testing.T
 			ApprovalMode:   "interactive",
 		},
 		registry: tools.DefaultRegistry(),
-		approval: func(req tools.ApprovalRequest) (bool, error) {
+		approval: func(req tools.ApprovalRequest) (tools.ApprovalDecision, error) {
 			requests = append(requests, req)
-			return true, nil
+			return tools.ApprovalDecision{Disposition: tools.ApprovalApproveOnce}, nil
 		},
 	}
 
@@ -166,23 +166,25 @@ func TestPrepareRunApprovalHandlerPreApprovesRunShellAndDestructive(t *testing.T
 		t.Fatalf("unexpected destructive pre-approval request: %+v", requests[1])
 	}
 
-	approved, err := handler(tools.ApprovalRequest{
-		Command: "go test ./...",
-		Reason:  "may modify files or environment: go",
+	decision, err := handler(tools.ApprovalRequest{
+		ToolName: "run_shell",
+		Command:  "go test ./...",
+		Reason:   "may modify files or environment: go",
 	})
-	if err != nil || !approved {
-		t.Fatalf("expected pre-approved run_shell request, approved=%v err=%v", approved, err)
+	if err != nil || !decision.Approved() {
+		t.Fatalf("expected pre-approved run_shell request, decision=%+v err=%v", decision, err)
 	}
 	if len(requests) != 2 {
 		t.Fatalf("expected run_shell request to skip runtime approval prompt, got %d calls", len(requests))
 	}
 
-	approved, err = handler(tools.ApprovalRequest{
-		Command: "write_file",
-		Reason:  "destructive tool may modify workspace files: write_file",
+	decision, err = handler(tools.ApprovalRequest{
+		ToolName: "write_file",
+		Command:  "write_file",
+		Reason:   "destructive tool may modify workspace files: write_file",
 	})
-	if err != nil || !approved {
-		t.Fatalf("expected pre-approved destructive request, approved=%v err=%v", approved, err)
+	if err != nil || !decision.Approved() {
+		t.Fatalf("expected pre-approved destructive request, decision=%+v err=%v", decision, err)
 	}
 	if len(requests) != 2 {
 		t.Fatalf("expected destructive request to skip runtime approval prompt, got %d calls", len(requests))
@@ -197,12 +199,12 @@ func TestPrepareRunApprovalHandlerFallsBackWhenPreApprovalDenied(t *testing.T) {
 			ApprovalMode:   "interactive",
 		},
 		registry: tools.DefaultRegistry(),
-		approval: func(req tools.ApprovalRequest) (bool, error) {
+		approval: func(req tools.ApprovalRequest) (tools.ApprovalDecision, error) {
 			requests = append(requests, req)
 			if strings.Contains(req.Reason, "pre-approve") {
-				return false, nil
+				return tools.ApprovalDecision{Disposition: tools.ApprovalDeny}, nil
 			}
-			return true, nil
+			return tools.ApprovalDecision{Disposition: tools.ApprovalApproveOnce}, nil
 		},
 	}
 
@@ -217,23 +219,25 @@ func TestPrepareRunApprovalHandlerFallsBackWhenPreApprovalDenied(t *testing.T) {
 		t.Fatalf("expected two pre-approval requests, got %d (%+v)", len(requests), requests)
 	}
 
-	approved, err := handler(tools.ApprovalRequest{
-		Command: "go test ./...",
-		Reason:  "may modify files or environment: go",
+	decision, err := handler(tools.ApprovalRequest{
+		ToolName: "run_shell",
+		Command:  "go test ./...",
+		Reason:   "may modify files or environment: go",
 	})
-	if err != nil || !approved {
-		t.Fatalf("expected runtime run_shell approval fallback, approved=%v err=%v", approved, err)
+	if err != nil || !decision.Approved() {
+		t.Fatalf("expected runtime run_shell approval fallback, decision=%+v err=%v", decision, err)
 	}
 	if len(requests) != 3 {
 		t.Fatalf("expected runtime run_shell request to call base handler after pre-approval denial, got %d calls", len(requests))
 	}
 
-	approved, err = handler(tools.ApprovalRequest{
-		Command: "write_file",
-		Reason:  "destructive tool may modify workspace files: write_file",
+	decision, err = handler(tools.ApprovalRequest{
+		ToolName: "write_file",
+		Command:  "write_file",
+		Reason:   "destructive tool may modify workspace files: write_file",
 	})
-	if err != nil || !approved {
-		t.Fatalf("expected runtime destructive approval fallback, approved=%v err=%v", approved, err)
+	if err != nil || !decision.Approved() {
+		t.Fatalf("expected runtime destructive approval fallback, decision=%+v err=%v", decision, err)
 	}
 	if len(requests) != 4 {
 		t.Fatalf("expected runtime destructive request to call base handler after pre-approval denial, got %d calls", len(requests))
@@ -263,20 +267,22 @@ func TestPrepareRunApprovalHandlerUsesStdinFallbackAndPreApproves(t *testing.T) 
 		t.Fatalf("expected two pre-approval prompts from stdin fallback, got %d (%q)", prompts, approvalOut.String())
 	}
 
-	approved, err := handler(tools.ApprovalRequest{
-		Command: "go test ./...",
-		Reason:  "may modify files or environment: go",
+	decision, err := handler(tools.ApprovalRequest{
+		ToolName: "run_shell",
+		Command:  "go test ./...",
+		Reason:   "may modify files or environment: go",
 	})
-	if err != nil || !approved {
-		t.Fatalf("expected run_shell request to be auto-approved after pre-approval, approved=%v err=%v", approved, err)
+	if err != nil || !decision.Approved() {
+		t.Fatalf("expected run_shell request to be auto-approved after pre-approval, decision=%+v err=%v", decision, err)
 	}
 
-	approved, err = handler(tools.ApprovalRequest{
-		Command: "write_file",
-		Reason:  "destructive tool may modify workspace files: write_file",
+	decision, err = handler(tools.ApprovalRequest{
+		ToolName: "write_file",
+		Command:  "write_file",
+		Reason:   "destructive tool may modify workspace files: write_file",
 	})
-	if err != nil || !approved {
-		t.Fatalf("expected destructive request to be auto-approved after pre-approval, approved=%v err=%v", approved, err)
+	if err != nil || !decision.Approved() {
+		t.Fatalf("expected destructive request to be auto-approved after pre-approval, decision=%+v err=%v", decision, err)
 	}
 
 	if prompts := strings.Count(approvalOut.String(), "Approve action"); prompts != 2 {
@@ -307,12 +313,13 @@ func TestPrepareRunApprovalHandlerStdinFallbackPromptsAtRuntimeAfterDeniedPreApp
 		t.Fatalf("expected two pre-approval prompts, got %d (%q)", prompts, approvalOut.String())
 	}
 
-	approved, err := handler(tools.ApprovalRequest{
-		Command: "go test ./...",
-		Reason:  "may modify files or environment: go",
+	decision, err := handler(tools.ApprovalRequest{
+		ToolName: "run_shell",
+		Command:  "go test ./...",
+		Reason:   "may modify files or environment: go",
 	})
-	if err != nil || !approved {
-		t.Fatalf("expected runtime prompt fallback to approve run_shell request, approved=%v err=%v", approved, err)
+	if err != nil || !decision.Approved() {
+		t.Fatalf("expected runtime prompt fallback to approve run_shell request, decision=%+v err=%v", decision, err)
 	}
 	if prompts := strings.Count(approvalOut.String(), "Approve action"); prompts != 3 {
 		t.Fatalf("expected one extra runtime prompt after denied pre-approval, got %d (%q)", prompts, approvalOut.String())
@@ -327,9 +334,9 @@ func TestPrepareRunApprovalHandlerSkipsPreapprovalWhenIntentUnclear(t *testing.T
 			ApprovalMode:   "interactive",
 		},
 		registry: tools.DefaultRegistry(),
-		approval: func(req tools.ApprovalRequest) (bool, error) {
+		approval: func(req tools.ApprovalRequest) (tools.ApprovalDecision, error) {
 			requests = append(requests, req)
-			return true, nil
+			return tools.ApprovalDecision{Disposition: tools.ApprovalApproveOnce}, nil
 		},
 	}
 
@@ -344,12 +351,13 @@ func TestPrepareRunApprovalHandlerSkipsPreapprovalWhenIntentUnclear(t *testing.T
 		t.Fatalf("expected no pre-approval requests for low-risk intent, got %+v", requests)
 	}
 
-	approved, err := handler(tools.ApprovalRequest{
-		Command: "go test ./...",
-		Reason:  "may modify files or environment: go",
+	decision, err := handler(tools.ApprovalRequest{
+		ToolName: "run_shell",
+		Command:  "go test ./...",
+		Reason:   "may modify files or environment: go",
 	})
-	if err != nil || !approved {
-		t.Fatalf("expected runtime approval handler to remain available, approved=%v err=%v", approved, err)
+	if err != nil || !decision.Approved() {
+		t.Fatalf("expected runtime approval handler to remain available, decision=%+v err=%v", decision, err)
 	}
 	if len(requests) != 1 {
 		t.Fatalf("expected runtime call to use base handler, got %d requests", len(requests))
@@ -364,9 +372,9 @@ func TestPrepareRunApprovalHandlerLearnsRuntimeApprovalsWithinRun(t *testing.T) 
 			ApprovalMode:   "interactive",
 		},
 		registry: tools.DefaultRegistry(),
-		approval: func(req tools.ApprovalRequest) (bool, error) {
+		approval: func(req tools.ApprovalRequest) (tools.ApprovalDecision, error) {
 			requests = append(requests, req)
-			return true, nil
+			return tools.ApprovalDecision{Disposition: tools.ApprovalApproveSameToolSession}, nil
 		},
 	}
 
@@ -381,45 +389,49 @@ func TestPrepareRunApprovalHandlerLearnsRuntimeApprovalsWithinRun(t *testing.T) 
 		t.Fatalf("expected no eager pre-approval requests, got %+v", requests)
 	}
 
-	approved, err := handler(tools.ApprovalRequest{
-		Command: "go test ./...",
-		Reason:  "may modify files or environment: go",
+	decision, err := handler(tools.ApprovalRequest{
+		ToolName: "run_shell",
+		Command:  "go test ./...",
+		Reason:   "may modify files or environment: go",
 	})
-	if err != nil || !approved {
-		t.Fatalf("expected first shell approval to pass, approved=%v err=%v", approved, err)
+	if err != nil || !decision.Approved() {
+		t.Fatalf("expected first shell approval to pass, decision=%+v err=%v", decision, err)
 	}
 	if len(requests) != 1 {
 		t.Fatalf("expected one runtime shell approval request, got %d", len(requests))
 	}
 
-	approved, err = handler(tools.ApprovalRequest{
-		Command: "go test ./...",
-		Reason:  "may modify files or environment: go",
+	decision, err = handler(tools.ApprovalRequest{
+		ToolName: "run_shell",
+		Command:  "go test ./...",
+		Reason:   "may modify files or environment: go",
 	})
-	if err != nil || !approved {
-		t.Fatalf("expected learned shell approval to pass, approved=%v err=%v", approved, err)
+	if err != nil || !decision.Approved() {
+		t.Fatalf("expected learned shell approval to pass, decision=%+v err=%v", decision, err)
 	}
 	if len(requests) != 1 {
 		t.Fatalf("expected learned shell approval not to reprompt, got %d requests", len(requests))
 	}
 
-	approved, err = handler(tools.ApprovalRequest{
-		Command: "write_file",
-		Reason:  "destructive tool may modify workspace files: write_file",
+	decision, err = handler(tools.ApprovalRequest{
+		ToolName: "write_file",
+		Command:  "write_file",
+		Reason:   "destructive tool may modify workspace files: write_file",
 	})
-	if err != nil || !approved {
-		t.Fatalf("expected first destructive approval to pass, approved=%v err=%v", approved, err)
+	if err != nil || !decision.Approved() {
+		t.Fatalf("expected first destructive approval to pass, decision=%+v err=%v", decision, err)
 	}
 	if len(requests) != 2 {
 		t.Fatalf("expected one runtime destructive approval request, got %d", len(requests))
 	}
 
-	approved, err = handler(tools.ApprovalRequest{
-		Command: "write_file",
-		Reason:  "destructive tool may modify workspace files: write_file",
+	decision, err = handler(tools.ApprovalRequest{
+		ToolName: "write_file",
+		Command:  "write_file",
+		Reason:   "destructive tool may modify workspace files: write_file",
 	})
-	if err != nil || !approved {
-		t.Fatalf("expected learned destructive approval to pass, approved=%v err=%v", approved, err)
+	if err != nil || !decision.Approved() {
+		t.Fatalf("expected learned destructive approval to pass, decision=%+v err=%v", decision, err)
 	}
 	if len(requests) != 2 {
 		t.Fatalf("expected learned destructive approval not to reprompt, got %d requests", len(requests))
@@ -446,14 +458,15 @@ func TestPrepareRunApprovalHandlerReportsUnavailableApprovalChannel(t *testing.T
 		t.Fatal("expected fallback approval handler when channel is unavailable")
 	}
 
-	approved, err := handler(tools.ApprovalRequest{
-		Command: "write_file",
-		Reason:  "destructive tool may modify workspace files: write_file",
+	decision, err := handler(tools.ApprovalRequest{
+		ToolName: "write_file",
+		Command:  "write_file",
+		Reason:   "destructive tool may modify workspace files: write_file",
 	})
 	if err == nil {
 		t.Fatal("expected unavailable approval channel error")
 	}
-	if approved {
+	if decision.Approved() {
 		t.Fatal("expected approval to be denied when channel is unavailable")
 	}
 	if !strings.Contains(err.Error(), "approval channel unavailable") {

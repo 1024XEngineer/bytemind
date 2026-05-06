@@ -250,12 +250,12 @@ func TestSubprocessWorkerPreApprovesInteractiveEscalation(t *testing.T) {
 			ExecAllowlist: []sandboxpkg.ExecRule{
 				{Command: "go run", ArgsPattern: []string{"./cmd/app"}},
 			},
-			Approval: func(req ApprovalRequest) (bool, error) {
+			Approval: func(req ApprovalRequest) (ApprovalDecision, error) {
 				approvalCalls++
 				if !strings.Contains(strings.ToLower(req.Reason), "outside lease scope") {
 					t.Fatalf("unexpected escalation reason: %q", req.Reason)
 				}
-				return true, nil
+				return ApprovalDecision{Disposition: ApprovalApproveOnce}, nil
 			},
 		},
 	})
@@ -296,12 +296,12 @@ func TestSubprocessWorkerPreApprovesInteractiveShellRiskOnce(t *testing.T) {
 			ExecAllowlist: []sandboxpkg.ExecRule{
 				{Command: "go test", ArgsPattern: []string{"./..."}},
 			},
-			Approval: func(req ApprovalRequest) (bool, error) {
+			Approval: func(req ApprovalRequest) (ApprovalDecision, error) {
 				approvalCalls++
 				if !strings.Contains(strings.ToLower(req.Command), "go test") {
 					t.Fatalf("unexpected approval command: %q", req.Command)
 				}
-				return true, nil
+				return ApprovalDecision{Disposition: ApprovalApproveOnce}, nil
 			},
 		},
 	})

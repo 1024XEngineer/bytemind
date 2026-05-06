@@ -62,12 +62,13 @@ func TestInstallApprovalBridgeRoutesRunnerApprovalsToAsyncChannel(t *testing.T) 
 	}
 
 	done := make(chan struct{})
-	var approved bool
+	var approved ApprovalDecision
 	var callErr error
 	go func() {
 		approved, callErr = runner.handler(ApprovalRequest{
-			Command: "go test ./...",
-			Reason:  "outside lease scope",
+			ToolName: "run_shell",
+			Command:  "go test ./...",
+			Reason:   "outside lease scope",
 		})
 		close(done)
 	}()
@@ -81,7 +82,7 @@ func TestInstallApprovalBridgeRoutesRunnerApprovalsToAsyncChannel(t *testing.T) 
 		if req.Request.Command != "go test ./..." {
 			t.Fatalf("unexpected approval command: %#v", req.Request)
 		}
-		req.Reply <- approvalDecision{Approved: true}
+		req.Reply <- approvalDecision{Decision: ApprovalDecision{Disposition: ApprovalApproveOnce}}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for approval request message")
 	}
@@ -94,7 +95,7 @@ func TestInstallApprovalBridgeRoutesRunnerApprovalsToAsyncChannel(t *testing.T) 
 	if callErr != nil {
 		t.Fatalf("unexpected approval handler error: %v", callErr)
 	}
-	if !approved {
+	if !approved.Approved() {
 		t.Fatal("expected approval decision to propagate back to runner handler")
 	}
 }

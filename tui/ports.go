@@ -40,11 +40,43 @@ type Event struct {
 }
 
 type ApprovalRequest struct {
-	Command string
-	Reason  string
+	ToolName string
+	Command  string
+	Reason   string
 }
 
-type ApprovalHandler func(ApprovalRequest) (bool, error)
+type ApprovalDisposition string
+
+const (
+	ApprovalApproveOnce            ApprovalDisposition = "approve_once"
+	ApprovalApproveSameToolSession ApprovalDisposition = "approve_same_tool_session"
+	ApprovalApproveAllSession      ApprovalDisposition = "approve_all_session"
+	ApprovalDeny                   ApprovalDisposition = "deny"
+)
+
+type ApprovalDecision struct {
+	Disposition ApprovalDisposition
+}
+
+func (d ApprovalDecision) Approved() bool {
+	switch d.Disposition {
+	case ApprovalApproveOnce, ApprovalApproveSameToolSession, ApprovalApproveAllSession:
+		return true
+	default:
+		return false
+	}
+}
+
+func NormalizeApprovalDecision(d ApprovalDecision) ApprovalDecision {
+	switch d.Disposition {
+	case ApprovalApproveOnce, ApprovalApproveSameToolSession, ApprovalApproveAllSession, ApprovalDeny:
+		return d
+	default:
+		return ApprovalDecision{Disposition: ApprovalDeny}
+	}
+}
+
+type ApprovalHandler func(ApprovalRequest) (ApprovalDecision, error)
 
 type Observer func(Event)
 

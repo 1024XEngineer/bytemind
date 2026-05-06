@@ -81,7 +81,9 @@ func TestRunnerSetters(t *testing.T) {
 	if runner.approval != nil {
 		t.Fatal("expected nil approval handler by default")
 	}
-	runner.SetApprovalHandler(func(tools.ApprovalRequest) (bool, error) { return true, nil })
+	runner.SetApprovalHandler(func(tools.ApprovalRequest) (tools.ApprovalDecision, error) {
+		return tools.ApprovalDecision{Disposition: tools.ApprovalApproveOnce}, nil
+	})
 	if runner.approval == nil {
 		t.Fatal("expected approval handler to be set")
 	}
