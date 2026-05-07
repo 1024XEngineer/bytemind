@@ -156,6 +156,68 @@ func TestRunDeleteCommandOpensDeletePicker(t *testing.T) {
 	}
 }
 
+func TestOpenModelPickerWithModeFallsBackToConfiguredTargetsOnRefreshError(t *testing.T) {
+	runner := &subAgentCommandRunnerStub{modelsErr: os.ErrDeadlineExceeded}
+	m := &model{
+		runner: runner,
+		cfg: config.Config{
+			ProviderRuntime: config.ProviderRuntimeConfig{
+				DefaultProvider: "openai",
+				DefaultModel:    "gpt-5.4",
+				Providers: map[string]config.ProviderConfig{
+					"openai":   {Type: "openai-compatible", Model: "gpt-5.4"},
+					"deepseek": {Type: "openai-compatible", Model: "deepseek-chat"},
+				},
+			},
+		},
+	}
+
+	if err := m.openModelPicker(); err != nil {
+		t.Fatalf("expected configured fallback to keep picker usable, got %v", err)
+	}
+	if !m.modelsOpen {
+		t.Fatal("expected picker to open from configured fallback")
+	}
+	if m.statusNote != "Opened model picker from configured targets." {
+		t.Fatalf("unexpected status note %q", m.statusNote)
+	}
+}
+
+func TestOpenModelPickerWithModeReportsEmptyDeleteTargets(t *testing.T) {
+	m := &model{runner: &subAgentCommandRunnerStub{}}
+	if err := m.openModelDeletePicker(); err != nil {
+		t.Fatalf("expected empty delete picker to be handled, got %v", err)
+	}
+	if m.modelsOpen {
+		t.Fatal("expected picker to stay closed when nothing can be deleted")
+	}
+	if m.statusNote != "No configured models are available to delete." {
+		t.Fatalf("unexpected status note %q", m.statusNote)
+	}
+}
+
+func TestSwitchModelCommandTargetRejectsUnknownTargetAfterRefresh(t *testing.T) {
+	m := &model{
+		runner: &subAgentCommandRunnerStub{
+			models: []provider.ModelInfo{{ProviderID: "openai", ModelID: "gpt-5.4"}},
+		},
+		cfg: config.Config{
+			ProviderRuntime: config.ProviderRuntimeConfig{
+				DefaultProvider: "openai",
+				DefaultModel:    "gpt-5.4",
+				Providers: map[string]config.ProviderConfig{
+					"openai": {Type: "openai-compatible", Model: "gpt-5.4"},
+				},
+			},
+		},
+	}
+
+	err := m.switchModelCommandTarget("/model picker deepseek/deepseek-chat", "deepseek/deepseek-chat")
+	if err == nil || !strings.Contains(err.Error(), "unknown model target") {
+		t.Fatalf("expected unknown target error, got %v", err)
+	}
+}
+
 func TestActivateSelectedModelTargetSwitchesRuntimePersistsConfigAndRefreshesBudget(t *testing.T) {
 	workspace := t.TempDir()
 	configPath := filepath.Join(workspace, "config.json")
