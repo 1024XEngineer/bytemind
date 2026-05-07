@@ -27,6 +27,9 @@ type subAgentCommandRunnerStub struct {
 	builtinAgent subagentspkg.Agent
 	builtinOK    bool
 	lastRequest  tools.DelegateSubAgentRequest
+	models       []provider.ModelInfo
+	warnings     []provider.Warning
+	modelsErr    error
 }
 
 func (s *subAgentCommandRunnerStub) RunPromptWithInput(context.Context, *session.Session, RunPromptInput, string, io.Writer) (string, error) {
@@ -60,7 +63,7 @@ func (s *subAgentCommandRunnerStub) ClearSkill(string) (skills.ClearResult, erro
 }
 
 func (s *subAgentCommandRunnerStub) ListModels(context.Context) ([]provider.ModelInfo, []provider.Warning, error) {
-	return nil, nil, nil
+	return s.models, s.warnings, s.modelsErr
 }
 
 func (s *subAgentCommandRunnerStub) ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic) {

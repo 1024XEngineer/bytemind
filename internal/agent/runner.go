@@ -83,28 +83,28 @@ type SubAgentPromptInput struct {
 }
 
 type Runner struct {
-	workspace       string
-	config          config.Config
-	client          llm.Client
-	store           SessionStore
-	registry        ToolRegistry
-	executor        ToolExecutor
-	policyGateway   PolicyGateway
-	engine          Engine
-	taskManager     runtimepkg.TaskManager
-	runtime         RuntimeGateway
-	extensions      extensionspkg.Manager
-	skillManager    *skills.Manager
-	subAgentManager *subagentspkg.Manager
+	workspace        string
+	config           config.Config
+	client           llm.Client
+	store            SessionStore
+	registry         ToolRegistry
+	executor         ToolExecutor
+	policyGateway    PolicyGateway
+	engine           Engine
+	taskManager      runtimepkg.TaskManager
+	runtime          RuntimeGateway
+	extensions       extensionspkg.Manager
+	skillManager     *skills.Manager
+	subAgentManager  *subagentspkg.Manager
 	subAgentExecutor SubAgentExecutor
 	subAgentNotifier SubAgentNotifier
-	tokenManager    *tokenusage.TokenUsageManager
-	auditStore      storagepkg.AuditStore
-	promptStore     storagepkg.PromptHistoryWriter
-	observer        Observer
-	approval        tools.ApprovalHandler
-	stdin           io.Reader
-	stdout          io.Writer
+	tokenManager     *tokenusage.TokenUsageManager
+	auditStore       storagepkg.AuditStore
+	promptStore      storagepkg.PromptHistoryWriter
+	observer         Observer
+	approval         tools.ApprovalHandler
+	stdin            io.Reader
+	stdout           io.Writer
 
 	bridgeMu            sync.Mutex
 	bridgeSessions      map[string]bridgeSessionState
@@ -246,10 +246,6 @@ func (r *Runner) ListModels(ctx context.Context) ([]provider.ModelInfo, []provid
 	if len(runtimeCfg.Providers) == 0 {
 		runtimeCfg = config.LegacyProviderRuntimeConfig(r.config.Provider)
 	}
-	baseClient := r.GetClient()
-	if _, ok := baseClient.(provider.Client); !ok {
-		return nil, nil, fmt.Errorf("provider runtime is unavailable")
-	}
 	registry, err := provider.NewRegistry(runtimeCfg)
 	if err != nil {
 		return nil, nil, err
@@ -286,7 +282,6 @@ func (r *Runner) storeModelsCache(models []provider.ModelInfo, warnings []provid
 	r.modelsCache = append([]provider.ModelInfo(nil), models...)
 	r.modelsCacheWarnings = append([]provider.Warning(nil), warnings...)
 }
-
 
 func (r *Runner) modelID() string {
 	if r == nil {
