@@ -50,6 +50,9 @@ func (m *model) handleStartupGuideSubmission(rawInput string) error {
 func (m *model) verifyAndFinalizeStartupAPIKey(rawInput string) error {
 	apiKey := sanitizeAPIKeyInput(rawInput)
 	if apiKey == "" {
+		apiKey = strings.TrimSpace(m.cfg.Provider.ResolveAPIKey())
+	}
+	if apiKey == "" {
 		return fmt.Errorf("please paste a non-empty API key")
 	}
 
@@ -59,7 +62,14 @@ func (m *model) verifyAndFinalizeStartupAPIKey(rawInput string) error {
 	if !check.Ready {
 		m.llmConnected = false
 		m.phase = "error"
-		m.setStartupGuideStep(startupFieldAPIKey, startupGuideIssueHint(check))
+		recoveryField := startupGuideRecoveryField(check)
+		if recoveryField != startupFieldAPIKey {
+			m.cfg.Provider.APIKey = apiKey
+			m.input.Reset()
+			m.clearPasteTransaction()
+			m.releasePasteSubmitSuppression()
+		}
+		m.setStartupGuideStep(recoveryField, startupGuideIssueHint(check))
 		return nil
 	}
 
@@ -83,6 +93,10 @@ func (m *model) verifyAndFinalizeStartupAPIKey(rawInput string) error {
 		m.runner.UpdateProvider(checkCfg, client)
 	}
 	m.cfg.Provider = checkCfg
+	m.cfg.ProviderRuntime = config.SyncProviderRuntimeWithProvider(m.cfg.ProviderRuntime, checkCfg)
+	m.discoveredModels = nil
+	m.refreshTokenBudget()
+	m.syncTokenUsageComponent()
 	m.startupGuide.Active = false
 	m.statusNote = "Provider configured and verified. You can start chatting."
 	m.llmConnected = true
@@ -122,6 +136,8 @@ func (m *model) applyStartupConfigField(field, value string) error {
 	default:
 		return fmt.Errorf("unsupported setup field: %s", field)
 	}
+	m.cfg.ProviderRuntime = config.SyncProviderRuntimeWithProvider(m.cfg.ProviderRuntime, m.cfg.Provider)
+	m.discoveredModels = nil
 
 	writtenPath, err := config.UpsertProviderField(m.startupGuide.ConfigPath, field, persistValue)
 	if err != nil {
@@ -332,12 +348,16 @@ func startupGuideStepLines(field string, cfg config.Config, configPath, issue st
 		lines = append(lines, "Enter provider: openai-compatible or anthropic.")
 	case startupFieldBaseURL:
 		lines = append(lines, "Enter provider base_url.")
-		lines = append(lines, "Example: https://api.deepseek.com")
+		lines = append(lines, "Example: https://api.deepseek.com/v1")
 	case startupFieldModel:
 		lines = append(lines, "Enter model name.")
 		lines = append(lines, "Example: deepseek-chat or GPT-5.4")
 	case startupFieldAPIKey:
-		lines = append(lines, "Paste API key and press Enter.")
+		if strings.TrimSpace(cfg.Provider.ResolveAPIKey()) != "" {
+			lines = append(lines, "Press Enter to retry the current API key, or paste a new one.")
+		} else {
+			lines = append(lines, "Paste API key and press Enter.")
+		}
 		lines = append(lines, "Bytemind will verify it automatically.")
 	}
 
@@ -365,6 +385,23 @@ func startupGuideStepLines(field string, cfg config.Config, configPath, issue st
 		lines = append(lines, "Config file: "+configPath)
 	}
 	return lines
+}
+
+func startupGuideRecoveryField(check provider.Availability) string {
+	reason := strings.ToLower(strings.TrimSpace(check.Reason))
+	detail := strings.ToLower(strings.TrimSpace(check.Detail))
+	switch {
+	case strings.Contains(reason, "missing api key"), strings.Contains(reason, "unauthorized"):
+		return startupFieldAPIKey
+	case strings.Contains(reason, "incomplete"),
+		strings.Contains(reason, "failed to build"),
+		strings.Contains(reason, "failed to reach"),
+		strings.Contains(reason, "not found"),
+		strings.Contains(detail, "base_url"):
+		return startupFieldBaseURL
+	default:
+		return startupFieldAPIKey
+	}
 }
 
 func startupGuideIssueHint(check provider.Availability) string {

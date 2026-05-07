@@ -77,6 +77,7 @@ func upsertProviderValues(configPath string, values map[string]string) (string, 
 		providerSection["model"] = defaultModel(providerType, asString(providerSection["base_url"]))
 	}
 	raw["provider"] = providerSection
+	syncProviderRuntimeDocument(raw, providerSection)
 
 	if _, ok := raw["approval_policy"]; !ok {
 		raw["approval_policy"] = "on-request"
@@ -99,6 +100,30 @@ func upsertProviderValues(configPath string, values map[string]string) (string, 
 	}
 
 	return path, nil
+}
+
+func syncProviderRuntimeDocument(raw map[string]any, providerSection map[string]any) {
+	if raw == nil || providerSection == nil {
+		return
+	}
+	providerCfg := providerConfigFromDocument(providerSection)
+	runtimeCfg := ProviderRuntimeConfig{}
+	if runtimeRaw, ok := raw["provider_runtime"]; ok {
+		if data, err := json.Marshal(runtimeRaw); err == nil {
+			_ = json.Unmarshal(data, &runtimeCfg)
+		}
+	}
+	raw["provider_runtime"] = SyncProviderRuntimeWithProvider(runtimeCfg, providerCfg)
+}
+
+func providerConfigFromDocument(providerSection map[string]any) ProviderConfig {
+	providerCfg := ProviderConfig{}
+	data, err := json.Marshal(providerSection)
+	if err != nil {
+		return providerCfg
+	}
+	_ = json.Unmarshal(data, &providerCfg)
+	return providerCfg
 }
 
 func MutateMCPConfig(workspace, explicitPath string, mutator func(*MCPConfig) error) (Config, string, error) {

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/1024XEngineer/bytemind/internal/llm"
@@ -50,11 +51,36 @@ var (
 	ErrDuplicateProvider = errors.New(string(ErrCodeDuplicateProvider))
 )
 
+type ModelMetadata struct {
+	ProviderID      ProviderID
+	ModelID         ModelID
+	Family          string
+	ContextWindow   int
+	MaxOutputTokens int
+	SupportsTools   bool
+	UsageSource     string
+	Metadata        map[string]string
+}
+
 type ModelInfo struct {
 	ProviderID   ProviderID
 	ModelID      ModelID
 	DisplayAlias string
 	Metadata     map[string]string
+}
+
+func (m ModelInfo) ModelMetadata() ModelMetadata {
+	metadata := cloneMetadataMap(m.Metadata)
+	return ModelMetadata{
+		ProviderID:      m.ProviderID,
+		ModelID:         m.ModelID,
+		Family:          firstNonEmptyMetadata(metadata["family"], metadata["provider_family"]),
+		ContextWindow:   parseMetadataInt(metadata, "context_window"),
+		MaxOutputTokens: parseMetadataInt(metadata, "max_output_tokens"),
+		SupportsTools:   parseMetadataBool(metadata, "supports_tools"),
+		UsageSource:     firstNonEmptyMetadata(metadata["usage_source"], metadata["source"]),
+		Metadata:        metadata,
+	}
 }
 
 type Warning struct {
@@ -111,4 +137,51 @@ type Event struct {
 	Usage      *Usage
 	Result     *llm.Message
 	Error      *Error
+}
+
+func cloneMetadataMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func firstNonEmptyMetadata(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func parseMetadataInt(metadata map[string]string, key string) int {
+	raw := strings.TrimSpace(metadata[key])
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0
+	}
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func parseMetadataBool(metadata map[string]string, key string) bool {
+	raw := strings.TrimSpace(metadata[key])
+	if raw == "" {
+		return false
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false
+	}
+	return value
 }

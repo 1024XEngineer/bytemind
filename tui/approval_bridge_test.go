@@ -8,6 +8,7 @@ import (
 
 	"github.com/1024XEngineer/bytemind/internal/config"
 	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/provider"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	"github.com/1024XEngineer/bytemind/internal/skills"
 
@@ -48,6 +49,10 @@ func (r *approvalBridgeRunnerStub) ClearActiveSkill(_ *session.Session) error {
 
 func (r *approvalBridgeRunnerStub) ClearSkill(_ string) (skills.ClearResult, error) {
 	return skills.ClearResult{}, nil
+}
+
+func (r *approvalBridgeRunnerStub) ListModels(_ context.Context) ([]provider.ModelInfo, []provider.Warning, error) {
+	return nil, nil, nil
 }
 
 func TestInstallApprovalBridgeRoutesRunnerApprovalsToAsyncChannel(t *testing.T) {

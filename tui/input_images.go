@@ -21,6 +21,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
+
 var imagePlaceholderPattern = regexp.MustCompile(`\[Image ?#(\d+)\]`)
 var imageMentionPattern = regexp.MustCompile(`(?i)@([^\s@]+?\.(?:png|jpe?g|webp|gif))`)
 var inlineWindowsImagePathPattern = regexp.MustCompile(`(?i)[a-z]:\\[^\r\n\t"'<>|]*?\.(?:png|jpe?g|webp|gif)`)
@@ -779,6 +780,39 @@ func collectImageAssetIDsFromMessages(messages []llm.Message) []llm.AssetID {
 		return nil
 	}
 	return assetIDs
+}
+
+func validatePromptImageSupport(message llm.Message, modelLabel string) error {
+	message.Normalize()
+	hasImage := false
+	for _, part := range message.Parts {
+		if part.Type == llm.PartImageRef && part.Image != nil {
+			hasImage = true
+			break
+		}
+	}
+	if !hasImage {
+		return nil
+	}
+	modelName := normalizeCapabilityModelName(modelLabel)
+	if llm.DefaultModelCapabilities.Resolve(modelName).SupportsVision {
+		return nil
+	}
+	return fmt.Errorf("this model does not support image input; remove the image and try again")
+}
+
+func normalizeCapabilityModelName(modelLabel string) string {
+	modelLabel = strings.TrimSpace(modelLabel)
+	if modelLabel == "" {
+		return ""
+	}
+	if strings.HasPrefix(modelLabel, "(") && strings.HasSuffix(modelLabel, ")") {
+		return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(modelLabel, "("), ")"))
+	}
+	if slash := strings.LastIndex(modelLabel, "/"); slash >= 0 && slash < len(modelLabel)-1 {
+		return strings.TrimSpace(modelLabel[slash+1:])
+	}
+	return modelLabel
 }
 
 func (m *model) findAssetByImageID(imageID int) (llm.AssetID, session.ImageAssetMeta, bool) {
