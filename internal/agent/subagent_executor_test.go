@@ -534,3 +534,107 @@ func TestExecuteRunPromptTurnsError(t *testing.T) {
 		t.Fatalf("expected error message in summary, got %q", result.Summary)
 	}
 }
+
+func TestExtractSubAgentToolCallsEmpty(t *testing.T) {
+	records := extractSubAgentToolCalls(nil)
+	if len(records) != 0 {
+		t.Fatalf("expected empty result, got %d records", len(records))
+	}
+}
+
+func TestExtractSubAgentToolCallsMatchesToolUseAndResult(t *testing.T) {
+	messages := []llm.Message{
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{ID: "call-1", Name: "read_file", Arguments: `{"path":"main.go"}`}},
+			{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{ID: "call-2", Name: "search_text", Arguments: `{"query":"foo"}`}},
+		}},
+		{Role: llm.RoleUser, Parts: []llm.Part{
+			{Type: llm.PartToolResult, ToolResult: &llm.ToolResultPart{ToolUseID: "call-1", Content: "file contents"}},
+			{Type: llm.PartToolResult, ToolResult: &llm.ToolResultPart{ToolUseID: "call-2", Content: "search results"}},
+		}},
+	}
+	records := extractSubAgentToolCalls(messages)
+	if len(records) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(records))
+	}
+	if records[0].ToolName != "read_file" || records[0].ToolCallID != "call-1" {
+		t.Errorf("record 0: expected read_file/call-1, got %s/%s", records[0].ToolName, records[0].ToolCallID)
+	}
+	if records[0].CompactBody != "main.go" {
+		t.Errorf("record 0: expected compact body 'main.go', got %q", records[0].CompactBody)
+	}
+	if records[0].Status != "done" {
+		t.Errorf("record 0: expected status 'done', got %q", records[0].Status)
+	}
+	if records[1].ToolName != "search_text" {
+		t.Errorf("record 1: expected tool name 'search_text', got %q", records[1].ToolName)
+	}
+	if records[1].CompactBody != `"foo"` {
+		t.Errorf("record 1: expected compact body '\"foo\"', got %q", records[1].CompactBody)
+	}
+}
+
+func TestExtractSubAgentToolCallsUnmatchedToolUseIsRunning(t *testing.T) {
+	messages := []llm.Message{
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{ID: "call-1", Name: "grep", Arguments: `{}`}},
+		}},
+	}
+	records := extractSubAgentToolCalls(messages)
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+	if records[0].Status != "running" {
+		t.Errorf("expected status 'running', got %q", records[0].Status)
+	}
+}
+
+func TestExtractSubAgentToolCallsOrdering(t *testing.T) {
+	messages := []llm.Message{
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{ID: "c1", Name: "tool_a", Arguments: `{}`}},
+		}},
+		{Role: llm.RoleUser, Parts: []llm.Part{
+			{Type: llm.PartToolResult, ToolResult: &llm.ToolResultPart{ToolUseID: "c1", Content: "ok"}},
+		}},
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{ID: "c2", Name: "tool_b", Arguments: `{}`}},
+		}},
+	}
+	records := extractSubAgentToolCalls(messages)
+	if len(records) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(records))
+	}
+	if records[0].ToolName != "tool_a" || records[1].ToolName != "tool_b" {
+		t.Errorf("expected ordering tool_a, tool_b; got %s, %s", records[0].ToolName, records[1].ToolName)
+	}
+}
+
+func TestStoreAndConsumeSubAgentToolCalls(t *testing.T) {
+	invID := "test-invocation-123"
+	toolCalls := []tools.SubAgentToolCallRecord{
+		{ToolName: "read_file", ToolCallID: "c1", CompactBody: "foo.go", Status: "done"},
+	}
+	storeSubAgentToolCalls(invID, toolCalls)
+
+	got := consumeSubAgentToolCalls(invID)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(got))
+	}
+	if got[0].ToolName != "read_file" {
+		t.Errorf("expected tool name 'read_file', got %q", got[0].ToolName)
+	}
+
+	// Second consume should return nil (consumed).
+	got2 := consumeSubAgentToolCalls(invID)
+	if got2 != nil {
+		t.Errorf("expected nil on second consume, got %v", got2)
+	}
+}
+
+func TestConsumeSubAgentToolCallsEmptyID(t *testing.T) {
+	got := consumeSubAgentToolCalls("")
+	if got != nil {
+		t.Errorf("expected nil for empty invocation ID, got %v", got)
+	}
+}

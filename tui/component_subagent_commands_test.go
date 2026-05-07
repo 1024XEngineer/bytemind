@@ -183,3 +183,124 @@ func containsChatEntry(items []chatEntry, kind, needle string) bool {
 	}
 	return false
 }
+
+func TestResolveSubAgentToolCallsFromMetaNil(t *testing.T) {
+	msg := llm.Message{}
+	got := resolveSubAgentToolCallsFromMeta(msg)
+	if got != nil {
+		t.Errorf("expected nil, got %v", got)
+	}
+}
+
+func TestResolveSubAgentToolCallsFromMetaFromSlice(t *testing.T) {
+	input := []SubAgentToolCall{
+		{ToolName: "read_file", ToolCallID: "c1", CompactBody: "main.go", Status: "done"},
+	}
+	msg := llm.Message{
+		Meta: llm.MessageMeta{"subagent_tool_calls": input},
+	}
+	got := resolveSubAgentToolCallsFromMeta(msg)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(got))
+	}
+	if got[0].ToolName != "read_file" || got[0].CompactBody != "main.go" {
+		t.Errorf("expected read_file/main.go, got %s/%s", got[0].ToolName, got[0].CompactBody)
+	}
+}
+
+func TestResolveSubAgentToolCallsFromMetaFromAnySlice(t *testing.T) {
+	// Simulate JSON deserialization: []any with map[string]any elements.
+	input := []any{
+		map[string]any{
+			"ToolName":    "grep",
+			"ToolCallID":  "c2",
+			"CompactBody": `"pattern"`,
+			"Status":      "done",
+		},
+	}
+	msg := llm.Message{
+		Meta: llm.MessageMeta{"subagent_tool_calls": input},
+	}
+	got := resolveSubAgentToolCallsFromMeta(msg)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(got))
+	}
+	if got[0].ToolName != "grep" {
+		t.Errorf("expected tool name 'grep', got %q", got[0].ToolName)
+	}
+}
+
+func TestRebuildSessionTimelineWithSubAgentTools(t *testing.T) {
+	sess := session.New("/workspace")
+	sess.Messages = []llm.Message{
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{
+				ID:        "call-1",
+				Name:      "delegate_subagent",
+				Arguments: `{"agent":"explorer","task":"scan files"}`,
+			}},
+		}},
+		{Role: llm.RoleUser, Parts: []llm.Part{
+			{Type: llm.PartToolResult, ToolResult: &llm.ToolResultPart{
+				ToolUseID: "call-1",
+				Content:   `{"ok":true,"summary":"done","invocation_id":"inv-1"}`,
+			}},
+		}},
+	}
+	// Inject subagent_tool_calls into Meta.
+	if sess.Messages[1].Meta == nil {
+		sess.Messages[1].Meta = llm.MessageMeta{}
+	}
+	sess.Messages[1].Meta["subagent_tool_calls"] = []SubAgentToolCall{
+		{ToolName: "read_file", ToolCallID: "c10", CompactBody: "a.go", Status: "done"},
+		{ToolName: "grep", ToolCallID: "c11", CompactBody: `"pattern"`, Status: "done"},
+	}
+
+	items := rebuildSessionTimeline(sess)
+	// Find the tool entry for delegate_subagent.
+	found := false
+	for _, item := range items {
+		if item.Kind == "tool" && item.AgentID == "explorer" {
+			found = true
+			if len(item.SubAgentTools) != 2 {
+				t.Errorf("expected 2 SubAgentTools, got %d", len(item.SubAgentTools))
+			}
+			if len(item.SubAgentTools) > 0 && item.SubAgentTools[0].ToolName != "read_file" {
+				t.Errorf("expected first tool 'read_file', got %q", item.SubAgentTools[0].ToolName)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected to find delegate_subagent tool entry")
+	}
+}
+
+func TestRebuildSessionTimelineWithoutSubAgentToolsMeta(t *testing.T) {
+	sess := session.New("/workspace")
+	sess.Messages = []llm.Message{
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{
+				ID:        "call-1",
+				Name:      "delegate_subagent",
+				Arguments: `{"agent":"explorer","task":"scan"}`,
+			}},
+		}},
+		{Role: llm.RoleUser, Parts: []llm.Part{
+			{Type: llm.PartToolResult, ToolResult: &llm.ToolResultPart{
+				ToolUseID: "call-1",
+				Content:   `{"ok":true,"summary":"done","invocation_id":"inv-1"}`,
+			}},
+		}},
+	}
+
+	items := rebuildSessionTimeline(sess)
+	for _, item := range items {
+		if item.Kind == "tool" && item.AgentID == "explorer" {
+			if len(item.SubAgentTools) != 0 {
+				t.Errorf("expected 0 SubAgentTools without meta, got %d", len(item.SubAgentTools))
+			}
+			return
+		}
+	}
+}

@@ -2132,6 +2132,7 @@ func waitForAsync(ch <-chan tea.Msg) tea.Cmd {
 func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 	items := make([]chatEntry, 0, len(sess.Messages))
 	callNames := map[string]string{}
+	callArgs := map[string]string{} // tool call ID -> arguments (for delegate_subagent AgentID recovery)
 
 	for _, message := range sess.Messages {
 		message.Normalize()
@@ -2149,18 +2150,29 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 				if name == "" {
 					name = "tool"
 				}
-				rendered := renderToolPayload(name, part.ToolResult.Content)
+				payload := part.ToolResult.Content
+				agentID := ""
+				if strings.EqualFold(name, "delegate_subagent") {
+					agentID = resolveAgentIDFromArgs(callArgs, part.ToolResult.ToolUseID)
+					if fullJSON := resolveFullSubAgentResult(message, part.ToolResult.ToolUseID); fullJSON != "" {
+						payload = fullJSON
+					}
+				}
+				rendered := renderToolPayload(name, payload)
 				summary := rendered.Summary
 				lines := rendered.DetailLines
 				status := rendered.Status
 				compactBody := rendered.CompactLine
+				toolCalls := resolveSubAgentToolCallsFromMeta(message)
 				items = append(items, chatEntry{
-					Kind:        "tool",
-					Title:       toolEntryTitle(name),
-					Body:        joinSummary(summary, lines),
-					Status:      status,
-					CompactBody: compactBody,
-					DetailLines: lines,
+					Kind:           "tool",
+					Title:          toolEntryTitle(name),
+					Body:           joinSummary(summary, lines),
+					Status:         status,
+					AgentID:        agentID,
+					CompactBody:    compactBody,
+					DetailLines:    lines,
+					SubAgentTools:  toolCalls,
 				})
 			}
 			userText := strings.Join(userTextParts, "")
@@ -2170,6 +2182,9 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 		case "assistant":
 			for _, call := range message.ToolCalls {
 				callNames[call.ID] = call.Function.Name
+				if strings.EqualFold(call.Function.Name, "delegate_subagent") {
+					callArgs[call.ID] = call.Function.Arguments
+				}
 			}
 			if strings.TrimSpace(message.Text()) != "" {
 				items = append(items, chatEntry{Kind: "assistant", Title: assistantLabel, Body: message.Text(), Status: "final"})
@@ -2179,22 +2194,92 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 			if name == "" {
 				name = "tool"
 			}
-			rendered := renderToolPayload(name, message.Content)
+			payload := message.Content
+			agentID := ""
+			if strings.EqualFold(name, "delegate_subagent") {
+				agentID = resolveAgentIDFromArgs(callArgs, message.ToolCallID)
+				if fullJSON := resolveFullSubAgentResult(message, message.ToolCallID); fullJSON != "" {
+					payload = fullJSON
+				}
+			}
+			rendered := renderToolPayload(name, payload)
 			summary := rendered.Summary
 			lines := rendered.DetailLines
 			status := rendered.Status
 			compactBody := rendered.CompactLine
+			toolCalls := resolveSubAgentToolCallsFromMeta(message)
 			items = append(items, chatEntry{
-				Kind:        "tool",
-				Title:       toolEntryTitle(name),
-				Body:        joinSummary(summary, lines),
-				Status:      status,
-				CompactBody: compactBody,
-				DetailLines: lines,
+				Kind:           "tool",
+				Title:          toolEntryTitle(name),
+				Body:           joinSummary(summary, lines),
+				Status:         status,
+				AgentID:        agentID,
+				CompactBody:    compactBody,
+				DetailLines:    lines,
+				SubAgentTools:  toolCalls,
 			})
 		}
 	}
 	return items
+}
+
+// resolveAgentIDFromArgs extracts the agent name from cached delegate_subagent arguments.
+func resolveAgentIDFromArgs(callArgs map[string]string, toolCallID string) string {
+	args, ok := callArgs[toolCallID]
+	if !ok {
+		return ""
+	}
+	agent, _ := summarizeDelegateSubAgent(args)
+	if agent == "" {
+		agent = "subagent"
+	}
+	return agent
+}
+
+// resolveFullSubAgentResult checks if the message Meta contains the full
+// delegate_subagent JSON result (stored before LLM trimming) and returns it.
+func resolveFullSubAgentResult(message llm.Message, toolCallID string) string {
+	if message.Meta == nil {
+		return ""
+	}
+	raw, ok := message.Meta["delegate_subagent_result"]
+	if !ok {
+		return ""
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
+// resolveSubAgentToolCallsFromMeta reads the subagent_tool_calls metadata
+// stored by the agent executor and returns SubAgentToolCall entries for UI
+// restoration on session reload.
+func resolveSubAgentToolCallsFromMeta(message llm.Message) []SubAgentToolCall {
+	if message.Meta == nil {
+		return nil
+	}
+	raw, ok := message.Meta["subagent_tool_calls"]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []SubAgentToolCall:
+		return v
+	case []any:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil
+		}
+		var calls []SubAgentToolCall
+		if err := json.Unmarshal(data, &calls); err != nil {
+			return nil
+		}
+		return calls
+	default:
+		return nil
+	}
 }
 
 func chatBubbleWidth(item chatEntry, width int) int {

@@ -127,6 +127,8 @@ func (e *defaultSubAgentExecutor) Execute(
 			messagesToTranscript(childSession.Messages),
 		)
 		result.Task = strings.TrimSpace(input.Request.Task)
+		// Store structured tool call records for TUI restoration via side-channel.
+		storeSubAgentToolCalls(input.InvocationID, extractSubAgentToolCalls(childSession.Messages))
 		if input.Store != nil && childSession != nil {
 			persistedID := session.FlattenSubAgentSessionID(childSession.ID)
 			clone := cloneSessionForPersist(childSession, persistedID, workspace)
@@ -138,6 +140,9 @@ func (e *defaultSubAgentExecutor) Execute(
 
 	result := buildSubAgentResultFromAnswer(answer, input.InvocationID, input.Agent, childSession.Messages)
 	result.Task = strings.TrimSpace(input.Request.Task)
+
+	// Store structured tool call records for TUI restoration via side-channel.
+	storeSubAgentToolCalls(input.InvocationID, extractSubAgentToolCalls(childSession.Messages))
 
 	// Persist child session transcript (best-effort).
 	if input.Store != nil && childSession != nil {

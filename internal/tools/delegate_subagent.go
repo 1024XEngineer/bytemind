@@ -38,6 +38,16 @@ type TranscriptMessage struct {
 	Content string `json:"content"`
 }
 
+// SubAgentToolCallRecord is a JSON-serializable record of a tool call made
+// by a subagent. JSON tags match tui.SubAgentToolCall for direct unmarshal.
+type SubAgentToolCallRecord struct {
+	ToolName    string   `json:"ToolName"`
+	ToolCallID  string   `json:"ToolCallID"`
+	CompactBody string   `json:"CompactBody"`
+	Status      string   `json:"Status"`
+	DetailLines []string `json:"DetailLines,omitempty"`
+}
+
 type DelegateSubAgentResult struct {
 	OK                  bool                   `json:"ok"`
 	Status              string                 `json:"status,omitempty"`
@@ -52,6 +62,10 @@ type DelegateSubAgentResult struct {
 	Transcript          []TranscriptMessage    `json:"transcript,omitempty"`
 	TranscriptSessionID string                 `json:"transcript_session_id,omitempty"`
 	Task                string                 `json:"task,omitempty"`
+	// ToolCalls carries structured tool call records from the subagent session.
+	// Populated by the executor for TUI restoration; excluded from JSON via
+	// json:"-" so it never reaches the parent LLM context.
+	ToolCalls []SubAgentToolCallRecord `json:"-"`
 }
 
 type DelegateSubAgentHandler func(context.Context, DelegateSubAgentRequest, *ExecutionContext) (DelegateSubAgentResult, error)
