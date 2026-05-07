@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	toolIcon     = "●"
-	toolTreeChar = "└"
+	toolIcon                  = "●"
+	toolTreeChar              = "└"
+	maxSubAgentToolsCollapsed = 3
 )
 
 func (m model) renderConversation() string {
@@ -618,17 +619,7 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 				body += "\n" + indent + strings.Join(subLines, "\n"+indent)
 			}
 		} else {
-			running := 0
-			for _, st := range item.SubAgentTools {
-				if st.Status == "running" {
-					running++
-				}
-			}
-			hint := fmt.Sprintf("%d tool uses", len(item.SubAgentTools))
-			if running > 0 {
-				hint += fmt.Sprintf(" (%d running)", running)
-			}
-			body += "  " + connectorStyle.Render(hint)
+			body += "\n" + indent + renderSubAgentToolsCollapsed(item.SubAgentTools, connectorStyle, indent)
 		}
 	}
 
@@ -750,22 +741,64 @@ func renderSubAgentGroup(group []chatEntry, width int, toolDetailsExpanded bool,
 					body += "\n" + indent + indent + strings.Join(subLines, "\n"+indent+indent)
 				}
 			} else {
-				running := 0
-				for _, st := range item.SubAgentTools {
-					if st.Status == "running" {
-						running++
-					}
-				}
-				hint := fmt.Sprintf("%d tool uses", len(item.SubAgentTools))
-				if running > 0 {
-					hint += fmt.Sprintf(" (%d running)", running)
-				}
-				body += "\n" + indent + indent + connectorStyle.Render(toolTreeChar+" "+hint)
+				body += "\n" + indent + indent + renderSubAgentToolsCollapsed(item.SubAgentTools, connectorStyle, indent+indent)
 			}
 		}
 	}
 
 	return style.Width(contentWidth).Render(body)
+}
+
+// renderSubAgentToolsCollapsed renders the last N subagent tool calls inline in
+// collapsed mode, with a "+M more" hint if there are additional tools.
+func renderSubAgentToolsCollapsed(tools []SubAgentToolCall, connectorStyle lipgloss.Style, indent string) string {
+	n := len(tools)
+	if n == 0 {
+		return ""
+	}
+	show := tools
+	hidden := 0
+	if n > maxSubAgentToolsCollapsed {
+		hidden = n - maxSubAgentToolsCollapsed
+		show = tools[n-maxSubAgentToolsCollapsed:]
+	}
+
+	lines := make([]string, 0, len(show)+1)
+	for _, st := range show {
+		indicator := toolTreeChar
+		if st.Status == "running" {
+			indicator = "⋰"
+		}
+		text := st.ToolName
+		if st.CompactBody != "" {
+			text += "(" + st.CompactBody + ")"
+		} else if st.Summary != "" {
+			summaryText := st.Summary
+			if runewidth.StringWidth(summaryText) > 56 {
+				summaryText = runewidth.Truncate(summaryText, 56, "…")
+			}
+			text += "(" + summaryText + ")"
+		}
+		lines = append(lines, connectorStyle.Render(indicator)+" "+text)
+	}
+
+	running := 0
+	for _, st := range tools {
+		if st.Status == "running" {
+			running++
+		}
+	}
+	hint := ""
+	if hidden > 0 || running > 0 {
+		hint = fmt.Sprintf(" +%d tool uses", len(tools))
+		if running > 0 {
+			hint += fmt.Sprintf(" (%d running)", running)
+		}
+		hint += " (ctrl+o to expand)"
+		lines = append(lines, connectorStyle.Render(hint))
+	}
+
+	return strings.Join(lines, "\n"+indent)
 }
 
 // renderSubAgentBlock renders a delegate_subagent entry as a standalone block
@@ -849,17 +882,7 @@ func renderSubAgentBlock(item chatEntry, agentID, compactBody string, width int,
 				body += "\n" + indent + strings.Join(subLines, "\n"+indent)
 			}
 		} else {
-			running := 0
-			for _, st := range item.SubAgentTools {
-				if st.Status == "running" {
-					running++
-				}
-			}
-			hint := fmt.Sprintf("%d tool uses", len(item.SubAgentTools))
-			if running > 0 {
-				hint += fmt.Sprintf(" (%d running)", running)
-			}
-			body += "  " + connectorStyle.Render("└─ "+hint+" (ctrl+o to expand)")
+			body += "\n" + indent + renderSubAgentToolsCollapsed(item.SubAgentTools, connectorStyle, indent)
 		}
 	}
 
