@@ -343,6 +343,7 @@ func (delegateSubAgentRenderer) Render(payload string) ToolRenderResult {
 		Agent    string `json:"agent"`
 		Task     string `json:"task,omitempty"`
 		Summary  string `json:"summary,omitempty"`
+		Content  string `json:"content,omitempty"`
 		Error    *struct {
 			Code    string `json:"code"`
 			Message string `json:"message"`
@@ -362,9 +363,15 @@ func (delegateSubAgentRenderer) Render(payload string) ToolRenderResult {
 			status = "running"
 		}
 
+		// Prefer Content (natural language) over Summary (structured) for display.
+		displayText := strings.TrimSpace(result.Content)
+		if displayText == "" {
+			displayText = strings.TrimSpace(result.Summary)
+		}
+
 		// Summary: stats overview (agent name + summary or tool count).
 		summary := fmt.Sprintf("SubAgent %s", result.Agent)
-		if text := strings.TrimSpace(result.Summary); text != "" {
+		if text := displayText; text != "" {
 			summary += ": " + compact(text, 72)
 		}
 
@@ -380,7 +387,7 @@ func (delegateSubAgentRenderer) Render(payload string) ToolRenderResult {
 				detailLines = append(detailLines, text)
 			}
 		}
-		if text := strings.TrimSpace(result.Summary); text != "" {
+		if text := displayText; text != "" {
 			detailLines = append(detailLines, "")
 			detailLines = append(detailLines, "Response: "+compactToolText(text, 200))
 		}

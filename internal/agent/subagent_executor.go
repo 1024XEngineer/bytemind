@@ -19,9 +19,7 @@ import (
 const (
 	defaultSubAgentMaxIterations = 8
 
-	subAgentResultPolicyCompressed = `Return your final answer as a single JSON object (no markdown fences). Schema:
-{"summary":"<one-paragraph overview>"}
-Do not include full tool logs.`
+	subAgentResultPolicyCompressed = `Return your final answer directly as natural language. Do not include full tool logs.`
 )
 
 // SubAgentExecutor runs a subagent task to completion and returns a structured result.
@@ -264,33 +262,52 @@ func buildSubAgentResultFromAnswer(answer, invocationID, agent string, messages 
 		Agent:        strings.TrimSpace(agent),
 	}
 
+	// Try to extract structured JSON if the LLM returned one (backward compat).
 	jsonStr := extractJSONFromAnswer(trimmed)
-	if jsonStr == "" {
-		base.Summary = trimmed
-		base.Transcript = messagesToTranscript(messages)
-		return base
+	if jsonStr != "" {
+		var parsed tools.DelegateSubAgentResult
+		if err := json.Unmarshal([]byte(jsonStr), &parsed); err == nil && strings.TrimSpace(parsed.Summary) != "" {
+			base.Summary = strings.TrimSpace(parsed.Summary)
+			base.Content = base.Summary
+			base.Transcript = messagesToTranscript(messages)
+			return base
+		}
 	}
 
-	var parsed tools.DelegateSubAgentResult
-	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
-		base.Summary = trimmed
-		base.Transcript = messagesToTranscript(messages)
-		return base
+	// Natural language path: extract last assistant text blocks (Claude Code style).
+	content := extractLastAssistantText(messages)
+	if content == "" {
+		content = trimmed
 	}
-
-	hasStructuredData := strings.TrimSpace(parsed.Summary) != ""
-	if !hasStructuredData {
-		base.Summary = trimmed
-		base.Transcript = messagesToTranscript(messages)
-		return base
-	}
-
-	base.Summary = strings.TrimSpace(parsed.Summary)
-	if base.Summary == "" {
-		base.Summary = trimmed
-	}
+	base.Summary = content
+	base.Content = content
 	base.Transcript = messagesToTranscript(messages)
 	return base
+}
+
+// extractLastAssistantText extracts text from the last assistant message,
+// similar to Claude Code's finalizeAgentTool. Only text blocks are included;
+// tool_use blocks are discarded.
+func extractLastAssistantText(messages []llm.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if msg.Role != llm.RoleAssistant {
+			continue
+		}
+		var parts []string
+		for _, part := range msg.Parts {
+			if part.Text != nil {
+				text := strings.TrimSpace(part.Text.Value)
+				if text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, "\n")
+		}
+	}
+	return ""
 }
 
 // extractPartialResult extracts any assistant text output from the child session
@@ -368,12 +385,14 @@ func resolveSubAgentMaxIterations(parentMaxIterations int, requestedMaxTurns int
 // summary content, so the parent agent can reason about the failure and decide
 // next steps (retry, partial recovery, or manual intervention).
 func subAgentErrorAsContent(invocationID, agent, message string, transcript []tools.TranscriptMessage) tools.DelegateSubAgentResult {
+	content := truncateSubAgentSummary("SubAgent error: " + strings.TrimSpace(message))
 	return tools.DelegateSubAgentResult{
 		OK:           true,
 		Status:       subAgentResultStatusCompleted,
 		InvocationID: strings.TrimSpace(invocationID),
 		Agent:        strings.TrimSpace(agent),
-		Summary:      truncateSubAgentSummary("SubAgent error: " + strings.TrimSpace(message)),
+		Summary:      content,
+		Content:      content,
 		Transcript:   transcript,
 	}
 }

@@ -827,12 +827,13 @@ func TestHandleAgentEventToolCallStartedCapturesCompactHint(t *testing.T) {
 func TestHandleAgentEventToolCallCompletedUpdatesToolCard(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
-			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
+			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running", ToolCallID: "call-1"},
 		},
 	}
 	m.handleAgentEvent(Event{
 		Type:       EventToolCallCompleted,
 		ToolName:   "run_shell",
+		ToolCallID: "call-1",
 		ToolResult: `{"ok":true,"exit_code":0,"stdout":"hello","stderr":""}`,
 	})
 
@@ -1018,12 +1019,13 @@ func TestHandleAgentEventToolCallCompletedWithRateLimitError(t *testing.T) {
 	// When tool result contains rate limit error JSON
 	m := model{
 		chatItems: []chatEntry{
-			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running"},
+			{Kind: "tool", Title: toolEntryTitle("run_shell"), Body: "", Status: "running", ToolCallID: "call-2"},
 		},
 	}
 	m.handleAgentEvent(Event{
 		Type:       EventToolCallCompleted,
 		ToolName:   "run_shell",
+		ToolCallID: "call-2",
 		ToolResult: `{"ok":false,"error":"provider rate limited: 429"}`,
 	})
 
@@ -1041,12 +1043,13 @@ func TestToolResultCardShowsOnlyToolResult(t *testing.T) {
 	// A completed tool result should show clean content, not error text
 	m := model{
 		chatItems: []chatEntry{
-			{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "", Status: "running"},
+			{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "", Status: "running", ToolCallID: "call-3"},
 		},
 	}
 	m.handleAgentEvent(Event{
 		Type:       EventToolCallCompleted,
 		ToolName:   "read_file",
+		ToolCallID: "call-3",
 		ToolResult: `{"path":"/project/main.go","start_line":1,"end_line":50}`,
 	})
 

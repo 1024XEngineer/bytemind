@@ -279,7 +279,10 @@ func (e *defaultEngine) executeToolCall(
 		Metadata:  metadata,
 	})
 
-	toolMessage := llm.NewToolResultMessage(call.ID, result)
+	// Decouple UI and LLM payloads: TUI sees the full JSON (for rendering),
+	// parent agent LLM context receives only the Content field (natural language).
+	llmPayload := extractSubAgentContentForLLM(call.Function.Name, result)
+	toolMessage := llm.NewToolResultMessage(call.ID, llmPayload)
 	if err := llm.ValidateMessage(toolMessage); err != nil {
 		return err
 	}
@@ -661,4 +664,33 @@ func appendSandboxAuditContext(metadata map[string]string, context sandboxAuditC
 	if context.FallbackReason != "" {
 		metadata["sandbox_fallback_reason"] = context.FallbackReason
 	}
+}
+
+// extractSubAgentContentForLLM returns a slimmed-down payload for the parent agent's
+// LLM context. For delegate_subagent results, only the Content field (natural language)
+// is forwarded; the full JSON is reserved for the TUI renderer. All other tools pass
+// through unchanged.
+func extractSubAgentContentForLLM(toolName, result string) string {
+	if strings.TrimSpace(toolName) != "delegate_subagent" {
+		return result
+	}
+	var parsed struct {
+		Content string `json:"content,omitempty"`
+		Summary string `json:"summary,omitempty"`
+		OK      bool   `json:"ok"`
+	}
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		return result
+	}
+	if !parsed.OK {
+		return result
+	}
+	content := strings.TrimSpace(parsed.Content)
+	if content == "" {
+		content = strings.TrimSpace(parsed.Summary)
+	}
+	if content == "" {
+		return result
+	}
+	return content
 }

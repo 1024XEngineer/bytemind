@@ -266,6 +266,7 @@ func (r *Runner) delegateSubAgent(
 			result.OK = true
 			result.Status = subAgentResultStatusCompleted
 			result.Summary = truncateSubAgentSummary(rawOutput)
+			result.Content = result.Summary
 			return result, nil
 		}
 		// Structured parse succeeded — fill in summary from raw text if empty.
@@ -279,6 +280,7 @@ func (r *Runner) delegateSubAgent(
 	result.OK = true
 	result.Status = subAgentResultStatusCompleted
 	result.Summary = "SubAgent task completed."
+	result.Content = result.Summary
 	return result, nil
 }
 

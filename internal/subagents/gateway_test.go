@@ -254,7 +254,7 @@ review files
 	}
 }
 
-func TestGatewayPreflightRejectsInvalidRequestedOutput(t *testing.T) {
+func TestGatewayPreflightAcceptsAnyRequestedOutput(t *testing.T) {
 	workspace := t.TempDir()
 	builtinDir := filepath.Join(workspace, "internal", "subagents")
 	writeSubAgentFile(t, filepath.Join(builtinDir, "review.md"), `---
@@ -274,12 +274,8 @@ review files
 		ParentVisible:   []string{"read_file"},
 		RequestedOutput: "json",
 	})
-	if err == nil {
-		t.Fatal("expected invalid output error")
-	}
-	gatewayErr, ok := err.(*GatewayError)
-	if !ok || gatewayErr.Code != ErrorCodeSubAgentInvalidRequest {
-		t.Fatalf("unexpected error: %#v", err)
+	if err != nil {
+		t.Fatalf("expected no error for any output format, got: %v", err)
 	}
 }
 

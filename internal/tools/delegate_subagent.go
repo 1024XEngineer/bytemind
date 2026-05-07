@@ -39,18 +39,19 @@ type TranscriptMessage struct {
 }
 
 type DelegateSubAgentResult struct {
-	OK                 bool                   `json:"ok"`
-	Status             string                 `json:"status,omitempty"`
-	InvocationID       string                 `json:"invocation_id"`
-	Agent              string                 `json:"agent"`
-	TaskID             string                 `json:"task_id,omitempty"`
-	ResultReadTool     string                 `json:"result_read_tool,omitempty"`
-	StopTool           string                 `json:"stop_tool,omitempty"`
-	Summary            string                 `json:"summary,omitempty"`
-	Error              *DelegateSubAgentError `json:"error,omitempty"`
-	Transcript         []TranscriptMessage    `json:"transcript,omitempty"`
-	TranscriptSessionID string                `json:"transcript_session_id,omitempty"`
-	Task               string                `json:"task,omitempty"`
+	OK                  bool                   `json:"ok"`
+	Status              string                 `json:"status,omitempty"`
+	InvocationID        string                 `json:"invocation_id"`
+	Agent               string                 `json:"agent"`
+	TaskID              string                 `json:"task_id,omitempty"`
+	ResultReadTool      string                 `json:"result_read_tool,omitempty"`
+	StopTool            string                 `json:"stop_tool,omitempty"`
+	Summary             string                 `json:"summary,omitempty"`
+	Content             string                 `json:"content,omitempty"`
+	Error               *DelegateSubAgentError `json:"error,omitempty"`
+	Transcript          []TranscriptMessage    `json:"transcript,omitempty"`
+	TranscriptSessionID string                 `json:"transcript_session_id,omitempty"`
+	Task                string                 `json:"task,omitempty"`
 }
 
 type DelegateSubAgentHandler func(context.Context, DelegateSubAgentRequest, *ExecutionContext) (DelegateSubAgentResult, error)
@@ -118,7 +119,7 @@ func (t DelegateSubAgentTool) Definition() llm.ToolDefinition {
 					},
 					"output": map[string]any{
 						"type":        "string",
-						"description": "Optional preferred result format such as findings.",
+						"description": "Optional preferred result format. Currently only \"summary\" is supported.",
 					},
 					"run_in_background": map[string]any{
 						"type":        "boolean",

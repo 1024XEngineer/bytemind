@@ -405,7 +405,8 @@ func collapsibleParallelGroupKey(item chatEntry, toolDetailsExpanded bool) (stri
 // collapsibleParallelToolName returns the tool name if this entry can be
 // grouped with adjacent entries of the same tool. All tool entries are
 // collapsible; grouping happens at render time, not data time.
-// delegate_subagent is excluded — each subagent renders as its own tree block.
+// delegate_subagent uses AgentID as the group key so same-type subagents
+// are grouped for header aggregation while different types remain separate.
 func collapsibleParallelToolName(item chatEntry) (string, bool) {
 	if item.Kind != "tool" {
 		return "", false
@@ -416,7 +417,10 @@ func collapsibleParallelToolName(item chatEntry) (string, bool) {
 		return "", false
 	}
 	if strings.EqualFold(name, "delegate_subagent") {
-		return "", false
+		if item.AgentID == "" {
+			return name, true
+		}
+		return "delegate_subagent:" + item.AgentID, true
 	}
 	return name, true
 }
@@ -427,6 +431,10 @@ func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded boo
 	}
 	if len(group) == 1 {
 		return renderRunSection(group[0], width, toolDetailsExpanded, runningIndicatorVisible)
+	}
+	// Delegate subagent group: same AgentID, aggregated header.
+	if isSubAgentGroup(group) {
+		return renderSubAgentGroup(group, width, toolDetailsExpanded, runningIndicatorVisible)
 	}
 	if !toolDetailsExpanded && isLiveInspectGroup(group) {
 		return renderLiveInspectGroup(group, width, runningIndicatorVisible)
@@ -621,6 +629,139 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 				hint += fmt.Sprintf(" (%d running)", running)
 			}
 			body += "  " + connectorStyle.Render(hint)
+		}
+	}
+
+	return style.Width(contentWidth).Render(body)
+}
+
+// isSubAgentGroup checks if a group of entries are all delegate_subagent
+// with the same AgentID, suitable for header aggregation.
+func isSubAgentGroup(group []chatEntry) bool {
+	if len(group) < 2 {
+		return false
+	}
+	agentID := group[0].AgentID
+	if agentID == "" {
+		return false
+	}
+	for _, item := range group {
+		_, name := toolDisplayParts(item.Title)
+		if !strings.EqualFold(name, "delegate_subagent") || item.AgentID != agentID {
+			return false
+		}
+	}
+	return true
+}
+
+// renderSubAgentGroup renders a group of same-type delegate_subagent entries
+// with an aggregated header ("N x AgentType") and each agent's tool tree
+// displayed independently beneath.
+func renderSubAgentGroup(group []chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool) string {
+	style := resolveToolRunSectionStyle(aggregateToolGroupStatus(group))
+	contentWidth := max(8, width-style.GetHorizontalFrameSize())
+	connectorStyle := lipgloss.NewStyle().Foreground(colorTool)
+	indent := "  "
+
+	agentID := group[0].AgentID
+	agentLabel := compact(agentID, 24)
+
+	// Aggregated status.
+	status := aggregateToolGroupStatus(group)
+
+	// Header: "N x AgentType"
+	headLine := toolStatusIndicator(status, runningIndicatorVisible) + " " +
+		fmt.Sprintf("%d x %s", len(group), agentLabel)
+	if shouldRenderToolStatusTag(status) {
+		headLine += "  " + renderToolTag(status, status)
+	}
+	if runewidth.StringWidth(headLine) > contentWidth {
+		headLine = runewidth.Truncate(headLine, contentWidth, "…")
+	}
+
+	body := headLine
+
+	// Each agent's tree displayed independently.
+	for _, item := range group {
+		task := item.CompactBody
+		if task == "" {
+			task = strings.TrimSpace(firstNonEmptyLine(item.Body))
+		}
+		// Agent sub-header.
+		agentLine := connectorStyle.Render("├─ " + agentLabel)
+		if task != "" {
+			agentLine += "(" + compact(task, 48) + ")"
+		}
+		if shouldRenderToolStatusTag(item.Status) {
+			agentLine += "  " + renderToolTag(item.Status, item.Status)
+		}
+		if runewidth.StringWidth(agentLine) > contentWidth {
+			agentLine = runewidth.Truncate(agentLine, contentWidth, "…")
+		}
+		body += "\n" + indent + agentLine
+
+		// Detail lines (ctrl+O expanded prompt/response).
+		if toolDetailsExpanded && len(item.DetailLines) > 0 {
+			detailLines := make([]string, 0, len(item.DetailLines))
+			for _, detail := range item.DetailLines {
+				detail = strings.TrimSpace(detail)
+				if detail == "" {
+					continue
+				}
+				detailLines = append(detailLines, connectorStyle.Render(toolTreeChar)+detail)
+			}
+			if len(detailLines) > 0 {
+				body += "\n" + indent + indent + strings.Join(detailLines, "\n"+indent+indent)
+			}
+		}
+
+		// Internal tool tree.
+		if len(item.SubAgentTools) > 0 {
+			if toolDetailsExpanded {
+				const maxSubAgentToolsDisplay = 5
+				tools := item.SubAgentTools
+				hidden := 0
+				if len(tools) > maxSubAgentToolsDisplay {
+					hidden = len(tools) - maxSubAgentToolsDisplay
+					tools = tools[len(tools)-maxSubAgentToolsDisplay:]
+				}
+				subLines := make([]string, 0, len(tools)+1)
+				if hidden > 0 {
+					subLines = append(subLines, connectorStyle.Render(toolTreeChar+fmt.Sprintf(" +%d more", hidden)))
+				}
+				for _, st := range tools {
+					indicator := toolTreeChar
+					if st.Status == "running" {
+						indicator = "⋰"
+					}
+					text := st.ToolName
+					if st.CompactBody != "" {
+						text += "(" + st.CompactBody + ")"
+					} else if st.Summary != "" {
+						summaryText := st.Summary
+						if runewidth.StringWidth(summaryText) > 56 {
+							summaryText = runewidth.Truncate(summaryText, 56, "…")
+						}
+						text += "(" + summaryText + ")"
+					}
+					subLines = append(subLines, connectorStyle.Render(indicator)+" "+text)
+				}
+				if len(subLines) > 0 {
+					body += "\n" + indent + indent + strings.Join(subLines, "\n"+indent+indent)
+				}
+			} else {
+				running := 0
+				for _, st := range item.SubAgentTools {
+					if st.Status == "running" {
+						running++
+					}
+				}
+				hint := fmt.Sprintf("%d tool uses", len(item.SubAgentTools))
+				if running > 0 {
+					hint += fmt.Sprintf(" (%d running)", running)
+				}
+				body += "\n" + indent + indent + connectorStyle.Render(toolTreeChar+" "+hint)
+			}
 		}
 	}
 

@@ -235,9 +235,8 @@ func (m *model) finishLatestToolCall(name, body, status string) {
 
 // finishToolCall finds the tool chatEntry by ToolCallID (precise match)
 // and updates its Body, Status, CompactBody, and DetailLines.
-// Falls back to title-based matching when ToolCallID is empty.
+// If no matching entry is found, appends as a new entry.
 func (m *model) finishToolCall(toolCallID, name, body, status string, compactBody string, detailLines []string) {
-	// Try precise ToolCallID match first
 	if toolCallID != "" {
 		for i := len(m.chatItems) - 1; i >= 0; i-- {
 			if m.chatItems[i].Kind == "tool" && m.chatItems[i].ToolCallID == toolCallID {
@@ -249,22 +248,7 @@ func (m *model) finishToolCall(toolCallID, name, body, status string, compactBod
 			}
 		}
 	}
-	// Fallback: match by title (same as finishLatestToolCall)
 	title := toolEntryTitle(name)
-	for i := len(m.chatItems) - 1; i >= 0; i-- {
-		if m.chatItems[i].Kind != "tool" {
-			continue
-		}
-		if m.chatItems[i].Title != title && strings.TrimSpace(name) != "" {
-			continue
-		}
-		m.chatItems[i].Body = body
-		m.chatItems[i].Status = status
-		m.chatItems[i].CompactBody = compactBody
-		m.chatItems[i].DetailLines = detailLines
-		return
-	}
-	// Last resort: append as new entry
 	m.appendChat(chatEntry{
 		Kind:        "tool",
 		Title:       title,
