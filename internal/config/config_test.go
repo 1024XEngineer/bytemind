@@ -1357,6 +1357,78 @@ func TestUpsertProviderFieldSyncsProviderRuntime(t *testing.T) {
 	}
 }
 
+func TestUpsertProviderRuntimeSelectionPersistsProviderAndRuntime(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-5.4-mini",
+    "api_key": "openai-key"
+  },
+  "provider_runtime": {
+    "default_provider": "openai",
+    "default_model": "gpt-5.4-mini",
+    "providers": {
+      "openai": {
+        "type": "openai-compatible",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-5.4-mini",
+        "api_key": "openai-key"
+      },
+      "deepseek": {
+        "type": "openai-compatible",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-chat",
+        "api_key": "deepseek-key"
+      }
+    }
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := UpsertProviderRuntimeSelection(configPath, ProviderRuntimeConfig{
+		DefaultProvider: "deepseek",
+		DefaultModel:    "deepseek-reasoner",
+		Providers: map[string]ProviderConfig{
+			"openai": {
+				Type:    "openai-compatible",
+				BaseURL: "https://api.openai.com/v1",
+				Model:   "gpt-5.4-mini",
+				APIKey:  "openai-key",
+			},
+			"deepseek": {
+				Type:    "openai-compatible",
+				BaseURL: "https://api.deepseek.com",
+				Model:   "deepseek-chat",
+				APIKey:  "deepseek-key",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.BaseURL != "https://api.deepseek.com" || cfg.Provider.Model != "deepseek-reasoner" {
+		t.Fatalf("expected provider section to switch to deepseek target, got %#v", cfg.Provider)
+	}
+	if cfg.ProviderRuntime.DefaultProvider != "deepseek" || cfg.ProviderRuntime.DefaultModel != "deepseek-reasoner" {
+		t.Fatalf("expected runtime defaults to switch, got %#v", cfg.ProviderRuntime)
+	}
+	if cfg.ProviderRuntime.Providers["openai"].Model != "gpt-5.4-mini" {
+		t.Fatalf("expected non-selected runtime provider to remain unchanged, got %#v", cfg.ProviderRuntime.Providers["openai"])
+	}
+	if cfg.ProviderRuntime.Providers["deepseek"].Model != "deepseek-reasoner" {
+		t.Fatalf("expected selected runtime provider model update, got %#v", cfg.ProviderRuntime.Providers["deepseek"])
+	}
+}
+
 func TestUpsertProviderFieldBackfillsModelForDeepseekEndpointWhenMissing(t *testing.T) {
 	workspace := t.TempDir()
 	configPath := filepath.Join(workspace, "config.json")

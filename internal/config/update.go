@@ -38,6 +38,35 @@ func UpsertProviderField(configPath, field, value string) (string, error) {
 	})
 }
 
+func UpsertProviderRuntimeSelection(configPath string, runtimeCfg ProviderRuntimeConfig) (string, error) {
+	configDocumentMu.Lock()
+	defer configDocumentMu.Unlock()
+	path, err := resolveWritableConfigPath(configPath)
+	if err != nil {
+		return "", err
+	}
+
+	selectedProvider := strings.ToLower(strings.TrimSpace(runtimeCfg.DefaultProvider))
+	selectedModel := strings.TrimSpace(runtimeCfg.DefaultModel)
+	runtimeCfg, providerCfg, err := SelectProviderRuntimeModel(runtimeCfg, selectedProvider, selectedModel)
+	if err != nil {
+		return "", err
+	}
+
+	raw, err := loadConfigDocument(path)
+	if err != nil {
+		return "", err
+	}
+	raw["provider"] = providerConfigDocument(providerCfg)
+	raw["provider_runtime"] = runtimeCfg
+	ensureDefaultConfigDocumentFields(raw)
+
+	if err := writeConfigDocument(path, raw); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 func upsertProviderValues(configPath string, values map[string]string) (string, error) {
 	configDocumentMu.Lock()
 	defer configDocumentMu.Unlock()
@@ -78,22 +107,7 @@ func upsertProviderValues(configPath string, values map[string]string) (string, 
 	}
 	raw["provider"] = providerSection
 	syncProviderRuntimeDocument(raw, providerSection)
-
-	if _, ok := raw["approval_policy"]; !ok {
-		raw["approval_policy"] = "on-request"
-	}
-	if _, ok := raw["approval_mode"]; !ok {
-		raw["approval_mode"] = "interactive"
-	}
-	if _, ok := raw["away_policy"]; !ok {
-		raw["away_policy"] = "auto_deny_continue"
-	}
-	if _, ok := raw["max_iterations"]; !ok {
-		raw["max_iterations"] = 32
-	}
-	if _, ok := raw["stream"]; !ok {
-		raw["stream"] = true
-	}
+	ensureDefaultConfigDocumentFields(raw)
 
 	if err := writeConfigDocument(path, raw); err != nil {
 		return "", err
@@ -124,6 +138,34 @@ func providerConfigFromDocument(providerSection map[string]any) ProviderConfig {
 	}
 	_ = json.Unmarshal(data, &providerCfg)
 	return providerCfg
+}
+
+func providerConfigDocument(providerCfg ProviderConfig) map[string]any {
+	raw := map[string]any{}
+	data, err := json.Marshal(providerCfg)
+	if err != nil {
+		return raw
+	}
+	_ = json.Unmarshal(data, &raw)
+	return raw
+}
+
+func ensureDefaultConfigDocumentFields(raw map[string]any) {
+	if _, ok := raw["approval_policy"]; !ok {
+		raw["approval_policy"] = "on-request"
+	}
+	if _, ok := raw["approval_mode"]; !ok {
+		raw["approval_mode"] = "interactive"
+	}
+	if _, ok := raw["away_policy"]; !ok {
+		raw["away_policy"] = "auto_deny_continue"
+	}
+	if _, ok := raw["max_iterations"]; !ok {
+		raw["max_iterations"] = 32
+	}
+	if _, ok := raw["stream"]; !ok {
+		raw["stream"] = true
+	}
 }
 
 func MutateMCPConfig(workspace, explicitPath string, mutator func(*MCPConfig) error) (Config, string, error) {

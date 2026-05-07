@@ -39,6 +39,74 @@ func (m model) renderSkillsModal() string {
 	return modalBoxStyle.Width(min(96, max(56, m.width-12))).Render(strings.Join(lines, "\n"))
 }
 
+func (m model) renderModelsModal() string {
+	title := "Models"
+	hint := "Up/Down to select, Enter to switch, Esc to close"
+	if normalizeModelPickerMode(m.modelPickerMode) == modelPickerModeDelete {
+		title = "Delete Model"
+		hint = "Up/Down to select, Enter to delete, Esc to close"
+	}
+	lines := []string{
+		modalTitleStyle.Render(title),
+		mutedStyle.Render(hint),
+		"",
+		"Current: " + activeModelLabel(m.cfg),
+		"",
+	}
+	targets := m.modelPickerTargets()
+	if len(targets) == 0 {
+		if normalizeModelPickerMode(m.modelPickerMode) == modelPickerModeDelete {
+			lines = append(lines, "No configured models available to delete.")
+		} else {
+			lines = append(lines, "No switchable models available.")
+		}
+	} else {
+		activeProvider, activeModel := activeProviderAndModel(m.cfg)
+		defaultProvider := strings.TrimSpace(m.cfg.ProviderRuntime.DefaultProvider)
+		defaultModel := strings.TrimSpace(m.cfg.ProviderRuntime.DefaultModel)
+		for i, target := range targets {
+			prefix := "  "
+			style := lipgloss.NewStyle()
+			if i == clamp(m.commandCursor, 0, len(targets)-1) {
+				prefix = "> "
+				style = style.Foreground(colorAccent).Bold(true)
+			}
+
+			label := prefix + modelTargetLabel(target)
+			flags := make([]string, 0, 2)
+			if strings.EqualFold(strings.TrimSpace(string(target.ProviderID)), activeProvider) &&
+				strings.TrimSpace(string(target.ModelID)) == activeModel {
+				flags = append(flags, "active")
+			}
+			if strings.EqualFold(strings.TrimSpace(string(target.ProviderID)), defaultProvider) &&
+				strings.TrimSpace(string(target.ModelID)) == defaultModel {
+				flags = append(flags, "default")
+			}
+			if len(flags) > 0 {
+				label += "  (" + strings.Join(flags, ", ") + ")"
+			}
+			lines = append(lines, style.Render(label))
+
+			metadata := target.ModelMetadata()
+			details := make([]string, 0, 3)
+			if metadata.Family != "" {
+				details = append(details, "family="+metadata.Family)
+			}
+			if metadata.ContextWindow > 0 {
+				details = append(details, fmt.Sprintf("context=%d", metadata.ContextWindow))
+			}
+			if metadata.UsageSource != "" {
+				details = append(details, "source="+metadata.UsageSource)
+			}
+			if len(details) > 0 {
+				lines = append(lines, mutedStyle.Render("   "+strings.Join(details, "  ")))
+			}
+			lines = append(lines, "")
+		}
+	}
+	return modalBoxStyle.Width(min(104, max(60, m.width-12))).Render(strings.Join(lines, "\n"))
+}
+
 func (m model) renderHelpModal() string {
 	modalWidth := min(88, max(54, m.width-16))
 	innerWidth := max(20, modalWidth-modalBoxStyle.GetHorizontalFrameSize())

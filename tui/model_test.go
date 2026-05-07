@@ -3985,7 +3985,7 @@ func TestFilteredCommandsShowsRootSelectorGroups(t *testing.T) {
 		usages = append(usages, item.Usage)
 	}
 
-	for _, want := range []string{"/help", "/session", "/skills-select", "/new", "/compact", "/commit <message>", "/undo-commit", "/quit"} {
+	for _, want := range []string{"/add model", "/delete model", "/help", "/session", "/skills-select", "/model picker", "/new", "/compact", "/commit <message>", "/undo-commit", "/quit"} {
 		if !containsString(usages, want) {
 			t.Fatalf("expected root selector to contain %q, got %v", want, usages)
 		}
@@ -4698,6 +4698,107 @@ func TestEscapeClosesSkillsPickerBeforeInterruptingRun(t *testing.T) {
 	}
 	if updated.interrupting {
 		t.Fatalf("expected interrupting to stay false when esc only closes skills picker")
+	}
+}
+
+func TestEscapeClosesModelPickerBeforeInterruptingRun(t *testing.T) {
+	canceled := false
+	m := model{
+		screen:        screenChat,
+		busy:          true,
+		runCancel:     func() { canceled = true },
+		modelsOpen:    true,
+		commandCursor: 2,
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	updated := got.(model)
+
+	if updated.modelsOpen {
+		t.Fatalf("expected esc to close model picker first")
+	}
+	if updated.commandCursor != 0 {
+		t.Fatalf("expected esc to reset model cursor, got %d", updated.commandCursor)
+	}
+	if canceled {
+		t.Fatalf("expected esc not to interrupt run while model picker is open")
+	}
+	if updated.interrupting {
+		t.Fatalf("expected interrupting to stay false when esc only closes model picker")
+	}
+}
+
+func TestModelPickerAllowsSingleTargetConfirmation(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "chatgpt-5.4",
+    "api_key": "openai-key"
+  },
+  "provider_runtime": {
+    "default_provider": "openai",
+    "default_model": "chatgpt-5.4",
+    "providers": {
+      "openai": {
+        "type": "openai-compatible",
+        "base_url": "https://api.openai.com/v1",
+        "model": "chatgpt-5.4",
+        "api_key": "openai-key"
+      }
+    }
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := model{
+		screen:          screenChat,
+		modelsOpen:      true,
+		modelPickerMode: modelPickerModeSwitch,
+		runner: &subAgentCommandRunnerStub{
+			models: []provider.ModelInfo{
+				{ProviderID: "openai", ModelID: "chatgpt-5.4"},
+			},
+		},
+		workspace:    workspace,
+		startupGuide: StartupGuide{ConfigPath: configPath},
+		cfg: config.Config{
+			Provider: config.ProviderConfig{
+				Type:    "openai-compatible",
+				BaseURL: "https://api.openai.com/v1",
+				Model:   "chatgpt-5.4",
+				APIKey:  "openai-key",
+			},
+			ProviderRuntime: config.ProviderRuntimeConfig{
+				DefaultProvider: "openai",
+				DefaultModel:    "chatgpt-5.4",
+				Providers: map[string]config.ProviderConfig{
+					"openai": {Type: "openai-compatible", BaseURL: "https://api.openai.com/v1", Model: "chatgpt-5.4", APIKey: "openai-key"},
+				},
+			},
+		},
+		discoveredModels: []provider.ModelInfo{
+			{ProviderID: "openai", ModelID: "chatgpt-5.4"},
+		},
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if updated.modelsOpen {
+		t.Fatal("expected enter to close the single-target model picker after switching")
+	}
+	if updated.cfg.ProviderRuntime.DefaultProvider != "openai" || updated.cfg.ProviderRuntime.DefaultModel != "chatgpt-5.4" {
+		t.Fatalf("expected single-target confirmation to preserve active target, got %#v", updated.cfg.ProviderRuntime)
+	}
+	if updated.statusNote != "Model already active." {
+		t.Fatalf("unexpected status note %q", updated.statusNote)
+	}
+	if len(updated.chatItems) < 2 || !strings.Contains(updated.chatItems[1].Body, "Model already active: openai/chatgpt-5.4.") {
+		t.Fatalf("expected already-active response in chat, got %#v", updated.chatItems)
 	}
 }
 

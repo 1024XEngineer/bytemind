@@ -49,6 +49,7 @@ func (m *model) openSkillsPicker() error {
 		return nil
 	}
 	m.skillsOpen = true
+	m.closeModelPicker()
 	m.commandOpen = false
 	m.sessionsOpen = false
 	m.commandCursor = 0
