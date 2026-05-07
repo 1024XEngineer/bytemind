@@ -744,10 +744,11 @@ func TestHandleAgentEventUsageUpdatedAccumulatesRealTokens(t *testing.T) {
 	}
 }
 
-func TestAssistantDeltaDoesNotChangeUsageWithoutOfficialUsage(t *testing.T) {
+func TestAssistantDeltaShowsEstimatedUsageUntilOfficialUsageArrives(t *testing.T) {
 	m := model{
-		tokenUsage:  newTokenUsageComponent(),
-		tokenBudget: 5000,
+		tokenUsage:     newTokenUsageComponent(),
+		tokenBudget:    5000,
+		tokenEstimator: newRealtimeTokenEstimator(""),
 	}
 
 	m.handleAgentEvent(Event{Type: EventRunStarted})
@@ -756,8 +757,8 @@ func TestAssistantDeltaDoesNotChangeUsageWithoutOfficialUsage(t *testing.T) {
 		Content: "This streamed delta should not change usage counters.",
 	})
 
-	if m.tokenUsedTotal != 0 || m.tokenOutput != 0 {
-		t.Fatalf("expected no provisional usage without official usage, used=%d output=%d", m.tokenUsedTotal, m.tokenOutput)
+	if m.tokenUsedTotal <= 0 || m.tokenOutput <= 0 {
+		t.Fatalf("expected estimated provisional usage after delta, used=%d output=%d", m.tokenUsedTotal, m.tokenOutput)
 	}
 
 	m.handleAgentEvent(Event{

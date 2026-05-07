@@ -169,8 +169,8 @@ func TestTokenUsageHelpers(t *testing.T) {
 	_ = c.SetUsage(200, 1000)
 
 	x, y, w, h := c.Layout(80)
-	if x < 0 || y < 0 || w <= 0 || h <= 0 {
-		t.Fatalf("expected non-negative layout with positive dimensions, got (%d,%d,%d,%d)", x, y, w, h)
+	if x < 0 || y != 0 || w <= 0 || h <= 0 {
+		t.Fatalf("expected top-row layout with positive dimensions, got (%d,%d,%d,%d)", x, y, w, h)
 	}
 	c.SetBounds(x, y, w, h)
 	if !c.contains(x, y) {

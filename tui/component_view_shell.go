@@ -35,18 +35,13 @@ func renderMainPanelDefault(m model) string {
 		m.conversationViewportComponent().Render(m),
 		m.scrollbarComponent().Render(m, m.viewport.Height, m.viewport.TotalLineCount(), m.viewport.YOffset),
 	)
-	if badge == "" {
-		return lipgloss.JoinVertical(lipgloss.Left, m.statusBarComponent().Render(m, max(24, m.chatPanelInnerWidth())), "", conversation)
-	}
-
-	badgeW := lipgloss.Width(badge)
-	statusW := max(12, width-badgeW-2)
-	status := m.statusBarComponent().Render(m, statusW)
-	header := lipgloss.JoinHorizontal(lipgloss.Top, status, "  ", badge)
-
-	parts := []string{header}
-	if popup := strings.TrimSpace(m.tokenUsage.PopupView()); popup != "" {
-		parts = append(parts, lipgloss.PlaceHorizontal(width, lipgloss.Right, popup))
+	status := m.statusBarComponent().Render(m, max(24, m.chatPanelInnerWidth()))
+	parts := []string{status}
+	if badge != "" {
+		parts = append(parts, lipgloss.PlaceHorizontal(width, lipgloss.Right, badge))
+		if popup := strings.TrimSpace(m.tokenUsage.PopupView()); popup != "" {
+			parts = append(parts, lipgloss.PlaceHorizontal(width, lipgloss.Right, popup))
+		}
 	}
 	parts = append(parts, "", conversation)
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)

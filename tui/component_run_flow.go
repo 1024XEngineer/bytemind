@@ -200,6 +200,7 @@ func (m *model) handleAgentEvent(event Event) {
 		m.phase = "responding"
 		m.statusNote = "LLM is responding..."
 		m.llmConnected = true
+		m.applyEstimatedDeltaUsage(event.Content)
 		m.appendAssistantDelta(event.Content)
 	case EventAssistantMessage:
 		m.llmConnected = true
