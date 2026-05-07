@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestComponentPromptSearchPaletteRendersEmptyAndResultStates(t *testing.T) {
@@ -589,6 +590,36 @@ func TestRenderRunSectionDividerLegacyUsesPreviousGlyph(t *testing.T) {
 	}
 }
 
+func TestRenderMentionPaletteEmptyAndAgentRecentMarkers(t *testing.T) {
+	empty := model{width: 90}
+	emptyView := stripANSI(empty.renderMentionPalette())
+	if !strings.Contains(emptyView, "No matching results.") {
+		t.Fatalf("expected empty mention palette state, got %q", emptyView)
+	}
+
+	m := model{
+		width:  90,
+		height: 10,
+		mentionResults: []mention.Candidate{
+			{Path: "explorer", BaseName: "explorer", Kind: "agent", Description: "scan code paths"},
+			{Path: "tui/model.go", BaseName: "model.go", Kind: "file"},
+		},
+		mentionRecent: map[string]int{
+			"explorer":     2,
+			"tui/model.go": 1,
+		},
+	}
+	view := stripANSI(m.renderMentionPalette())
+	for _, want := range []string{
+		"* * explorer  scan code paths",
+		"* + tui/model.go",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected mention palette to contain %q, got %q", want, view)
+		}
+	}
+}
+
 func TestCollapsibleParallelToolNameUsesAgentIDForDelegateSubagent(t *testing.T) {
 	withAgent, ok := collapsibleParallelToolName(chatEntry{
 		Kind:    "tool",
@@ -691,5 +722,169 @@ func TestRenderRunSectionGroupDelegateSubagentAggregation(t *testing.T) {
 		if !strings.Contains(expanded, want) {
 			t.Fatalf("expected expanded delegate group to contain %q, got %q", want, expanded)
 		}
+	}
+}
+
+func TestSummarizeDelegateSubAgentHandlesInvalidPayload(t *testing.T) {
+	agentName, task := summarizeDelegateSubAgent(`{"agent"`)
+	if agentName != "" || task != "" {
+		t.Fatalf("expected invalid payload to return empty summary, got %q %q", agentName, task)
+	}
+}
+
+func TestRenderToolTreeItemSubAgentToolsExpandedAndCollapsedBranches(t *testing.T) {
+	longSummary := strings.Repeat("S", 120)
+	item := chatEntry{
+		Kind:        "tool",
+		Title:       toolEntryTitle("run_shell"),
+		Status:      "queued",
+		CompactBody: "run very long command with lots of detail to force truncation behavior",
+		DetailLines: []string{
+			"first detail",
+			"   ",
+			"second detail",
+		},
+		SubAgentTools: []SubAgentToolCall{
+			{ToolName: "read_file", CompactBody: "a.go", Status: "done"},
+			{ToolName: "search_text", CompactBody: "\"needle\"", Status: "done"},
+			{ToolName: "run_shell", CompactBody: "go test ./...", Status: "running"},
+			{ToolName: "list_files", Summary: longSummary, Status: "done"},
+			{ToolName: "write_file", CompactBody: "b.go", Status: "done"},
+			{ToolName: "replace_in_file", CompactBody: "c.go", Status: "done"},
+		},
+	}
+
+	expanded := stripANSI(renderToolTreeItem(item, 48, true, true))
+	for _, want := range []string{"first detail", "second detail", "+1 more", "run_shell: go test ./..."} {
+		if !strings.Contains(expanded, want) {
+			t.Fatalf("expected expanded render to contain %q, got %q", want, expanded)
+		}
+	}
+	if strings.Contains(expanded, longSummary) {
+		t.Fatalf("expected long summary to be truncated in expanded render, got %q", expanded)
+	}
+
+	collapsed := stripANSI(renderToolTreeItem(item, 48, false, true))
+	if !strings.Contains(collapsed, "(ctrl+o to expand)") {
+		t.Fatalf("expected collapsed render to include expand hint, got %q", collapsed)
+	}
+}
+
+func TestSubAgentGroupingAndCollapsedToolHelpers(t *testing.T) {
+	if isSubAgentGroup([]chatEntry{{AgentID: "explorer"}}) {
+		t.Fatal("expected one-item group not to be treated as subagent aggregate")
+	}
+	if isSubAgentGroup([]chatEntry{
+		{Kind: "tool", Title: toolEntryTitle("delegate_subagent"), AgentID: "", Status: "done"},
+		{Kind: "tool", Title: toolEntryTitle("delegate_subagent"), AgentID: "", Status: "done"},
+	}) {
+		t.Fatal("expected empty agent id group not to aggregate")
+	}
+	if isSubAgentGroup([]chatEntry{
+		{Kind: "tool", Title: toolEntryTitle("delegate_subagent"), AgentID: "explorer", Status: "done"},
+		{Kind: "tool", Title: toolEntryTitle("delegate_subagent"), AgentID: "review", Status: "done"},
+	}) {
+		t.Fatal("expected mixed agent ids not to aggregate")
+	}
+	if !isSubAgentGroup([]chatEntry{
+		{Kind: "tool", Title: toolEntryTitle("delegate_subagent"), AgentID: "explorer", Status: "running"},
+		{Kind: "tool", Title: toolEntryTitle("delegate_subagent"), AgentID: "explorer", Status: "done"},
+	}) {
+		t.Fatal("expected same-agent delegate group to aggregate")
+	}
+
+	if got := renderSubAgentToolsCollapsed(nil, lipgloss.NewStyle(), "  "); got != "" {
+		t.Fatalf("expected empty collapsed tools output, got %q", got)
+	}
+}
+
+func TestRenderSubAgentBlockCoversFallbackDetailsAndNonDoneStates(t *testing.T) {
+	longSummary := strings.Repeat("L", 120)
+	expandedItem := chatEntry{
+		Status:      "running",
+		DetailLines: []string{"  ", "prompt line from details"},
+		SubAgentTools: []SubAgentToolCall{
+			{ToolName: "search_text", Summary: longSummary, Status: "done"},
+		},
+	}
+	expanded := stripANSI(renderSubAgentBlock(expandedItem, "explorer", "", 64, true, true))
+	if !strings.Contains(expanded, "prompt line from details") {
+		t.Fatalf("expected detail fallback line in expanded block, got %q", expanded)
+	}
+	if strings.Contains(expanded, longSummary) {
+		t.Fatalf("expected long subagent summary to truncate in expanded block, got %q", expanded)
+	}
+
+	doneWithTools := chatEntry{
+		Status: "completed",
+		SubAgentTools: []SubAgentToolCall{
+			{ToolName: "run_shell", CompactBody: "go test ./...", Status: "done"},
+		},
+	}
+	doneView := stripANSI(renderSubAgentBlock(doneWithTools, "review", "verify regressions", 100, false, true))
+	if !strings.Contains(doneView, "(ctrl+o to expand)") {
+		t.Fatalf("expected completed collapsed block with tools to include expand hint, got %q", doneView)
+	}
+
+	errorState := chatEntry{
+		Status: "failed",
+		SubAgentTools: []SubAgentToolCall{
+			{ToolName: "read_file", CompactBody: "model.go", Status: "done"},
+		},
+	}
+	errorView := stripANSI(renderSubAgentBlock(errorState, "review", "inspect failure", 100, false, true))
+	if !strings.Contains(errorView, "read_file(model.go)") {
+		t.Fatalf("expected failed state to show collapsed tool list, got %q", errorView)
+	}
+}
+
+func TestLiveInspectAndStatusHelpersAdditionalBranches(t *testing.T) {
+	fallbackSummary := summarizeLiveInspectGroup([]chatEntry{
+		{Kind: "tool", Title: toolEntryTitle("run_shell"), Status: "done"},
+		{Kind: "tool", Title: toolEntryTitle("apply_patch"), Status: "done"},
+	})
+	if fallbackSummary != "Running 2 tool calls" {
+		t.Fatalf("expected generic summary fallback, got %q", fallbackSummary)
+	}
+
+	hint := latestLiveInspectHint([]chatEntry{
+		{Kind: "tool", Status: "done", CompactBody: "older.go"},
+		{Kind: "tool", Status: "running", CompactBody: "  ", Body: "  "},
+	})
+	if hint != "older.go" {
+		t.Fatalf("expected hint fallback from non-running entry, got %q", hint)
+	}
+
+	if got := compactToolHint(chatEntry{CompactBody: " ", Body: " \n\nline from body"}); got != "line from body" {
+		t.Fatalf("expected compactToolHint body fallback, got %q", got)
+	}
+	if got := compactToolHint(chatEntry{CompactBody: " ", Body: " "}); got != "" {
+		t.Fatalf("expected compactToolHint empty fallback, got %q", got)
+	}
+
+	if got := aggregateToolGroupStatus([]chatEntry{{Status: "queued"}, {Status: "done"}}); got != "queued" {
+		t.Fatalf("expected queued aggregate status, got %q", got)
+	}
+
+	if got := renderToolTag("", "queued"); got != "" {
+		t.Fatalf("expected empty tool tag text to render empty string, got %q", got)
+	}
+	queuedTag := stripANSI(renderToolTag("queued", "queued"))
+	if !strings.Contains(strings.ToLower(queuedTag), "queued") {
+		t.Fatalf("expected queued tag text to be rendered, got %q", queuedTag)
+	}
+
+	queuedVisible := stripANSI(toolStatusIndicator("queued", true))
+	queuedHidden := stripANSI(toolStatusIndicator("queued", false))
+	if strings.TrimSpace(queuedVisible) == "" {
+		t.Fatalf("expected queued indicator to be visible when blinking is on, got %q", queuedVisible)
+	}
+	if strings.TrimSpace(queuedHidden) != "" {
+		t.Fatalf("expected queued indicator to be blank when blinking is off, got %q", queuedHidden)
+	}
+
+	thinking := stripANSI((model{stalled: true}).renderThinkingHeadline("thinking"))
+	if !strings.Contains(thinking, "thinking") {
+		t.Fatalf("expected stalled thinking headline text, got %q", thinking)
 	}
 }

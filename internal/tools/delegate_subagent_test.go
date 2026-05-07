@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -75,5 +76,74 @@ func TestDelegateSubAgentToolCallsHandlerAndReturnsJSON(t *testing.T) {
 	}
 	if !strings.Contains(output, `"ok":true`) || !strings.Contains(output, `"invocation_id":"subagent-1"`) {
 		t.Fatalf("unexpected output: %s", output)
+	}
+}
+
+func TestDelegateSubAgentToolDefinitionAndSpec(t *testing.T) {
+	tool := NewDelegateSubAgentTool([]AgentInfo{
+		{Name: "explorer", Description: "Read-only repo exploration"},
+		{Name: "review", Description: "Review changed code"},
+	})
+
+	def := tool.Definition()
+	if def.Function.Name != "delegate_subagent" {
+		t.Fatalf("expected function name delegate_subagent, got %q", def.Function.Name)
+	}
+	desc := def.Function.Description
+	for _, want := range []string{
+		"Available agents:",
+		"- explorer: Read-only repo exploration",
+		"- review: Review changed code",
+		"Write a detailed, self-contained task description",
+	} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("expected tool definition description to contain %q, got %q", want, desc)
+		}
+	}
+	params, ok := def.Function.Parameters["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected properties map in definition parameters, got %#v", def.Function.Parameters["properties"])
+	}
+	for _, key := range []string{"agent", "task", "scope", "run_in_background", "resume_session_id"} {
+		if _, exists := params[key]; !exists {
+			t.Fatalf("expected definition properties to contain %q", key)
+		}
+	}
+
+	spec := tool.Spec()
+	if spec.Name != "delegate_subagent" || spec.ReadOnly || !spec.ConcurrencySafe || spec.Destructive {
+		t.Fatalf("unexpected tool spec core flags: %#v", spec)
+	}
+	if spec.SafetyClass != SafetyClassSensitive || !spec.StrictArgs {
+		t.Fatalf("unexpected tool spec safety flags: %#v", spec)
+	}
+	if spec.DefaultTimeoutS != 120 || spec.MaxTimeoutS != 900 || spec.MaxResultChars != 64*1024 {
+		t.Fatalf("unexpected tool spec limits: %#v", spec)
+	}
+}
+
+func TestDelegateSubAgentToolRunInvalidJSONAndHandlerError(t *testing.T) {
+	tool := DelegateSubAgentTool{}
+	execCtx := &ExecutionContext{
+		DelegateSubAgent: func(context.Context, DelegateSubAgentRequest, *ExecutionContext) (DelegateSubAgentResult, error) {
+			return DelegateSubAgentResult{OK: true}, nil
+		},
+	}
+	_, err := tool.Run(context.Background(), json.RawMessage(`{"agent"`), execCtx)
+	if err == nil {
+		t.Fatal("expected invalid JSON error")
+	}
+	if execErr, ok := AsToolExecError(err); !ok || execErr.Code != ToolErrorInvalidArgs {
+		t.Fatalf("expected invalid args tool error, got %#v", err)
+	}
+
+	wantErr := errors.New("delegate failed")
+	_, err = tool.Run(context.Background(), json.RawMessage(`{"agent":"explorer","task":"scan"}`), &ExecutionContext{
+		DelegateSubAgent: func(context.Context, DelegateSubAgentRequest, *ExecutionContext) (DelegateSubAgentResult, error) {
+			return DelegateSubAgentResult{}, wantErr
+		},
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected handler error to be returned directly, got %v", err)
 	}
 }

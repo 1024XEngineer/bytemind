@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/1024XEngineer/bytemind/internal/agent"
 	"github.com/1024XEngineer/bytemind/internal/config"
@@ -25,6 +26,7 @@ type subAgentCommandRunnerStub struct {
 	builtinAgent subagentspkg.Agent
 	builtinOK    bool
 	lastRequest  tools.DelegateSubAgentRequest
+	subAgents    []subagentspkg.Agent
 	models       []provider.ModelInfo
 	warnings     []provider.Warning
 	modelsErr    error
@@ -78,7 +80,7 @@ func (s *subAgentCommandRunnerStub) ListModels(context.Context) ([]provider.Mode
 }
 
 func (s *subAgentCommandRunnerStub) ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic) {
-	return nil, nil
+	return s.subAgents, nil
 }
 
 func (s *subAgentCommandRunnerStub) FindSubAgent(string) (subagentspkg.Agent, bool) {
@@ -182,6 +184,164 @@ func TestCommandPaletteEnterOnModelOpensPicker(t *testing.T) {
 	}
 	if len(updated.chatItems) != 0 {
 		t.Fatalf("expected opening model picker not to append chat items, got %#v", updated.chatItems)
+	}
+}
+
+func TestRunAgentsCommandAppendsCommandExchange(t *testing.T) {
+	m := &model{
+		runner: &subAgentCommandRunnerStub{
+			subAgents: []subagentspkg.Agent{
+				{Name: "explorer", Scope: "builtin", Description: "Explore code"},
+				{Name: "review", Scope: "workspace", Description: ""},
+			},
+		},
+	}
+
+	if err := m.runAgentsCommand("/agents"); err != nil {
+		t.Fatalf("expected runAgentsCommand to succeed, got %v", err)
+	}
+	if !containsChatEntry(m.chatItems, "assistant", "Available subagents:") {
+		t.Fatalf("expected /agents exchange output in chat, got %#v", m.chatItems)
+	}
+	if !containsChatEntry(m.chatItems, "assistant", "- review [workspace]: No description provided.") {
+		t.Fatalf("expected missing descriptions to use fallback text, got %#v", m.chatItems)
+	}
+	if m.statusNote != "Discovered 2 subagent(s)." {
+		t.Fatalf("expected status note to reflect discovered count, got %q", m.statusNote)
+	}
+}
+
+func TestRenderSubAgentsViewFallbacks(t *testing.T) {
+	if got := renderSubAgentsView(nil); got != "No subagents available." {
+		t.Fatalf("expected empty agent set fallback, got %q", got)
+	}
+
+	view := renderSubAgentsView([]subagentspkg.Agent{
+		{Name: "review", Scope: "builtin", Description: "   "},
+	})
+	if !strings.Contains(view, "- review [builtin]: No description provided.") {
+		t.Fatalf("expected renderSubAgentsView description fallback, got %q", view)
+	}
+}
+
+func TestRenderSubAgentResultCardCompletedAndErrorStates(t *testing.T) {
+	completed := stripANSI(renderSubAgentResultCard(tools.DelegateSubAgentResult{
+		OK:           true,
+		Agent:        "",
+		TaskID:       "task-1",
+		InvocationID: "inv-1",
+		Summary:      "",
+	}, 32))
+	for _, want := range []string{
+		"SubAgent",
+		"subagent",
+		"COMPLETED",
+		"task: task-1",
+		"invocation: inv-1",
+		"SubAgent task completed.",
+	} {
+		if !strings.Contains(completed, want) {
+			t.Fatalf("expected completed card to contain %q, got %q", want, completed)
+		}
+	}
+
+	failed := stripANSI(renderSubAgentResultCard(tools.DelegateSubAgentResult{
+		OK:     false,
+		Agent:  "reviewer",
+		Status: "",
+		Error: &tools.DelegateSubAgentError{
+			Code:    "timeout",
+			Message: "worker exceeded time budget",
+		},
+	}, 80))
+	for _, want := range []string{"SubAgent", "reviewer", "FAILED", "Error:", "[timeout]", "worker exceeded time budget"} {
+		if !strings.Contains(failed, want) {
+			t.Fatalf("expected failed card to contain %q, got %q", want, failed)
+		}
+	}
+}
+
+func TestRenderSubAgentDispatchResultUsesCardRenderer(t *testing.T) {
+	out := stripANSI(renderSubAgentDispatchResult(tools.DelegateSubAgentResult{
+		OK:      true,
+		Agent:   "explorer",
+		Status:  "running",
+		Summary: "scanning files",
+	}))
+	for _, want := range []string{"SubAgent", "explorer", "RUNNING", "scanning files"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected dispatch output to contain %q, got %q", want, out)
+		}
+	}
+}
+
+func TestFormatElapsedBranches(t *testing.T) {
+	if got := formatElapsed(450 * time.Millisecond); got != "0s" {
+		t.Fatalf("expected sub-second duration to clamp to 0s, got %q", got)
+	}
+	if got := formatElapsed(9 * time.Second); got != "9s" {
+		t.Fatalf("expected seconds formatting, got %q", got)
+	}
+	if got := formatElapsed(125 * time.Second); got != "2m5s" {
+		t.Fatalf("expected minute-second formatting, got %q", got)
+	}
+}
+
+func TestRenderSubAgentProgressCardIncludesTaskAndElapsed(t *testing.T) {
+	progress := stripANSI(renderSubAgentProgressCard(
+		"explorer",
+		"inspect module boundaries and collect critical test paths for regression coverage",
+		"◐",
+		"12s",
+		40,
+	))
+	for _, want := range []string{"explorer", "Elapsed: 12s"} {
+		if !strings.Contains(progress, want) {
+			t.Fatalf("expected progress card to contain %q, got %q", want, progress)
+		}
+	}
+	if !strings.Contains(progress, "...") {
+		t.Fatalf("expected long task text to be truncated, got %q", progress)
+	}
+}
+
+func TestSubAgentStatusBadgeTypeAndBorderAccentMappings(t *testing.T) {
+	tests := []struct {
+		status    string
+		wantBadge string
+		wantColor string
+	}{
+		{status: "completed", wantBadge: "success", wantColor: string(semanticColors.Success)},
+		{status: "failed", wantBadge: "error", wantColor: string(semanticColors.Danger)},
+		{status: "accepted", wantBadge: "accent", wantColor: string(semanticColors.Accent)},
+		{status: "queued", wantBadge: "accent", wantColor: string(semanticColors.Accent)},
+		{status: "running", wantBadge: "accent", wantColor: string(semanticColors.Accent)},
+		{status: "unknown", wantBadge: "neutral", wantColor: string(semanticColors.Border)},
+	}
+
+	for _, tc := range tests {
+		if got := subAgentStatusBadgeType(tc.status); got != tc.wantBadge {
+			t.Fatalf("status=%q expected badge %q, got %q", tc.status, tc.wantBadge, got)
+		}
+		if got := string(subAgentBorderAccent(tc.status)); got != tc.wantColor {
+			t.Fatalf("status=%q expected border color %q, got %q", tc.status, tc.wantColor, got)
+		}
+	}
+}
+
+func TestWrapTextBreaksOnSpaceAndHardCuts(t *testing.T) {
+	spaceWrapped := wrapText("alpha beta gamma", 6)
+	if !strings.Contains(spaceWrapped, "\n") || !strings.Contains(spaceWrapped, "alpha") {
+		t.Fatalf("expected wrapText to split by width with spaces, got %q", spaceWrapped)
+	}
+
+	hardCut := wrapText("abcdefghij", 4)
+	if hardCut != "abcd\nefgh\nij" {
+		t.Fatalf("expected wrapText hard-cut fallback, got %q", hardCut)
+	}
+
+	if got := wrapText("short", 0); got != "short" {
+		t.Fatalf("expected non-positive width to return original text, got %q", got)
 	}
 }
 
