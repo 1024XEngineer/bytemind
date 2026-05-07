@@ -245,6 +245,7 @@ func (m *model) handleAgentEvent(event Event) {
 			newEntry.AgentID = agent
 			if task != "" {
 				newEntry.CompactBody = task
+				newEntry.TaskPrompt = task
 			}
 		}
 		m.appendChat(newEntry)
@@ -256,6 +257,16 @@ func (m *model) handleAgentEvent(event Event) {
 		status := rendered.Status
 		compactBody := rendered.CompactLine
 		m.finishToolCall(event.ToolCallID, event.ToolName, joinSummary(summary, lines), status, compactBody, lines)
+		// Set TotalToolCalls for completed subagent entries so the UI
+		// renders the "Done (N tool uses)" summary.
+		if strings.EqualFold(event.ToolName, "delegate_subagent") && event.ToolCallID != "" {
+			for i := len(m.chatItems) - 1; i >= 0; i-- {
+				if m.chatItems[i].Kind == "tool" && m.chatItems[i].ToolCallID == event.ToolCallID {
+					m.chatItems[i].TotalToolCalls = len(m.chatItems[i].SubAgentTools)
+					break
+				}
+			}
+		}
 		m.statusNote = summary
 		m.phase = "thinking"
 		if m.interruptSafe && m.interrupting && m.pendingInterrupt && m.runCancel != nil {

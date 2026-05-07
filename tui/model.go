@@ -144,6 +144,8 @@ type chatEntry struct {
 	CompactBody    string   // collapsed tree view text (e.g. "Read model.go (1-50)")
 	DetailLines    []string // expanded detail lines
 	SubAgentTools  []SubAgentToolCall // tool calls made by a subagent
+	TaskPrompt     string   // full task prompt text for expanded subagent view
+	TotalToolCalls int      // total tool call count for completed subagent summary
 }
 
 type viewportSelectionPoint struct {
@@ -2165,6 +2167,10 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 				status := rendered.Status
 				compactBody := rendered.CompactLine
 				toolCalls := resolveSubAgentToolCallsFromMeta(message)
+				taskPrompt := ""
+				if strings.EqualFold(name, "delegate_subagent") {
+					_, taskPrompt = resolveDelegateSubAgentArgs(callArgs, part.ToolResult.ToolUseID)
+				}
 				items = append(items, chatEntry{
 					Kind:           "tool",
 					Title:          toolEntryTitle(name),
@@ -2174,6 +2180,8 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 					CompactBody:    compactBody,
 					DetailLines:    lines,
 					SubAgentTools:  toolCalls,
+					TaskPrompt:     taskPrompt,
+					TotalToolCalls: len(toolCalls),
 				})
 			}
 			userText := strings.Join(userTextParts, "")
@@ -2215,6 +2223,10 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 			status := rendered.Status
 			compactBody := rendered.CompactLine
 			toolCalls := resolveSubAgentToolCallsFromMeta(message)
+			taskPrompt := ""
+			if strings.EqualFold(name, "delegate_subagent") {
+				_, taskPrompt = resolveDelegateSubAgentArgs(callArgs, message.ToolCallID)
+			}
 			items = append(items, chatEntry{
 				Kind:           "tool",
 				Title:          toolEntryTitle(name),
@@ -2224,6 +2236,8 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 				CompactBody:    compactBody,
 				DetailLines:    lines,
 				SubAgentTools:  toolCalls,
+				TaskPrompt:     taskPrompt,
+				TotalToolCalls: len(toolCalls),
 			})
 		}
 	}
@@ -2241,6 +2255,16 @@ func resolveAgentIDFromArgs(callArgs map[string]string, toolCallID string) strin
 		agent = "subagent"
 	}
 	return agent
+}
+
+// resolveDelegateSubAgentArgs extracts the agent name and task prompt from
+// cached delegate_subagent arguments.
+func resolveDelegateSubAgentArgs(callArgs map[string]string, toolCallID string) (agent, task string) {
+	raw, ok := callArgs[toolCallID]
+	if !ok {
+		return "", ""
+	}
+	return summarizeDelegateSubAgent(raw)
 }
 
 // resolveFullSubAgentResult checks if the message Meta contains the full

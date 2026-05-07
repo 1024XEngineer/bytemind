@@ -802,7 +802,12 @@ func renderSubAgentToolsCollapsed(tools []SubAgentToolCall, connectorStyle lipgl
 }
 
 // renderSubAgentBlock renders a delegate_subagent entry as a standalone block
-// with agent name header and internal tool tree using ├─/└─ connectors.
+// with agent name header and internal tool tree.
+//
+// Three rendering modes:
+//  1. Running — last 3 tool calls inline, "+N more" hint.
+//  2. Completed, collapsed — "Done (N tool uses)" summary line.
+//  3. Expanded (ctrl+o) — task prompt + all tool calls with tree connectors.
 func renderSubAgentBlock(item chatEntry, agentID, compactBody string, width int, toolDetailsExpanded bool, runningIndicatorVisible bool) string {
 	style := resolveToolRunSectionStyle(item.Status)
 	contentWidth := max(8, width-style.GetHorizontalFrameSize())
@@ -827,45 +832,42 @@ func renderSubAgentBlock(item chatEntry, agentID, compactBody string, width int,
 	}
 
 	body := header
-
-	// Detail lines from the parent entry (ctrl+O expanded prompt/response).
-	if toolDetailsExpanded && len(item.DetailLines) > 0 {
-		detailLines := make([]string, 0, len(item.DetailLines))
-		for _, detail := range item.DetailLines {
-			detail = strings.TrimSpace(detail)
-			if detail == "" {
-				continue
-			}
-			detailLines = append(detailLines, connectorStyle.Render(toolTreeChar)+detail)
-		}
-		if len(detailLines) > 0 {
-			body += "\n" + indent + strings.Join(detailLines, "\n"+indent)
-		}
+	isRunning := strings.EqualFold(item.Status, "running")
+	isDone := !isRunning && strings.EqualFold(item.Status, "done") || strings.EqualFold(item.Status, "completed")
+	toolCount := item.TotalToolCalls
+	if toolCount < len(item.SubAgentTools) {
+		toolCount = len(item.SubAgentTools)
 	}
+	hasTools := len(item.SubAgentTools) > 0 || toolCount > 0
 
-	// Internal tool tree.
-	if len(item.SubAgentTools) > 0 {
-		if toolDetailsExpanded {
-			const maxSubAgentToolsDisplay = 5
+	// Expanded mode: show full prompt + all tools.
+	if toolDetailsExpanded {
+		// Task prompt section.
+		if item.TaskPrompt != "" {
+			body += "\n" + indent + connectorStyle.Render("└ Prompt: "+
+				runewidth.Truncate(item.TaskPrompt, contentWidth-12, "…"))
+		} else if len(item.DetailLines) > 0 {
+			for _, detail := range item.DetailLines {
+				detail = strings.TrimSpace(detail)
+				if detail == "" {
+					continue
+				}
+				body += "\n" + indent + connectorStyle.Render(toolTreeChar+" "+detail)
+			}
+		}
+
+		// All tool calls with ├─/└─ tree connectors.
+		if len(item.SubAgentTools) > 0 {
 			tools := item.SubAgentTools
-			hidden := 0
-			if len(tools) > maxSubAgentToolsDisplay {
-				hidden = len(tools) - maxSubAgentToolsDisplay
-				tools = tools[len(tools)-maxSubAgentToolsDisplay:]
-			}
-			subLines := make([]string, 0, len(tools)+1)
-			if hidden > 0 {
-				subLines = append(subLines, connectorStyle.Render(fmt.Sprintf("└─ +%d more (ctrl+o to expand)", hidden)))
-			}
 			for i, st := range tools {
 				connector := "├─"
-				if i == len(tools)-1 && hidden == 0 {
+				if i == len(tools)-1 {
 					connector = "└─"
 				}
-				if st.Status == "running" {
-					connector = "├─"
-				}
 				indicator := connector
+				if st.Status == "running" {
+					indicator = "├─"
+				}
 				text := st.ToolName
 				if st.CompactBody != "" {
 					text += "(" + st.CompactBody + ")"
@@ -876,14 +878,25 @@ func renderSubAgentBlock(item chatEntry, agentID, compactBody string, width int,
 					}
 					text += "(" + summaryText + ")"
 				}
-				subLines = append(subLines, connectorStyle.Render(indicator)+" "+text)
+				body += "\n" + indent + connectorStyle.Render(indicator)+" "+text
 			}
-			if len(subLines) > 0 {
-				body += "\n" + indent + strings.Join(subLines, "\n"+indent)
-			}
-		} else {
-			body += "\n" + indent + renderSubAgentToolsCollapsed(item.SubAgentTools, connectorStyle, indent)
 		}
+	} else if isRunning && hasTools {
+		// Running: show last 3 tools inline.
+		body += "\n" + indent + renderSubAgentToolsCollapsed(item.SubAgentTools, connectorStyle, indent)
+	} else if isDone && hasTools {
+		// Completed: "Done (N tool uses)" summary.
+		summary := fmt.Sprintf("⎿  Done (%d tool uses)", toolCount)
+		if len(item.SubAgentTools) == 0 {
+			summary += " (ctrl+o to expand)"
+		}
+		body += "\n" + indent + connectorStyle.Render(summary)
+		if len(item.SubAgentTools) > 0 {
+			body += "\n" + indent + mutedStyle.Render("(ctrl+o to expand)")
+		}
+	} else if hasTools {
+		// Other states (e.g. error): show tool count.
+		body += "\n" + indent + renderSubAgentToolsCollapsed(item.SubAgentTools, connectorStyle, indent)
 	}
 
 	return style.Width(contentWidth).Render(body)
