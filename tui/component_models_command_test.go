@@ -67,12 +67,14 @@ func TestRunModelsCommandAppendsResponse(t *testing.T) {
 		models: []provider.ModelInfo{{
 			ProviderID: "openai",
 			ModelID:    "gpt-5.4",
-			Metadata:   map[string]string{"family": "openai"},
+			Metadata:   map[string]string{"family": "openai", "context_window": "128000"},
 		}},
 	}
 	m := &model{
-		runner: runner,
+		runner:     runner,
+		tokenUsage: newTokenUsageComponent(),
 		cfg: config.Config{
+			TokenQuota: 1000,
 			ProviderRuntime: config.ProviderRuntimeConfig{
 				DefaultProvider: "openai",
 				DefaultModel:    "gpt-5.4",
@@ -94,6 +96,9 @@ func TestRunModelsCommandAppendsResponse(t *testing.T) {
 	}
 	if !strings.Contains(m.chatItems[1].Body, "active: openai/gpt-5.4") {
 		t.Fatalf("expected assistant response to include model status, got:\n%s", m.chatItems[1].Body)
+	}
+	if m.tokenBudget != 128000 || m.tokenUsage.total != 128000 {
+		t.Fatalf("expected discovered model metadata to refresh token budget, got budget=%d total=%d", m.tokenBudget, m.tokenUsage.total)
 	}
 }
 

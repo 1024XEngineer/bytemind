@@ -20,6 +20,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/mention"
 	notifypkg "github.com/1024XEngineer/bytemind/internal/notify"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/provider"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	"github.com/1024XEngineer/bytemind/internal/tools"
 
@@ -1441,7 +1442,15 @@ func TestStartupGuideAcceptsValidKeyAndDisablesGuide(t *testing.T) {
 				Model:     "gpt-5.4",
 				APIKeyEnv: "BYTEMIND_API_KEY",
 			},
+			ProviderRuntime: config.ProviderRuntimeConfig{
+				DefaultProvider: "old",
+				DefaultModel:    "old-model",
+				Providers: map[string]config.ProviderConfig{
+					"old": {Type: "openai-compatible", Model: "old-model"},
+				},
+			},
 		},
+		discoveredModels: []provider.ModelInfo{{ProviderID: "old", ModelID: "old-model"}},
 		startupGuide: StartupGuide{
 			Active:       true,
 			Status:       "Bytemind needs a working API key before chat can start.",
@@ -1457,6 +1466,15 @@ func TestStartupGuideAcceptsValidKeyAndDisablesGuide(t *testing.T) {
 	}
 	if !strings.Contains(updated.statusNote, "Provider configured and verified") {
 		t.Fatalf("unexpected status after setup: %q", updated.statusNote)
+	}
+	if updated.cfg.ProviderRuntime.DefaultProvider != "openai" || updated.cfg.ProviderRuntime.DefaultModel != "gpt-5.4" {
+		t.Fatalf("expected startup guide to sync provider runtime defaults, got %#v", updated.cfg.ProviderRuntime)
+	}
+	if providerCfg := updated.cfg.ProviderRuntime.Providers["openai"]; providerCfg.Model != "gpt-5.4" || providerCfg.ResolveAPIKey() != "test-key" {
+		t.Fatalf("expected startup guide to sync provider runtime provider, got %#v", providerCfg)
+	}
+	if len(updated.discoveredModels) != 0 {
+		t.Fatalf("expected startup guide reconfiguration to clear discovered model cache, got %#v", updated.discoveredModels)
 	}
 
 	written, err := os.ReadFile(configPath)

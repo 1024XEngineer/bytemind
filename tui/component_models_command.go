@@ -24,6 +24,7 @@ func (m *model) runModelsCommand(input string, fields []string) error {
 	if err != nil {
 		return err
 	}
+	m.setDiscoveredModels(models)
 	response := formatModelsStatus(m.cfg, models, warnings)
 	m.appendCommandExchange(input, response)
 	m.statusNote = fmt.Sprintf("Listed %d model(s).", len(models))

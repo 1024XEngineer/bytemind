@@ -20,6 +20,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/mention"
 	notifypkg "github.com/1024XEngineer/bytemind/internal/notify"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/provider"
 	"github.com/1024XEngineer/bytemind/internal/session"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -451,6 +452,7 @@ type model struct {
 	tokenOutput                int
 	tokenContext               int
 	tokenHasOfficialUsage      bool
+	discoveredModels           []provider.ModelInfo
 	tempEstimatedOutput        int
 	tokenEstimator             *realtimeTokenEstimator
 	promptHistoryLoaded        bool
@@ -602,9 +604,7 @@ func newModel(opts Options) model {
 		m.initializeStartupGuide()
 	}
 	m.restoreTokenUsageFromSession(opts.Session)
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, 0)
-	m.tokenUsage.SetUnavailable(!m.tokenHasOfficialUsage)
-	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
+	m.syncTokenUsageComponent()
 	m.ensureSessionImageAssets()
 	m.ensurePastedContentState()
 	m.syncPlanActionPicker()

@@ -130,3 +130,47 @@ func TestRunnerListModelsRejectsInvalidState(t *testing.T) {
 		t.Fatal("expected invalid provider runtime to fail")
 	}
 }
+
+func TestRunnerUpdateProviderSyncsRuntimeAndClearsModelCache(t *testing.T) {
+	runner := NewRunner(Options{
+		Config: config.Config{
+			ProviderRuntime: config.ProviderRuntimeConfig{
+				DefaultProvider: "old",
+				DefaultModel:    "old-model",
+				Providers: map[string]config.ProviderConfig{
+					"old": {Type: "openai-compatible", Model: "old-model"},
+				},
+			},
+		},
+		Client: &fakeClient{},
+	})
+	runner.storeModelsCache(
+		[]provider.ModelInfo{{ProviderID: "old", ModelID: "old-model"}},
+		[]provider.Warning{{ProviderID: "old", Reason: "old-warning"}},
+	)
+
+	nextClient := &fakeClient{}
+	runner.UpdateProvider(config.ProviderConfig{
+		Type:  "anthropic",
+		Model: "claude-sonnet-4",
+	}, nextClient)
+
+	if _, _, ok := runner.listModelsFromCache(); ok {
+		t.Fatal("expected provider update to clear model cache")
+	}
+	if runner.config.ProviderRuntime.DefaultProvider != "anthropic" {
+		t.Fatalf("expected runtime default provider to sync, got %q", runner.config.ProviderRuntime.DefaultProvider)
+	}
+	if runner.config.ProviderRuntime.DefaultModel != "claude-sonnet-4" {
+		t.Fatalf("expected runtime default model to sync, got %q", runner.config.ProviderRuntime.DefaultModel)
+	}
+	if _, ok := runner.config.ProviderRuntime.Providers["old"]; !ok {
+		t.Fatalf("expected existing providers to be preserved, got %#v", runner.config.ProviderRuntime.Providers)
+	}
+	if runner.config.ProviderRuntime.Providers["anthropic"].Model != "claude-sonnet-4" {
+		t.Fatalf("expected anthropic provider entry to be updated, got %#v", runner.config.ProviderRuntime.Providers["anthropic"])
+	}
+	if got := runner.GetClient(); got != nextClient {
+		t.Fatalf("expected GetClient to unwrap updated route-aware client")
+	}
+}

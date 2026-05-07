@@ -92,6 +92,53 @@ func TestLegacyProviderRuntimeConfigNormalizesProviderIDs(t *testing.T) {
 	}
 }
 
+func TestSyncProviderRuntimeWithProviderUpdatesDefaultAndPreservesOthers(t *testing.T) {
+	runtime := SyncProviderRuntimeWithProvider(ProviderRuntimeConfig{
+		DefaultProvider: "old",
+		DefaultModel:    "old-model",
+		AllowFallback:   true,
+		Providers: map[string]ProviderConfig{
+			"old": {Type: "openai-compatible", Model: "old-model"},
+		},
+	}, ProviderConfig{
+		Type:      "anthropic",
+		BaseURL:   "https://api.anthropic.com",
+		Model:     "claude-sonnet-4",
+		APIKeyEnv: "ANTHROPIC_API_KEY",
+	})
+
+	if runtime.DefaultProvider != "anthropic" {
+		t.Fatalf("expected default provider to sync to anthropic, got %q", runtime.DefaultProvider)
+	}
+	if runtime.DefaultModel != "claude-sonnet-4" {
+		t.Fatalf("expected default model to sync, got %q", runtime.DefaultModel)
+	}
+	if !runtime.AllowFallback {
+		t.Fatal("expected existing allow_fallback setting to be preserved")
+	}
+	if _, ok := runtime.Providers["old"]; !ok {
+		t.Fatalf("expected existing provider entry to be preserved, got %#v", runtime.Providers)
+	}
+	anthropic := runtime.Providers["anthropic"]
+	if anthropic.Model != "claude-sonnet-4" || anthropic.APIKeyEnv != "ANTHROPIC_API_KEY" {
+		t.Fatalf("expected synced anthropic provider entry, got %#v", anthropic)
+	}
+}
+
+func TestSyncProviderRuntimeWithProviderBuildsMissingProvidersMap(t *testing.T) {
+	runtime := SyncProviderRuntimeWithProvider(ProviderRuntimeConfig{}, ProviderConfig{
+		Type:  "openai-compatible",
+		Model: "gpt-5.4",
+	})
+
+	if runtime.DefaultProvider != "openai" || runtime.DefaultModel != "gpt-5.4" {
+		t.Fatalf("unexpected runtime defaults %#v", runtime)
+	}
+	if providerCfg, ok := runtime.Providers["openai"]; !ok || providerCfg.Type != "openai" || providerCfg.Model != "gpt-5.4" {
+		t.Fatalf("unexpected provider entry %#v", runtime.Providers)
+	}
+}
+
 func TestConfigLoadRejectsDuplicateNormalizedProviderRuntimeIDs(t *testing.T) {
 	workspace := t.TempDir()
 	writeProviderRuntimeConfigFile(t, workspace, map[string]any{

@@ -134,9 +134,7 @@ func (m *model) newSession() error {
 	m.statusNote = "Started a new session."
 	m.chatAutoFollow = true
 	m.restoreTokenUsageFromSession(next)
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, 0)
-	m.tokenUsage.SetUnavailable(!m.tokenHasOfficialUsage)
-	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
+	m.syncTokenUsageComponent()
 	m.inputImageRefs = make(map[int]llm.AssetID, 8)
 	m.inputImageMentions = make(map[string]llm.AssetID, 8)
 	m.orphanedImages = make(map[llm.AssetID]time.Time, 8)
@@ -194,9 +192,7 @@ func (m *model) resumeSession(prefix string) error {
 	m.statusNote = "Resumed session " + shortID(next.ID)
 	m.chatAutoFollow = true
 	m.restoreTokenUsageFromSession(next)
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, 0)
-	m.tokenUsage.SetUnavailable(!m.tokenHasOfficialUsage)
-	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
+	m.syncTokenUsageComponent()
 	m.inputImageRefs = make(map[int]llm.AssetID, 8)
 	m.inputImageMentions = make(map[string]llm.AssetID, 8)
 	m.orphanedImages = make(map[llm.AssetID]time.Time, 8)

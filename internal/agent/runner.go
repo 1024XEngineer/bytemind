@@ -283,6 +283,17 @@ func (r *Runner) storeModelsCache(models []provider.ModelInfo, warnings []provid
 	r.modelsCacheWarnings = append([]provider.Warning(nil), warnings...)
 }
 
+func (r *Runner) clearModelsCache() {
+	if r == nil {
+		return
+	}
+	r.modelsCacheMu.Lock()
+	defer r.modelsCacheMu.Unlock()
+	r.modelsCacheAt = time.Time{}
+	r.modelsCache = nil
+	r.modelsCacheWarnings = nil
+}
+
 func (r *Runner) modelID() string {
 	if r == nil {
 		return ""

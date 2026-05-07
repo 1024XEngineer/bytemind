@@ -1187,6 +1187,17 @@ func TestUpsertProviderAPIKeyUpdatesExistingConfig(t *testing.T) {
     "api_key": "old-key",
     "api_key_env": "BYTEMIND_API_KEY"
   },
+  "provider_runtime": {
+    "default_provider": "old",
+    "default_model": "old-model",
+    "allow_fallback": true,
+    "providers": {
+      "old": {
+        "type": "openai-compatible",
+        "model": "old-model"
+      }
+    }
+  },
   "custom": "keep-me"
 }`), 0o644); err != nil {
 		t.Fatal(err)
@@ -1217,6 +1228,22 @@ func TestUpsertProviderAPIKeyUpdatesExistingConfig(t *testing.T) {
 	}
 	if doc["custom"] != "keep-me" {
 		t.Fatalf("expected custom field to be preserved, got %#v", doc["custom"])
+	}
+	cfg, err := Load(workspace, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ProviderRuntime.DefaultProvider != "openai" || cfg.ProviderRuntime.DefaultModel != "GPT-5.4" {
+		t.Fatalf("expected provider runtime defaults to sync, got %#v", cfg.ProviderRuntime)
+	}
+	if !cfg.ProviderRuntime.AllowFallback {
+		t.Fatal("expected provider runtime allow_fallback to be preserved")
+	}
+	if _, ok := cfg.ProviderRuntime.Providers["old"]; !ok {
+		t.Fatalf("expected existing runtime provider to be preserved, got %#v", cfg.ProviderRuntime.Providers)
+	}
+	if providerCfg := cfg.ProviderRuntime.Providers["openai"]; providerCfg.ResolveAPIKey() != "new-key" {
+		t.Fatalf("expected synced runtime provider to include updated API key, got %#v", providerCfg)
 	}
 }
 
@@ -1284,6 +1311,49 @@ func TestUpsertProviderFieldUpdatesModelBaseURLAndFamily(t *testing.T) {
 	}
 	if cfg.Provider.Family != "moonshot" {
 		t.Fatalf("expected normalized provider family, got %q", cfg.Provider.Family)
+	}
+}
+
+func TestUpsertProviderFieldSyncsProviderRuntime(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "old-model",
+    "api_key": "test-key"
+  },
+  "provider_runtime": {
+    "default_provider": "old",
+    "default_model": "old-model",
+    "providers": {
+      "old": {
+        "type": "openai-compatible",
+        "model": "old-model"
+      }
+    }
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := UpsertProviderField(configPath, "model", "gpt-5.4"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ProviderRuntime.DefaultProvider != "openai" || cfg.ProviderRuntime.DefaultModel != "gpt-5.4" {
+		t.Fatalf("expected provider runtime defaults to sync, got %#v", cfg.ProviderRuntime)
+	}
+	if _, ok := cfg.ProviderRuntime.Providers["old"]; !ok {
+		t.Fatalf("expected existing runtime provider to be preserved, got %#v", cfg.ProviderRuntime.Providers)
+	}
+	if providerCfg := cfg.ProviderRuntime.Providers["openai"]; providerCfg.Model != "gpt-5.4" || providerCfg.ResolveAPIKey() != "test-key" {
+		t.Fatalf("expected synced runtime provider entry, got %#v", providerCfg)
 	}
 }
 

@@ -4,7 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/1024XEngineer/bytemind/internal/config"
 	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/provider"
+	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
 func TestApplyUsageEarlyReturnWhenPayloadHasNoTokens(t *testing.T) {
@@ -122,5 +125,58 @@ func TestRestoreTokenUsageFromSessionNilResetsCounters(t *testing.T) {
 	}
 	if m.tempEstimatedOutput != 0 {
 		t.Fatalf("expected nil-session restore to clear temporary estimate, got %d", m.tempEstimatedOutput)
+	}
+}
+
+func TestNewModelRestoresTokenBudgetOnFirstRender(t *testing.T) {
+	sess := session.New(t.TempDir())
+	sess.Messages = append(sess.Messages, llm.Message{
+		Role:  llm.RoleAssistant,
+		Usage: &llm.Usage{TotalTokens: 42},
+	})
+
+	m := newModel(Options{
+		Session: sess,
+		Config: config.Config{
+			TokenQuota: 12345,
+			Provider:   config.ProviderConfig{Model: "gpt-5.4"},
+		},
+		Workspace: t.TempDir(),
+	})
+
+	if m.tokenBudget != 12345 {
+		t.Fatalf("expected restored token budget 12345, got %d", m.tokenBudget)
+	}
+	if m.tokenUsage.total != 12345 {
+		t.Fatalf("expected token monitor total to preserve budget, got %d", m.tokenUsage.total)
+	}
+	if m.tokenUsage.used != 42 {
+		t.Fatalf("expected token monitor to show restored usage, got %d", m.tokenUsage.used)
+	}
+	if m.tokenUsage.unavailable {
+		t.Fatal("expected restored session usage to mark token monitor available")
+	}
+}
+
+func TestRefreshTokenBudgetUsesDiscoveredModelMetadata(t *testing.T) {
+	m := model{
+		cfg: config.Config{
+			TokenQuota: 1000,
+			ProviderRuntime: config.ProviderRuntimeConfig{
+				DefaultProvider: "openai",
+				DefaultModel:    "gpt-5.4",
+			},
+		},
+		discoveredModels: []provider.ModelInfo{{
+			ProviderID: "openai",
+			ModelID:    "gpt-5.4",
+			Metadata:   map[string]string{"context_window": "128000"},
+		}},
+	}
+
+	m.refreshTokenBudget()
+
+	if m.tokenBudget != 128000 {
+		t.Fatalf("expected model context window budget, got %d", m.tokenBudget)
 	}
 }

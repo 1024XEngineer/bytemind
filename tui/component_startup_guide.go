@@ -93,6 +93,10 @@ func (m *model) verifyAndFinalizeStartupAPIKey(rawInput string) error {
 		m.runner.UpdateProvider(checkCfg, client)
 	}
 	m.cfg.Provider = checkCfg
+	m.cfg.ProviderRuntime = config.SyncProviderRuntimeWithProvider(m.cfg.ProviderRuntime, checkCfg)
+	m.discoveredModels = nil
+	m.refreshTokenBudget()
+	m.syncTokenUsageComponent()
 	m.startupGuide.Active = false
 	m.statusNote = "Provider configured and verified. You can start chatting."
 	m.llmConnected = true
@@ -132,6 +136,8 @@ func (m *model) applyStartupConfigField(field, value string) error {
 	default:
 		return fmt.Errorf("unsupported setup field: %s", field)
 	}
+	m.cfg.ProviderRuntime = config.SyncProviderRuntimeWithProvider(m.cfg.ProviderRuntime, m.cfg.Provider)
+	m.discoveredModels = nil
 
 	writtenPath, err := config.UpsertProviderField(m.startupGuide.ConfigPath, field, persistValue)
 	if err != nil {

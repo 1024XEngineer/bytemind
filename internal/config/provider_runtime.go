@@ -37,3 +37,27 @@ func LegacyProviderRuntimeConfig(cfg ProviderConfig) ProviderRuntimeConfig {
 		},
 	}
 }
+
+func SyncProviderRuntimeWithProvider(runtimeCfg ProviderRuntimeConfig, providerCfg ProviderConfig) ProviderRuntimeConfig {
+	legacy := LegacyProviderRuntimeConfig(providerCfg)
+	providerID := strings.ToLower(strings.TrimSpace(legacy.DefaultProvider))
+	if providerID == "" {
+		return runtimeCfg
+	}
+	providerEntry := legacy.Providers[providerID]
+
+	providers := make(map[string]ProviderConfig, len(runtimeCfg.Providers)+1)
+	for id, cfg := range runtimeCfg.Providers {
+		normalizedID := strings.ToLower(strings.TrimSpace(id))
+		if normalizedID == "" {
+			continue
+		}
+		providers[normalizedID] = cfg
+	}
+	providers[providerID] = providerEntry
+
+	runtimeCfg.DefaultProvider = providerID
+	runtimeCfg.DefaultModel = strings.TrimSpace(providerEntry.Model)
+	runtimeCfg.Providers = providers
+	return runtimeCfg
+}

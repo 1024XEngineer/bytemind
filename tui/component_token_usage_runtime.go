@@ -53,6 +53,24 @@ func (m *model) SetUsage(used, total int) tea.Cmd {
 	return m.tokenUsage.SetUsage(used, m.tokenBudget)
 }
 
+func (m *model) syncTokenUsageComponent() {
+	if m == nil {
+		return
+	}
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	m.tokenUsage.SetUnavailable(!m.tokenHasOfficialUsage)
+	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
+}
+
+func (m *model) setDiscoveredModels(models []provider.ModelInfo) {
+	if m == nil {
+		return
+	}
+	m.discoveredModels = append([]provider.ModelInfo(nil), models...)
+	m.refreshTokenBudget()
+	m.syncTokenUsageComponent()
+}
+
 func (m model) renderStartupGuidePanel() string {
 	width := max(24, m.commandPaletteWidth())
 	title := strings.TrimSpace(m.startupGuide.Title)
@@ -142,16 +160,23 @@ func (m *model) refreshTokenBudget() {
 	}
 	budget := max(1, m.cfg.TokenQuota)
 	runtimeCfg := m.cfg.ProviderRuntime
-	if len(runtimeCfg.Providers) == 0 {
-		runtimeCfg = config.LegacyProviderRuntimeConfig(m.cfg.Provider)
-	}
 	providerID := strings.TrimSpace(runtimeCfg.DefaultProvider)
 	modelID := strings.TrimSpace(runtimeCfg.DefaultModel)
 	if modelID == "" {
 		modelID = strings.TrimSpace(m.cfg.Provider.Model)
 	}
+	if providerID == "" {
+		legacy := config.LegacyProviderRuntimeConfig(m.cfg.Provider)
+		providerID = strings.TrimSpace(legacy.DefaultProvider)
+		if modelID == "" {
+			modelID = strings.TrimSpace(legacy.DefaultModel)
+		}
+		if len(runtimeCfg.Providers) == 0 {
+			runtimeCfg = legacy
+		}
+	}
 	if providerID != "" && modelID != "" {
-		registry := provider.NewModelRegistry(runtimeCfg, nil)
+		registry := provider.NewModelRegistry(runtimeCfg, m.discoveredModels)
 		if contextWindow := registry.ContextWindow(provider.ProviderID(providerID), provider.ModelID(modelID)); contextWindow > 0 {
 			budget = contextWindow
 		}
