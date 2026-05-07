@@ -2,71 +2,96 @@
 
 ## 系统要求
 
-| 项目     | 要求                                         |
-| -------- | -------------------------------------------- |
-| 操作系统 | macOS 12+、Linux（glibc 2.17+）、Windows 10+ |
-| 架构     | amd64、arm64                                 |
-| 磁盘空间 | < 20 MB                                      |
+| 项目     | 要求                                 |
+| -------- | ------------------------------------ |
+| 操作系统 | Windows 10+、Linux、MacOS 12+        |
+| 架构     | amd64、arm64                         |
+| Linux    | glibc 2.17+                          |
+| 磁盘空间 | < 20 MB                              |
 
 安装脚本会自动检测平台并下载对应二进制，**无需预先安装 Go**。
 
 ## 一键安装（推荐）
 
-### macOS / Linux
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
-```
-
-### Windows（PowerShell）
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
 
 ```powershell
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
+默认安装到 `%USERPROFILE%\bin\bytemind.exe`。安装完成后，脚本会输出实际路径。
+
 :::warning Windows 用户请复制 PowerShell 命令
-在 Windows PowerShell 或 CMD 中不要运行 `curl ... install.sh | bash`。那条命令只适用于 macOS、Linux 或正常工作的 WSL；在 Windows 终端里运行会启动 WSL。若看到 `ext4.vhdx`、`HCS` 或 `Bash/Service/CreateInstance` 错误，请改用上面的 PowerShell 命令重新安装。
+在 Windows PowerShell 或 CMD 中不要运行 `curl ... install.sh | bash`。那条命令只适用于 MacOS、Linux 或正常工作的 WSL；在 Windows 终端里运行会启动 WSL。若看到 `ext4.vhdx`、`HCS` 或 `Bash/Service/CreateInstance` 错误，请改用上面的 PowerShell 命令重新安装。
 :::
 
-安装完成后，脚本会输出安装路径。若终端提示找不到 `bytemind` 命令，请参考下方 [PATH 配置](#配置-path) 一节。
+</Tab>
+
+<Tab title="Linux">
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
+```
+
+默认安装到 `~/bin/bytemind`。安装完成后，脚本会输出实际路径。
+
+</Tab>
+
+<Tab title="MacOS">
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
+```
+
+默认安装到 `~/bin/bytemind`。安装完成后，脚本会输出实际路径。
+
+</Tab>
+</Tabs>
+
+若终端提示找不到 `bytemind` 命令，请参考下方 [PATH 配置](#配置-path)。
 
 ## 安装指定版本
 
-生产环境建议固定版本，避免自动更新带来的行为变化。
+生产环境建议固定版本，避免自动更新带来的行为变化。将 `vX.Y.Z` 替换为 [GitHub Releases](https://github.com/1024XEngineer/bytemind/releases) 页面中的发布标签。
 
-### macOS / Linux
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=vX.Y.Z bash
-```
-
-### Windows（PowerShell）
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
 
 ```powershell
 $env:BYTEMIND_VERSION = 'vX.Y.Z'
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
-:::tip 查看可用版本
-将 `vX.Y.Z` 替换为 [GitHub Releases](https://github.com/1024XEngineer/bytemind/releases) 页面中的发布标签。
-:::
+</Tab>
+
+<Tab title="Linux">
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=vX.Y.Z bash
+```
+
+</Tab>
+
+<Tab title="MacOS">
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=vX.Y.Z bash
+```
+
+</Tab>
+</Tabs>
 
 ## 配置 PATH
 
-安装脚本默认将二进制写入：
+如果 `bytemind --version` 提示找不到命令，将安装目录加入 `PATH`。
 
-- **Linux / macOS**：`~/bin/bytemind`
-- **Windows**：`%USERPROFILE%\bin\bytemind.exe`
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
 
-如果 `bytemind --version` 提示找不到命令，将对应目录加入 `PATH`：
-
-```bash
-# bash / zsh（写入 ~/.bashrc 或 ~/.zshrc）
-export PATH="$HOME/bin:$PATH"
-```
+默认路径：`%USERPROFILE%\bin\bytemind.exe`
 
 ```powershell
-# PowerShell（当前终端立即生效，并对后续新终端永久生效）
 $target = "$env:USERPROFILE\bin"
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (-not (($userPath -split ";") -contains $target)) {
@@ -76,32 +101,6 @@ $env:Path = $target + ";" + $env:Path
 ```
 
 如果更新后 `bytemind --version` 仍显示旧版本，先确认 PowerShell 实际命中的二进制：
-
-```powershell
-Get-Command bytemind -All
-& "$env:USERPROFILE\bin\bytemind.exe" --version
-```
-
-若 `Get-Command` 第一条不是 `%USERPROFILE%\bin\bytemind.exe`，说明 PATH 中有更靠前的旧副本；删除旧副本，或把 `%USERPROFILE%\bin` 移到它前面。
-
-也可通过 `BYTEMIND_INSTALL_DIR` 环境变量自定义安装目录：
-
-### macOS / Linux
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_INSTALL_DIR=/usr/local/bin bash
-```
-
-### Windows（PowerShell）
-
-```powershell
-$env:BYTEMIND_INSTALL_DIR = "$env:LOCALAPPDATA\Programs\ByteMind"
-iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
-```
-
-## Windows：更新后仍显示旧版本
-
-如果安装脚本显示下载了新版本，但 `bytemind --version` 仍输出旧版本，通常是 PATH 中有旧的 `bytemind.exe` 排在新安装目录前面。直接按下面步骤处理：
 
 ```powershell
 Get-Command bytemind -All | Select-Object Source
@@ -125,6 +124,62 @@ bytemind --version
 Get-Command bytemind -All | Select-Object Source
 bytemind --version
 ```
+
+</Tab>
+
+<Tab title="Linux">
+
+默认路径：`~/bin/bytemind`
+
+```bash
+# bash / zsh（写入 ~/.bashrc 或 ~/.zshrc）
+export PATH="$HOME/bin:$PATH"
+```
+
+</Tab>
+
+<Tab title="MacOS">
+
+默认路径：`~/bin/bytemind`
+
+```bash
+# zsh（写入 ~/.zshrc）
+export PATH="$HOME/bin:$PATH"
+```
+
+</Tab>
+</Tabs>
+
+## 自定义安装目录
+
+也可通过 `BYTEMIND_INSTALL_DIR` 环境变量自定义安装目录。
+
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
+
+```powershell
+$env:BYTEMIND_INSTALL_DIR = "$env:LOCALAPPDATA\Programs\ByteMind"
+iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
+```
+
+</Tab>
+
+<Tab title="Linux">
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_INSTALL_DIR=/usr/local/bin bash
+```
+
+</Tab>
+
+<Tab title="MacOS">
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_INSTALL_DIR=/usr/local/bin bash
+```
+
+</Tab>
+</Tabs>
 
 ## 从源码构建
 
@@ -150,27 +205,41 @@ bytemind --version
 
 输出示例：
 
-```
+```text
 vX.Y.Z
 ```
 
 ## 更新
 
-重新执行安装脚本即可覆盖更新到最新版本：
+重新执行安装脚本即可覆盖更新到最新版本。
 
-### macOS / Linux
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
-```
-
-### Windows（PowerShell）
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
 
 ```powershell
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
 如果你在 Windows 终端中误运行了 `curl ... install.sh | bash` 并看到 WSL 错误，不需要修复 ByteMind；改运行上面的 PowerShell 命令即可。WSL 与 Windows 是两套环境，在 WSL 中安装的 `~/bin/bytemind` 不会更新 Windows 的 `%USERPROFILE%\bin\bytemind.exe`。
+
+</Tab>
+
+<Tab title="Linux">
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
+```
+
+</Tab>
+
+<Tab title="MacOS">
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
+```
+
+</Tab>
+</Tabs>
 
 如需禁用更新检查提示，在配置文件中设置：
 
@@ -182,15 +251,10 @@ iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/
 
 ## 卸载
 
-删除对应的二进制文件即可完成卸载：
+删除对应的二进制文件即可完成卸载。
 
-### macOS / Linux
-
-```bash
-rm ~/bin/bytemind
-```
-
-### Windows（PowerShell）
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
 
 ```powershell
 Remove-Item "$env:USERPROFILE\bin\bytemind.exe"
@@ -203,4 +267,27 @@ Get-Command bytemind -All | Select-Object Source
 Remove-Item "<上一步显示的 bytemind.exe 路径>"
 ```
 
-会话记录和配置保存在 `.bytemind/` 目录中，需要时可一并删除。Windows 默认位置是 `%USERPROFILE%\.bytemind`。
+会话记录和配置保存在 `%USERPROFILE%\.bytemind`。
+
+</Tab>
+
+<Tab title="Linux">
+
+```bash
+rm ~/bin/bytemind
+```
+
+会话记录和配置保存在 `~/.bytemind/`。
+
+</Tab>
+
+<Tab title="MacOS">
+
+```bash
+rm ~/bin/bytemind
+```
+
+会话记录和配置保存在 `~/.bytemind/`。
+
+</Tab>
+</Tabs>

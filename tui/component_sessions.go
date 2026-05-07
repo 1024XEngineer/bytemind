@@ -129,7 +129,6 @@ func (m *model) newSession() error {
 	m.plan = planpkg.State{}
 	m.mode = modeBuild
 	m.chatItems = nil
-	m.toolRuns = nil
 	m.streamingIndex = -1
 	m.statusNote = "Started a new session."
 	m.chatAutoFollow = true
@@ -187,7 +186,7 @@ func (m *model) resumeSession(prefix string) error {
 	m.screen = screenChat
 	m.plan = copyPlanState(next.Plan)
 	m.mode = toAgentMode(next.Mode)
-	m.chatItems, m.toolRuns = rebuildSessionTimeline(next)
+	m.chatItems = rebuildSessionTimeline(next)
 	m.streamingIndex = -1
 	m.statusNote = "Resumed session " + shortID(next.ID)
 	m.chatAutoFollow = true

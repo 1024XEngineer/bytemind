@@ -35,6 +35,17 @@ func (m *model) appendAssistantDelta(delta string) {
 	if delta == "" {
 		return
 	}
+	if m.streamingIndex < 0 {
+		candidate := m.suppressedAssistantDelta + delta
+		if shouldRenderThinkingFromDelta(candidate) {
+			m.suppressedAssistantDelta = candidate
+			return
+		}
+		if m.suppressedAssistantDelta != "" {
+			delta = m.suppressedAssistantDelta + delta
+			m.suppressedAssistantDelta = ""
+		}
+	}
 	if m.streamingIndex >= 0 && m.streamingIndex < len(m.chatItems) {
 		current := m.chatItems[m.streamingIndex].Body
 		if m.chatItems[m.streamingIndex].Status == "pending" ||
@@ -75,6 +86,7 @@ func (m *model) applyAssistantDeltaPresentation(item *chatEntry) {
 }
 
 func (m *model) finishAssistantMessage(content string) {
+	m.suppressedAssistantDelta = ""
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return
@@ -92,10 +104,7 @@ func (m *model) finishAssistantMessage(content string) {
 	if m.streamingIndex >= 0 && m.streamingIndex < len(m.chatItems) {
 		current := &m.chatItems[m.streamingIndex]
 		if current.Kind == "assistant" && (current.Status == "thinking" || current.Status == "pending") {
-			current.Title = thinkingLabel
-			current.Status = "thinking_done"
-			current.Body = m.thinkingDoneText()
-			m.streamingIndex = -1
+			m.removeStreamingAssistantPlaceholder()
 			m.chatItems = append(m.chatItems, chatEntry{
 				Kind:   "assistant",
 				Title:  assistantLabel,
@@ -142,24 +151,15 @@ func (m *model) removeThinkingCard() {
 	}
 }
 
-func (m *model) finalizeAssistantTurnForTool(toolName string) {
+func (m *model) finalizeAssistantTurnForTool(_ string) {
+	m.suppressedAssistantDelta = ""
 	if m.streamingIndex >= 0 && m.streamingIndex < len(m.chatItems) {
 		item := &m.chatItems[m.streamingIndex]
 		if item.Kind == "assistant" {
-			if strings.TrimSpace(item.Body) == "" && (item.Status == "thinking" || item.Status == "pending") {
-				item.Title = thinkingLabel
-				item.Status = "thinking"
-				m.streamingIndex = -1
-				return
-			}
-			if !isMeaningfulThinking(item.Body, toolName) {
+			if item.Status == "thinking" || item.Status == "pending" || item.Status == "streaming" {
 				m.removeStreamingAssistantPlaceholder()
 				return
 			}
-			item.Title = thinkingLabel
-			item.Status = "thinking"
-			m.streamingIndex = -1
-			return
 		}
 	}
 }
@@ -230,6 +230,48 @@ func (m *model) finishLatestToolCall(name, body, status string) {
 		Title:  title,
 		Body:   body,
 		Status: status,
+	})
+}
+
+// finishToolCall finds the tool chatEntry by ToolCallID (precise match)
+// and updates its Body, Status, CompactBody, and DetailLines.
+// Falls back to title-based matching when ToolCallID is empty.
+func (m *model) finishToolCall(toolCallID, name, body, status string, compactBody string, detailLines []string) {
+	// Try precise ToolCallID match first
+	if toolCallID != "" {
+		for i := len(m.chatItems) - 1; i >= 0; i-- {
+			if m.chatItems[i].Kind == "tool" && m.chatItems[i].ToolCallID == toolCallID {
+				m.chatItems[i].Body = body
+				m.chatItems[i].Status = status
+				m.chatItems[i].CompactBody = compactBody
+				m.chatItems[i].DetailLines = detailLines
+				return
+			}
+		}
+	}
+	// Fallback: match by title (same as finishLatestToolCall)
+	title := toolEntryTitle(name)
+	for i := len(m.chatItems) - 1; i >= 0; i-- {
+		if m.chatItems[i].Kind != "tool" {
+			continue
+		}
+		if m.chatItems[i].Title != title && strings.TrimSpace(name) != "" {
+			continue
+		}
+		m.chatItems[i].Body = body
+		m.chatItems[i].Status = status
+		m.chatItems[i].CompactBody = compactBody
+		m.chatItems[i].DetailLines = detailLines
+		return
+	}
+	// Last resort: append as new entry
+	m.appendChat(chatEntry{
+		Kind:        "tool",
+		Title:       title,
+		Body:        body,
+		Status:      status,
+		CompactBody: compactBody,
+		DetailLines: detailLines,
 	})
 }
 
@@ -308,17 +350,8 @@ func (m *model) failLatestAssistant(errText string) {
 
 func (m *model) failRunningToolCalls() {
 	for i := range m.chatItems {
-		if m.chatItems[i].Kind == "tool" && m.chatItems[i].Status == "running" {
+		if m.chatItems[i].Kind == "tool" && (m.chatItems[i].Status == "running" || m.chatItems[i].Status == "queued") {
 			m.chatItems[i].Status = "error"
-		}
-	}
-}
-
-func (m *model) failRunningToolRuns() {
-	for i := range m.toolRuns {
-		if m.toolRuns[i].Status == "running" {
-			m.toolRuns[i].Status = "error"
-			m.toolRuns[i].Summary = "Tool call interrupted by error."
 		}
 	}
 }

@@ -32,6 +32,7 @@ type Event struct {
 	UserInput     string
 	Content       string
 	ToolName      string
+	ToolCallID    string
 	ToolArguments string
 	ToolResult    string
 	Error         string

@@ -2,8 +2,10 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -39,8 +41,8 @@ func (m *model) beginRunWithInput(promptInput RunPromptInput, mode, note string)
 	m.lastRunDuration = 0
 	m.runIndicatorState = runIndicatorRunning
 	m.chatAutoFollow = true
+	m.suppressedAssistantDelta = ""
 	spinnerTick := m.resetThinkingSpinner()
-	m.ensureThinkingCard()
 	if m.width > 0 && m.height > 0 {
 		m.syncLayoutForCurrentScreen()
 		m.refreshViewport()
@@ -196,41 +198,57 @@ func (m *model) handleAgentEvent(event Event) {
 	switch event.Type {
 	case EventRunStarted:
 		m.tempEstimatedOutput = 0
+		m.lastTokenReceivedAt = time.Now()
 	case EventAssistantDelta:
 		m.phase = "responding"
 		m.statusNote = "LLM is responding..."
 		m.llmConnected = true
 		m.applyEstimatedDeltaUsage(event.Content)
+		m.lastTokenReceivedAt = time.Now()
 		m.appendAssistantDelta(event.Content)
 	case EventAssistantMessage:
 		m.llmConnected = true
+		m.lastTokenReceivedAt = time.Now()
 		m.finishAssistantMessage(event.Content)
 	case EventToolCallStarted:
 		m.phase = "tool"
 		m.llmConnected = true
+		m.lastTokenReceivedAt = time.Now()
+		m.suppressedAssistantDelta = ""
+		// Demote previously running tools to queued
+		for i := range m.chatItems {
+			if m.chatItems[i].Kind == "tool" && m.chatItems[i].Status == "running" {
+				m.chatItems[i].Status = "queued"
+			}
+		}
 		m.finalizeAssistantTurnForTool(event.ToolName)
 		m.populateLatestThinkingToolStep(event.ToolName, "", "running")
+		renderer := GetToolRenderer(event.ToolName)
+		label := "TOOL"
+		if renderer != nil {
+			label = renderer.DisplayLabel()
+		} else {
+			label = toolDisplayLabel(event.ToolName)
+		}
+		title := label + " | " + event.ToolName
+		compactBody, detailLines := summarizeToolCallStart(event.ToolName, event.ToolArguments)
 		m.appendChat(chatEntry{
-			Kind:   "tool",
-			Title:  toolEntryTitle(event.ToolName),
-			Body:   "",
-			Status: "running",
-		})
-		m.toolRuns = append(m.toolRuns, toolRun{
-			Name:    event.ToolName,
-			Summary: "Tool call started.",
-			Status:  "running",
+			Kind:        "tool",
+			Title:       title,
+			Body:        "",
+			Status:      "running",
+			CompactBody: compactBody,
+			DetailLines: detailLines,
+			ToolCallID:  event.ToolCallID,
 		})
 		m.statusNote = "Running tool: " + event.ToolName
 	case EventToolCallCompleted:
-		summary, lines, status := summarizeTool(event.ToolName, event.ToolResult)
-		m.finishLatestToolCall(event.ToolName, joinSummary(summary, lines), status)
-		if len(m.toolRuns) > 0 {
-			index := len(m.toolRuns) - 1
-			m.toolRuns[index].Summary = summary
-			m.toolRuns[index].Lines = lines
-			m.toolRuns[index].Status = status
-		}
+		rendered := renderToolPayload(event.ToolName, event.ToolResult)
+		summary := rendered.Summary
+		lines := rendered.DetailLines
+		status := rendered.Status
+		compactBody := rendered.CompactLine
+		m.finishToolCall(event.ToolCallID, event.ToolName, joinSummary(summary, lines), status, compactBody, lines)
 		m.statusNote = summary
 		m.phase = "thinking"
 		if m.interruptSafe && m.interrupting && m.pendingInterrupt && m.runCancel != nil {
@@ -278,6 +296,53 @@ func (m *model) handleAgentEvent(event Event) {
 	}
 }
 
+func summarizeToolCallStart(toolName, rawArgs string) (string, []string) {
+	switch strings.TrimSpace(strings.ToLower(toolName)) {
+	case "search_text", "web_search":
+		var args struct {
+			Query string `json:"query"`
+		}
+		if json.Unmarshal([]byte(rawArgs), &args) == nil {
+			query := strings.TrimSpace(args.Query)
+			if query != "" {
+				return fmt.Sprintf("%q", query), []string{"query: " + query}
+			}
+		}
+	case "read_file":
+		var args struct {
+			Path      string `json:"path"`
+			StartLine int    `json:"start_line"`
+			EndLine   int    `json:"end_line"`
+		}
+		if json.Unmarshal([]byte(rawArgs), &args) == nil {
+			path := strings.TrimSpace(args.Path)
+			if path != "" {
+				name := filepath.ToSlash(path)
+				if args.StartLine > 0 || args.EndLine > 0 {
+					return fmt.Sprintf("%s (%d-%d)", name, args.StartLine, args.EndLine), []string{
+						"path: " + name,
+						fmt.Sprintf("range: %d-%d", args.StartLine, args.EndLine),
+					}
+				}
+				return name, []string{"path: " + name}
+			}
+		}
+	case "list_files":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal([]byte(rawArgs), &args) == nil {
+			path := strings.TrimSpace(args.Path)
+			if path == "" {
+				path = "."
+			}
+			path = filepath.ToSlash(path)
+			return path, []string{"path: " + path}
+		}
+	}
+	return "", nil
+}
+
 func (m model) startRunCmd(runCtx context.Context, runID int, prompt RunPromptInput, mode string) tea.Cmd {
 	return func() tea.Msg {
 		if m.runner == nil {
@@ -320,7 +385,10 @@ func (m *model) handleSubAgentEvent(event Event) {
 			Status: "running",
 		})
 	case EventToolCallCompleted:
-		summary, lines, status := summarizeTool(event.ToolName, event.ToolResult)
+		rendered := renderToolPayload(event.ToolName, event.ToolResult)
+		summary := rendered.Summary
+		lines := rendered.DetailLines
+		status := rendered.Status
 		body := joinSummary(summary, lines)
 		for i := len(m.subAgentStreamItems) - 1; i >= 0; i-- {
 			item := &m.subAgentStreamItems[i]

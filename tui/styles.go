@@ -4,8 +4,8 @@ import "github.com/charmbracelet/lipgloss"
 
 const (
 	landingBuildAccent = "#4CB7FF"
-	landingPlanAccent  = "#D86BFF"
-	landingPlanBg      = "#2C123D"
+	landingPlanAccent  = "#9D8AC8"
+	landingPlanBg      = "#231421"
 )
 
 type semanticColorTokens struct {
@@ -398,6 +398,9 @@ var (
 
 	toolDetailStyle = lipgloss.NewStyle().
 			Foreground(semanticColors.TextMuted)
+
+	toolExpandHintStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextMuted)
 
 	toolErrorSummaryStyle = lipgloss.NewStyle().
 				Foreground(semanticColors.Danger).
