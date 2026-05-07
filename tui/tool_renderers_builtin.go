@@ -341,6 +341,7 @@ func (delegateSubAgentRenderer) Render(payload string) ToolRenderResult {
 		OK       bool   `json:"ok"`
 		Status   string `json:"status,omitempty"`
 		Agent    string `json:"agent"`
+		Task     string `json:"task,omitempty"`
 		Summary  string `json:"summary,omitempty"`
 		Error    *struct {
 			Code    string `json:"code"`
@@ -352,11 +353,6 @@ func (delegateSubAgentRenderer) Render(payload string) ToolRenderResult {
 		} `json:"transcript,omitempty"`
 	}
 	if json.Unmarshal([]byte(payload), &result) == nil {
-		summary := fmt.Sprintf("SubAgent %s", result.Agent)
-		if text := strings.TrimSpace(result.Summary); text != "" {
-			summary += ": " + compact(text, 72)
-		}
-
 		status := "done"
 		if !result.OK {
 			status = "error"
@@ -364,16 +360,27 @@ func (delegateSubAgentRenderer) Render(payload string) ToolRenderResult {
 			status = "running"
 		}
 
-		detailLines := make([]string, 0, len(result.Transcript))
+		// Summary: stats overview (agent name + summary or tool count).
+		summary := fmt.Sprintf("SubAgent %s", result.Agent)
+		if text := strings.TrimSpace(result.Summary); text != "" {
+			summary += ": " + compact(text, 72)
+		}
+
+		// DetailLines (Ctrl+O expanded): Prompt + transcript + Response.
+		detailLines := make([]string, 0, len(result.Transcript)+4)
+		if task := strings.TrimSpace(result.Task); task != "" {
+			detailLines = append(detailLines, "Prompt: "+compactToolText(task, 72))
+			detailLines = append(detailLines, "")
+		}
 		for _, msg := range result.Transcript {
-			role := msg.Role
-			if role == "assistant" {
-				role = "agent"
-			}
 			text := compactToolText(msg.Content, 72)
 			if text != "" {
-				detailLines = append(detailLines, fmt.Sprintf("[%s] %s", role, text))
+				detailLines = append(detailLines, text)
 			}
+		}
+		if text := strings.TrimSpace(result.Summary); text != "" {
+			detailLines = append(detailLines, "")
+			detailLines = append(detailLines, "Response: "+compact(text, 72))
 		}
 
 		compactLine := result.Agent

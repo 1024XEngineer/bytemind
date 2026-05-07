@@ -50,6 +50,7 @@ type DelegateSubAgentResult struct {
 	Error              *DelegateSubAgentError `json:"error,omitempty"`
 	Transcript         []TranscriptMessage    `json:"transcript,omitempty"`
 	TranscriptSessionID string                `json:"transcript_session_id,omitempty"`
+	Task               string                `json:"task,omitempty"`
 }
 
 type DelegateSubAgentHandler func(context.Context, DelegateSubAgentRequest, *ExecutionContext) (DelegateSubAgentResult, error)

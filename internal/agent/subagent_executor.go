@@ -120,6 +120,7 @@ func (e *defaultSubAgentExecutor) Execute(
 	}
 
 	result := buildSubAgentResultFromAnswer(answer, input.InvocationID, input.Agent, childSession.Messages)
+	result.Task = strings.TrimSpace(input.Request.Task)
 
 	// Persist child session transcript (best-effort).
 	if input.Store != nil && childSession != nil {
@@ -342,7 +343,51 @@ func subAgentFailureResult(invocationID, agent, code, message string, retryable 
 func messagesToTranscript(messages []llm.Message) []tools.TranscriptMessage {
 	result := make([]tools.TranscriptMessage, 0, len(messages))
 	for _, msg := range messages {
-		content := strings.TrimSpace(msg.Text())
+		var content string
+		switch msg.Role {
+		case llm.RoleUser:
+			// User messages may contain tool results (raw JSON) or the original task.
+			// Only include messages that have meaningful text parts.
+			hasText := false
+			for _, part := range msg.Parts {
+				if part.Text != nil && strings.TrimSpace(part.Text.Value) != "" {
+					hasText = true
+					break
+				}
+			}
+			if !hasText {
+				continue // skip tool result messages
+			}
+			var parts []string
+			for _, part := range msg.Parts {
+				if part.Text != nil {
+					if t := strings.TrimSpace(part.Text.Value); t != "" {
+						parts = append(parts, t)
+					}
+				}
+			}
+			content = strings.Join(parts, "\n")
+		case llm.RoleAssistant:
+			var parts []string
+			for _, part := range msg.Parts {
+				switch {
+				case part.Text != nil:
+					if t := strings.TrimSpace(part.Text.Value); t != "" {
+						parts = append(parts, t)
+					}
+				case part.ToolUse != nil:
+					name := part.ToolUse.Name
+					args := strings.TrimSpace(part.ToolUse.Arguments)
+					if len(args) > 80 {
+						args = args[:77] + "..."
+					}
+					parts = append(parts, name+"("+args+")")
+				}
+			}
+			content = strings.Join(parts, "\n")
+		default:
+			continue
+		}
 		if content == "" {
 			continue
 		}
