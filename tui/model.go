@@ -335,6 +335,8 @@ type hiddenPasteProbeState struct {
 }
 
 var commandItems = []commandItem{
+	{Name: "/add model", Usage: "/add model", Description: "Open the setup flow to add or configure a provider/model.", Kind: "command"},
+	{Name: "/delete model", Usage: "/delete model", Description: "Open the configured model picker and remove one target.", Kind: "command"},
 	{Name: "/help", Usage: "/help", Description: "Show usage and supported commands.", Kind: "command"},
 	{Name: "/session", Usage: "/session", Description: "Open the recent session list.", Kind: "command"},
 	{Name: "/agents", Usage: "/agents [name]", Description: "List available subagents or show one definition.", Kind: "command"},
@@ -344,6 +346,7 @@ var commandItems = []commandItem{
 	{Name: "/mcp list", Usage: "/mcp list", Description: "List configured MCP servers and current status.", Kind: "command"},
 	{Name: "/mcp help", Usage: "/mcp help", Description: "Show MCP command help.", Kind: "command"},
 	{Name: "/mcp show", Usage: "/mcp show <id>", Description: "Show one MCP server config and runtime state.", Kind: "command"},
+	{Name: "/model picker", Usage: "/model picker", Description: "Open the model picker and switch the active provider/model.", Kind: "command"},
 	{Name: "/models", Usage: "/models", Description: "Show configured providers and available models.", Kind: "command"},
 	{Name: "/new", Usage: "/new", Description: "Start a fresh session in this workspace.", Kind: "command"},
 	{Name: "/compact", Usage: "/compact", Description: "Compress long session history into a continuation summary.", Kind: "command"},
@@ -391,6 +394,8 @@ type model struct {
 	mode                       agentMode
 	sessionsOpen               bool
 	skillsOpen                 bool
+	modelsOpen                 bool
+	modelPickerMode            string
 	helpOpen                   bool
 	commandOpen                bool
 	mentionOpen                bool
@@ -1085,7 +1090,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	}
 
-	if !m.sessionsOpen && !m.helpOpen && !m.commandOpen && !m.planActionOpen && m.approval == nil {
+	if !m.sessionsOpen && !m.helpOpen && !m.commandOpen && !m.modelsOpen && !m.planActionOpen && m.approval == nil {
 		return m.defaultInputComponent().Update(m, msg)
 	}
 
@@ -1518,6 +1523,10 @@ func (m model) handleEscKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.commandOpen {
 		return m.handleCommandPaletteKey(msg)
 	}
+	if m.modelsOpen {
+		m.closeModelPicker()
+		return m, nil
+	}
 	if m.skillsOpen {
 		m.skillsOpen = false
 		m.commandCursor = 0
@@ -1609,7 +1618,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch key {
 	case "tab":
-		if m.commandOpen || m.mentionOpen || m.sessionsOpen || m.helpOpen || m.approval != nil || m.planActionOpen {
+		if m.commandOpen || m.modelsOpen || m.mentionOpen || m.sessionsOpen || m.helpOpen || m.approval != nil || m.planActionOpen {
 			break
 		}
 		m.toggleMode()
@@ -1620,7 +1629,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "ctrl+k":
-		if m.approval != nil || m.helpOpen || m.sessionsOpen || m.commandOpen || m.mentionOpen || m.planActionOpen || m.busy {
+		if m.approval != nil || m.helpOpen || m.sessionsOpen || m.modelsOpen || m.commandOpen || m.mentionOpen || m.planActionOpen || m.busy {
 			return m, nil
 		}
 		if err := m.openSkillsPicker(); err != nil {
@@ -1631,7 +1640,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.screen == screenLanding {
 			return m, nil
 		}
-		if m.approval != nil || m.helpOpen || m.sessionsOpen || m.skillsOpen || m.commandOpen || m.mentionOpen || m.planActionOpen {
+		if m.approval != nil || m.helpOpen || m.sessionsOpen || m.skillsOpen || m.modelsOpen || m.commandOpen || m.mentionOpen || m.planActionOpen {
 			return m, nil
 		}
 		m.toggleApprovalMode()
@@ -1640,7 +1649,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.screen != screenChat {
 			return m, nil
 		}
-		if m.approval != nil || m.helpOpen || m.sessionsOpen || m.skillsOpen || m.commandOpen || m.mentionOpen || m.planActionOpen {
+		if m.approval != nil || m.helpOpen || m.sessionsOpen || m.skillsOpen || m.modelsOpen || m.commandOpen || m.mentionOpen || m.planActionOpen {
 			return m, nil
 		}
 		if len(m.pastedOrder) == 0 {
@@ -1723,6 +1732,48 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.commandOpen {
 		return m.handleCommandPaletteKey(msg)
+	}
+
+	if m.modelsOpen {
+		items := m.modelPickerTargets()
+		switch {
+		case isPageUpKey(msg):
+			if len(items) > 0 {
+				m.commandCursor = max(0, m.commandCursor-commandPageSize)
+			}
+			return m, nil
+		case isPageDownKey(msg):
+			if len(items) > 0 {
+				m.commandCursor = min(len(items)-1, m.commandCursor+commandPageSize)
+			}
+			return m, nil
+		}
+
+		switch key {
+		case "esc":
+			m.closeModelPicker()
+		case "up", "k":
+			if len(items) > 0 {
+				m.commandCursor = max(0, m.commandCursor-1)
+			}
+		case "down", "j":
+			if len(items) > 0 {
+				m.commandCursor = min(len(items)-1, m.commandCursor+1)
+			}
+		case "enter":
+			var err error
+			if normalizeModelPickerMode(m.modelPickerMode) == modelPickerModeDelete {
+				err = m.deleteSelectedModelTarget()
+			} else {
+				err = m.activateSelectedModelTarget()
+			}
+			if err != nil {
+				m.statusNote = err.Error()
+				return m, nil
+			}
+			m.closeModelPicker()
+		}
+		return m, nil
 	}
 
 	if m.skillsOpen {
@@ -1999,7 +2050,7 @@ func (m model) shouldSubmitStartupGuideInput(msg tea.KeyMsg) bool {
 	if !m.startupGuide.Active || msg.Paste || msg.Type != tea.KeyEnter || isInputNewlineKey(msg) {
 		return false
 	}
-	if m.commandOpen || m.skillsOpen || m.mentionOpen || m.sessionsOpen || m.promptSearchOpen || m.planActionOpen || m.approval != nil {
+	if m.commandOpen || m.skillsOpen || m.modelsOpen || m.mentionOpen || m.sessionsOpen || m.promptSearchOpen || m.planActionOpen || m.approval != nil {
 		return false
 	}
 	return !strings.HasPrefix(strings.TrimSpace(m.input.Value()), "/")
@@ -2009,7 +2060,7 @@ func (m model) handleStartupGuideKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) 
 	if !m.startupGuide.Active {
 		return m, nil, false
 	}
-	if m.commandOpen || m.skillsOpen || m.mentionOpen || m.sessionsOpen || m.promptSearchOpen || m.planActionOpen || m.approval != nil {
+	if m.commandOpen || m.skillsOpen || m.modelsOpen || m.mentionOpen || m.sessionsOpen || m.promptSearchOpen || m.planActionOpen || m.approval != nil {
 		return m, nil, false
 	}
 	if msg.Type != tea.KeyEnter && m.consumePasteEchoKey(msg) {
@@ -2823,7 +2874,7 @@ func shouldExecuteFromPalette(item commandItem) bool {
 		return true
 	}
 	switch item.Name {
-	case "/help", "/session", "/agents", "/skills", "/skill clear", "/mcp list", "/mcp help", "/new", "/compact", "/undo-commit", "/quit":
+	case "/add model", "/delete model", "/help", "/session", "/agents", "/skills", "/skill clear", "/mcp list", "/mcp help", "/model picker", "/new", "/compact", "/undo-commit", "/quit":
 		return true
 	default:
 		return false

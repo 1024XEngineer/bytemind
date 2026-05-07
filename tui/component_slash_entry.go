@@ -20,6 +20,10 @@ func (m *model) handleSlashCommand(input string) error {
 	}
 
 	switch fields[0] {
+	case "/add":
+		return m.runAddCommand(input, fields)
+	case "/delete":
+		return m.runDeleteCommand(input, fields)
 	case "/help":
 		m.screen = screenChat
 		m.appendChat(chatEntry{
@@ -48,6 +52,8 @@ func (m *model) handleSlashCommand(input string) error {
 		return m.runMCPCommandDispatch(input, fields)
 	case "/models":
 		return m.runModelsCommand(input, fields)
+	case "/model":
+		return m.runModelCommand(input, fields)
 	case "/new":
 		return m.newSession()
 	case "/compact":

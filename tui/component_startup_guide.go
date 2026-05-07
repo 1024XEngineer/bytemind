@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 	"github.com/1024XEngineer/bytemind/internal/provider"
 )
 
@@ -85,15 +86,22 @@ func (m *model) verifyAndFinalizeStartupAPIKey(rawInput string) error {
 		}
 	}
 
-	client, err := provider.NewClient(checkCfg)
+	runtimeCfg := config.SyncProviderRuntimeWithProvider(m.cfg.ProviderRuntime, checkCfg)
+	client, err := provider.NewClientFromRuntime(runtimeCfg, nil)
 	if err != nil {
 		return err
 	}
 	if m.runner != nil {
-		m.runner.UpdateProvider(checkCfg, client)
+		if runtimeUpdater, ok := any(m.runner).(interface {
+			UpdateProviderRuntime(config.ProviderRuntimeConfig, config.ProviderConfig, llm.Client)
+		}); ok {
+			runtimeUpdater.UpdateProviderRuntime(runtimeCfg, checkCfg, client)
+		} else {
+			m.runner.UpdateProvider(checkCfg, client)
+		}
 	}
 	m.cfg.Provider = checkCfg
-	m.cfg.ProviderRuntime = config.SyncProviderRuntimeWithProvider(m.cfg.ProviderRuntime, checkCfg)
+	m.cfg.ProviderRuntime = runtimeCfg
 	m.discoveredModels = nil
 	m.refreshTokenBudget()
 	m.syncTokenUsageComponent()

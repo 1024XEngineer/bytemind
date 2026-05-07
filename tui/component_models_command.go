@@ -35,6 +35,9 @@ func formatModelsStatus(cfg config.Config, models []provider.ModelInfo, warnings
 	lines := []string{
 		fmt.Sprintf("active: %s", activeModelLabel(cfg)),
 		fmt.Sprintf("default provider: %s", defaultProviderLabel(cfg)),
+		"add: /add model",
+		"delete: /delete model",
+		"switch: /model picker",
 	}
 	if len(models) == 0 {
 		lines = append(lines, "", "No models discovered.")

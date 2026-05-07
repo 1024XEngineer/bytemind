@@ -174,3 +174,55 @@ func TestRunnerUpdateProviderSyncsRuntimeAndClearsModelCache(t *testing.T) {
 		t.Fatalf("expected GetClient to unwrap updated route-aware client")
 	}
 }
+
+func TestRunnerUpdateProviderRuntimePreservesSelectedProviderIDAndClearsCache(t *testing.T) {
+	runner := NewRunner(Options{
+		Config: config.Config{
+			Provider: config.ProviderConfig{
+				Type:  "openai-compatible",
+				Model: "gpt-5.4-mini",
+			},
+			ProviderRuntime: config.ProviderRuntimeConfig{
+				DefaultProvider: "openai",
+				DefaultModel:    "gpt-5.4-mini",
+				Providers: map[string]config.ProviderConfig{
+					"openai":   {Type: "openai-compatible", Model: "gpt-5.4-mini"},
+					"deepseek": {Type: "openai-compatible", Model: "deepseek-chat"},
+				},
+			},
+		},
+		Client: &fakeClient{},
+	})
+	runner.storeModelsCache(
+		[]provider.ModelInfo{{ProviderID: "openai", ModelID: "gpt-5.4-mini"}},
+		[]provider.Warning{{ProviderID: "openai", Reason: "cached"}},
+	)
+
+	nextClient := &fakeClient{}
+	nextRuntime := config.ProviderRuntimeConfig{
+		DefaultProvider: "deepseek",
+		DefaultModel:    "deepseek-reasoner",
+		Providers: map[string]config.ProviderConfig{
+			"openai":   {Type: "openai-compatible", Model: "gpt-5.4-mini"},
+			"deepseek": {Type: "openai-compatible", Model: "deepseek-reasoner"},
+		},
+	}
+	nextProvider := config.ProviderConfig{
+		Type:  "openai-compatible",
+		Model: "deepseek-reasoner",
+	}
+	runner.UpdateProviderRuntime(nextRuntime, nextProvider, nextClient)
+
+	if _, _, ok := runner.listModelsFromCache(); ok {
+		t.Fatal("expected runtime update to clear model cache")
+	}
+	if runner.config.ProviderRuntime.DefaultProvider != "deepseek" || runner.config.ProviderRuntime.DefaultModel != "deepseek-reasoner" {
+		t.Fatalf("expected runtime defaults to preserve selected provider id, got %#v", runner.config.ProviderRuntime)
+	}
+	if runner.config.Provider.Model != "deepseek-reasoner" {
+		t.Fatalf("expected legacy provider config to sync to selected model, got %#v", runner.config.Provider)
+	}
+	if got := runner.GetClient(); got != nextClient {
+		t.Fatalf("expected GetClient to unwrap updated runtime client")
+	}
+}

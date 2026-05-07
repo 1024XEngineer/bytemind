@@ -145,9 +145,13 @@ func shouldExecuteTypedSlashFromPalette(selected commandItem, typedValue string)
 		return false
 	}
 	typedLower := strings.ToLower(typed)
+	nameLower := strings.ToLower(strings.TrimSpace(selected.Name))
 	usageLower := strings.ToLower(usage)
-	if typedLower == usageLower {
+	if typedLower == usageLower || typedLower == nameLower {
 		return false
+	}
+	if nameLower != "" && strings.HasPrefix(typedLower, nameLower+" ") {
+		return true
 	}
 	return strings.HasPrefix(typedLower, usageLower+" ")
 }
@@ -295,6 +299,7 @@ func (m *model) bindMentionImageAsset(path string, assetID llm.AssetID) {
 
 func (m *model) openCommandPalette() {
 	m.commandOpen = true
+	m.closeModelPicker()
 	m.skillsOpen = false
 	m.commandCursor = 0
 	m.setInputValue("/")
@@ -309,6 +314,7 @@ func (m *model) openPromptSearch(mode promptSearchMode) tea.Cmd {
 	m.promptSearchCursor = 0
 	m.promptSearchOpen = true
 	m.commandOpen = false
+	m.closeModelPicker()
 	m.closeMentionPalette()
 
 	loadCmd := tea.Cmd(nil)
