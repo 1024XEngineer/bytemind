@@ -12,6 +12,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/config"
 	"github.com/1024XEngineer/bytemind/internal/mcpctl"
 	notifypkg "github.com/1024XEngineer/bytemind/internal/notify"
+	"github.com/1024XEngineer/bytemind/internal/provider"
 	"github.com/1024XEngineer/bytemind/tui"
 )
 
@@ -73,6 +74,10 @@ func BuildTUIRuntime(req TUIRequest) (TUIRuntime, error) {
 
 	interactive := isInteractiveStdin(req.Stdin)
 	guide, requireAPIKey := resolveTUIStartupPolicy(interactive)
+	providerCheck := checkTUIProviderAvailability(cfg)
+	if interactive && !providerCheck.Ready {
+		guide = BuildStartupGuide(cfg, providerCheck, workspace, *configPath)
+	}
 	runtimeBundle, err := BootstrapEntrypoint(EntrypointRequest{
 		WorkspaceOverride:     *workspaceOverride,
 		ConfigPath:            *configPath,
@@ -150,9 +155,15 @@ func chainTUIRuntimeClose(runnerClose func() error, notifier notifypkg.Notifier)
 }
 
 func resolveTUIStartupPolicy(interactive bool) (tui.StartupGuide, bool) {
-	// Startup guide at UI entry is disabled by default.
-	// Keep interactive TUI accessible even when API key is not configured yet.
 	return tui.StartupGuide{}, !interactive
+}
+
+func checkTUIProviderAvailability(cfg config.Config) provider.Availability {
+	providerCfg := cfg.Provider
+	if model := providerCfg.Model; model == "" {
+		providerCfg.Model = cfg.ProviderRuntime.DefaultModel
+	}
+	return provider.CheckAvailability(context.Background(), providerCfg)
 }
 
 func isInteractiveStdin(stdin io.Reader) bool {

@@ -37,6 +37,8 @@ func (defaultViewOverlayComponent) Apply(m model, base string) string {
 		return renderModal(m.width, m.height, m.renderHelpModal())
 	case m.sessionsOpen:
 		return renderModal(m.width, m.height, m.renderSessionsModal())
+	case m.modelsOpen:
+		return renderModal(m.width, m.height, m.renderModelsModal())
 	case m.skillsOpen:
 		return renderModal(m.width, m.height, m.renderSkillsModal())
 	default:

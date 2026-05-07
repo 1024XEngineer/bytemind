@@ -15,10 +15,35 @@ func (r *Runner) SetApprovalHandler(handler tools.ApprovalHandler) {
 }
 
 func (r *Runner) UpdateProvider(providerCfg config.ProviderConfig, client llm.Client) {
+	if r == nil {
+		return
+	}
+	r.config.Provider = providerCfg
+	r.config.ProviderRuntime = config.SyncProviderRuntimeWithProvider(r.config.ProviderRuntime, providerCfg)
+	if client != nil {
+		if _, ok := client.(routeAwareClient); ok {
+			r.client = client
+		} else {
+			r.client = routeAwareClient{base: client}
+		}
+	}
+	r.clearModelsCache()
+}
+
+func (r *Runner) UpdateProviderRuntime(runtimeCfg config.ProviderRuntimeConfig, providerCfg config.ProviderConfig, client llm.Client) {
+	if r == nil {
+		return
+	}
+	r.config.ProviderRuntime = runtimeCfg
 	r.config.Provider = providerCfg
 	if client != nil {
-		r.client = client
+		if _, ok := client.(routeAwareClient); ok {
+			r.client = client
+		} else {
+			r.client = routeAwareClient{base: client}
+		}
 	}
+	r.clearModelsCache()
 }
 
 func (r *Runner) UpdateApprovalMode(mode string) {

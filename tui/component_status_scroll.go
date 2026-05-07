@@ -21,6 +21,9 @@ func (m model) renderTopRightCluster(width int) string {
 }
 
 func (m model) renderTokenBadge(width int) string {
+	if width < 80 {
+		return m.tokenUsage.CompactView()
+	}
 	return m.tokenUsage.View()
 }
 

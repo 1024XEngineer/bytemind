@@ -6,7 +6,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/1024XEngineer/bytemind/internal/config"
 	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/provider"
 	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
@@ -23,6 +25,7 @@ func (m *model) applyUsage(usage llm.Usage) {
 	if used == 0 && input == 0 && output == 0 && context == 0 {
 		return
 	}
+	m.refreshTokenBudget()
 
 	// Replace provisional stream estimate with provider-confirmed usage.
 	if m.tempEstimatedOutput > 0 {
@@ -35,7 +38,7 @@ func (m *model) applyUsage(usage llm.Usage) {
 	m.tokenInput += input
 	m.tokenOutput += output
 	m.tokenContext += context
-	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, 0)
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
 	m.tokenUsage.SetUnavailable(false)
 	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 }
@@ -43,7 +46,29 @@ func (m *model) applyUsage(usage llm.Usage) {
 func (m *model) SetUsage(used, total int) tea.Cmd {
 	m.tokenHasOfficialUsage = true
 	m.tokenUsage.SetUnavailable(false)
-	return m.tokenUsage.SetUsage(used, 0)
+	m.refreshTokenBudget()
+	if total > 0 {
+		m.tokenBudget = total
+	}
+	return m.tokenUsage.SetUsage(used, m.tokenBudget)
+}
+
+func (m *model) syncTokenUsageComponent() {
+	if m == nil {
+		return
+	}
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	m.tokenUsage.SetUnavailable(!m.tokenHasOfficialUsage)
+	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
+}
+
+func (m *model) setDiscoveredModels(models []provider.ModelInfo) {
+	if m == nil {
+		return
+	}
+	m.discoveredModels = append([]provider.ModelInfo(nil), models...)
+	m.refreshTokenBudget()
+	m.syncTokenUsageComponent()
 }
 
 func (m model) renderStartupGuidePanel() string {
@@ -109,6 +134,7 @@ func (m *model) restoreTokenUsageFromSession(sess *session.Session) {
 	if sess != nil {
 		m.accumulateTokenUsage(sess.Messages)
 	}
+	m.refreshTokenBudget()
 }
 
 func (m *model) accumulateTokenUsage(messages []llm.Message) {
@@ -126,4 +152,34 @@ func (m *model) accumulateTokenUsage(messages []llm.Message) {
 		m.tokenOutput += max(0, msg.Usage.OutputTokens)
 		m.tokenContext += max(0, msg.Usage.ContextTokens)
 	}
+}
+
+func (m *model) refreshTokenBudget() {
+	if m == nil {
+		return
+	}
+	budget := max(1, m.cfg.TokenQuota)
+	runtimeCfg := m.cfg.ProviderRuntime
+	providerID := strings.TrimSpace(runtimeCfg.DefaultProvider)
+	modelID := strings.TrimSpace(runtimeCfg.DefaultModel)
+	if modelID == "" {
+		modelID = strings.TrimSpace(m.cfg.Provider.Model)
+	}
+	if providerID == "" {
+		legacy := config.LegacyProviderRuntimeConfig(m.cfg.Provider)
+		providerID = strings.TrimSpace(legacy.DefaultProvider)
+		if modelID == "" {
+			modelID = strings.TrimSpace(legacy.DefaultModel)
+		}
+		if len(runtimeCfg.Providers) == 0 {
+			runtimeCfg = legacy
+		}
+	}
+	if providerID != "" && modelID != "" {
+		registry := provider.NewModelRegistry(runtimeCfg, m.discoveredModels)
+		if contextWindow := registry.ContextWindow(provider.ProviderID(providerID), provider.ModelID(modelID)); contextWindow > 0 {
+			budget = contextWindow
+		}
+	}
+	m.tokenBudget = budget
 }

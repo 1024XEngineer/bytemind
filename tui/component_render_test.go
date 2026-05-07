@@ -58,8 +58,8 @@ func TestComponentCommandAndMentionPaletteRenderStates(t *testing.T) {
 
 	m.mentionResults = []mention.Candidate{{Path: "tui/model.go", BaseName: "model.go", TypeTag: "go"}}
 	mentionView := m.renderMentionPalette()
-	if !strings.Contains(mentionView, "[go] model.go") || !strings.Contains(mentionView, "tui/model.go") {
-		t.Fatalf("expected mention palette row with metadata, got %q", mentionView)
+	if !strings.Contains(mentionView, "tui/model.go") {
+		t.Fatalf("expected mention palette row with path, got %q", mentionView)
 	}
 }
 

@@ -98,6 +98,9 @@ func (c tokenUsageComponent) CompactView() string {
 }
 
 func (c tokenUsageComponent) PopupView() string {
+	if c.popup {
+		return c.popupStyle().Render(c.popupText())
+	}
 	return ""
 }
 
@@ -180,6 +183,9 @@ func (c tokenUsageComponent) usageText() string {
 		return "token: unavailable"
 	}
 	text := "token: " + formatInt(max(0, int(math.Round(c.displayUsed))))
+	if c.total > 0 {
+		text += fmt.Sprintf(" / %s", formatInt(c.total))
+	}
 	pad := max(8, len(text))
 	if c.hover {
 		text = "Used " + text
@@ -320,7 +326,21 @@ func ringGlyph(level int, full, half string) string {
 }
 
 func (c tokenUsageComponent) popupText() string {
-	return ""
+	parts := []string{
+		fmt.Sprintf("used: %s", formatInt(max(0, int(math.Round(c.displayUsed))))),
+	}
+	if c.total > 0 {
+		parts = append(parts, fmt.Sprintf("budget: %s", formatInt(c.total)))
+		parts = append(parts, fmt.Sprintf("ratio: %.0f%%", c.ratio()*100))
+	}
+	if c.input > 0 || c.output > 0 || c.context > 0 {
+		parts = append(parts,
+			fmt.Sprintf("input: %s", formatInt(c.input)),
+			fmt.Sprintf("output: %s", formatInt(c.output)),
+			fmt.Sprintf("context: %s", formatInt(c.context)),
+		)
+	}
+	return strings.Join(parts, "\n")
 }
 
 func (c tokenUsageComponent) estimatedCost() float64 {

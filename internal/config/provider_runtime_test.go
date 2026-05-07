@@ -92,6 +92,145 @@ func TestLegacyProviderRuntimeConfigNormalizesProviderIDs(t *testing.T) {
 	}
 }
 
+func TestSyncProviderRuntimeWithProviderUpdatesDefaultAndPreservesOthers(t *testing.T) {
+	runtime := SyncProviderRuntimeWithProvider(ProviderRuntimeConfig{
+		DefaultProvider: "old",
+		DefaultModel:    "old-model",
+		AllowFallback:   true,
+		Providers: map[string]ProviderConfig{
+			"old": {Type: "openai-compatible", Model: "old-model"},
+		},
+	}, ProviderConfig{
+		Type:      "anthropic",
+		BaseURL:   "https://api.anthropic.com",
+		Model:     "claude-sonnet-4",
+		APIKeyEnv: "ANTHROPIC_API_KEY",
+	})
+
+	if runtime.DefaultProvider != "anthropic" {
+		t.Fatalf("expected default provider to sync to anthropic, got %q", runtime.DefaultProvider)
+	}
+	if runtime.DefaultModel != "claude-sonnet-4" {
+		t.Fatalf("expected default model to sync, got %q", runtime.DefaultModel)
+	}
+	if !runtime.AllowFallback {
+		t.Fatal("expected existing allow_fallback setting to be preserved")
+	}
+	if _, ok := runtime.Providers["old"]; !ok {
+		t.Fatalf("expected existing provider entry to be preserved, got %#v", runtime.Providers)
+	}
+	anthropic := runtime.Providers["anthropic"]
+	if anthropic.Model != "claude-sonnet-4" || anthropic.APIKeyEnv != "ANTHROPIC_API_KEY" {
+		t.Fatalf("expected synced anthropic provider entry, got %#v", anthropic)
+	}
+}
+
+func TestSyncProviderRuntimeWithProviderBuildsMissingProvidersMap(t *testing.T) {
+	runtime := SyncProviderRuntimeWithProvider(ProviderRuntimeConfig{}, ProviderConfig{
+		Type:  "openai-compatible",
+		Model: "gpt-5.4",
+	})
+
+	if runtime.DefaultProvider != "openai" || runtime.DefaultModel != "gpt-5.4" {
+		t.Fatalf("unexpected runtime defaults %#v", runtime)
+	}
+	if providerCfg, ok := runtime.Providers["openai"]; !ok || providerCfg.Type != "openai" || providerCfg.Model != "gpt-5.4" {
+		t.Fatalf("unexpected provider entry %#v", runtime.Providers)
+	}
+}
+
+func TestSelectProviderRuntimeModelUpdatesSelectedProviderOnly(t *testing.T) {
+	runtime, providerCfg, err := SelectProviderRuntimeModel(ProviderRuntimeConfig{
+		DefaultProvider: "openai",
+		DefaultModel:    "gpt-5.4-mini",
+		Providers: map[string]ProviderConfig{
+			"openai":   {Type: "openai-compatible", Model: "gpt-5.4-mini", APIKeyEnv: "OPENAI_API_KEY"},
+			"deepseek": {Type: "openai-compatible", Model: "deepseek-chat", APIKeyEnv: "DEEPSEEK_API_KEY"},
+		},
+	}, "deepseek", "deepseek-reasoner")
+	if err != nil {
+		t.Fatalf("expected runtime selection to succeed, got %v", err)
+	}
+	if runtime.DefaultProvider != "deepseek" || runtime.DefaultModel != "deepseek-reasoner" {
+		t.Fatalf("unexpected runtime defaults %#v", runtime)
+	}
+	if runtime.Providers["openai"].Model != "gpt-5.4-mini" {
+		t.Fatalf("expected non-selected provider to remain unchanged, got %#v", runtime.Providers["openai"])
+	}
+	if runtime.Providers["deepseek"].Model != "deepseek-reasoner" {
+		t.Fatalf("expected selected provider model update, got %#v", runtime.Providers["deepseek"])
+	}
+	if providerCfg.Model != "deepseek-reasoner" || providerCfg.APIKeyEnv != "DEEPSEEK_API_KEY" {
+		t.Fatalf("unexpected selected provider config %#v", providerCfg)
+	}
+}
+
+func TestSelectProviderRuntimeModelRejectsUnknownProvider(t *testing.T) {
+	if _, _, err := SelectProviderRuntimeModel(ProviderRuntimeConfig{
+		Providers: map[string]ProviderConfig{
+			"openai": {Type: "openai-compatible", Model: "gpt-5.4"},
+		},
+	}, "missing", "gpt-5.4"); err == nil {
+		t.Fatal("expected missing provider selection to fail")
+	}
+}
+
+func TestDeleteProviderRuntimeProviderRemovesTargetAndPreservesCurrentDefault(t *testing.T) {
+	runtime, providerCfg, err := DeleteProviderRuntimeProvider(ProviderRuntimeConfig{
+		DefaultProvider: "openai",
+		DefaultModel:    "gpt-5.4-mini",
+		Providers: map[string]ProviderConfig{
+			"openai":   {Type: "openai-compatible", Model: "gpt-5.4-mini", APIKeyEnv: "OPENAI_API_KEY"},
+			"deepseek": {Type: "openai-compatible", Model: "deepseek-chat", APIKeyEnv: "DEEPSEEK_API_KEY"},
+		},
+	}, "deepseek")
+	if err != nil {
+		t.Fatalf("expected runtime deletion to succeed, got %v", err)
+	}
+	if runtime.DefaultProvider != "openai" || runtime.DefaultModel != "gpt-5.4-mini" {
+		t.Fatalf("unexpected runtime defaults %#v", runtime)
+	}
+	if _, ok := runtime.Providers["deepseek"]; ok {
+		t.Fatalf("expected deepseek provider to be removed, got %#v", runtime.Providers)
+	}
+	if providerCfg.Model != "gpt-5.4-mini" || providerCfg.APIKeyEnv != "OPENAI_API_KEY" {
+		t.Fatalf("unexpected surviving provider config %#v", providerCfg)
+	}
+}
+
+func TestDeleteProviderRuntimeProviderReselectsDefaultWhenActiveTargetDeleted(t *testing.T) {
+	runtime, providerCfg, err := DeleteProviderRuntimeProvider(ProviderRuntimeConfig{
+		DefaultProvider: "deepseek",
+		DefaultModel:    "deepseek-reasoner",
+		Providers: map[string]ProviderConfig{
+			"openai-primary": {Type: "openai-compatible", Model: "gpt-5.4-mini", APIKeyEnv: "OPENAI_API_KEY"},
+			"deepseek":       {Type: "openai-compatible", Model: "deepseek-reasoner", APIKeyEnv: "DEEPSEEK_API_KEY"},
+			"zai":            {Type: "openai-compatible", Model: "glm-4.6", APIKeyEnv: "ZAI_API_KEY"},
+		},
+	}, "deepseek")
+	if err != nil {
+		t.Fatalf("expected runtime deletion to succeed, got %v", err)
+	}
+	if runtime.DefaultProvider != "openai-primary" || runtime.DefaultModel != "gpt-5.4-mini" {
+		t.Fatalf("expected lexicographically first remaining provider to become default, got %#v", runtime)
+	}
+	if providerCfg.Model != "gpt-5.4-mini" || providerCfg.APIKeyEnv != "OPENAI_API_KEY" {
+		t.Fatalf("unexpected selected provider config %#v", providerCfg)
+	}
+}
+
+func TestDeleteProviderRuntimeProviderRejectsDeletingLastConfiguredModel(t *testing.T) {
+	if _, _, err := DeleteProviderRuntimeProvider(ProviderRuntimeConfig{
+		DefaultProvider: "openai",
+		DefaultModel:    "gpt-5.4",
+		Providers: map[string]ProviderConfig{
+			"openai": {Type: "openai-compatible", Model: "gpt-5.4"},
+		},
+	}, "openai"); err == nil {
+		t.Fatal("expected deleting the last configured provider to fail")
+	}
+}
+
 func TestConfigLoadRejectsDuplicateNormalizedProviderRuntimeIDs(t *testing.T) {
 	workspace := t.TempDir()
 	writeProviderRuntimeConfigFile(t, workspace, map[string]any{

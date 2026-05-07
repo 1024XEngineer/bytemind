@@ -8,6 +8,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	"github.com/1024XEngineer/bytemind/internal/mcpctl"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
+	"github.com/1024XEngineer/bytemind/internal/provider"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	"github.com/1024XEngineer/bytemind/internal/skills"
 	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
@@ -100,6 +101,7 @@ type Runner interface {
 	ClearActiveSkill(sess *session.Session) error
 	ClearSkill(name string) (skills.ClearResult, error)
 	SubAgentManager() *subagentspkg.Manager
+	ListModels(ctx context.Context) ([]provider.ModelInfo, []provider.Warning, error)
 }
 
 type SessionStore interface {

@@ -202,7 +202,7 @@ func (m *model) shouldPromoteImplicitPasteCandidate(msg tea.KeyMsg) bool {
 	if m == nil || !m.pasteBurstCandidate.active || m.hasActivePasteSession() || m.hasActivePasteBurst() {
 		return false
 	}
-	if m.approval != nil || m.helpOpen || m.sessionsOpen || m.commandOpen || m.skillsOpen || m.mentionOpen || m.promptSearchOpen {
+	if m.approval != nil || m.helpOpen || m.sessionsOpen || m.commandOpen || m.skillsOpen || m.modelsOpen || m.mentionOpen || m.promptSearchOpen {
 		return false
 	}
 	if _, hasMarker := extractLeadingCompressedMarker(m.input.Value()); hasMarker {
@@ -284,7 +284,7 @@ func (m *model) shouldCaptureImplicitPasteSpecialKey(msg tea.KeyMsg) bool {
 	if msg.Type != tea.KeyEnter && msg.Type != tea.KeyTab {
 		return false
 	}
-	if m.approval != nil || m.helpOpen || m.sessionsOpen || m.commandOpen || m.skillsOpen || m.mentionOpen || m.promptSearchOpen {
+	if m.approval != nil || m.helpOpen || m.sessionsOpen || m.commandOpen || m.skillsOpen || m.modelsOpen || m.mentionOpen || m.promptSearchOpen {
 		return false
 	}
 	if m.lastInputAt.IsZero() || time.Since(m.lastInputAt) > 250*time.Millisecond {
@@ -656,6 +656,9 @@ func (m *model) ingestPasteFragment(fragment, source string) tea.Cmd {
 }
 
 func (m model) handlePastePayload(payload string) (tea.Model, tea.Cmd) {
+	if m.startupGuide.Active {
+		return m.insertStartupGuideText(payload), nil
+	}
 	cleaned := trimTrailingPasteTerminators(payload)
 	candidate := strings.ReplaceAll(normalizeNewlines(cleaned), ctrlVMarkerRune, "")
 	if strings.TrimSpace(candidate) == "" {

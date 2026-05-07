@@ -239,3 +239,74 @@ func TestMaxFloat(t *testing.T) {
 		t.Fatalf("expected max float 3.0, got %f", got)
 	}
 }
+
+func TestTokenUsagePopupTextBreakdownAndCost(t *testing.T) {
+	c := newTokenUsageComponent()
+	_ = c.SetUsage(750, 1000)
+	c.SetBreakdown(100, 200, 450)
+	c.SetPrice(-1, 2.5)
+	c.displayUsed = 750
+
+	text := c.popupText()
+	for _, want := range []string{
+		"used: 750",
+		"budget: 1,000",
+		"ratio: 75%",
+		"input: 100",
+		"output: 200",
+		"context: 450",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected popup text to contain %q, got:\n%s", want, text)
+		}
+	}
+	if got := c.estimatedCost(); got != 0.0005 {
+		t.Fatalf("expected clamped input price and output cost, got %f", got)
+	}
+}
+
+func TestTokenUsageUpdateTickSchedulesAnimationAndExpiresPopup(t *testing.T) {
+	c := newTokenUsageComponent()
+	_ = c.SetUsage(1000, 5000)
+	c.displayUsed = 0
+	c.popup = true
+	c.popupUntil = time.Now().Add(-time.Second)
+
+	cmd, consumed := c.Update(tokenMonitorTickMsg(time.Now()))
+	if consumed {
+		t.Fatal("expected tick not to consume input")
+	}
+	if cmd == nil {
+		t.Fatal("expected tick to schedule animation follow-up")
+	}
+	if c.popup {
+		t.Fatal("expected expired popup to close")
+	}
+	if c.displayUsed <= 0 {
+		t.Fatalf("expected display usage to animate upward, got %f", c.displayUsed)
+	}
+}
+
+func TestTokenUsageColorAndUnavailableCompactBranches(t *testing.T) {
+	c := newTokenUsageComponent()
+	_ = c.SetUsage(50, 100)
+	c.displayUsed = 50
+	if got := string(c.ringColor()); got != "#007AFF" {
+		t.Fatalf("expected low usage color, got %q", got)
+	}
+	_ = c.SetUsage(90, 100)
+	c.displayUsed = 90
+	if got := string(c.ringColor()); got == "#007AFF" || got == "#FF3B30" {
+		t.Fatalf("expected interpolated warning color, got %q", got)
+	}
+	_ = c.SetUsage(100, 100)
+	c.displayUsed = 100
+	if got := string(c.ringColor()); got != "#FF3B30" {
+		t.Fatalf("expected high usage color, got %q", got)
+	}
+
+	c.SetUnavailable(true)
+	if got := c.compactUsageText(); got != "token: unavailable" {
+		t.Fatalf("expected unavailable compact text, got %q", got)
+	}
+}
