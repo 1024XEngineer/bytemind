@@ -496,6 +496,13 @@ type model struct {
 	startupGuide               StartupGuide
 	mouseYOffset               int
 	landingGlowStep            int
+
+	// Status dot animation
+	lastTokenTime    time.Time
+	dotBlinkVisible  bool
+	stagnationStart  time.Time
+	stagnationActive bool
+	reducedMotion    bool
 }
 
 func newModel(opts Options) model {
@@ -591,6 +598,7 @@ func newModel(opts Options) model {
 		clipboardRead:        defaultClipboardTextReader{},
 		clipboardText:        defaultClipboardTextWriter{},
 		startupGuide:         opts.StartupGuide,
+		reducedMotion:        isReducedMotion(),
 		mouseYOffset:         resolveMouseYOffset(),
 	}
 	if opts.StartupGuide.Active {
@@ -792,6 +800,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.interruptSafe = false
 		m.pendingInterrupt = false
 		m.pendingInterruptReason = ""
+		m.stagnationActive = false
+		m.stagnationStart = time.Time{}
 		shouldResumeBTW := m.interrupting && len(m.pendingBTW) > 0
 		m.interrupting = false
 		finishReason := classifyRunFinish(msg.Err, shouldResumeBTW)
@@ -1078,6 +1088,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.landingGlowStep = (m.landingGlowStep + 1) % 2048
 		return m, landingGlowTickCmd()
+		case statusDotTickMsg:
+			if m.reducedMotion {
+				return m, nil
+			}
+			if !m.busy && !m.hasBlinkingDot() {
+				return m, nil
+			}
+			m.dotBlinkVisible = !m.dotBlinkVisible
+			if m.hasBlinkingDot() {
+				m.refreshViewport()
+			}
+			return m, statusDotTickCmd()
+		case stagnationTickMsg:
+			if m.updateStagnation() {
+				m.refreshViewport()
+			}
+			if m.hasActiveDotAnimation() {
+				return m, stagnationTickCmd()
+			}
+			return m, nil
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 	case tea.KeyMsg:
