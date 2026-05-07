@@ -292,13 +292,13 @@ func TestBuildSubAgentPromptInput(t *testing.T) {
 	}
 }
 
-func TestSubAgentFailureResult(t *testing.T) {
-	result := subAgentFailureResult("inv-1", "explorer", "test_code", "test message", true)
-	if result.OK {
-		t.Fatal("expected OK false")
+func TestSubAgentErrorAsContent(t *testing.T) {
+	result := subAgentErrorAsContent("inv-1", "explorer", "test error message", nil)
+	if !result.OK {
+		t.Fatal("expected OK true (error as content)")
 	}
-	if result.Status != subAgentResultStatusFailed {
-		t.Fatalf("expected status failed, got %q", result.Status)
+	if result.Status != subAgentResultStatusCompleted {
+		t.Fatalf("expected status completed, got %q", result.Status)
 	}
 	if result.InvocationID != "inv-1" {
 		t.Fatalf("expected invocation id, got %q", result.InvocationID)
@@ -306,17 +306,11 @@ func TestSubAgentFailureResult(t *testing.T) {
 	if result.Agent != "explorer" {
 		t.Fatalf("expected agent, got %q", result.Agent)
 	}
-	if result.Error == nil {
-		t.Fatal("expected non-nil error")
+	if !strings.Contains(result.Summary, "test error message") {
+		t.Fatalf("expected error message in summary, got %q", result.Summary)
 	}
-	if result.Error.Code != "test_code" {
-		t.Fatalf("expected error code test_code, got %q", result.Error.Code)
-	}
-	if result.Error.Message != "test message" {
-		t.Fatalf("expected error message, got %q", result.Error.Message)
-	}
-	if !result.Error.Retryable {
-		t.Fatal("expected retryable true")
+	if result.Error != nil {
+		t.Fatalf("expected nil error struct (error is in summary), got %#v", result.Error)
 	}
 }
 
@@ -492,8 +486,11 @@ func TestExecutePrepareRunPromptError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.OK {
-		t.Fatal("expected failure for prepareRunPrompt error")
+	if !result.OK {
+		t.Fatal("expected OK:true for error-as-content (prepareRunPrompt error)")
+	}
+	if !strings.Contains(result.Summary, "sandbox unavailable") {
+		t.Fatalf("expected error message in summary, got %q", result.Summary)
 	}
 }
 
@@ -530,7 +527,10 @@ func TestExecuteRunPromptTurnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.OK {
-		t.Fatal("expected failure for runPromptTurns error")
+	if !result.OK {
+		t.Fatal("expected OK:true for error-as-content (runPromptTurns error)")
+	}
+	if !strings.Contains(result.Summary, "llm connection failed") {
+		t.Fatalf("expected error message in summary, got %q", result.Summary)
 	}
 }

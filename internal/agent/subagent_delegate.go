@@ -253,7 +253,8 @@ func (r *Runner) delegateSubAgent(
 		}
 		return result, nil
 	}
-	if len(strings.TrimSpace(string(execution.Result.Output))) > 0 {
+	rawOutput := strings.TrimSpace(string(execution.Result.Output))
+	if len(rawOutput) > 0 {
 		normalized, normalizeErr := normalizeDelegateSubAgentResult(
 			execution.Result.Output,
 			result.InvocationID,
@@ -261,29 +262,23 @@ func (r *Runner) delegateSubAgent(
 			result.TaskID,
 		)
 		if normalizeErr != nil {
-			result.Error = &tools.DelegateSubAgentError{
-				Code:      subAgentErrorCodeInvalidResult,
-				Message:   fmt.Sprintf("subagent returned invalid structured result: %v", normalizeErr),
-				Retryable: true,
-			}
+			// Structured parse failed — treat raw output as plain text summary.
+			result.OK = true
+			result.Status = subAgentResultStatusCompleted
+			result.Summary = truncateSubAgentSummary(rawOutput)
 			return result, nil
 		}
-		if contractErr := validateDelegateSubAgentOutputContract(normalized, preflight.RequestedOutput); contractErr != nil {
-			result.Error = &tools.DelegateSubAgentError{
-				Code:      subAgentErrorCodeInvalidResult,
-				Message:   fmt.Sprintf("subagent result violates requested output contract: %v", contractErr),
-				Retryable: true,
-			}
-			return result, nil
+		// Structured parse succeeded — fill in summary from raw text if empty.
+		if normalized.Summary == "" {
+			normalized.Summary = truncateSubAgentSummary(rawOutput)
 		}
 		return normalized, nil
 	}
 
-	result.Error = &tools.DelegateSubAgentError{
-		Code:      subAgentErrorCodeNotImplemented,
-		Message:   "subagent execution returned no structured result",
-		Retryable: true,
-	}
+	// Empty output — use a fallback summary.
+	result.OK = true
+	result.Status = subAgentResultStatusCompleted
+	result.Summary = "SubAgent task completed."
 	return result, nil
 }
 
@@ -387,9 +382,14 @@ func normalizeDelegateSubAgentResult(
 	result.Agent = firstNonEmpty(result.Agent, fallbackAgent)
 	result.TaskID = firstNonEmpty(result.TaskID, fallbackTaskID)
 	result.Summary = strings.TrimSpace(result.Summary)
+
+	// Reconcile OK/Error: if both are set, prefer the error.
 	if result.OK && result.Error != nil {
-		return tools.DelegateSubAgentResult{}, fmt.Errorf("ok result must not include error")
+		result.OK = false
+		result.Status = subAgentResultStatusFailed
 	}
+
+	// Normalize status.
 	result.Status = strings.ToLower(strings.TrimSpace(result.Status))
 	if result.Status == "" {
 		if result.OK {
@@ -398,28 +398,25 @@ func normalizeDelegateSubAgentResult(
 			result.Status = subAgentResultStatusFailed
 		}
 	}
-	if !isAllowedSubAgentStatus(result.Status) {
-		return tools.DelegateSubAgentResult{}, fmt.Errorf("unsupported status %q", result.Status)
-	}
-	if result.OK && result.Status == subAgentResultStatusFailed {
-		return tools.DelegateSubAgentResult{}, fmt.Errorf("ok result must not use failed status")
-	}
-	if result.OK && requiresTaskIDForStatus(result.Status) && strings.TrimSpace(result.TaskID) == "" {
-		return tools.DelegateSubAgentResult{}, fmt.Errorf("status %q requires non-empty task_id", result.Status)
-	}
-	if !result.OK && result.Status != subAgentResultStatusFailed {
-		return tools.DelegateSubAgentResult{}, fmt.Errorf("failed result must use status %q", subAgentResultStatusFailed)
-	}
-	if !result.OK {
-		if result.Error == nil {
-			return tools.DelegateSubAgentResult{}, fmt.Errorf("failed result must include error")
+
+	// Ensure failed results have an error.
+	if !result.OK && result.Error == nil {
+		result.Error = &tools.DelegateSubAgentError{
+			Code:    subAgentErrorCodeExecutionFailed,
+			Message: "subagent execution failed",
 		}
+	}
+	if result.Error != nil {
 		result.Error.Code = strings.ToLower(strings.TrimSpace(result.Error.Code))
 		result.Error.Message = strings.TrimSpace(result.Error.Message)
-		if result.Error.Code == "" || result.Error.Message == "" {
-			return tools.DelegateSubAgentResult{}, fmt.Errorf("failed result must include non-empty error code/message")
+		if result.Error.Code == "" {
+			result.Error.Code = subAgentErrorCodeExecutionFailed
+		}
+		if result.Error.Message == "" {
+			result.Error.Message = "subagent execution failed"
 		}
 	}
+
 	return result, nil
 }
 
@@ -431,17 +428,14 @@ func firstNonEmpty(value, fallback string) string {
 	return strings.TrimSpace(fallback)
 }
 
-func isAllowedSubAgentStatus(status string) bool {
-	switch strings.TrimSpace(strings.ToLower(status)) {
-	case subAgentResultStatusCompleted,
-		subAgentResultStatusFailed,
-		subAgentResultStatusQueued,
-		subAgentResultStatusRunning,
-		subAgentResultStatusAccepted:
-		return true
-	default:
-		return false
+const maxSubAgentSummaryLen = 500
+
+func truncateSubAgentSummary(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if len(trimmed) <= maxSubAgentSummaryLen {
+		return trimmed
 	}
+	return trimmed[:maxSubAgentSummaryLen-3] + "..."
 }
 
 func validateDelegateSubAgentOutputContract(result tools.DelegateSubAgentResult, requestedOutput string) error {

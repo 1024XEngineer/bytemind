@@ -356,6 +356,8 @@ func (delegateSubAgentRenderer) Render(payload string) ToolRenderResult {
 		status := "done"
 		if !result.OK {
 			status = "error"
+		} else if strings.HasPrefix(strings.TrimSpace(result.Summary), "SubAgent error:") {
+			status = "warn"
 		} else if result.Status == "running" || result.Status == "accepted" {
 			status = "running"
 		}
@@ -380,7 +382,7 @@ func (delegateSubAgentRenderer) Render(payload string) ToolRenderResult {
 		}
 		if text := strings.TrimSpace(result.Summary); text != "" {
 			detailLines = append(detailLines, "")
-			detailLines = append(detailLines, "Response: "+compact(text, 72))
+			detailLines = append(detailLines, "Response: "+compactToolText(text, 200))
 		}
 
 		compactLine := result.Agent

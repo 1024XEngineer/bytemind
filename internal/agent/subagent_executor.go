@@ -70,12 +70,11 @@ func (e *defaultSubAgentExecutor) Execute(
 
 	childRunner := e.newSubAgentChildRunner(workspace, input.Preflight.Definition.MaxTurns, input.Observer)
 	if childRunner == nil || childRunner.client == nil {
-		return subAgentFailureResult(
+		return subAgentErrorAsContent(
 			input.InvocationID,
 			input.Agent,
-			subAgentErrorCodeRuntimeUnavailable,
 			"llm client is unavailable for subagent execution",
-			true,
+			nil,
 		), nil
 	}
 
@@ -85,8 +84,8 @@ func (e *defaultSubAgentExecutor) Execute(
 		flattenedID := session.FlattenSubAgentSessionID(resumeID)
 		loaded, loadErr := input.Store.Load(flattenedID)
 		if loadErr != nil {
-			return subAgentFailureResult(input.InvocationID, input.Agent, subAgentErrorCodeExecutionFailed,
-				fmt.Sprintf("failed to load subagent session %s: %v", resumeID, loadErr), false), nil
+			return subAgentErrorAsContent(input.InvocationID, input.Agent,
+				fmt.Sprintf("failed to load subagent session %s: %v", resumeID, loadErr), nil), nil
 		}
 		childSession = loaded
 		childSession.ID = resumeID
@@ -99,7 +98,7 @@ func (e *defaultSubAgentExecutor) Execute(
 
 	if err := childRunner.syncExtensionTools(ctx, false); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return subAgentFailureResult(input.InvocationID, input.Agent, subAgentErrorCodeExecutionFailed, err.Error(), true), nil
+			return subAgentErrorAsContent(input.InvocationID, input.Agent, err.Error(), nil), nil
 		}
 	}
 
@@ -110,13 +109,33 @@ func (e *defaultSubAgentExecutor) Execute(
 		SubAgent:    buildSubAgentPromptInput(input.Request, input.Preflight),
 	}, string(input.RunMode))
 	if err != nil {
-		return subAgentFailureResult(input.InvocationID, input.Agent, subAgentErrorCodeExecutionFailed, err.Error(), true), nil
+		return subAgentErrorAsContent(input.InvocationID, input.Agent, err.Error(), nil), nil
 	}
 	applySubAgentPreflightSetup(&setup, input.Preflight)
 
 	answer, runErr := (&defaultEngine{runner: childRunner}).runPromptTurns(ctx, childSession, setup, nil)
 	if runErr != nil {
-		return subAgentFailureResult(input.InvocationID, input.Agent, subAgentErrorCodeExecutionFailed, runErr.Error(), true), nil
+		// Error as content: return OK:true with error in summary so the parent
+		// agent can reason about the failure and decide next steps.
+		partial := extractPartialResult(childSession.Messages)
+		errorMsg := runErr.Error()
+		if partial != "" {
+			errorMsg = partial + "\n\nSubAgent error: " + errorMsg
+		} else {
+			errorMsg = "SubAgent error: " + errorMsg
+		}
+		result := subAgentErrorAsContent(
+			input.InvocationID, input.Agent, errorMsg,
+			messagesToTranscript(childSession.Messages),
+		)
+		result.Task = strings.TrimSpace(input.Request.Task)
+		if input.Store != nil && childSession != nil {
+			persistedID := session.FlattenSubAgentSessionID(childSession.ID)
+			clone := cloneSessionForPersist(childSession, persistedID, workspace)
+			_ = input.Store.Save(clone)
+			result.TranscriptSessionID = persistedID
+		}
+		return result, nil
 	}
 
 	result := buildSubAgentResultFromAnswer(answer, input.InvocationID, input.Agent, childSession.Messages)
@@ -274,6 +293,25 @@ func buildSubAgentResultFromAnswer(answer, invocationID, agent string, messages 
 	return base
 }
 
+// extractPartialResult extracts any assistant text output from the child session
+// before a failure occurred, so the parent agent can see what was accomplished.
+func extractPartialResult(messages []llm.Message) string {
+	var parts []string
+	for _, msg := range messages {
+		if msg.Role == llm.RoleAssistant {
+			for _, part := range msg.Parts {
+				if part.Text != nil {
+					text := strings.TrimSpace(part.Text.Value)
+					if text != "" {
+						parts = append(parts, text)
+					}
+				}
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
 func extractJSONFromAnswer(answer string) string {
 	if json.Valid([]byte(answer)) {
 		return answer
@@ -326,17 +364,17 @@ func resolveSubAgentMaxIterations(parentMaxIterations int, requestedMaxTurns int
 	return effectiveParent
 }
 
-func subAgentFailureResult(invocationID, agent, code, message string, retryable bool) tools.DelegateSubAgentResult {
+// subAgentErrorAsContent returns a result with OK:true and the error message as
+// summary content, so the parent agent can reason about the failure and decide
+// next steps (retry, partial recovery, or manual intervention).
+func subAgentErrorAsContent(invocationID, agent, message string, transcript []tools.TranscriptMessage) tools.DelegateSubAgentResult {
 	return tools.DelegateSubAgentResult{
-		OK:           false,
-		Status:       subAgentResultStatusFailed,
+		OK:           true,
+		Status:       subAgentResultStatusCompleted,
 		InvocationID: strings.TrimSpace(invocationID),
 		Agent:        strings.TrimSpace(agent),
-		Error: &tools.DelegateSubAgentError{
-			Code:      strings.TrimSpace(code),
-			Message:   strings.TrimSpace(message),
-			Retryable: retryable,
-		},
+		Summary:      truncateSubAgentSummary("SubAgent error: " + strings.TrimSpace(message)),
+		Transcript:   transcript,
 	}
 }
 

@@ -212,7 +212,10 @@ func (e *defaultEngine) executeToolCall(
 		}
 	}
 
-	if execErr != nil {
+	if execErr != nil && len(strings.TrimSpace(result)) == 0 {
+		// Only override ToolResult when there is no content from the tool itself.
+		// Subagent errors are returned as OK:true with error in summary content,
+		// so the parent agent can reason about the failure.
 		status, reasonCode := classifyToolExecutionError(execErr)
 		payload := map[string]any{
 			"ok":          false,
