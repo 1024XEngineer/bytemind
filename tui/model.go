@@ -125,9 +125,11 @@ var startupFieldOrder = []string{
 // SubAgentToolCall tracks a single tool call made by a running subagent.
 type SubAgentToolCall struct {
 	ToolName    string
-	CompactBody string // short description, e.g. "search_text: config"
-	Status      string // "running" / "done" / "error"
-	Summary     string // summary after completion
+	ToolCallID  string   // precise matching for EventToolCallCompleted
+	CompactBody string   // short description, e.g. "search_text: config"
+	Status      string   // "running" / "done" / "error"
+	Summary     string   // summary after completion
+	DetailLines []string // expanded detail lines (ctrl+o)
 }
 
 type chatEntry struct {
@@ -137,6 +139,7 @@ type chatEntry struct {
 	Body           string
 	Status         string
 	ToolCallID     string   // precise matching for tool call completion
+	AgentID        string   // subagent agent name (e.g. "explorer") for AgentID-based routing
 	CompactBody    string   // collapsed tree view text (e.g. "Read model.go (1-50)")
 	DetailLines    []string // expanded detail lines
 	SubAgentTools  []SubAgentToolCall // tool calls made by a subagent

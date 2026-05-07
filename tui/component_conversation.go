@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -404,6 +405,7 @@ func collapsibleParallelGroupKey(item chatEntry, toolDetailsExpanded bool) (stri
 // collapsibleParallelToolName returns the tool name if this entry can be
 // grouped with adjacent entries of the same tool. All tool entries are
 // collapsible; grouping happens at render time, not data time.
+// delegate_subagent is excluded — each subagent renders as its own tree block.
 func collapsibleParallelToolName(item chatEntry) (string, bool) {
 	if item.Kind != "tool" {
 		return "", false
@@ -411,6 +413,9 @@ func collapsibleParallelToolName(item chatEntry) (string, bool) {
 	_, name := toolDisplayParts(item.Title)
 	name = strings.TrimSpace(name)
 	if name == "" {
+		return "", false
+	}
+	if strings.EqualFold(name, "delegate_subagent") {
 		return "", false
 	}
 	return name, true
@@ -498,6 +503,19 @@ func renderRunSection(item chatEntry, width int, toolDetailsExpanded bool, runni
 	return renderChatSection(item, width)
 }
 
+// summarizeDelegateSubAgent parses delegate_subagent tool arguments to extract
+// agent name and task description for display.
+func summarizeDelegateSubAgent(rawArgs string) (agent, task string) {
+	var args struct {
+		Agent string `json:"agent"`
+		Task  string `json:"task"`
+	}
+	if json.Unmarshal([]byte(rawArgs), &args) == nil {
+		return strings.TrimSpace(args.Agent), strings.TrimSpace(args.Task)
+	}
+	return "", ""
+}
+
 // renderToolTreeItem renders a single tool entry in tree style.
 func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool) string {
 	_, name := toolDisplayParts(item.Title)
@@ -510,6 +528,11 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 	compact := item.CompactBody
 	if compact == "" {
 		compact = strings.TrimSpace(firstNonEmptyLine(item.Body))
+	}
+
+	// Delegate subagent: render as AgentName(task) + internal tool tree.
+	if strings.EqualFold(name, "delegate_subagent") && item.AgentID != "" {
+		return renderSubAgentBlock(item, item.AgentID, compact, width, toolDetailsExpanded, runningIndicatorVisible)
 	}
 
 	statusBadge := ""
@@ -598,6 +621,104 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 				hint += fmt.Sprintf(" (%d running)", running)
 			}
 			body += "  " + connectorStyle.Render(hint)
+		}
+	}
+
+	return style.Width(contentWidth).Render(body)
+}
+
+// renderSubAgentBlock renders a delegate_subagent entry as a standalone block
+// with agent name header and internal tool tree using ├─/└─ connectors.
+func renderSubAgentBlock(item chatEntry, agentID, compactBody string, width int, toolDetailsExpanded bool, runningIndicatorVisible bool) string {
+	style := resolveToolRunSectionStyle(item.Status)
+	contentWidth := max(8, width-style.GetHorizontalFrameSize())
+	connectorStyle := lipgloss.NewStyle().Foreground(colorTool)
+	indent := "  "
+
+	// Header: AgentName(task)
+	agentLabel := compact(agentID, 24)
+	header := toolStatusIndicator(item.Status, runningIndicatorVisible) + " " + agentLabel
+	if compactBody != "" {
+		task := compactBody
+		if runewidth.StringWidth(task) > 56 {
+			task = runewidth.Truncate(task, 56, "…")
+		}
+		header += "(" + task + ")"
+	}
+	if shouldRenderToolStatusTag(item.Status) {
+		header += "  " + renderToolTag(item.Status, item.Status)
+	}
+	if runewidth.StringWidth(header) > contentWidth {
+		header = runewidth.Truncate(header, contentWidth, "…")
+	}
+
+	body := header
+
+	// Detail lines from the parent entry (ctrl+O expanded prompt/response).
+	if toolDetailsExpanded && len(item.DetailLines) > 0 {
+		detailLines := make([]string, 0, len(item.DetailLines))
+		for _, detail := range item.DetailLines {
+			detail = strings.TrimSpace(detail)
+			if detail == "" {
+				continue
+			}
+			detailLines = append(detailLines, connectorStyle.Render(toolTreeChar)+detail)
+		}
+		if len(detailLines) > 0 {
+			body += "\n" + indent + strings.Join(detailLines, "\n"+indent)
+		}
+	}
+
+	// Internal tool tree.
+	if len(item.SubAgentTools) > 0 {
+		if toolDetailsExpanded {
+			const maxSubAgentToolsDisplay = 5
+			tools := item.SubAgentTools
+			hidden := 0
+			if len(tools) > maxSubAgentToolsDisplay {
+				hidden = len(tools) - maxSubAgentToolsDisplay
+				tools = tools[len(tools)-maxSubAgentToolsDisplay:]
+			}
+			subLines := make([]string, 0, len(tools)+1)
+			if hidden > 0 {
+				subLines = append(subLines, connectorStyle.Render(fmt.Sprintf("└─ +%d more (ctrl+o to expand)", hidden)))
+			}
+			for i, st := range tools {
+				connector := "├─"
+				if i == len(tools)-1 && hidden == 0 {
+					connector = "└─"
+				}
+				if st.Status == "running" {
+					connector = "├─"
+				}
+				indicator := connector
+				text := st.ToolName
+				if st.CompactBody != "" {
+					text += "(" + st.CompactBody + ")"
+				} else if st.Summary != "" {
+					summaryText := st.Summary
+					if runewidth.StringWidth(summaryText) > 56 {
+						summaryText = runewidth.Truncate(summaryText, 56, "…")
+					}
+					text += "(" + summaryText + ")"
+				}
+				subLines = append(subLines, connectorStyle.Render(indicator)+" "+text)
+			}
+			if len(subLines) > 0 {
+				body += "\n" + indent + strings.Join(subLines, "\n"+indent)
+			}
+		} else {
+			running := 0
+			for _, st := range item.SubAgentTools {
+				if st.Status == "running" {
+					running++
+				}
+			}
+			hint := fmt.Sprintf("%d tool uses", len(item.SubAgentTools))
+			if running > 0 {
+				hint += fmt.Sprintf(" (%d running)", running)
+			}
+			body += "  " + connectorStyle.Render("└─ "+hint+" (ctrl+o to expand)")
 		}
 	}
 

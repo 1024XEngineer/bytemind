@@ -227,7 +227,7 @@ func (m *model) handleAgentEvent(event Event) {
 		}
 		title := label + " | " + event.ToolName
 		compactBody, detailLines := summarizeToolCallStart(event.ToolName, event.ToolArguments)
-		m.appendChat(chatEntry{
+		newEntry := chatEntry{
 			Kind:        "tool",
 			Title:       title,
 			Body:        "",
@@ -235,7 +235,19 @@ func (m *model) handleAgentEvent(event Event) {
 			CompactBody: compactBody,
 			DetailLines: detailLines,
 			ToolCallID:  event.ToolCallID,
-		})
+		}
+		// For delegate_subagent, parse agent name and set AgentID for routing.
+		if strings.EqualFold(event.ToolName, "delegate_subagent") {
+			agent, task := summarizeDelegateSubAgent(event.ToolArguments)
+			if agent == "" {
+				agent = "subagent"
+			}
+			newEntry.AgentID = agent
+			if task != "" {
+				newEntry.CompactBody = task
+			}
+		}
+		m.appendChat(newEntry)
 		m.statusNote = "Running tool: " + event.ToolName
 	case EventToolCallCompleted:
 		rendered := renderToolPayload(event.ToolName, event.ToolResult)
@@ -294,20 +306,37 @@ func (m *model) handleAgentEvent(event Event) {
 func (m *model) handleSubAgentEvent(event Event) {
 	switch event.Type {
 	case EventToolCallStarted:
-		entry := m.findActiveSubAgentEntry()
+		entry := m.findActiveSubAgentEntryByID(event.AgentID)
+		if entry == nil {
+			entry = m.findActiveSubAgentEntry()
+		}
 		if entry == nil {
 			return
 		}
-		compactBody, _ := summarizeToolCallStart(event.ToolName, event.ToolArguments)
+		compactBody, detailLines := summarizeToolCallStart(event.ToolName, event.ToolArguments)
 		entry.SubAgentTools = append(entry.SubAgentTools, SubAgentToolCall{
 			ToolName:    event.ToolName,
+			ToolCallID:  event.ToolCallID,
 			CompactBody: compactBody,
 			Status:      "running",
+			DetailLines: detailLines,
 		})
 	case EventToolCallCompleted:
-		entry := m.findActiveSubAgentEntry()
+		entry := m.findActiveSubAgentEntryByID(event.AgentID)
+		if entry == nil {
+			entry = m.findActiveSubAgentEntry()
+		}
 		if entry == nil {
 			return
+		}
+		// Match by ToolCallID first (precise), then fall back to ToolName+running.
+		for i := len(entry.SubAgentTools) - 1; i >= 0; i-- {
+			if event.ToolCallID != "" && entry.SubAgentTools[i].ToolCallID == event.ToolCallID {
+				rendered := renderToolPayload(event.ToolName, event.ToolResult)
+				entry.SubAgentTools[i].Status = rendered.Status
+				entry.SubAgentTools[i].Summary = rendered.Summary
+				return
+			}
 		}
 		for i := len(entry.SubAgentTools) - 1; i >= 0; i-- {
 			if entry.SubAgentTools[i].Status == "running" && entry.SubAgentTools[i].ToolName == event.ToolName {
@@ -318,6 +347,22 @@ func (m *model) handleSubAgentEvent(event Event) {
 			}
 		}
 	}
+}
+
+// findActiveSubAgentEntryByID finds a running delegate_subagent entry by AgentID.
+func (m *model) findActiveSubAgentEntryByID(agentID string) *chatEntry {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return nil
+	}
+	for i := len(m.chatItems) - 1; i >= 0; i-- {
+		if m.chatItems[i].Kind == "tool" &&
+			m.chatItems[i].AgentID == agentID &&
+			m.chatItems[i].Status == "running" {
+			return &m.chatItems[i]
+		}
+	}
+	return nil
 }
 
 func (m *model) findActiveSubAgentEntry() *chatEntry {

@@ -386,7 +386,9 @@ func (delegateSubAgentRenderer) Render(payload string) ToolRenderResult {
 		}
 
 		compactLine := result.Agent
-		if text := strings.TrimSpace(result.Summary); text != "" {
+		if task := strings.TrimSpace(result.Task); task != "" {
+			compactLine += "(" + compact(task, 48) + ")"
+		} else if text := strings.TrimSpace(result.Summary); text != "" {
 			compactLine += ": " + compact(text, 60)
 		}
 
