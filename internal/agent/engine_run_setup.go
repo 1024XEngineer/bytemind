@@ -16,6 +16,8 @@ import (
 
 var resolveAgentSystemSandboxRuntimeStatus = tools.ResolveSystemSandboxRuntimeStatus
 
+const userMessageModelMetaKey = "user_model"
+
 func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptInput, mode string) (runPromptSetup, error) {
 	if e == nil || e.runner == nil {
 		return runPromptSetup{}, fmt.Errorf("agent engine is unavailable")
@@ -136,6 +138,21 @@ func (e *defaultEngine) beginRunSession(sess *session.Session, userMessage llm.M
 		return fmt.Errorf("agent engine is unavailable")
 	}
 	runner := e.runner
+	now := time.Now().UTC()
+
+	// Persist minimal user-turn metadata so TUI can rebuild a consistent header
+	// after session reload/switch.
+	if strings.TrimSpace(userMessage.CreatedAt) == "" {
+		userMessage.CreatedAt = now.Format(time.RFC3339Nano)
+	}
+	if userMessage.Role == llm.RoleUser {
+		if model := strings.TrimSpace(runner.modelID()); model != "" {
+			if userMessage.Meta == nil {
+				userMessage.Meta = llm.MessageMeta{}
+			}
+			userMessage.Meta[userMessageModelMetaKey] = model
+		}
+	}
 
 	if err := llm.ValidateMessage(userMessage); err != nil {
 		return err
@@ -146,7 +163,7 @@ func (e *defaultEngine) beginRunSession(sess *session.Session, userMessage llm.M
 			return err
 		}
 	}
-	runner.appendPromptHistory(corepkg.SessionID(sess.ID), userInput, time.Now().UTC())
+	runner.appendPromptHistory(corepkg.SessionID(sess.ID), userInput, now)
 	runner.emit(Event{
 		Type:      EventRunStarted,
 		SessionID: corepkg.SessionID(sess.ID),

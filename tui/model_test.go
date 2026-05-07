@@ -5121,6 +5121,43 @@ func TestRebuildSessionTimelineParsesLegacyToolRoleMessage(t *testing.T) {
 	}
 }
 
+func TestRebuildSessionTimelineRestoresUserMetaHeader(t *testing.T) {
+	user := llm.NewUserTextMessage("hello")
+	user.CreatedAt = "2026-05-07T20:58:58Z"
+	user.Meta = llm.MessageMeta{
+		userMessageModelMetaKey: "mimo-v2.5",
+	}
+	sess := &session.Session{Messages: []llm.Message{user}}
+
+	items := rebuildSessionTimeline(sess)
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %#v", items)
+	}
+	if items[0].Kind != "user" {
+		t.Fatalf("expected user item, got %#v", items[0])
+	}
+	want := formatUserMeta("mimo-v2.5", time.Date(2026, 5, 7, 20, 58, 58, 0, time.UTC))
+	if items[0].Meta != want {
+		t.Fatalf("expected restored user meta %q, got %q", want, items[0].Meta)
+	}
+}
+
+func TestRebuildSessionTimelineKeepsLegacyUserHeaderWhenMetadataMissing(t *testing.T) {
+	sess := &session.Session{
+		Messages: []llm.Message{
+			llm.NewUserTextMessage("legacy message"),
+		},
+	}
+
+	items := rebuildSessionTimeline(sess)
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %#v", items)
+	}
+	if items[0].Meta != "" {
+		t.Fatalf("expected empty user meta for legacy message, got %q", items[0].Meta)
+	}
+}
+
 func TestHandleAgentEventShowsToolProgressInChat(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{

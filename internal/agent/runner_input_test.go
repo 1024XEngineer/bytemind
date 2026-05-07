@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/1024XEngineer/bytemind/internal/config"
 	"github.com/1024XEngineer/bytemind/internal/llm"
@@ -242,6 +243,58 @@ func TestRunPromptWithInputPlanModeSetsGoalFromUserMessageWhenDisplayTextBlank(t
 	}
 	if sess.Mode != "plan" {
 		t.Fatalf("expected session mode to be plan, got %q", sess.Mode)
+	}
+}
+
+func TestRunPromptWithInputPersistsUserMessageMetaForTimelineRestore(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+
+	client := &fakeClient{
+		replies: []llm.Message{
+			llm.NewAssistantTextMessage("done"),
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "mimo-v2.5"},
+			MaxIterations: 2,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	_, err = runner.RunPromptWithInput(context.Background(), sess, RunPromptInput{
+		UserMessage: llm.NewUserTextMessage("check message metadata"),
+		DisplayText: "check message metadata",
+	}, "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sess.Messages) == 0 {
+		t.Fatalf("expected persisted session message")
+	}
+	first := sess.Messages[0]
+	if strings.TrimSpace(first.CreatedAt) == "" {
+		t.Fatalf("expected CreatedAt on persisted user message")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, first.CreatedAt); err != nil {
+		t.Fatalf("expected RFC3339Nano CreatedAt, got %q: %v", first.CreatedAt, err)
+	}
+	if first.Meta == nil {
+		t.Fatalf("expected metadata map on persisted user message")
+	}
+	if got, _ := first.Meta[userMessageModelMetaKey].(string); got != "mimo-v2.5" {
+		t.Fatalf("expected %q=%q, got %q", userMessageModelMetaKey, "mimo-v2.5", got)
 	}
 }
 

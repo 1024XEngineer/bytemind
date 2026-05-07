@@ -56,6 +56,7 @@ const (
 	pasteAggregateDebounce     = 120 * time.Millisecond
 	pasteBurstSettleDelay      = 120 * time.Millisecond
 	hiddenPasteProbeDelay      = 45 * time.Millisecond
+	userMessageModelMetaKey    = "user_model"
 )
 
 type footerShortcutHint struct {
@@ -2177,7 +2178,13 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 			}
 			userText := strings.Join(userTextParts, "")
 			if strings.TrimSpace(userText) != "" {
-				items = append(items, chatEntry{Kind: "user", Title: "You", Body: userText, Status: "final"})
+				items = append(items, chatEntry{
+					Kind:   "user",
+					Title:  "You",
+					Meta:   resolveUserMessageMeta(message),
+					Body:   userText,
+					Status: "final",
+				})
 			}
 		case "assistant":
 			for _, call := range message.ToolCalls {
@@ -2280,6 +2287,35 @@ func resolveSubAgentToolCallsFromMeta(message llm.Message) []SubAgentToolCall {
 	default:
 		return nil
 	}
+}
+
+func resolveUserMessageMeta(message llm.Message) string {
+	createdAt, ok := parseMessageCreatedAt(message.CreatedAt)
+	if !ok {
+		return ""
+	}
+	model := "-"
+	if message.Meta != nil {
+		if raw, exists := message.Meta[userMessageModelMetaKey]; exists {
+			if value, ok := raw.(string); ok && strings.TrimSpace(value) != "" {
+				model = strings.TrimSpace(value)
+			}
+		}
+	}
+	return formatUserMeta(model, createdAt)
+}
+
+func parseMessageCreatedAt(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func chatBubbleWidth(item chatEntry, width int) int {
