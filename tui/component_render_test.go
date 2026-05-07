@@ -588,3 +588,108 @@ func TestRenderRunSectionDividerLegacyUsesPreviousGlyph(t *testing.T) {
 		t.Fatalf("expected legacy divider to differ from ascii fallback, got %q", got)
 	}
 }
+
+func TestCollapsibleParallelToolNameUsesAgentIDForDelegateSubagent(t *testing.T) {
+	withAgent, ok := collapsibleParallelToolName(chatEntry{
+		Kind:    "tool",
+		Title:   toolEntryTitle("delegate_subagent"),
+		AgentID: "explorer",
+	})
+	if !ok || withAgent != "delegate_subagent:explorer" {
+		t.Fatalf("expected delegate_subagent key with agent id, got key=%q ok=%v", withAgent, ok)
+	}
+
+	withoutAgent, ok := collapsibleParallelToolName(chatEntry{
+		Kind:  "tool",
+		Title: toolEntryTitle("delegate_subagent"),
+	})
+	if !ok || withoutAgent != "delegate_subagent" {
+		t.Fatalf("expected delegate_subagent key without suffix, got key=%q ok=%v", withoutAgent, ok)
+	}
+}
+
+func TestRenderSubAgentBlockThreeStateModes(t *testing.T) {
+	running := chatEntry{
+		Status: "running",
+		SubAgentTools: []SubAgentToolCall{
+			{ToolName: "read_file", CompactBody: "a.go", Status: "done"},
+			{ToolName: "search_text", CompactBody: `"token"`, Status: "done"},
+			{ToolName: "run_shell", CompactBody: "go test ./...", Status: "done"},
+			{ToolName: "write_file", CompactBody: "b.go", Status: "running"},
+		},
+	}
+	runningView := stripANSI(renderSubAgentBlock(running, "explorer", "scan auth flow", 120, false, true))
+	for _, want := range []string{"explorer", "scan auth flow", "+4 tool uses", "(1 running)", "(ctrl+o to expand)"} {
+		if !strings.Contains(runningView, want) {
+			t.Fatalf("expected running subagent block to contain %q, got %q", want, runningView)
+		}
+	}
+
+	done := chatEntry{
+		Status:         "done",
+		TotalToolCalls: 5,
+	}
+	doneView := stripANSI(renderSubAgentBlock(done, "reviewer", "summarize failures", 120, false, true))
+	for _, want := range []string{"reviewer", "Done (5 tool uses)", "(ctrl+o to expand)"} {
+		if !strings.Contains(doneView, want) {
+			t.Fatalf("expected completed subagent block to contain %q, got %q", want, doneView)
+		}
+	}
+
+	expanded := chatEntry{
+		Status:     "done",
+		TaskPrompt: "investigate flaky tests",
+		SubAgentTools: []SubAgentToolCall{
+			{ToolName: "read_file", CompactBody: "main_test.go", Status: "done"},
+			{ToolName: "search_text", Summary: "found unstable timing assertion in 3 places", Status: "running"},
+		},
+	}
+	expandedView := stripANSI(renderSubAgentBlock(expanded, "planner", "", 120, true, true))
+	for _, want := range []string{"planner", "Prompt:", "investigate flaky tests", "read_file(main_test.go)", "search_text("} {
+		if !strings.Contains(expandedView, want) {
+			t.Fatalf("expected expanded subagent block to contain %q, got %q", want, expandedView)
+		}
+	}
+}
+
+func TestRenderRunSectionGroupDelegateSubagentAggregation(t *testing.T) {
+	group := []chatEntry{
+		{
+			Kind:        "tool",
+			Title:       toolEntryTitle("delegate_subagent"),
+			Status:      "running",
+			AgentID:     "explorer",
+			CompactBody: "scan service wiring",
+			DetailLines: []string{"prompt: scan service wiring"},
+			SubAgentTools: []SubAgentToolCall{
+				{ToolName: "read_file", CompactBody: "service.go", Status: "done"},
+				{ToolName: "search_text", CompactBody: `"wire.NewSet"`, Status: "running"},
+			},
+		},
+		{
+			Kind:        "tool",
+			Title:       toolEntryTitle("delegate_subagent"),
+			Status:      "done",
+			AgentID:     "explorer",
+			CompactBody: "verify tests",
+			DetailLines: []string{"prompt: verify tests"},
+			SubAgentTools: []SubAgentToolCall{
+				{ToolName: "run_shell", CompactBody: "go test ./...", Status: "done"},
+			},
+		},
+	}
+
+	collapsed := stripANSI(renderRunSectionGroup(group, 140, false, true))
+	for _, want := range []string{"2 x explorer", "scan service wiring", "verify tests", "(ctrl+o to expand)"} {
+		if !strings.Contains(collapsed, want) {
+			t.Fatalf("expected collapsed delegate group to contain %q, got %q", want, collapsed)
+		}
+	}
+
+	expanded := stripANSI(renderRunSectionGroup(group, 140, true, true))
+	for _, want := range []string{"2 x explorer", "prompt: scan service wiring", "read_file(service.go)", "run_shell(go test ./...)"} {
+		if !strings.Contains(expanded, want) {
+			t.Fatalf("expected expanded delegate group to contain %q, got %q", want, expanded)
+		}
+	}
+}

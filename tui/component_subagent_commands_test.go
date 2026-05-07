@@ -288,6 +288,22 @@ func TestResolveSubAgentToolCallsFromMetaFromAnySlice(t *testing.T) {
 	}
 }
 
+func TestResolveSubAgentToolCallsFromMetaInvalidAnySlice(t *testing.T) {
+	msg := llm.Message{
+		Meta: llm.MessageMeta{
+			"subagent_tool_calls": []any{
+				map[string]any{
+					"ToolName": 123,
+					"Status":   "done",
+				},
+			},
+		},
+	}
+	if got := resolveSubAgentToolCallsFromMeta(msg); got != nil {
+		t.Fatalf("expected invalid []any payload to fail decoding, got %#v", got)
+	}
+}
+
 func TestRebuildSessionTimelineWithSubAgentTools(t *testing.T) {
 	sess := session.New("/workspace")
 	sess.Messages = []llm.Message{
@@ -361,4 +377,108 @@ func TestRebuildSessionTimelineWithoutSubAgentToolsMeta(t *testing.T) {
 			return
 		}
 	}
+}
+
+func TestRebuildSessionTimelineUsesFullDelegateSubAgentResultFromMeta(t *testing.T) {
+	sess := session.New("/workspace")
+	sess.Messages = []llm.Message{
+		{
+			Role: llm.RoleAssistant,
+			Parts: []llm.Part{
+				{
+					Type: llm.PartToolUse,
+					ToolUse: &llm.ToolUsePart{
+						ID:        "call-1",
+						Name:      "delegate_subagent",
+						Arguments: `{"agent":"explorer","task":"scan files"}`,
+					},
+				},
+			},
+		},
+		{
+			Role: llm.RoleUser,
+			Parts: []llm.Part{
+				{
+					Type: llm.PartToolResult,
+					ToolResult: &llm.ToolResultPart{
+						ToolUseID: "call-1",
+						Content:   `{"ok":true,"agent":"explorer","summary":"trimmed summary"}`,
+					},
+				},
+			},
+			Meta: llm.MessageMeta{
+				"delegate_subagent_result": `{"ok":true,"agent":"explorer","task":"scan files","content":"full natural language result from subagent"}`,
+			},
+		},
+	}
+
+	items := rebuildSessionTimeline(sess)
+	for _, item := range items {
+		if item.Kind != "tool" || item.AgentID != "explorer" {
+			continue
+		}
+		if item.TaskPrompt != "scan files" {
+			t.Fatalf("expected task prompt to be restored from arguments, got %q", item.TaskPrompt)
+		}
+		if !strings.Contains(item.Body, "full natural language result from subagent") {
+			t.Fatalf("expected full delegate result payload to be used, got %q", item.Body)
+		}
+		return
+	}
+	t.Fatal("expected to find restored delegate_subagent tool entry")
+}
+
+func TestRebuildSessionTimelineRestoresDelegateSubAgentToolRoleMessage(t *testing.T) {
+	sess := session.New("/workspace")
+	sess.Messages = []llm.Message{
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{
+				{
+					ID: "call-2",
+					Function: llm.ToolFunctionCall{
+						Name:      "delegate_subagent",
+						Arguments: `{"agent":"reviewer","task":"verify docs"}`,
+					},
+				},
+			},
+		},
+		{
+			Role:       llm.Role("tool"),
+			ToolCallID: "call-2",
+			Content:    `{"ok":true,"agent":"reviewer","summary":"trimmed"}`,
+			Meta: llm.MessageMeta{
+				"delegate_subagent_result": `{"ok":true,"agent":"reviewer","task":"verify docs","content":"tool-role full payload"}`,
+				"subagent_tool_calls": []any{
+					map[string]any{
+						"ToolName":    "read_file",
+						"ToolCallID":  "tc-1",
+						"CompactBody": "docs.md",
+						"Status":      "done",
+					},
+				},
+			},
+		},
+	}
+
+	items := rebuildSessionTimeline(sess)
+	for _, item := range items {
+		if item.Kind != "tool" || item.AgentID != "reviewer" {
+			continue
+		}
+		if item.TaskPrompt != "verify docs" {
+			t.Fatalf("expected task prompt to be restored for tool-role message, got %q", item.TaskPrompt)
+		}
+		if item.TotalToolCalls != 1 || len(item.SubAgentTools) != 1 {
+			t.Fatalf("expected one restored subagent tool call, got total=%d items=%d", item.TotalToolCalls, len(item.SubAgentTools))
+		}
+		if item.SubAgentTools[0].ToolName != "read_file" {
+			t.Fatalf("expected restored subagent tool to be read_file, got %#v", item.SubAgentTools[0])
+		}
+		if !strings.Contains(item.Body, "tool-role full payload") {
+			t.Fatalf("expected full tool-role delegate payload to be used, got %q", item.Body)
+		}
+		return
+	}
+	t.Fatal("expected to find tool-role delegate_subagent entry")
 }

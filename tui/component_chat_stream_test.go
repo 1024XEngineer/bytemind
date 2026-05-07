@@ -1414,3 +1414,151 @@ func TestStallDetectionSkipsWhenNotBusy(t *testing.T) {
 		t.Fatal("expected stalled=false when not busy")
 	}
 }
+
+func TestHandleAgentEventDelegateSubagentParsesTaskAndSetsTotalToolCalls(t *testing.T) {
+	cancelCalls := 0
+	m := model{
+		runCancel: func() {
+			cancelCalls++
+		},
+		interruptSafe:    true,
+		interrupting:     true,
+		pendingInterrupt: true,
+	}
+
+	m.handleAgentEvent(Event{
+		Type:          EventToolCallStarted,
+		ToolName:      "delegate_subagent",
+		ToolCallID:    "delegate-1",
+		ToolArguments: `{"agent":"reviewer","task":"scan login flow"}`,
+	})
+
+	if len(m.chatItems) == 0 {
+		t.Fatal("expected delegate_subagent start to append a tool entry")
+	}
+	entry := m.chatItems[len(m.chatItems)-1]
+	if entry.AgentID != "reviewer" {
+		t.Fatalf("expected AgentID=reviewer, got %q", entry.AgentID)
+	}
+	if entry.TaskPrompt != "scan login flow" {
+		t.Fatalf("expected TaskPrompt from arguments, got %q", entry.TaskPrompt)
+	}
+	if entry.CompactBody != "scan login flow" {
+		t.Fatalf("expected CompactBody to use task prompt, got %q", entry.CompactBody)
+	}
+
+	m.chatItems[len(m.chatItems)-1].SubAgentTools = []SubAgentToolCall{
+		{ToolName: "read_file", Status: "done"},
+		{ToolName: "search_text", Status: "done"},
+	}
+
+	m.handleAgentEvent(Event{
+		Type:       EventToolCallCompleted,
+		ToolName:   "delegate_subagent",
+		ToolCallID: "delegate-1",
+		ToolResult: `{"ok":true,"agent":"reviewer","summary":"finished"}`,
+	})
+
+	final := m.chatItems[len(m.chatItems)-1]
+	if final.TotalToolCalls != 2 {
+		t.Fatalf("expected TotalToolCalls to be set from subagent tools, got %d", final.TotalToolCalls)
+	}
+	if cancelCalls != 1 {
+		t.Fatalf("expected interrupt-safe completion to invoke runCancel once, got %d", cancelCalls)
+	}
+	if m.pendingInterrupt {
+		t.Fatal("expected pending interrupt flag to be cleared after safe completion")
+	}
+	if m.phase != "interrupting" {
+		t.Fatalf("expected phase to stay interrupting while canceling run, got %q", m.phase)
+	}
+}
+
+func TestHandleAgentEventDelegateSubagentMissingAgentFallsBackToDefault(t *testing.T) {
+	m := model{}
+	m.handleAgentEvent(Event{
+		Type:          EventToolCallStarted,
+		ToolName:      "delegate_subagent",
+		ToolArguments: `{"task":"triage flaky tests"}`,
+	})
+	if len(m.chatItems) == 0 {
+		t.Fatal("expected tool entry to be appended")
+	}
+	last := m.chatItems[len(m.chatItems)-1]
+	if last.AgentID != "subagent" {
+		t.Fatalf("expected missing agent to fall back to subagent, got %q", last.AgentID)
+	}
+	if last.TaskPrompt != "triage flaky tests" {
+		t.Fatalf("expected task prompt to be captured, got %q", last.TaskPrompt)
+	}
+}
+
+func TestHandleSubAgentEventRoutesByAgentIDAndFallbacks(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{
+				Kind:    "tool",
+				Title:   toolEntryTitle("delegate_subagent"),
+				Status:  "running",
+				AgentID: "explorer",
+			},
+			{
+				Kind:    "tool",
+				Title:   toolEntryTitle("delegate_subagent"),
+				Status:  "running",
+				AgentID: "reviewer",
+			},
+		},
+	}
+
+	m.handleAgentEvent(Event{
+		Type:          EventToolCallStarted,
+		AgentID:       "reviewer",
+		ToolName:      "read_file",
+		ToolCallID:    "sub-1",
+		ToolArguments: `{"path":"pkg/auth.go","start_line":1,"end_line":20}`,
+	})
+
+	if len(m.chatItems[0].SubAgentTools) != 0 {
+		t.Fatalf("expected explorer entry untouched, got %#v", m.chatItems[0].SubAgentTools)
+	}
+	if len(m.chatItems[1].SubAgentTools) != 1 {
+		t.Fatalf("expected reviewer entry to receive one tool call, got %#v", m.chatItems[1].SubAgentTools)
+	}
+	if m.chatItems[1].SubAgentTools[0].ToolCallID != "sub-1" {
+		t.Fatalf("expected precise ToolCallID routing, got %#v", m.chatItems[1].SubAgentTools[0])
+	}
+
+	m.handleAgentEvent(Event{
+		Type:       EventToolCallCompleted,
+		AgentID:    "reviewer",
+		ToolName:   "read_file",
+		ToolCallID: "sub-1",
+		ToolResult: `{"path":"pkg/auth.go","start_line":1,"end_line":20}`,
+	})
+	if m.chatItems[1].SubAgentTools[0].Status == "running" {
+		t.Fatalf("expected ToolCallID completion path to update status, got %#v", m.chatItems[1].SubAgentTools[0])
+	}
+
+	m.chatItems[1].SubAgentTools = append(m.chatItems[1].SubAgentTools, SubAgentToolCall{
+		ToolName: "search_text",
+		Status:   "running",
+	})
+	m.handleSubAgentEvent(Event{
+		Type:       EventToolCallCompleted,
+		AgentID:    "unknown-agent",
+		ToolName:   "search_text",
+		ToolResult: `{"query":"token","matches":[{"path":"a.go","line":8,"text":"token"}]}`,
+	})
+	if got := m.chatItems[1].SubAgentTools[1].Status; got == "running" {
+		t.Fatalf("expected fallback completion by name to update status, got %q", got)
+	}
+
+	if got := m.findActiveSubAgentEntryByID(" reviewer "); got == nil {
+		t.Fatal("expected trimmed AgentID to resolve active subagent entry")
+	}
+	m.chatItems[1].Status = "done"
+	if got := m.findActiveSubAgentEntryByID("reviewer"); got != nil {
+		t.Fatalf("expected non-running entries to be excluded, got %#v", *got)
+	}
+}
