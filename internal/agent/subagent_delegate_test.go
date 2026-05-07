@@ -1572,6 +1572,49 @@ func TestDelegateSubAgentRunSyncError(t *testing.T) {
 	}
 }
 
+func TestDelegateSubAgentRunSyncDeadlineExceededWithSettledCompletedResult(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &flexibleRuntimeGateway{
+		syncResult: RuntimeTaskExecution{
+			TaskID: "task-1",
+			Result: runtimepkg.TaskResult{
+				TaskID: "task-1",
+				Status: corepkg.TaskCompleted,
+				Output: []byte(`{"ok":true,"status":"completed","summary":"scan complete","content":"scan complete"}`),
+			},
+		},
+		syncErr: context.DeadlineExceeded,
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test task",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("expected success result, got %#v", result)
+	}
+	if result.Error != nil {
+		t.Fatalf("expected nil error, got %#v", result.Error)
+	}
+	if result.Status != subAgentResultStatusCompleted {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusCompleted, result.Status)
+	}
+	if result.Summary != "scan complete" {
+		t.Fatalf("expected summary to be preserved, got %q", result.Summary)
+	}
+	if result.TaskID != "task-1" {
+		t.Fatalf("expected task id from execution, got %q", result.TaskID)
+	}
+}
+
 func TestDelegateSubAgentRunSyncEmptyOutput(t *testing.T) {
 	workspace := t.TempDir()
 	writeExplorerSubAgentDefinition(t, workspace)

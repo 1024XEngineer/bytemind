@@ -230,15 +230,18 @@ func (r *Runner) delegateSubAgent(
 	}
 
 	execution, runErr := r.runtime.RunSync(ctx, runtimeRequest)
-	if runErr != nil {
-		if execution.TaskID != "" {
-			result.TaskID = string(execution.TaskID)
-		}
-		result.Error = mapDelegateSubAgentError(runErr, subAgentErrorCodeRuntimeUnavailable)
-		return result, nil
-	}
 	if execution.TaskID != "" {
 		result.TaskID = string(execution.TaskID)
+	}
+	if runErr != nil {
+		// RunSync can return a parent wait timeout/cancel while still carrying a
+		// settled terminal result. Prefer the settled completed output when present.
+		waitTimedOutOrCanceled := errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded)
+		settledCompleted := execution.ExecutionError == nil && execution.Result.Status == corepkg.TaskCompleted
+		if !(waitTimedOutOrCanceled && settledCompleted) {
+			result.Error = mapDelegateSubAgentError(runErr, subAgentErrorCodeRuntimeUnavailable)
+			return result, nil
+		}
 	}
 	if execution.ExecutionError != nil {
 		result.Error = mapDelegateSubAgentError(execution.ExecutionError, subAgentErrorCodeNotImplemented)
