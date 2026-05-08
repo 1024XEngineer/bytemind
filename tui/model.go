@@ -335,8 +335,6 @@ type hiddenPasteProbeState struct {
 }
 
 var commandItems = []commandItem{
-	{Name: "/add model", Usage: "/add model", Description: "Open the setup flow to add or configure a provider/model.", Kind: "command"},
-	{Name: "/delete model", Usage: "/delete model", Description: "Open the configured model picker and remove one target.", Kind: "command"},
 	{Name: "/help", Usage: "/help", Description: "Show usage and supported commands.", Kind: "command"},
 	{Name: "/session", Usage: "/session", Description: "Open the recent session list.", Kind: "command"},
 	{Name: "/agents", Usage: "/agents [name]", Description: "List available subagents or show one definition.", Kind: "command"},
@@ -346,8 +344,9 @@ var commandItems = []commandItem{
 	{Name: "/mcp list", Usage: "/mcp list", Description: "List configured MCP servers and current status.", Kind: "command"},
 	{Name: "/mcp help", Usage: "/mcp help", Description: "Show MCP command help.", Kind: "command"},
 	{Name: "/mcp show", Usage: "/mcp show <id>", Description: "Show one MCP server config and runtime state.", Kind: "command"},
-	{Name: "/model picker", Usage: "/model picker", Description: "Open the model picker and switch the active provider/model.", Kind: "command"},
-	{Name: "/models", Usage: "/models", Description: "Show configured providers and available models.", Kind: "command"},
+	{Name: "/models", Usage: "/models", Description: "Show configured providers and available models; switch with Up/Down + Enter.", Kind: "command"},
+	{Name: "/model add", Usage: "/model add", Description: "Open the setup flow to add or configure a provider/model.", Kind: "command"},
+	{Name: "/model delete", Usage: "/model delete", Description: "Open the configured model list and remove one target.", Kind: "command"},
 	{Name: "/new", Usage: "/new", Description: "Start a fresh session in this workspace.", Kind: "command"},
 	{Name: "/compact", Usage: "/compact", Description: "Compress long session history into a continuation summary.", Kind: "command"},
 	{Name: "/commit", Usage: "/commit <message>", Description: "Stage all changes and create a local Git commit.", Kind: "command"},
@@ -458,6 +457,7 @@ type model struct {
 	tokenContext               int
 	tokenHasOfficialUsage      bool
 	discoveredModels           []provider.ModelInfo
+	modelWarnings              []provider.Warning
 	tempEstimatedOutput        int
 	tokenEstimator             *realtimeTokenEstimator
 	promptHistoryLoaded        bool
@@ -2874,7 +2874,7 @@ func shouldExecuteFromPalette(item commandItem) bool {
 		return true
 	}
 	switch item.Name {
-	case "/add model", "/delete model", "/help", "/session", "/agents", "/skills", "/skill clear", "/mcp list", "/mcp help", "/model picker", "/new", "/compact", "/undo-commit", "/quit":
+	case "/models", "/model add", "/model delete", "/help", "/session", "/agents", "/skills", "/skill clear", "/mcp list", "/mcp help", "/new", "/compact", "/undo-commit", "/quit":
 		return true
 	default:
 		return false

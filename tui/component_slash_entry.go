@@ -20,10 +20,6 @@ func (m *model) handleSlashCommand(input string) error {
 	}
 
 	switch fields[0] {
-	case "/add":
-		return m.runAddCommand(input, fields)
-	case "/delete":
-		return m.runDeleteCommand(input, fields)
 	case "/help":
 		m.screen = screenChat
 		m.appendChat(chatEntry{

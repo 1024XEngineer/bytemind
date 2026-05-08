@@ -3982,7 +3982,7 @@ func TestFilteredCommandsShowsRootSelectorGroups(t *testing.T) {
 		usages = append(usages, item.Usage)
 	}
 
-	for _, want := range []string{"/add model", "/delete model", "/help", "/session", "/skills-select", "/model picker", "/new", "/compact", "/commit <message>", "/undo-commit", "/quit"} {
+	for _, want := range []string{"/models", "/model add", "/model delete", "/help", "/session", "/skills-select", "/new", "/compact", "/commit <message>", "/undo-commit", "/quit"} {
 		if !containsString(usages, want) {
 			t.Fatalf("expected root selector to contain %q, got %v", want, usages)
 		}
@@ -4712,16 +4712,16 @@ func TestEscapeClosesModelPickerBeforeInterruptingRun(t *testing.T) {
 	updated := got.(model)
 
 	if updated.modelsOpen {
-		t.Fatalf("expected esc to close model picker first")
+		t.Fatalf("expected esc to close models list first")
 	}
 	if updated.commandCursor != 0 {
 		t.Fatalf("expected esc to reset model cursor, got %d", updated.commandCursor)
 	}
 	if canceled {
-		t.Fatalf("expected esc not to interrupt run while model picker is open")
+		t.Fatalf("expected esc not to interrupt run while models list is open")
 	}
 	if updated.interrupting {
-		t.Fatalf("expected interrupting to stay false when esc only closes model picker")
+		t.Fatalf("expected interrupting to stay false when esc only closes models list")
 	}
 }
 
@@ -4786,7 +4786,7 @@ func TestModelPickerAllowsSingleTargetConfirmation(t *testing.T) {
 	updated := got.(model)
 
 	if updated.modelsOpen {
-		t.Fatal("expected enter to close the single-target model picker after switching")
+		t.Fatal("expected enter to close the single-target models list after switching")
 	}
 	if updated.cfg.ProviderRuntime.DefaultProvider != "openai" || updated.cfg.ProviderRuntime.DefaultModel != "chatgpt-5.4" {
 		t.Fatalf("expected single-target confirmation to preserve active target, got %#v", updated.cfg.ProviderRuntime)

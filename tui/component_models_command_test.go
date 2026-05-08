@@ -62,7 +62,7 @@ func TestFormatModelsStatusFallbackLabelsWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestRunModelsCommandAppendsResponse(t *testing.T) {
+func TestRunModelsCommandOpensSwitchList(t *testing.T) {
 	runner := &subAgentCommandRunnerStub{
 		models: []provider.ModelInfo{{
 			ProviderID: "openai",
@@ -85,17 +85,14 @@ func TestRunModelsCommandAppendsResponse(t *testing.T) {
 	if err := m.runModelsCommand("/models", []string{"/models"}); err != nil {
 		t.Fatalf("expected /models to run, got %v", err)
 	}
-	if m.statusNote != "Listed 1 model(s)." {
+	if !m.modelsOpen {
+		t.Fatal("expected /models to open models list")
+	}
+	if m.statusNote != "Opened models list." {
 		t.Fatalf("unexpected status note %q", m.statusNote)
 	}
-	if len(m.chatItems) != 2 {
-		t.Fatalf("expected command exchange to append two chat items, got %d", len(m.chatItems))
-	}
-	if m.chatItems[0].Body != "/models" {
-		t.Fatalf("expected user command body, got %q", m.chatItems[0].Body)
-	}
-	if !strings.Contains(m.chatItems[1].Body, "active: openai/gpt-5.4") {
-		t.Fatalf("expected assistant response to include model status, got:\n%s", m.chatItems[1].Body)
+	if len(m.chatItems) != 0 {
+		t.Fatalf("expected opening models list not to append chat items, got %d", len(m.chatItems))
 	}
 	if m.tokenBudget != 128000 || m.tokenUsage.total != 128000 {
 		t.Fatalf("expected discovered model metadata to refresh token budget, got budget=%d total=%d", m.tokenBudget, m.tokenUsage.total)
@@ -108,13 +105,13 @@ func TestRunModelsCommandRejectsInvalidState(t *testing.T) {
 	}
 
 	m := &model{runner: &subAgentCommandRunnerStub{}}
-	if err := m.runModelsCommand("/models delete", []string{"/models", "delete"}); err == nil || !strings.Contains(err.Error(), "usage: /models") {
+	if err := m.runModelsCommand("/models status", []string{"/models", "status"}); err == nil || !strings.Contains(err.Error(), "usage: /models") {
 		t.Fatalf("expected usage error, got %v", err)
 	}
 
 	runnerErr := errors.New("models offline")
 	m = &model{runner: &subAgentCommandRunnerStub{modelsErr: runnerErr}}
-	if err := m.runModelsCommand("/models status", []string{"/models", "status"}); !errors.Is(err, runnerErr) {
+	if err := m.runModelsCommand("/models", []string{"/models"}); !errors.Is(err, runnerErr) {
 		t.Fatalf("expected runner error, got %v", err)
 	}
 }

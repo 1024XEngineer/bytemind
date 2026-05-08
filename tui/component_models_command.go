@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,30 +13,19 @@ func (m *model) runModelsCommand(input string, fields []string) error {
 	if m == nil || m.runner == nil {
 		return fmt.Errorf("runner is unavailable")
 	}
-	if len(fields) > 1 {
-		sub := strings.ToLower(strings.TrimSpace(fields[1]))
-		if sub != "list" && sub != "status" {
-			return fmt.Errorf("usage: /models [list|status]")
-		}
+	if len(fields) != 1 {
+		return fmt.Errorf("usage: /models")
 	}
-	models, warnings, err := m.runner.ListModels(context.Background())
-	if err != nil {
-		return err
-	}
-	m.setDiscoveredModels(models)
-	response := formatModelsStatus(m.cfg, models, warnings)
-	m.appendCommandExchange(input, response)
-	m.statusNote = fmt.Sprintf("Listed %d model(s).", len(models))
-	return nil
+	return m.openModelPicker()
 }
 
 func formatModelsStatus(cfg config.Config, models []provider.ModelInfo, warnings []provider.Warning) string {
 	lines := []string{
 		fmt.Sprintf("active: %s", activeModelLabel(cfg)),
 		fmt.Sprintf("default provider: %s", defaultProviderLabel(cfg)),
-		"add: /add model",
-		"delete: /delete model",
-		"switch: /model picker",
+		"add: /model add",
+		"delete: /model delete",
+		"switch: select a model from /models",
 	}
 	if len(models) == 0 {
 		lines = append(lines, "", "No models discovered.")

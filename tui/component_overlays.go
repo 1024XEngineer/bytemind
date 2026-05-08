@@ -104,6 +104,21 @@ func (m model) renderModelsModal() string {
 			lines = append(lines, "")
 		}
 	}
+	if len(m.modelWarnings) > 0 {
+		lines = append(lines, "Warnings:")
+		for _, warning := range m.modelWarnings {
+			providerID := strings.TrimSpace(string(warning.ProviderID))
+			if providerID == "" {
+				providerID = "unknown"
+			}
+			reason := strings.TrimSpace(warning.Reason)
+			if reason == "" {
+				reason = "provider warning"
+			}
+			lines = append(lines, mutedStyle.Render("  "+providerID+": "+reason))
+		}
+		lines = append(lines, "")
+	}
 	return modalBoxStyle.Width(min(104, max(60, m.width-12))).Render(strings.Join(lines, "\n"))
 }
 

@@ -493,9 +493,9 @@ func TestCommandPaletteSelectExplorerPrefillsCommand(t *testing.T) {
 	}
 }
 
-func TestCommandPaletteEnterOnModelOpensPicker(t *testing.T) {
+func TestCommandPaletteEnterOnModelsOpensList(t *testing.T) {
 	input := textarea.New()
-	input.SetValue("/model picker")
+	input.SetValue("/models")
 	m := model{
 		screen:      screenChat,
 		commandOpen: true,
@@ -523,13 +523,13 @@ func TestCommandPaletteEnterOnModelOpensPicker(t *testing.T) {
 	updated := got.(model)
 
 	if updated.commandOpen {
-		t.Fatalf("expected command palette to close after opening model picker")
+		t.Fatalf("expected command palette to close after opening models list")
 	}
 	if !updated.modelsOpen {
-		t.Fatal("expected model picker to open")
+		t.Fatal("expected models list to open")
 	}
 	if len(updated.chatItems) != 0 {
-		t.Fatalf("expected opening model picker not to append chat items, got %#v", updated.chatItems)
+		t.Fatalf("expected opening models list not to append chat items, got %#v", updated.chatItems)
 	}
 }
 

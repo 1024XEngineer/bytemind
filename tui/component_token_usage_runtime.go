@@ -84,6 +84,7 @@ func (m *model) setDiscoveredModels(models []provider.ModelInfo) {
 		return
 	}
 	m.discoveredModels = append([]provider.ModelInfo(nil), models...)
+	m.modelWarnings = nil
 	m.refreshTokenBudget()
 	m.syncTokenUsageComponent()
 }

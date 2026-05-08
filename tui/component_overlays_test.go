@@ -32,10 +32,11 @@ func TestRenderModelsModalSwitchModeIncludesFlagsAndMetadata(t *testing.T) {
 				"usage_source":   "metadata",
 			},
 		}},
+		modelWarnings: []provider.Warning{{ProviderID: "deepseek", Reason: "provider_list_models_failed"}},
 	}
 
 	view := m.renderModelsModal()
-	for _, want := range []string{"Models", "Current: openai/gpt-5.4", "openai/gpt-5.4  (active, default)", "family=gpt", "context=128000", "source=metadata"} {
+	for _, want := range []string{"Models", "Current: openai/gpt-5.4", "openai/gpt-5.4  (active, default)", "family=gpt", "context=128000", "source=metadata", "Warnings:", "deepseek: provider_list_models_failed"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected models modal to contain %q, got %q", want, view)
 		}

@@ -103,6 +103,7 @@ func (m *model) verifyAndFinalizeStartupAPIKey(rawInput string) error {
 	m.cfg.Provider = checkCfg
 	m.cfg.ProviderRuntime = runtimeCfg
 	m.discoveredModels = nil
+	m.modelWarnings = nil
 	m.refreshTokenBudget()
 	m.syncTokenUsageComponent()
 	m.startupGuide.Active = false
@@ -146,6 +147,7 @@ func (m *model) applyStartupConfigField(field, value string) error {
 	}
 	m.cfg.ProviderRuntime = config.SyncProviderRuntimeWithProvider(m.cfg.ProviderRuntime, m.cfg.Provider)
 	m.discoveredModels = nil
+	m.modelWarnings = nil
 
 	writtenPath, err := config.UpsertProviderField(m.startupGuide.ConfigPath, field, persistValue)
 	if err != nil {

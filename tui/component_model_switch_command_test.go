@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 )
 
-func TestRunModelCommandOpensPickerAndRefreshesTargets(t *testing.T) {
+func TestRunModelsCommandOpensListAndRefreshesTargets(t *testing.T) {
 	runner := &subAgentCommandRunnerStub{
 		models: []provider.ModelInfo{
 			{ProviderID: "deepseek", ModelID: "deepseek-chat"},
@@ -43,13 +43,13 @@ func TestRunModelCommandOpensPickerAndRefreshesTargets(t *testing.T) {
 		},
 	}
 
-	if err := m.runModelCommand("/model picker", []string{"/model", "picker"}); err != nil {
-		t.Fatalf("expected /model picker to open picker, got %v", err)
+	if err := m.runModelsCommand("/models", []string{"/models"}); err != nil {
+		t.Fatalf("expected /models to open models list, got %v", err)
 	}
 	if !m.modelsOpen {
-		t.Fatal("expected model picker to open")
+		t.Fatal("expected models list to open")
 	}
-	if m.statusNote != "Opened model picker." {
+	if m.statusNote != "Opened models list." {
 		t.Fatalf("unexpected status note %q", m.statusNote)
 	}
 	if len(m.discoveredModels) != 2 {
@@ -64,7 +64,7 @@ func TestRunModelCommandOpensPickerAndRefreshesTargets(t *testing.T) {
 	}
 }
 
-func TestRunModelCommandAllowsPickerWhenOnlyOneTargetExists(t *testing.T) {
+func TestRunModelsCommandAllowsListWhenOnlyOneTargetExists(t *testing.T) {
 	runner := &subAgentCommandRunnerStub{
 		models: []provider.ModelInfo{
 			{ProviderID: "openai", ModelID: "chatgpt-5.4"},
@@ -89,26 +89,26 @@ func TestRunModelCommandAllowsPickerWhenOnlyOneTargetExists(t *testing.T) {
 		},
 	}
 
-	if err := m.runModelCommand("/model picker", []string{"/model", "picker"}); err != nil {
-		t.Fatalf("expected /model picker to open with one target, got %v", err)
+	if err := m.runModelsCommand("/models", []string{"/models"}); err != nil {
+		t.Fatalf("expected /models to open with one target, got %v", err)
 	}
 	if !m.modelsOpen {
-		t.Fatal("expected single-target model picker to stay open")
+		t.Fatal("expected single-target models list to stay open")
 	}
-	if m.statusNote != "Opened model picker." {
+	if m.statusNote != "Opened models list." {
 		t.Fatalf("unexpected status note %q", m.statusNote)
 	}
 }
 
-func TestRunAddCommandOpensStartupGuide(t *testing.T) {
+func TestRunModelAddCommandOpensStartupGuide(t *testing.T) {
 	workspace := t.TempDir()
 	m := &model{
 		workspace: workspace,
 		input:     textarea.New(),
 	}
 
-	if err := m.runAddCommand("/add model", []string{"/add", "model"}); err != nil {
-		t.Fatalf("expected /add model to open startup guide, got %v", err)
+	if err := m.runModelCommand("/model add", []string{"/model", "add"}); err != nil {
+		t.Fatalf("expected /model add to open startup guide, got %v", err)
 	}
 	if !m.startupGuide.Active {
 		t.Fatal("expected startup guide to be active")
@@ -127,7 +127,7 @@ func TestRunAddCommandOpensStartupGuide(t *testing.T) {
 	}
 }
 
-func TestRunDeleteCommandOpensDeletePicker(t *testing.T) {
+func TestRunModelDeleteCommandOpensDeletePicker(t *testing.T) {
 	m := &model{
 		runner: &subAgentCommandRunnerStub{},
 		cfg: config.Config{
@@ -142,8 +142,8 @@ func TestRunDeleteCommandOpensDeletePicker(t *testing.T) {
 		},
 	}
 
-	if err := m.runDeleteCommand("/delete model", []string{"/delete", "model"}); err != nil {
-		t.Fatalf("expected /delete model to open picker, got %v", err)
+	if err := m.runModelCommand("/model delete", []string{"/model", "delete"}); err != nil {
+		t.Fatalf("expected /model delete to open picker, got %v", err)
 	}
 	if !m.modelsOpen {
 		t.Fatal("expected delete picker to open")
@@ -178,7 +178,7 @@ func TestOpenModelPickerWithModeFallsBackToConfiguredTargetsOnRefreshError(t *te
 	if !m.modelsOpen {
 		t.Fatal("expected picker to open from configured fallback")
 	}
-	if m.statusNote != "Opened model picker from configured targets." {
+	if m.statusNote != "Opened models list from configured targets." {
 		t.Fatalf("unexpected status note %q", m.statusNote)
 	}
 }
@@ -212,7 +212,7 @@ func TestSwitchModelCommandTargetRejectsUnknownTargetAfterRefresh(t *testing.T) 
 		},
 	}
 
-	err := m.switchModelCommandTarget("/model picker deepseek/deepseek-chat", "deepseek/deepseek-chat")
+	err := m.switchModelCommandTarget("/models deepseek/deepseek-chat", "deepseek/deepseek-chat")
 	if err == nil || !strings.Contains(err.Error(), "unknown model target") {
 		t.Fatalf("expected unknown target error, got %v", err)
 	}
@@ -489,6 +489,7 @@ func TestRunModelCommandRejectsLegacyForms(t *testing.T) {
 
 	for _, fields := range [][]string{
 		{"/model"},
+		{"/model", "picker"},
 		{"/model", "list"},
 		{"/model", "set", "openai/gpt-5.4"},
 		{"/model", "openai/gpt-5.4"},
