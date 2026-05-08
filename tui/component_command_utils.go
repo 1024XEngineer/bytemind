@@ -23,7 +23,6 @@ func (m model) helpText() string {
 		"- `/mcp show <id>`: show one MCP server config and runtime status.",
 		"- Add MCP servers by writing `.bytemind/mcp.json` in the workspace.",
 		"- `/model`: open the configured provider/model picker and switch with Up/Down + Enter.",
-		"- `/models`: compatibility alias for `/model`.",
 		"- `/<skill-name> [k=v...]`: activate a skill for this session.",
 		"- `/skill clear`: clear the active skill in this session.",
 		"- `/skill delete <name>`: delete the specified project skill.",

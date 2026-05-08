@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	modelCommandUsage     = "Usage: /model"
-	addModelUsage         = "Usage: /add model"
-	deleteModelUsage      = "Usage: /delete model"
-	modelPickerModeSwitch = "switch"
-	modelPickerModeDelete = "delete"
+	modelCommandUsage       = "Usage: /model"
+	addModelUsage           = "Usage: /add model"
+	deleteModelUsage        = "Usage: /delete model"
+	modelConfigEditedInJSON = "provider/model config is edited in config.json; use /model to switch configured targets"
+	modelPickerModeSwitch   = "switch"
+	modelPickerModeDelete   = "delete"
 )
 
 type runnerRuntimeUpdater interface {
@@ -49,7 +50,7 @@ func (m *model) runAddCommand(input string, fields []string) error {
 	if len(fields) != 2 || !strings.EqualFold(strings.TrimSpace(fields[1]), "model") {
 		return fmt.Errorf(addModelUsage)
 	}
-	return fmt.Errorf("provider/model config is edited in config.json; use /model to switch configured targets")
+	return fmt.Errorf(modelConfigEditedInJSON)
 }
 
 func (m *model) runDeleteCommand(input string, fields []string) error {
@@ -59,7 +60,7 @@ func (m *model) runDeleteCommand(input string, fields []string) error {
 	if len(fields) != 2 || !strings.EqualFold(strings.TrimSpace(fields[1]), "model") {
 		return fmt.Errorf(deleteModelUsage)
 	}
-	return fmt.Errorf("provider/model config is edited in config.json; use /model to switch configured targets")
+	return fmt.Errorf(modelConfigEditedInJSON)
 }
 
 func (m *model) openAddModelGuide() error {
@@ -93,7 +94,7 @@ func (m *model) openModelPicker() error {
 }
 
 func (m *model) openModelDeletePicker() error {
-	return m.openModelPickerWithMode(modelPickerModeDelete)
+	return fmt.Errorf(modelConfigEditedInJSON)
 }
 
 func (m *model) openModelPickerWithMode(mode string) error {
@@ -210,13 +211,7 @@ func (m *model) activateSelectedModelTarget() error {
 }
 
 func (m *model) deleteSelectedModelTarget() error {
-	targets := m.sortedConfiguredModelCommandTargets()
-	if len(targets) == 0 {
-		return nil
-	}
-	selected := targets[clamp(m.commandCursor, 0, len(targets)-1)]
-	target := modelTargetLabel(selected)
-	return m.deleteModelCommandTarget("/delete model", target)
+	return fmt.Errorf(modelConfigEditedInJSON)
 }
 
 func (m *model) refreshDiscoveredModels() error {
@@ -325,58 +320,7 @@ func (m *model) deleteModelCommandTarget(input, target string) error {
 	if m == nil || m.runner == nil {
 		return fmt.Errorf("runner is unavailable")
 	}
-	providerID, modelID, err := parseModelCommandTarget(target)
-	if err != nil {
-		return err
-	}
-
-	targets := m.configuredModelCommandTargets()
-	if !hasModelCommandTarget(targets, providerID, modelID) {
-		return fmt.Errorf("unknown configured model target %q", providerID+"/"+modelID)
-	}
-	if len(targets) <= 1 {
-		return fmt.Errorf("cannot delete the last configured model; use /add model to configure another target first")
-	}
-
-	runtimeCfg := m.cfg.ProviderRuntime
-	if len(runtimeCfg.Providers) == 0 {
-		runtimeCfg = config.LegacyProviderRuntimeConfig(m.cfg.Provider)
-	}
-	runtimeCfg, providerCfg, err := config.DeleteProviderRuntimeProvider(runtimeCfg, providerID)
-	if err != nil {
-		return err
-	}
-	client, err := provider.NewClientFromRuntime(runtimeCfg, nil)
-	if err != nil {
-		return err
-	}
-	runtimeUpdater, ok := any(m.runner).(runnerRuntimeUpdater)
-	if !ok {
-		return fmt.Errorf("runtime model deletion is unavailable in this build")
-	}
-	runtimeUpdater.UpdateProviderRuntime(runtimeCfg, providerCfg, client)
-
-	m.cfg.ProviderRuntime = runtimeCfg
-	m.cfg.Provider = providerCfg
-	m.removeDiscoveredModelsForProvider(providerID)
-	m.refreshTokenBudget()
-	m.syncTokenUsageComponent()
-
-	response := "Deleted model " + providerID + "/" + modelID + "."
-	response += "\nActive model is now " + activeModelLabel(m.cfg) + "."
-	status := "Model deleted."
-	if path, saveErr := m.persistModelCommandSelection(runtimeCfg); saveErr != nil {
-		status = "Model deleted, but config save failed."
-		response += "\nConfig save failed: " + compact(saveErr.Error(), 120)
-	} else if strings.TrimSpace(path) != "" {
-		m.startupGuide.ConfigPath = path
-		response += "\nSaved to " + compact(path, 72)
-		status = "Model deleted and saved."
-	}
-
-	m.appendCommandExchange(input, response)
-	m.statusNote = status
-	return nil
+	return fmt.Errorf(modelConfigEditedInJSON)
 }
 
 func (m *model) removeDiscoveredModelsForProvider(providerID string) {
