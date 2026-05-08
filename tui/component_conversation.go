@@ -572,28 +572,55 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 }
 
 func renderDiffDetailLine(line string, width int) string {
-	if len(line) < 9 {
+	// Find diff marker: first +, -, or space after the line number digits
+	marker := byte(0)
+	markerPos := -1
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if c >= '0' && c <= '9' {
+			if markerPos < 0 {
+				markerPos = i
+			}
+			continue
+		}
+		if c == '+' || c == '-' || c == ' ' {
+			marker = c
+			markerPos = i
+			break
+		}
+	}
+	if marker == 0 {
 		return line
 	}
-	// Claude CLI format: line number at pos 0-6, marker at pos 7
-	marker := line[7]
+
+	// Rebuild: line number part + marker + content
+	lineNumStr := line[:markerPos]
+	content := line[markerPos+1:]
+
+	// Pad line number to 7 chars with leading spaces (Claude CLI format)
+	paddedNum := lineNumStr
+	for len(paddedNum) < 7 {
+		paddedNum = " " + paddedNum
+	}
+
+	fullLine := paddedNum + string(marker) + content
+
+	// Pad to card width for full-row background
+	lineWidth := runewidth.StringWidth(fullLine)
+	if lineWidth < width {
+		fullLine = fullLine + strings.Repeat(" ", width-lineWidth)
+	}
+
 	var style lipgloss.Style
 	switch marker {
 	case '+':
 		style = toolDiffAddStyle
 	case '-':
 		style = toolDiffRemoveStyle
-	case ' ':
-		style = toolDiffContextStyle
 	default:
-		return line
+		style = toolDiffContextStyle
 	}
-	// pad line to full width with spaces so background spans the row
-	lineWidth := runewidth.StringWidth(line)
-	if lineWidth < width {
-		line = line + strings.Repeat(" ", width-lineWidth)
-	}
-	return style.Render(line)
+	return style.Render(fullLine)
 }
 
 func summarizeParallelToolGroup(group []chatEntry, name string) string {
