@@ -571,14 +571,14 @@ func TestRenderRunSectionGroupSingleErrorTool(t *testing.T) {
 		Body:   "Request failed: provider rate limited",
 		Status: "error",
 	}
-	rendered := renderRunSectionGroup([]chatEntry{item}, 80, false, true)
+	rendered := renderRunSectionGroup([]chatEntry{item}, 80, false, true, model{})
 	if rendered == "" {
 		t.Fatalf("expected non-empty rendering")
 	}
 }
 
 func TestRenderRunSectionGroupEmpty(t *testing.T) {
-	rendered := renderRunSectionGroup(nil, 80, false, true)
+	rendered := renderRunSectionGroup(nil, 80, false, true, model{})
 	if rendered != "" {
 		t.Fatalf("expected empty rendering, got %q", rendered)
 	}

@@ -167,7 +167,7 @@ func (c tokenUsageComponent) Layout(containerWidth int) (x, y, w, h int) {
 	badgeW := lipgloss.Width(c.View())
 	badgeH := lipgloss.Height(c.badgeStyle().Render("x"))
 	x = max(0, containerWidth-badgeW-2)
-	y = 1
+	y = 0
 	return x, y, badgeW, badgeH
 }
 
@@ -350,12 +350,11 @@ func (c tokenUsageComponent) estimatedCost() float64 {
 }
 
 func (c tokenUsageComponent) badgeStyle() lipgloss.Style {
-	return lipgloss.NewStyle().
-		Background(lipgloss.Color("#1A1A1A")).
-		Foreground(lipgloss.Color("#E8E8E8")).
-		Padding(0, 1).
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#242424"))
+	fg := lipgloss.Color("#A9C6E8")
+	if c.unavailable {
+		fg = lipgloss.Color("#7F96B8")
+	}
+	return lipgloss.NewStyle().Foreground(fg)
 }
 
 func (c tokenUsageComponent) popupStyle() lipgloss.Style {

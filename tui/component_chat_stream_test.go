@@ -7,9 +7,11 @@ import (
 	"testing"
 	"time"
 
-	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 )
 
 func TestAppendAssistantDeltaStripsTurnIntentTag(t *testing.T) {
@@ -864,6 +866,59 @@ func TestHandleAgentEventRunStartedResetsEstimatedOutput(t *testing.T) {
 
 	if m.tempEstimatedOutput != 0 {
 		t.Fatalf("expected 0, got %d", m.tempEstimatedOutput)
+	}
+}
+
+func TestHandleAgentEventAssistantDeltaAppliesEstimatedUsageWithoutOfficialUsage(t *testing.T) {
+	m := model{
+		tokenUsage:     newTokenUsageComponent(),
+		tokenBudget:    5000,
+		tokenEstimator: newRealtimeTokenEstimator(""),
+	}
+
+	m.handleAgentEvent(Event{Type: EventAssistantDelta, Content: "hello world from stream"})
+
+	if m.tempEstimatedOutput <= 0 {
+		t.Fatalf("expected estimated output tokens > 0, got %d", m.tempEstimatedOutput)
+	}
+	if m.tokenUsedTotal != m.tempEstimatedOutput {
+		t.Fatalf("expected used tokens to match estimate, got used=%d estimate=%d", m.tokenUsedTotal, m.tempEstimatedOutput)
+	}
+	if m.tokenOutput != m.tempEstimatedOutput {
+		t.Fatalf("expected output tokens to match estimate, got output=%d estimate=%d", m.tokenOutput, m.tempEstimatedOutput)
+	}
+	if m.tokenUsage.used != m.tempEstimatedOutput {
+		t.Fatalf("expected token monitor to show estimate, got %d", m.tokenUsage.used)
+	}
+	if m.tokenUsage.unavailable {
+		t.Fatal("expected token monitor to become available after estimate")
+	}
+}
+
+func TestHandleAgentEventAssistantDeltaDoesNotDoubleCountAfterOfficialUsage(t *testing.T) {
+	m := model{
+		tokenUsage:     newTokenUsageComponent(),
+		tokenBudget:    5000,
+		tokenEstimator: newRealtimeTokenEstimator(""),
+	}
+
+	m.handleAgentEvent(Event{Type: EventAssistantDelta, Content: "hello world from stream"})
+	estimated := m.tempEstimatedOutput
+	if estimated <= 0 {
+		t.Fatalf("expected estimate > 0, got %d", estimated)
+	}
+
+	m.handleAgentEvent(Event{Type: EventUsageUpdated, Usage: llm.Usage{InputTokens: 20, OutputTokens: 7, ContextTokens: 3, TotalTokens: 30}})
+	m.handleAgentEvent(Event{Type: EventAssistantDelta, Content: "more trailing streamed text"})
+
+	if m.tempEstimatedOutput != 0 {
+		t.Fatalf("expected estimate to be cleared by official usage, got %d", m.tempEstimatedOutput)
+	}
+	if m.tokenUsedTotal != 30 {
+		t.Fatalf("expected official total 30 without double counting, got %d", m.tokenUsedTotal)
+	}
+	if m.tokenOutput != 7 {
+		t.Fatalf("expected official output 7 without double counting, got %d", m.tokenOutput)
 	}
 }
 

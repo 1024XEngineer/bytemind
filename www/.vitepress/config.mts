@@ -12,6 +12,7 @@ const enSidebar = [
     text: 'Getting Started',
     items: [
       { text: 'Quick Start', link: '/quick-start' },
+      { text: 'Get API Key', link: '/api-key' },
       { text: 'Installation', link: '/installation' },
       { text: 'Configuration', link: '/configuration' },
       { text: 'Core Concepts', link: '/core-concepts' },

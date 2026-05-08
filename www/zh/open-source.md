@@ -57,6 +57,11 @@ go test ./...
 
 ## 反馈与支持
 
-- **Bug 反馈**：[GitHub Issues](https://github.com/1024XEngineer/bytemind/issues)
+- **Bug 反馈**：[GitHub Issues](https://github.com/1024XEngineer/bytemind/issues)，也可加入下方微信群聊进行及时反馈
+
+<p align="center">
+  <img src="./assets/UserFeedback.png" alt="用户群聊反馈" width="240" style="max-width: 100%; height: auto;" />
+</p>
+
 - **功能建议**：[GitHub Discussions](https://github.com/1024XEngineer/bytemind/discussions)
 - **安全问题**：请通过 GitHub Security 页签下的私人通道报告，而不要公开提 Issue
