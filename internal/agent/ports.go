@@ -12,6 +12,7 @@ import (
 // SessionStore defines the persistence contract consumed by Runner.
 type SessionStore interface {
 	Save(session *session.Session) error
+	Load(id string) (*session.Session, error)
 }
 
 // ToolRegistry defines the tool definition query contract consumed by Runner.

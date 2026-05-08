@@ -98,6 +98,7 @@ type Runner struct {
 	subAgentManager  *subagentspkg.Manager
 	subAgentExecutor SubAgentExecutor
 	subAgentNotifier SubAgentNotifier
+	worktreeManager  *runtimepkg.WorktreeManager
 	tokenManager     *tokenusage.TokenUsageManager
 	auditStore       storagepkg.AuditStore
 	promptStore      storagepkg.PromptHistoryWriter
@@ -214,6 +215,10 @@ func NewRunner(opts Options) *Runner {
 
 	runner.subAgentExecutor = NewSubAgentExecutor(runner)
 	runner.subAgentNotifier = &defaultSubAgentNotifier{}
+
+	if wm, wmErr := runtimepkg.NewWorktreeManager(opts.Workspace); wmErr == nil {
+		runner.worktreeManager = wm
+	}
 
 	return runner
 }

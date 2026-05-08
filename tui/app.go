@@ -8,6 +8,7 @@ import (
 
 	"github.com/1024XEngineer/bytemind/internal/assets"
 	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/mention"
 	notifypkg "github.com/1024XEngineer/bytemind/internal/notify"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
@@ -24,6 +25,7 @@ type Options struct {
 	Workspace    string
 	Version      string
 	StartupGuide StartupGuide
+	AgentSource  mention.AgentSource
 }
 
 type StartupGuide struct {

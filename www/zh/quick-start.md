@@ -126,7 +126,7 @@ JSON
 
 | 字段                   | 说明                                              | 用例                      |
 | ---------------------- | ------------------------------------------------- | --------------------------- |
-| `provider.type`        | Provider 类型：`openai-compatible` 或 `anthropic` | `openai-compatible` `anthropic`        |
+| `provider.type`        | Provider 类型：`openai-compatible`  `anthropic` `gemini` | `openai-compatible`|
 | `provider.base_url`    | API 端点                                          | `https://api.openai.com/v1` |
 | `provider.model`       | 模型 ID                                           | `gpt-5.4-mini`              |
 | `provider.api_key`     | API 密钥（明文）                                  | `sk-xxxxxxxxxxxxxxxxxx`   |

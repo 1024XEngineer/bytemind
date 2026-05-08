@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	configpkg "github.com/1024XEngineer/bytemind/internal/config"
@@ -32,6 +34,28 @@ type sandboxAuditContext struct {
 	Fallback        bool
 	Status          string
 	FallbackReason  string
+}
+
+// subagentToolCallsStore is a side-channel for passing structured tool call
+// records from the subagent executor to the tool execution layer, where they
+// are stored in message.Meta for TUI restoration on session reload.
+// Keyed by invocation ID; entries are consumed (deleted) after use.
+var subagentToolCallsStore = &sync.Map{}
+
+func storeSubAgentToolCalls(invocationID string, toolCalls []tools.SubAgentToolCallRecord) {
+	if len(toolCalls) == 0 {
+		return
+	}
+	subagentToolCallsStore.Store(invocationID, toolCalls)
+}
+
+func consumeSubAgentToolCalls(invocationID string) []tools.SubAgentToolCallRecord {
+	raw, ok := subagentToolCallsStore.LoadAndDelete(invocationID)
+	if !ok {
+		return nil
+	}
+	toolCalls, _ := raw.([]tools.SubAgentToolCallRecord)
+	return toolCalls
 }
 
 func (e *defaultEngine) executeToolCall(
@@ -212,7 +236,10 @@ func (e *defaultEngine) executeToolCall(
 		}
 	}
 
-	if execErr != nil {
+	if execErr != nil && len(strings.TrimSpace(result)) == 0 {
+		// Only override ToolResult when there is no content from the tool itself.
+		// Subagent errors are returned as OK:true with error in summary content,
+		// so the parent agent can reason about the failure.
 		status, reasonCode := classifyToolExecutionError(execErr)
 		payload := map[string]any{
 			"ok":          false,
@@ -276,7 +303,31 @@ func (e *defaultEngine) executeToolCall(
 		Metadata:  metadata,
 	})
 
-	toolMessage := llm.NewToolResultMessage(call.ID, result)
+	// Decouple UI and LLM payloads: TUI sees the full JSON (for rendering),
+	// parent agent LLM context receives only the Content field (natural language).
+	// Store full JSON in Meta so TUI can restore it when reloading from session.
+	llmPayload := extractSubAgentContentForLLM(call.Function.Name, result)
+	toolMessage := llm.NewToolResultMessage(call.ID, llmPayload)
+	if strings.TrimSpace(call.Function.Name) == "delegate_subagent" {
+		if toolMessage.Meta == nil {
+			toolMessage.Meta = llm.MessageMeta{}
+		}
+		if result != llmPayload {
+			toolMessage.Meta["delegate_subagent_result"] = result
+		}
+		// Retrieve structured tool call records from the side-channel populated
+		// by the subagent executor, and store in Meta for TUI restoration.
+		var invocationID string
+		var parsed struct {
+			InvocationID string `json:"invocation_id"`
+		}
+		if json.Unmarshal([]byte(result), &parsed) == nil {
+			invocationID = strings.TrimSpace(parsed.InvocationID)
+		}
+		if toolCalls := consumeSubAgentToolCalls(invocationID); len(toolCalls) > 0 {
+			toolMessage.Meta["subagent_tool_calls"] = toolCalls
+		}
+	}
 	if err := llm.ValidateMessage(toolMessage); err != nil {
 		return err
 	}
@@ -658,4 +709,107 @@ func appendSandboxAuditContext(metadata map[string]string, context sandboxAuditC
 	if context.FallbackReason != "" {
 		metadata["sandbox_fallback_reason"] = context.FallbackReason
 	}
+}
+
+// extractSubAgentContentForLLM returns a slimmed-down payload for the parent agent's
+// LLM context. For delegate_subagent results, only the Content field (natural language)
+// is forwarded; the full JSON is reserved for the TUI renderer. All other tools pass
+// through unchanged.
+func extractSubAgentContentForLLM(toolName, result string) string {
+	if strings.TrimSpace(toolName) != "delegate_subagent" {
+		return result
+	}
+	var parsed struct {
+		Content string `json:"content,omitempty"`
+		Summary string `json:"summary,omitempty"`
+		OK      bool   `json:"ok"`
+	}
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		return result
+	}
+	if !parsed.OK {
+		return result
+	}
+	content := strings.TrimSpace(parsed.Content)
+	if content == "" {
+		content = strings.TrimSpace(parsed.Summary)
+	}
+	if content == "" {
+		return result
+	}
+	return content
+}
+
+// extractSubAgentToolCalls builds a JSON-serializable list of tool calls from a
+// subagent's message history. Used to populate message.Meta so the TUI can
+// restore SubAgentTools when reloading a session.
+func extractSubAgentToolCalls(messages []llm.Message) []tools.SubAgentToolCallRecord {
+	// Pass 1: build result map from ToolResult parts.
+	results := map[string]string{}
+	for _, msg := range messages {
+		if msg.Role != llm.RoleUser {
+			continue
+		}
+		for _, part := range msg.Parts {
+			if part.ToolResult != nil {
+				results[part.ToolResult.ToolUseID] = part.ToolResult.Content
+			}
+		}
+	}
+
+	// Pass 2: collect ToolUse parts in order, match with results.
+	var records []tools.SubAgentToolCallRecord
+	for _, msg := range messages {
+		if msg.Role != llm.RoleAssistant {
+			continue
+		}
+		for _, part := range msg.Parts {
+			if part.ToolUse == nil {
+				continue
+			}
+			status := "done"
+			if _, ok := results[part.ToolUse.ID]; !ok {
+				status = "running"
+			}
+			name := strings.TrimSpace(part.ToolUse.Name)
+			args := strings.TrimSpace(part.ToolUse.Arguments)
+
+			compactBody := name
+			switch strings.ToLower(name) {
+			case "read_file":
+				var a struct {
+					Path string `json:"path"`
+				}
+				if json.Unmarshal([]byte(args), &a) == nil && strings.TrimSpace(a.Path) != "" {
+					compactBody = filepath.ToSlash(strings.TrimSpace(a.Path))
+				}
+			case "search_text", "web_search":
+				var a struct {
+					Query string `json:"query"`
+				}
+				if json.Unmarshal([]byte(args), &a) == nil && strings.TrimSpace(a.Query) != "" {
+					compactBody = `"` + strings.TrimSpace(a.Query) + `"`
+				}
+			case "list_files":
+				var a struct {
+					Path string `json:"path"`
+				}
+				if json.Unmarshal([]byte(args), &a) == nil {
+					p := strings.TrimSpace(a.Path)
+					if p == "" {
+						p = "."
+					}
+					compactBody = filepath.ToSlash(p)
+				}
+			}
+
+			records = append(records, tools.SubAgentToolCallRecord{
+				ToolName:    name,
+				ToolCallID:  part.ToolUse.ID,
+				CompactBody: compactBody,
+				Status:      status,
+			})
+		}
+	}
+	return records
 }

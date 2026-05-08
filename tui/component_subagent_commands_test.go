@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -27,6 +26,7 @@ type subAgentCommandRunnerStub struct {
 	builtinAgent subagentspkg.Agent
 	builtinOK    bool
 	lastRequest  tools.DelegateSubAgentRequest
+	subAgents    []subagentspkg.Agent
 	models       []provider.ModelInfo
 	warnings     []provider.Warning
 	modelsErr    error
@@ -71,12 +71,16 @@ func (s *subAgentCommandRunnerStub) ClearSkill(string) (skills.ClearResult, erro
 	return skills.ClearResult{}, nil
 }
 
+func (s *subAgentCommandRunnerStub) SubAgentManager() *subagentspkg.Manager {
+	return nil
+}
+
 func (s *subAgentCommandRunnerStub) ListModels(context.Context) ([]provider.ModelInfo, []provider.Warning, error) {
 	return s.models, s.warnings, s.modelsErr
 }
 
 func (s *subAgentCommandRunnerStub) ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic) {
-	return nil, nil
+	return s.subAgents, nil
 }
 
 func (s *subAgentCommandRunnerStub) FindSubAgent(string) (subagentspkg.Agent, bool) {
@@ -90,20 +94,9 @@ func (s *subAgentCommandRunnerStub) FindBuiltinSubAgent(string) (subagentspkg.Ag
 	return subagentspkg.Agent{}, false
 }
 
-func (s *subAgentCommandRunnerStub) DispatchSubAgent(_ context.Context, _ *session.Session, _ string, request tools.DelegateSubAgentRequest, _ Observer) (tools.DelegateSubAgentResult, error) {
-	s.lastRequest = request
-	return tools.DelegateSubAgentResult{
-		OK:      true,
-		Status:  "completed",
-		Summary: "stub result",
-	}, nil
-}
-
 func TestCommandPaletteListsSubAgentCommands(t *testing.T) {
 	required := map[string]bool{
-		"/agents":   false,
-		"/review":   false,
-		"/explorer": false,
+		"/agents": false,
 	}
 	for _, item := range commandItems {
 		if _, ok := required[item.Name]; ok && item.Kind == "command" {
@@ -128,7 +121,7 @@ func TestHandleSlashAgentsRequiresSubAgentRunner(t *testing.T) {
 	}
 }
 
-func TestHandleSlashAgentsListsAndDescribesSubAgents(t *testing.T) {
+func TestHandleSlashAgentsListsSubAgents(t *testing.T) {
 	workspace := t.TempDir()
 	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "review.md"), `---
 name: review
@@ -151,345 +144,6 @@ review files
 	}
 	if !strings.Contains(body, "- review [builtin]: builtin reviewer") {
 		t.Fatalf("expected /agents output to include builtin review definition, got %q", body)
-	}
-
-	if err := m.handleSlashCommand("/agents review"); err != nil {
-		t.Fatalf("expected /agents review to succeed, got %v", err)
-	}
-	detailBody := m.chatItems[len(m.chatItems)-1].Body
-	for _, want := range []string{"subagent review", "scope builtin", "description builtin reviewer"} {
-		if !strings.Contains(detailBody, want) {
-			t.Fatalf("expected /agents review output to contain %q, got %q", want, detailBody)
-		}
-	}
-
-	if err := m.handleSlashCommand("/agents missing"); err != nil {
-		t.Fatalf("expected /agents missing to succeed with not-found message, got %v", err)
-	}
-	missingBody := m.chatItems[len(m.chatItems)-1].Body
-	if !strings.Contains(missingBody, "subagent not found: missing") {
-		t.Fatalf("expected /agents missing output to contain not-found message, got %q", missingBody)
-	}
-}
-
-func TestHandleSlashBuiltinSubAgentRequiresTask(t *testing.T) {
-	workspace := t.TempDir()
-	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "review.md"), `---
-name: review
-description: builtin reviewer
----
-builtin body
-`)
-
-	m := newSubAgentCommandModel(t, workspace, nil)
-
-	if err := m.handleSlashCommand("/review"); err != nil {
-		t.Fatalf("expected /review to succeed, got %v", err)
-	}
-	body := m.chatItems[len(m.chatItems)-1].Body
-	if !strings.Contains(body, "usage: /review <task>") {
-		t.Fatalf("expected /review to render usage hint when task is missing, got %q", body)
-	}
-	if !strings.Contains(body, "Tip: use /agents review") {
-		t.Fatalf("expected /review to include agents tip, got %q", body)
-	}
-}
-
-func TestHandleSlashBuiltinSubAgentUnavailable(t *testing.T) {
-	m := &model{
-		runner: &subAgentCommandRunnerStub{},
-		screen: screenChat,
-	}
-
-	if err := m.handleSlashCommand("/review inspect code changes"); err != nil {
-		t.Fatalf("expected /review to render unavailable hint, got %v", err)
-	}
-	if len(m.chatItems) < 2 {
-		t.Fatalf("expected /review command exchange in chat, got %#v", m.chatItems)
-	}
-	body := m.chatItems[len(m.chatItems)-1].Body
-	if !strings.Contains(body, "builtin subagent is unavailable") {
-		t.Fatalf("expected unavailable response, got %q", body)
-	}
-	if !strings.Contains(m.statusNote, "unavailable") {
-		t.Fatalf("expected unavailable status note, got %q", m.statusNote)
-	}
-}
-
-func TestHandleSlashBuiltinSubAgentDelegatesTask(t *testing.T) {
-	workspace := t.TempDir()
-	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "review.md"), `---
-name: review
-description: builtin reviewer
-tools: [list_files, read_file, search_text]
----
-review files
-`)
-	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "explorer.md"), `---
-name: explorer
-description: builtin explorer
-tools: [list_files, read_file, search_text]
----
-explore files
-`)
-
-	client := &compactCommandTestClient{
-		replies: []llm.Message{
-			{Role: llm.RoleAssistant, Content: "review summary"},
-		},
-	}
-	m := newSubAgentCommandModel(t, workspace, client)
-
-	if err := m.handleSlashCommand("/review inspect prompt assembly ordering"); err != nil {
-		t.Fatalf("expected /review <task> to succeed, got %v", err)
-	}
-
-	if !m.busy {
-		t.Fatalf("expected /review to mark model busy while the subagent runs")
-	}
-	if len(m.chatItems) == 0 {
-		t.Fatalf("expected /review to append user slash input to chat")
-	}
-	if !containsChatEntry(m.chatItems, "user", "/review inspect prompt assembly ordering") {
-		t.Fatalf("expected /review command text to appear in user chat entry, got %#v", m.chatItems)
-	}
-
-	if err := m.handleSlashCommand("/exploer locate task lifecycle codepath"); err != nil {
-		t.Fatalf("expected /exploer <task> alias to succeed, got %v", err)
-	}
-	if len(m.chatItems) == 0 {
-		t.Fatalf("expected /exploer to append user slash input to chat")
-	}
-	if !containsChatEntry(m.chatItems, "user", "/exploer locate task lifecycle codepath") &&
-		!containsChatEntry(m.chatItems, "user", "/explorer locate task lifecycle codepath") {
-		t.Fatalf("expected /exploer alias command text to be preserved in user chat entry, got %#v", m.chatItems)
-	}
-}
-
-func TestHandleSlashBuiltinSubAgentDelegatesTaskWithoutWhitespace(t *testing.T) {
-	workspace := t.TempDir()
-	writeSubAgentDef(t, filepath.Join(workspace, "internal", "subagents", "explorer.md"), `---
-name: explorer
-description: builtin explorer
-tools: [list_files, read_file, search_text]
----
-explore files
-`)
-
-	client := &compactCommandTestClient{
-		replies: []llm.Message{
-			{Role: llm.RoleAssistant, Content: "explorer compact summary"},
-		},
-	}
-	m := newSubAgentCommandModel(t, workspace, client)
-
-	if err := m.handleSlashCommand("/explorer分析一下agent模块功能和作用"); err != nil {
-		t.Fatalf("expected compact /explorer command to succeed, got %v", err)
-	}
-
-	if !m.busy {
-		t.Fatalf("expected compact /explorer command to mark model busy")
-	}
-	if len(m.chatItems) == 0 {
-		t.Fatalf("expected compact /explorer command to append user slash input to chat")
-	}
-	if !containsChatEntryWithPrefix(m.chatItems, "user", "/explorer ") {
-		t.Fatalf("expected compact /explorer command to normalize with whitespace, got %#v", m.chatItems)
-	}
-}
-
-func TestSubmitBuiltinSubAgentPreferenceSynthesizesDisplayInput(t *testing.T) {
-	workspace := t.TempDir()
-	client := &compactCommandTestClient{
-		replies: []llm.Message{
-			{Role: llm.RoleAssistant, Content: "delegated"},
-		},
-	}
-	m := newSubAgentCommandModel(t, workspace, client)
-
-	if err := m.submitBuiltinSubAgentPreference("", "explorer", "locate runtime prompt"); err != nil {
-		t.Fatalf("expected synthesized display input submission to succeed, got %v", err)
-	}
-	if !m.busy {
-		t.Fatal("expected synthesized submission to mark model busy")
-	}
-	if !containsChatEntry(m.chatItems, "user", "/explorer locate runtime prompt") {
-		t.Fatalf("expected synthesized slash input in chat history, got %#v", m.chatItems)
-	}
-}
-
-func TestSubmitBuiltinSubAgentPreferencePersistsDisplayTextInChatHistory(t *testing.T) {
-	runner := &subAgentCommandRunnerStub{
-		builtinAgent: subagentspkg.Agent{Name: "review"},
-		builtinOK:    true,
-	}
-	input := textarea.New()
-	input.Focus()
-	m := &model{
-		runner: runner,
-		sess:   session.New(t.TempDir()),
-		async:  make(chan tea.Msg, 8),
-		input:  input,
-		screen: screenChat,
-	}
-
-	if err := m.submitBuiltinSubAgentPreference("/review inspect changed files", "review", "inspect changed files"); err != nil {
-		t.Fatalf("expected slash preference submission to succeed, got %v", err)
-	}
-	if !m.busy {
-		t.Fatal("expected slash preference to mark model busy")
-	}
-	if !containsChatEntry(m.chatItems, "user", "/review inspect changed files") {
-		t.Fatalf("expected slash command input in chat history, got %#v", m.chatItems)
-	}
-
-	select {
-	case msg := <-m.async:
-		result, ok := msg.(subAgentResultMsg)
-		if !ok {
-			t.Fatalf("expected subAgentResultMsg, got %#v", msg)
-		}
-		if result.Err != nil {
-			t.Fatalf("expected no dispatch error, got %v", result.Err)
-		}
-		if !strings.Contains(result.Response, "stub result") {
-			t.Fatalf("expected dispatch result to contain stub summary, got %q", result.Response)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for async dispatch result")
-	}
-}
-
-func TestSubmitBuiltinSubAgentPreferenceUpdatesRunIndicator(t *testing.T) {
-	runner := &subAgentCommandRunnerStub{
-		builtinAgent: subagentspkg.Agent{Name: "review"},
-		builtinOK:    true,
-	}
-	input := textarea.New()
-	input.Focus()
-	m := model{
-		runner:            runner,
-		sess:              session.New(t.TempDir()),
-		async:             make(chan tea.Msg, 8),
-		input:             input,
-		screen:            screenChat,
-		runIndicatorState: runIndicatorReady,
-	}
-
-	if err := m.submitBuiltinSubAgentPreference("/review inspect changed files", "review", "inspect changed files"); err != nil {
-		t.Fatalf("expected slash preference submission to succeed, got %v", err)
-	}
-	if m.runIndicatorState != runIndicatorRunning {
-		t.Fatalf("expected slash preference to set running indicator, got %q", m.runIndicatorState)
-	}
-	if m.runStartedAt.IsZero() {
-		t.Fatal("expected slash preference to record run start time")
-	}
-
-	select {
-	case msg := <-m.async:
-		result, ok := msg.(subAgentResultMsg)
-		if !ok {
-			t.Fatalf("expected subAgentResultMsg, got %#v", msg)
-		}
-		next, _ := m.Update(result)
-		updated := next.(model)
-		if updated.runIndicatorState != runIndicatorComplete {
-			t.Fatalf("expected completed indicator after subagent result, got %q", updated.runIndicatorState)
-		}
-		if updated.phase != "idle" {
-			t.Fatalf("expected phase to become idle after subagent result, got %q", updated.phase)
-		}
-		if updated.runStartedAt != (time.Time{}) {
-			t.Fatalf("expected run start time to reset after completion, got %v", updated.runStartedAt)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for async dispatch result")
-	}
-}
-
-func TestSubmitBuiltinSubAgentPreferenceConfiguresSpinnerAndTimeout(t *testing.T) {
-	runner := &subAgentCommandRunnerStub{
-		builtinAgent: subagentspkg.Agent{Name: "review"},
-		builtinOK:    true,
-	}
-	input := textarea.New()
-	input.Focus()
-	m := model{
-		runner:            runner,
-		sess:              session.New(t.TempDir()),
-		async:             make(chan tea.Msg, 8),
-		input:             input,
-		screen:            screenChat,
-		runIndicatorState: runIndicatorReady,
-	}
-
-	if err := m.submitBuiltinSubAgentPreference("/review inspect changed files", "review", "inspect changed files"); err != nil {
-		t.Fatalf("expected slash preference submission to succeed, got %v", err)
-	}
-	if m.pendingCommandCmd == nil {
-		t.Fatal("expected slash preference to schedule spinner command")
-	}
-
-	select {
-	case msg := <-m.async:
-		if _, ok := msg.(subAgentResultMsg); !ok {
-			t.Fatalf("expected subAgentResultMsg, got %#v", msg)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for async dispatch result")
-	}
-
-	if runner.lastRequest.Timeout != "" {
-		t.Fatalf("expected empty subagent timeout (bounded by MaxTurns only), got %q", runner.lastRequest.Timeout)
-	}
-}
-
-func TestSubAgentResultErrorSetsFailedIndicator(t *testing.T) {
-	m := model{
-		async:             make(chan tea.Msg, 1),
-		busy:              true,
-		subAgentPending:   true,
-		subAgentName:      "review",
-		runStartedAt:      time.Now().Add(-80 * time.Millisecond),
-		runIndicatorState: runIndicatorRunning,
-		screen:            screenChat,
-	}
-
-	next, _ := m.Update(subAgentResultMsg{
-		Input: "/review inspect changed files",
-		Err:   errors.New("boom"),
-	})
-	updated := next.(model)
-
-	if updated.runIndicatorState != runIndicatorFailed {
-		t.Fatalf("expected failed indicator after subagent error, got %q", updated.runIndicatorState)
-	}
-	if !containsChatEntry(updated.chatItems, "assistant", "Subagent failed: boom") {
-		t.Fatalf("expected assistant error entry in chat, got %#v", updated.chatItems)
-	}
-}
-
-func TestCommandPaletteSelectExplorerPrefillsCommand(t *testing.T) {
-	input := textarea.New()
-	input.SetValue("/expl")
-	m := model{
-		screen:      screenChat,
-		commandOpen: true,
-		input:       input,
-	}
-	m.syncCommandPalette()
-
-	got, cmd := m.handleCommandPaletteKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd != nil {
-		t.Fatalf("expected palette selection to prefill /explorer template instead of executing immediately")
-	}
-	updated := got.(model)
-	if updated.commandOpen {
-		t.Fatalf("expected command palette to close after selecting /explorer")
-	}
-	if updated.input.Value() != "/explorer" {
-		t.Fatalf("expected /explorer usage to be inserted, got %q", updated.input.Value())
 	}
 }
 
@@ -530,6 +184,164 @@ func TestCommandPaletteEnterOnModelOpensPicker(t *testing.T) {
 	}
 	if len(updated.chatItems) != 0 {
 		t.Fatalf("expected opening model picker not to append chat items, got %#v", updated.chatItems)
+	}
+}
+
+func TestRunAgentsCommandAppendsCommandExchange(t *testing.T) {
+	m := &model{
+		runner: &subAgentCommandRunnerStub{
+			subAgents: []subagentspkg.Agent{
+				{Name: "explorer", Scope: "builtin", Description: "Explore code"},
+				{Name: "review", Scope: "workspace", Description: ""},
+			},
+		},
+	}
+
+	if err := m.runAgentsCommand("/agents"); err != nil {
+		t.Fatalf("expected runAgentsCommand to succeed, got %v", err)
+	}
+	if !containsChatEntry(m.chatItems, "assistant", "Available subagents:") {
+		t.Fatalf("expected /agents exchange output in chat, got %#v", m.chatItems)
+	}
+	if !containsChatEntry(m.chatItems, "assistant", "- review [workspace]: No description provided.") {
+		t.Fatalf("expected missing descriptions to use fallback text, got %#v", m.chatItems)
+	}
+	if m.statusNote != "Discovered 2 subagent(s)." {
+		t.Fatalf("expected status note to reflect discovered count, got %q", m.statusNote)
+	}
+}
+
+func TestRenderSubAgentsViewFallbacks(t *testing.T) {
+	if got := renderSubAgentsView(nil); got != "No subagents available." {
+		t.Fatalf("expected empty agent set fallback, got %q", got)
+	}
+
+	view := renderSubAgentsView([]subagentspkg.Agent{
+		{Name: "review", Scope: "builtin", Description: "   "},
+	})
+	if !strings.Contains(view, "- review [builtin]: No description provided.") {
+		t.Fatalf("expected renderSubAgentsView description fallback, got %q", view)
+	}
+}
+
+func TestRenderSubAgentResultCardCompletedAndErrorStates(t *testing.T) {
+	completed := stripANSI(renderSubAgentResultCard(tools.DelegateSubAgentResult{
+		OK:           true,
+		Agent:        "",
+		TaskID:       "task-1",
+		InvocationID: "inv-1",
+		Summary:      "",
+	}, 32))
+	for _, want := range []string{
+		"SubAgent",
+		"subagent",
+		"COMPLETED",
+		"task: task-1",
+		"invocation: inv-1",
+		"SubAgent task completed.",
+	} {
+		if !strings.Contains(completed, want) {
+			t.Fatalf("expected completed card to contain %q, got %q", want, completed)
+		}
+	}
+
+	failed := stripANSI(renderSubAgentResultCard(tools.DelegateSubAgentResult{
+		OK:     false,
+		Agent:  "reviewer",
+		Status: "",
+		Error: &tools.DelegateSubAgentError{
+			Code:    "timeout",
+			Message: "worker exceeded time budget",
+		},
+	}, 80))
+	for _, want := range []string{"SubAgent", "reviewer", "FAILED", "Error:", "[timeout]", "worker exceeded time budget"} {
+		if !strings.Contains(failed, want) {
+			t.Fatalf("expected failed card to contain %q, got %q", want, failed)
+		}
+	}
+}
+
+func TestRenderSubAgentDispatchResultUsesCardRenderer(t *testing.T) {
+	out := stripANSI(renderSubAgentDispatchResult(tools.DelegateSubAgentResult{
+		OK:      true,
+		Agent:   "explorer",
+		Status:  "running",
+		Summary: "scanning files",
+	}))
+	for _, want := range []string{"SubAgent", "explorer", "RUNNING", "scanning files"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected dispatch output to contain %q, got %q", want, out)
+		}
+	}
+}
+
+func TestFormatElapsedBranches(t *testing.T) {
+	if got := formatElapsed(450 * time.Millisecond); got != "0s" {
+		t.Fatalf("expected sub-second duration to clamp to 0s, got %q", got)
+	}
+	if got := formatElapsed(9 * time.Second); got != "9s" {
+		t.Fatalf("expected seconds formatting, got %q", got)
+	}
+	if got := formatElapsed(125 * time.Second); got != "2m5s" {
+		t.Fatalf("expected minute-second formatting, got %q", got)
+	}
+}
+
+func TestRenderSubAgentProgressCardIncludesTaskAndElapsed(t *testing.T) {
+	progress := stripANSI(renderSubAgentProgressCard(
+		"explorer",
+		"inspect module boundaries and collect critical test paths for regression coverage",
+		"◐",
+		"12s",
+		40,
+	))
+	for _, want := range []string{"explorer", "Elapsed: 12s"} {
+		if !strings.Contains(progress, want) {
+			t.Fatalf("expected progress card to contain %q, got %q", want, progress)
+		}
+	}
+	if !strings.Contains(progress, "...") {
+		t.Fatalf("expected long task text to be truncated, got %q", progress)
+	}
+}
+
+func TestSubAgentStatusBadgeTypeAndBorderAccentMappings(t *testing.T) {
+	tests := []struct {
+		status    string
+		wantBadge string
+		wantColor string
+	}{
+		{status: "completed", wantBadge: "success", wantColor: string(semanticColors.Success)},
+		{status: "failed", wantBadge: "error", wantColor: string(semanticColors.Danger)},
+		{status: "accepted", wantBadge: "accent", wantColor: string(semanticColors.Accent)},
+		{status: "queued", wantBadge: "accent", wantColor: string(semanticColors.Accent)},
+		{status: "running", wantBadge: "accent", wantColor: string(semanticColors.Accent)},
+		{status: "unknown", wantBadge: "neutral", wantColor: string(semanticColors.Border)},
+	}
+
+	for _, tc := range tests {
+		if got := subAgentStatusBadgeType(tc.status); got != tc.wantBadge {
+			t.Fatalf("status=%q expected badge %q, got %q", tc.status, tc.wantBadge, got)
+		}
+		if got := string(subAgentBorderAccent(tc.status)); got != tc.wantColor {
+			t.Fatalf("status=%q expected border color %q, got %q", tc.status, tc.wantColor, got)
+		}
+	}
+}
+
+func TestWrapTextBreaksOnSpaceAndHardCuts(t *testing.T) {
+	spaceWrapped := wrapText("alpha beta gamma", 6)
+	if !strings.Contains(spaceWrapped, "\n") || !strings.Contains(spaceWrapped, "alpha") {
+		t.Fatalf("expected wrapText to split by width with spaces, got %q", spaceWrapped)
+	}
+
+	hardCut := wrapText("abcdefghij", 4)
+	if hardCut != "abcd\nefgh\nij" {
+		t.Fatalf("expected wrapText hard-cut fallback, got %q", hardCut)
+	}
+
+	if got := wrapText("short", 0); got != "short" {
+		t.Fatalf("expected non-positive width to return original text, got %q", got)
 	}
 }
 
@@ -590,19 +402,243 @@ func containsChatEntry(items []chatEntry, kind, needle string) bool {
 	return false
 }
 
-func containsChatEntryWithPrefix(items []chatEntry, kind, prefix string) bool {
-	kind = strings.TrimSpace(kind)
-	prefix = strings.TrimSpace(prefix)
-	if prefix == "" {
-		return false
+func TestResolveSubAgentToolCallsFromMetaNil(t *testing.T) {
+	msg := llm.Message{}
+	got := resolveSubAgentToolCallsFromMeta(msg)
+	if got != nil {
+		t.Errorf("expected nil, got %v", got)
 	}
+}
+
+func TestResolveSubAgentToolCallsFromMetaFromSlice(t *testing.T) {
+	input := []SubAgentToolCall{
+		{ToolName: "read_file", ToolCallID: "c1", CompactBody: "main.go", Status: "done"},
+	}
+	msg := llm.Message{
+		Meta: llm.MessageMeta{"subagent_tool_calls": input},
+	}
+	got := resolveSubAgentToolCallsFromMeta(msg)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(got))
+	}
+	if got[0].ToolName != "read_file" || got[0].CompactBody != "main.go" {
+		t.Errorf("expected read_file/main.go, got %s/%s", got[0].ToolName, got[0].CompactBody)
+	}
+}
+
+func TestResolveSubAgentToolCallsFromMetaFromAnySlice(t *testing.T) {
+	// Simulate JSON deserialization: []any with map[string]any elements.
+	input := []any{
+		map[string]any{
+			"ToolName":    "grep",
+			"ToolCallID":  "c2",
+			"CompactBody": `"pattern"`,
+			"Status":      "done",
+		},
+	}
+	msg := llm.Message{
+		Meta: llm.MessageMeta{"subagent_tool_calls": input},
+	}
+	got := resolveSubAgentToolCallsFromMeta(msg)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(got))
+	}
+	if got[0].ToolName != "grep" {
+		t.Errorf("expected tool name 'grep', got %q", got[0].ToolName)
+	}
+}
+
+func TestResolveSubAgentToolCallsFromMetaInvalidAnySlice(t *testing.T) {
+	msg := llm.Message{
+		Meta: llm.MessageMeta{
+			"subagent_tool_calls": []any{
+				map[string]any{
+					"ToolName": 123,
+					"Status":   "done",
+				},
+			},
+		},
+	}
+	if got := resolveSubAgentToolCallsFromMeta(msg); got != nil {
+		t.Fatalf("expected invalid []any payload to fail decoding, got %#v", got)
+	}
+}
+
+func TestRebuildSessionTimelineWithSubAgentTools(t *testing.T) {
+	sess := session.New("/workspace")
+	sess.Messages = []llm.Message{
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{
+				ID:        "call-1",
+				Name:      "delegate_subagent",
+				Arguments: `{"agent":"explorer","task":"scan files"}`,
+			}},
+		}},
+		{Role: llm.RoleUser, Parts: []llm.Part{
+			{Type: llm.PartToolResult, ToolResult: &llm.ToolResultPart{
+				ToolUseID: "call-1",
+				Content:   `{"ok":true,"summary":"done","invocation_id":"inv-1"}`,
+			}},
+		}},
+	}
+	// Inject subagent_tool_calls into Meta.
+	if sess.Messages[1].Meta == nil {
+		sess.Messages[1].Meta = llm.MessageMeta{}
+	}
+	sess.Messages[1].Meta["subagent_tool_calls"] = []SubAgentToolCall{
+		{ToolName: "read_file", ToolCallID: "c10", CompactBody: "a.go", Status: "done"},
+		{ToolName: "grep", ToolCallID: "c11", CompactBody: `"pattern"`, Status: "done"},
+	}
+
+	items := rebuildSessionTimeline(sess)
+	// Find the tool entry for delegate_subagent.
+	found := false
 	for _, item := range items {
-		if kind != "" && item.Kind != kind {
+		if item.Kind == "tool" && item.AgentID == "explorer" {
+			found = true
+			if len(item.SubAgentTools) != 2 {
+				t.Errorf("expected 2 SubAgentTools, got %d", len(item.SubAgentTools))
+			}
+			if len(item.SubAgentTools) > 0 && item.SubAgentTools[0].ToolName != "read_file" {
+				t.Errorf("expected first tool 'read_file', got %q", item.SubAgentTools[0].ToolName)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected to find delegate_subagent tool entry")
+	}
+}
+
+func TestRebuildSessionTimelineWithoutSubAgentToolsMeta(t *testing.T) {
+	sess := session.New("/workspace")
+	sess.Messages = []llm.Message{
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{
+				ID:        "call-1",
+				Name:      "delegate_subagent",
+				Arguments: `{"agent":"explorer","task":"scan"}`,
+			}},
+		}},
+		{Role: llm.RoleUser, Parts: []llm.Part{
+			{Type: llm.PartToolResult, ToolResult: &llm.ToolResultPart{
+				ToolUseID: "call-1",
+				Content:   `{"ok":true,"summary":"done","invocation_id":"inv-1"}`,
+			}},
+		}},
+	}
+
+	items := rebuildSessionTimeline(sess)
+	for _, item := range items {
+		if item.Kind == "tool" && item.AgentID == "explorer" {
+			if len(item.SubAgentTools) != 0 {
+				t.Errorf("expected 0 SubAgentTools without meta, got %d", len(item.SubAgentTools))
+			}
+			return
+		}
+	}
+}
+
+func TestRebuildSessionTimelineUsesFullDelegateSubAgentResultFromMeta(t *testing.T) {
+	sess := session.New("/workspace")
+	sess.Messages = []llm.Message{
+		{
+			Role: llm.RoleAssistant,
+			Parts: []llm.Part{
+				{
+					Type: llm.PartToolUse,
+					ToolUse: &llm.ToolUsePart{
+						ID:        "call-1",
+						Name:      "delegate_subagent",
+						Arguments: `{"agent":"explorer","task":"scan files"}`,
+					},
+				},
+			},
+		},
+		{
+			Role: llm.RoleUser,
+			Parts: []llm.Part{
+				{
+					Type: llm.PartToolResult,
+					ToolResult: &llm.ToolResultPart{
+						ToolUseID: "call-1",
+						Content:   `{"ok":true,"agent":"explorer","summary":"trimmed summary"}`,
+					},
+				},
+			},
+			Meta: llm.MessageMeta{
+				"delegate_subagent_result": `{"ok":true,"agent":"explorer","task":"scan files","content":"full natural language result from subagent"}`,
+			},
+		},
+	}
+
+	items := rebuildSessionTimeline(sess)
+	for _, item := range items {
+		if item.Kind != "tool" || item.AgentID != "explorer" {
 			continue
 		}
-		if strings.HasPrefix(strings.TrimSpace(item.Body), prefix) {
-			return true
+		if item.TaskPrompt != "scan files" {
+			t.Fatalf("expected task prompt to be restored from arguments, got %q", item.TaskPrompt)
 		}
+		if !strings.Contains(item.Body, "full natural language result from subagent") {
+			t.Fatalf("expected full delegate result payload to be used, got %q", item.Body)
+		}
+		return
 	}
-	return false
+	t.Fatal("expected to find restored delegate_subagent tool entry")
+}
+
+func TestRebuildSessionTimelineRestoresDelegateSubAgentToolRoleMessage(t *testing.T) {
+	sess := session.New("/workspace")
+	sess.Messages = []llm.Message{
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{
+				{
+					ID: "call-2",
+					Function: llm.ToolFunctionCall{
+						Name:      "delegate_subagent",
+						Arguments: `{"agent":"reviewer","task":"verify docs"}`,
+					},
+				},
+			},
+		},
+		{
+			Role:       llm.Role("tool"),
+			ToolCallID: "call-2",
+			Content:    `{"ok":true,"agent":"reviewer","summary":"trimmed"}`,
+			Meta: llm.MessageMeta{
+				"delegate_subagent_result": `{"ok":true,"agent":"reviewer","task":"verify docs","content":"tool-role full payload"}`,
+				"subagent_tool_calls": []any{
+					map[string]any{
+						"ToolName":    "read_file",
+						"ToolCallID":  "tc-1",
+						"CompactBody": "docs.md",
+						"Status":      "done",
+					},
+				},
+			},
+		},
+	}
+
+	items := rebuildSessionTimeline(sess)
+	for _, item := range items {
+		if item.Kind != "tool" || item.AgentID != "reviewer" {
+			continue
+		}
+		if item.TaskPrompt != "verify docs" {
+			t.Fatalf("expected task prompt to be restored for tool-role message, got %q", item.TaskPrompt)
+		}
+		if item.TotalToolCalls != 1 || len(item.SubAgentTools) != 1 {
+			t.Fatalf("expected one restored subagent tool call, got total=%d items=%d", item.TotalToolCalls, len(item.SubAgentTools))
+		}
+		if item.SubAgentTools[0].ToolName != "read_file" {
+			t.Fatalf("expected restored subagent tool to be read_file, got %#v", item.SubAgentTools[0])
+		}
+		if !strings.Contains(item.Body, "tool-role full payload") {
+			t.Fatalf("expected full tool-role delegate payload to be used, got %q", item.Body)
+		}
+		return
+	}
+	t.Fatal("expected to find tool-role delegate_subagent entry")
 }

@@ -10,6 +10,13 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
+func (r *Runner) SubAgentManager() *subagentspkg.Manager {
+	if r == nil {
+		return nil
+	}
+	return r.subAgentManager
+}
+
 func (r *Runner) ListSubAgents() ([]subagentspkg.Agent, []subagentspkg.Diagnostic) {
 	if r.subAgentManager == nil {
 		return nil, nil

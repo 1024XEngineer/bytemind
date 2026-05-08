@@ -121,7 +121,7 @@ func TestBuildSubAgentTaskInputNormal(t *testing.T) {
 }
 
 func TestBuildSubAgentResultFromAnswerEmpty(t *testing.T) {
-	result := buildSubAgentResultFromAnswer("", "inv-1", "explorer")
+	result := buildSubAgentResultFromAnswer("", "inv-1", "explorer", nil)
 	if !result.OK {
 		t.Fatal("expected OK true")
 	}
@@ -137,7 +137,7 @@ func TestBuildSubAgentResultFromAnswerEmpty(t *testing.T) {
 }
 
 func TestBuildSubAgentResultFromAnswerWithJSON(t *testing.T) {
-	result := buildSubAgentResultFromAnswer(`{"summary":"scan done"}`, "inv-1", "explorer")
+	result := buildSubAgentResultFromAnswer(`{"summary":"scan done"}`, "inv-1", "explorer", nil)
 	if !result.OK {
 		t.Fatal("expected OK true")
 	}
@@ -147,7 +147,7 @@ func TestBuildSubAgentResultFromAnswerWithJSON(t *testing.T) {
 }
 
 func TestBuildSubAgentResultFromAnswerPlainText(t *testing.T) {
-	result := buildSubAgentResultFromAnswer("just plain text", "inv-1", "explorer")
+	result := buildSubAgentResultFromAnswer("just plain text", "inv-1", "explorer", nil)
 	if !result.OK {
 		t.Fatal("expected OK true")
 	}
@@ -157,7 +157,7 @@ func TestBuildSubAgentResultFromAnswerPlainText(t *testing.T) {
 }
 
 func TestBuildSubAgentResultFromAnswerJSONWithEmptySummary(t *testing.T) {
-	result := buildSubAgentResultFromAnswer(`{"ok":true,"summary":"  "}`, "inv-1", "explorer")
+	result := buildSubAgentResultFromAnswer(`{"ok":true,"summary":"  "}`, "inv-1", "explorer", nil)
 	if !result.OK {
 		t.Fatal("expected OK true")
 	}
@@ -168,7 +168,7 @@ func TestBuildSubAgentResultFromAnswerJSONWithEmptySummary(t *testing.T) {
 }
 
 func TestBuildSubAgentResultFromAnswerJSONWithoutSummary(t *testing.T) {
-	result := buildSubAgentResultFromAnswer(`{"ok":true}`, "inv-1", "explorer")
+	result := buildSubAgentResultFromAnswer(`{"ok":true}`, "inv-1", "explorer", nil)
 	if !result.OK {
 		t.Fatal("expected OK true")
 	}
@@ -287,18 +287,81 @@ func TestBuildSubAgentPromptInput(t *testing.T) {
 	if input.Isolation != "sandbox" {
 		t.Fatalf("expected isolation sandbox, got %q", input.Isolation)
 	}
-	if input.DefinitionBody != "scan code" {
-		t.Fatalf("expected definition body, got %q", input.DefinitionBody)
+	if !strings.Contains(input.DefinitionBody, "READ-ONLY MODE") {
+		t.Fatalf("expected read-only guardrails, got %q", input.DefinitionBody)
+	}
+	if !strings.Contains(input.DefinitionBody, "scan code") {
+		t.Fatalf("expected definition body to contain original instruction, got %q", input.DefinitionBody)
 	}
 }
 
-func TestSubAgentFailureResult(t *testing.T) {
-	result := subAgentFailureResult("inv-1", "explorer", "test_code", "test message", true)
-	if result.OK {
-		t.Fatal("expected OK false")
+func TestBuildSubAgentPromptInputWriteModeGuardrails(t *testing.T) {
+	req := tools.DelegateSubAgentRequest{
+		Task: "edit config",
 	}
-	if result.Status != subAgentResultStatusFailed {
-		t.Fatalf("expected status failed, got %q", result.Status)
+	preflight := subagentspkg.PreflightResult{
+		Definition: subagentspkg.Agent{
+			Name:        "general",
+			Instruction: "edit files",
+		},
+		EffectiveTools: []string{"read_file", "write_file", "replace_in_file"},
+		Isolation:      "none",
+	}
+	input := buildSubAgentPromptInput(req, preflight)
+	if !strings.Contains(input.DefinitionBody, "=== WRITE MODE - FILE MODIFICATIONS ALLOWED ===") {
+		t.Fatalf("expected WRITE MODE guardrails, got %q", input.DefinitionBody)
+	}
+	if !strings.Contains(input.DefinitionBody, "edit files") {
+		t.Fatalf("expected definition body to contain original instruction, got %q", input.DefinitionBody)
+	}
+}
+
+func TestBuildSubAgentPromptInputReadOnlyGuardrails(t *testing.T) {
+	req := tools.DelegateSubAgentRequest{
+		Task: "find files",
+	}
+	preflight := subagentspkg.PreflightResult{
+		Definition: subagentspkg.Agent{
+			Name:        "explorer",
+			Instruction: "search only",
+		},
+		EffectiveTools: []string{"read_file", "search_text"},
+		Isolation:      "none",
+	}
+	input := buildSubAgentPromptInput(req, preflight)
+	if !strings.Contains(input.DefinitionBody, "=== READ-ONLY MODE - NO FILE MODIFICATIONS ===") {
+		t.Fatalf("expected READ-ONLY MODE guardrails, got %q", input.DefinitionBody)
+	}
+	if !strings.Contains(input.DefinitionBody, "search only") {
+		t.Fatalf("expected definition body to contain original instruction, got %q", input.DefinitionBody)
+	}
+}
+
+func TestBuildToolSafetyGuardrailsEmptyDefinition(t *testing.T) {
+	req := tools.DelegateSubAgentRequest{
+		Task: "do something",
+	}
+	preflight := subagentspkg.PreflightResult{
+		Definition: subagentspkg.Agent{
+			Name:        "worker",
+			Instruction: "",
+		},
+		EffectiveTools: []string{"write_file"},
+		Isolation:      "none",
+	}
+	input := buildSubAgentPromptInput(req, preflight)
+	if !strings.Contains(input.DefinitionBody, "WRITE MODE") {
+		t.Fatalf("expected WRITE MODE guardrails even with empty instruction, got %q", input.DefinitionBody)
+	}
+}
+
+func TestSubAgentErrorAsContent(t *testing.T) {
+	result := subAgentErrorAsContent("inv-1", "explorer", "test error message", nil)
+	if !result.OK {
+		t.Fatal("expected OK true (error as content)")
+	}
+	if result.Status != subAgentResultStatusCompleted {
+		t.Fatalf("expected status completed, got %q", result.Status)
 	}
 	if result.InvocationID != "inv-1" {
 		t.Fatalf("expected invocation id, got %q", result.InvocationID)
@@ -306,17 +369,11 @@ func TestSubAgentFailureResult(t *testing.T) {
 	if result.Agent != "explorer" {
 		t.Fatalf("expected agent, got %q", result.Agent)
 	}
-	if result.Error == nil {
-		t.Fatal("expected non-nil error")
+	if !strings.Contains(result.Summary, "test error message") {
+		t.Fatalf("expected error message in summary, got %q", result.Summary)
 	}
-	if result.Error.Code != "test_code" {
-		t.Fatalf("expected error code test_code, got %q", result.Error.Code)
-	}
-	if result.Error.Message != "test message" {
-		t.Fatalf("expected error message, got %q", result.Error.Message)
-	}
-	if !result.Error.Retryable {
-		t.Fatal("expected retryable true")
+	if result.Error != nil {
+		t.Fatalf("expected nil error struct (error is in summary), got %#v", result.Error)
 	}
 }
 
@@ -412,7 +469,7 @@ func TestExecuteWithStreamObserver(t *testing.T) {
 func TestBuildSubAgentResultFromAnswerUnmarshalableJSON(t *testing.T) {
 	// Valid JSON but summary is a number, not a string — Unmarshal fails
 	input := `{"ok":true,"summary":123}`
-	result := buildSubAgentResultFromAnswer(input, "inv-1", "explorer")
+	result := buildSubAgentResultFromAnswer(input, "inv-1", "explorer", nil)
 	if !result.OK {
 		t.Fatal("expected OK true")
 	}
@@ -492,8 +549,11 @@ func TestExecutePrepareRunPromptError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.OK {
-		t.Fatal("expected failure for prepareRunPrompt error")
+	if !result.OK {
+		t.Fatal("expected OK:true for error-as-content (prepareRunPrompt error)")
+	}
+	if !strings.Contains(result.Summary, "sandbox unavailable") {
+		t.Fatalf("expected error message in summary, got %q", result.Summary)
 	}
 }
 
@@ -530,7 +590,114 @@ func TestExecuteRunPromptTurnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.OK {
-		t.Fatal("expected failure for runPromptTurns error")
+	if !result.OK {
+		t.Fatal("expected OK:true for error-as-content (runPromptTurns error)")
+	}
+	if !strings.Contains(result.Summary, "llm connection failed") {
+		t.Fatalf("expected error message in summary, got %q", result.Summary)
+	}
+}
+
+func TestExtractSubAgentToolCallsEmpty(t *testing.T) {
+	records := extractSubAgentToolCalls(nil)
+	if len(records) != 0 {
+		t.Fatalf("expected empty result, got %d records", len(records))
+	}
+}
+
+func TestExtractSubAgentToolCallsMatchesToolUseAndResult(t *testing.T) {
+	messages := []llm.Message{
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{ID: "call-1", Name: "read_file", Arguments: `{"path":"main.go"}`}},
+			{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{ID: "call-2", Name: "search_text", Arguments: `{"query":"foo"}`}},
+		}},
+		{Role: llm.RoleUser, Parts: []llm.Part{
+			{Type: llm.PartToolResult, ToolResult: &llm.ToolResultPart{ToolUseID: "call-1", Content: "file contents"}},
+			{Type: llm.PartToolResult, ToolResult: &llm.ToolResultPart{ToolUseID: "call-2", Content: "search results"}},
+		}},
+	}
+	records := extractSubAgentToolCalls(messages)
+	if len(records) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(records))
+	}
+	if records[0].ToolName != "read_file" || records[0].ToolCallID != "call-1" {
+		t.Errorf("record 0: expected read_file/call-1, got %s/%s", records[0].ToolName, records[0].ToolCallID)
+	}
+	if records[0].CompactBody != "main.go" {
+		t.Errorf("record 0: expected compact body 'main.go', got %q", records[0].CompactBody)
+	}
+	if records[0].Status != "done" {
+		t.Errorf("record 0: expected status 'done', got %q", records[0].Status)
+	}
+	if records[1].ToolName != "search_text" {
+		t.Errorf("record 1: expected tool name 'search_text', got %q", records[1].ToolName)
+	}
+	if records[1].CompactBody != `"foo"` {
+		t.Errorf("record 1: expected compact body '\"foo\"', got %q", records[1].CompactBody)
+	}
+}
+
+func TestExtractSubAgentToolCallsUnmatchedToolUseIsRunning(t *testing.T) {
+	messages := []llm.Message{
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{ID: "call-1", Name: "grep", Arguments: `{}`}},
+		}},
+	}
+	records := extractSubAgentToolCalls(messages)
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+	if records[0].Status != "running" {
+		t.Errorf("expected status 'running', got %q", records[0].Status)
+	}
+}
+
+func TestExtractSubAgentToolCallsOrdering(t *testing.T) {
+	messages := []llm.Message{
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{ID: "c1", Name: "tool_a", Arguments: `{}`}},
+		}},
+		{Role: llm.RoleUser, Parts: []llm.Part{
+			{Type: llm.PartToolResult, ToolResult: &llm.ToolResultPart{ToolUseID: "c1", Content: "ok"}},
+		}},
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			{Type: llm.PartToolUse, ToolUse: &llm.ToolUsePart{ID: "c2", Name: "tool_b", Arguments: `{}`}},
+		}},
+	}
+	records := extractSubAgentToolCalls(messages)
+	if len(records) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(records))
+	}
+	if records[0].ToolName != "tool_a" || records[1].ToolName != "tool_b" {
+		t.Errorf("expected ordering tool_a, tool_b; got %s, %s", records[0].ToolName, records[1].ToolName)
+	}
+}
+
+func TestStoreAndConsumeSubAgentToolCalls(t *testing.T) {
+	invID := "test-invocation-123"
+	toolCalls := []tools.SubAgentToolCallRecord{
+		{ToolName: "read_file", ToolCallID: "c1", CompactBody: "foo.go", Status: "done"},
+	}
+	storeSubAgentToolCalls(invID, toolCalls)
+
+	got := consumeSubAgentToolCalls(invID)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(got))
+	}
+	if got[0].ToolName != "read_file" {
+		t.Errorf("expected tool name 'read_file', got %q", got[0].ToolName)
+	}
+
+	// Second consume should return nil (consumed).
+	got2 := consumeSubAgentToolCalls(invID)
+	if got2 != nil {
+		t.Errorf("expected nil on second consume, got %v", got2)
+	}
+}
+
+func TestConsumeSubAgentToolCallsEmptyID(t *testing.T) {
+	got := consumeSubAgentToolCalls("")
+	if got != nil {
+		t.Errorf("expected nil for empty invocation ID, got %v", got)
 	}
 }
