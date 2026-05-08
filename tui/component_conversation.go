@@ -554,17 +554,17 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 		detailLines := make([]string, 0, limit+1)
 		for i, detail := range item.DetailLines {
 			if i >= limit {
-				detailLines = append(detailLines, toolExpandHintStyle.Render("(ctrl+o to expand)"))
+				detailLines = append(detailLines, indent+toolExpandHintStyle.Render("(ctrl+o to expand)"))
 				break
 			}
 			detail = strings.TrimSpace(detail)
 			if detail == "" {
 				continue
 			}
-			detailLines = append(detailLines, renderDiffDetailLine(detail, contentWidth-2))
+			detailLines = append(detailLines, indent+renderDiffDetailLine(detail, contentWidth-len(indent)))
 		}
 		if len(detailLines) > 0 {
-			body = headLine + "\n" + indent + strings.Join(detailLines, "\n"+indent)
+			body = headLine + "\n" + strings.Join(detailLines, "\n")
 		}
 	}
 
