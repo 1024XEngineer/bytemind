@@ -5842,8 +5842,8 @@ func TestFormatChatBodyHighlightsSearchToolSummaryAndMatches(t *testing.T) {
 	if !strings.Contains(got, toolSearchSummaryStyle.Render("12 matches for \"func main() {\"")) {
 		t.Fatalf("expected search summary line to be highlighted, got %q", got)
 	}
-	if strings.Contains(got, "github.com/1024XEngineer/bytemind/opencode-go/main.go:14") || strings.Contains(got, "cmd/bytemind/main.go:11") {
-		t.Fatalf("expected tool body to render only summary line, got %q", got)
+	if !strings.Contains(got, "github.com/1024XEngineer/bytemind/opencode-go/main.go:14") || !strings.Contains(got, "cmd/bytemind/main.go:11") {
+		t.Fatalf("expected tool body to render first 3 non-empty lines with detail matches, got %q", got)
 	}
 }
 
@@ -7058,8 +7058,8 @@ func TestRenderChatCardToolUsesVisualSeparator(t *testing.T) {
 	if !strings.Contains(got, "✓") {
 		t.Fatalf("expected done status to render as checkmark, got %q", got)
 	}
-	if strings.Contains(got, "range: 1-20") || strings.Contains(got, "path: tui/model.go") {
-		t.Fatalf("expected tool card body to collapse to one summary line, got %q", got)
+	if !strings.Contains(got, "range: 1-20") || !strings.Contains(got, "path: tui/model.go") {
+		t.Fatalf("expected tool card body to show first 3 lines including detail, got %q", got)
 	}
 }
 
