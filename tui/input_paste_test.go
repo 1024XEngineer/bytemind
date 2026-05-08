@@ -462,6 +462,35 @@ func TestBuildPromptInputDefaultsToLatestPastedReference(t *testing.T) {
 	}
 }
 
+func TestSubmitPromptExpandsPasteReferenceForDisplayedChatBodyAndClearsPasteState(t *testing.T) {
+	m := newImagePipelineModel(t)
+	_, stored, err := m.compressPastedText("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11")
+	if err != nil {
+		t.Fatalf("compress pasted text: %v", err)
+	}
+
+	raw := "inspect [Paste #" + stored.ID + " ~11 lines]"
+	got, _ := m.submitPrompt(raw)
+	updated := got.(model)
+
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected user chat item to be appended")
+	}
+	body := updated.chatItems[len(updated.chatItems)-1].Body
+	if !strings.Contains(body, stored.Content) {
+		t.Fatalf("expected displayed chat body to expand pasted content, got %q", body)
+	}
+	if strings.Contains(body, "[Paste #"+stored.ID) {
+		t.Fatalf("expected displayed chat body not to keep paste marker, got %q", body)
+	}
+	if updated.pastedContents != nil {
+		t.Fatalf("expected pasted contents state to be cleared after submit")
+	}
+	if updated.pastedOrder != nil {
+		t.Fatalf("expected pasted order state to be cleared after submit")
+	}
+}
+
 func TestStorePastedContentKeepsRecentLimit(t *testing.T) {
 	m := newImagePipelineModel(t)
 	for i := 0; i < maxStoredPastedContents+2; i++ {
