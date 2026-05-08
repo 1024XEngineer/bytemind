@@ -400,10 +400,12 @@ var (
 			Foreground(semanticColors.TextMuted)
 
 	toolDiffAddStyle = lipgloss.NewStyle().
-			Foreground(semanticColors.Success)
+			Background(semanticColors.HighlightGreen).
+			Foreground(semanticColors.TextBase)
 
 	toolDiffRemoveStyle = lipgloss.NewStyle().
-			Foreground(semanticColors.Danger)
+			Background(semanticColors.HighlightRed).
+			Foreground(semanticColors.TextBase)
 
 	toolDiffContextStyle = lipgloss.NewStyle().
 				Foreground(semanticColors.TextMuted)

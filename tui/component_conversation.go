@@ -545,6 +545,7 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 	}
 
 	indent := "  "
+	indentWidth := 2
 	body := headLine
 	if len(item.DetailLines) > 0 {
 		limit := len(item.DetailLines)
@@ -561,7 +562,7 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 			if detail == "" {
 				continue
 			}
-			detailLines = append(detailLines, renderDiffDetailLine(detail))
+			detailLines = append(detailLines, renderDiffDetailLine(detail, contentWidth-indentWidth))
 		}
 		if len(detailLines) > 0 {
 			body = headLine + "\n" + indent + strings.Join(detailLines, "\n"+indent)
@@ -571,21 +572,26 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 	return style.Width(contentWidth).Render(body)
 }
 
-func renderDiffDetailLine(line string) string {
+func renderDiffDetailLine(line string, width int) string {
 	if len(line) < 9 {
 		return line
 	}
-	// Claude CLI format: "    554 " context, "    557 -" removed, "    557 +" added
+	// Claude CLI format: line number at pos 0-6, marker at pos 7
 	marker := line[7]
+	var style lipgloss.Style
 	switch marker {
 	case '+':
-		return toolDiffAddStyle.Render(line)
+		style = toolDiffAddStyle
 	case '-':
-		return toolDiffRemoveStyle.Render(line)
+		style = toolDiffRemoveStyle
 	case ' ':
-		return toolDiffContextStyle.Render(line)
+		style = toolDiffContextStyle
+	default:
+		return line
 	}
-	return line
+	// pad to full width for row-level background highlighting
+	styled := style.Render(line)
+	return styled + style.Width(width - runewidth.StringWidth(line)).Render("")
 }
 
 func summarizeParallelToolGroup(group []chatEntry, name string) string {
