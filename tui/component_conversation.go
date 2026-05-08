@@ -11,6 +11,7 @@ import (
 const (
 	toolIcon     = "●"
 	toolTreeChar = "└"
+	toolTreeLead = "└ "
 )
 
 func (m model) renderConversation() string {
@@ -481,7 +482,7 @@ func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded boo
 		if runewidth.StringWidth(compact) > maxDetail {
 			compact = runewidth.Truncate(compact, maxDetail, "…")
 		}
-		detailLines = append(detailLines, connectorStyle.Render(toolTreeChar)+compact)
+		detailLines = append(detailLines, connectorStyle.Render(toolTreeLead)+compact)
 	}
 
 	indent := "  "
@@ -560,7 +561,7 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 			if detail == "" {
 				continue
 			}
-			detailLines = append(detailLines, connectorStyle.Render(toolTreeChar)+detail)
+			detailLines = append(detailLines, connectorStyle.Render(toolTreeLead)+detail)
 		}
 		if len(detailLines) > 0 {
 			body = headLine + "\n" + indent + strings.Join(detailLines, "\n"+indent)
@@ -631,7 +632,7 @@ func renderLiveInspectGroup(group []chatEntry, width int, runningIndicatorVisibl
 		if detail := latestLiveInspectHint(group); detail != "" {
 			connectorStyle := lipgloss.NewStyle().Foreground(colorTool)
 			maxDetailWidth := max(12, contentWidth-6)
-			headLine += "\n  " + connectorStyle.Render(toolTreeChar) + " " + compact(detail, maxDetailWidth)
+			headLine += "\n  " + connectorStyle.Render(toolTreeLead) + compact(detail, maxDetailWidth)
 		}
 	}
 

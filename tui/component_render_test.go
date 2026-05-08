@@ -312,13 +312,13 @@ func TestRenderConversationToolDetailsDefaultCollapsedAndExpandToggle(t *testing
 	}
 
 	collapsed := stripANSI(m.renderConversation())
-	if strings.Contains(collapsed, "└a.go") || strings.Contains(collapsed, "└ b.go (1-20)") {
+	if strings.Contains(collapsed, "└ a.go") || strings.Contains(collapsed, "└ b.go (1-20)") {
 		t.Fatalf("expected collapsed tool details to hide detail hint rows by default, got %q", collapsed)
 	}
 
 	m.toolDetailExpanded = true
 	expanded := stripANSI(m.renderConversation())
-	for _, want := range []string{"└a.go (1-10)", "└b.go (1-20)"} {
+	for _, want := range []string{"└ a.go (1-10)", "└ b.go (1-20)"} {
 		if !strings.Contains(expanded, want) {
 			t.Fatalf("expected expanded tool detail view to contain %q, got %q", want, expanded)
 		}

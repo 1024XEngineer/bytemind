@@ -42,6 +42,13 @@ const (
 	markdownCodeBottomLeft = "\u2570"
 	markdownCodeSideGlyph  = "\u2502 "
 
+	// Table border glyphs
+	markdownTableCornerTopLeft     = "\u250c" // \u250c
+	markdownTableCornerTopRight    = "\u2510" // \u2510
+	markdownTableCross             = "\u253c" // \u253c
+	markdownTableCornerBottomLeft  = "\u2514" // \u2514
+	markdownTableCornerBottomRight = "\u2518" // \u2518
+
 	// Enhanced icon set for richer visual representation
 	markdownBulletAltGlyph     = "\u25e6 " // White bullet
 	markdownBulletSquareGlyph  = "\u25a0 " // Square bullet
@@ -61,15 +68,9 @@ const (
 	markdownListLetterUpper  = "A." // Uppercase letter for ordered lists
 	markdownListLetterLower  = "a." // Lowercase letter for ordered lists
 
-	markdownTableCornerTopLeft     = "\u250c" // Table corner
-	markdownTableCornerTopRight    = "\u2510" // Table corner
-	markdownTableCornerBottomLeft  = "\u2514" // Table corner
-	markdownTableCornerBottomRight = "\u2518" // Table corner
-	markdownTableCross             = "\u253c" // Table cross
-	markdownTableTeeTop            = "\u252c" // Table tee
-	markdownTableTeeBottom         = "\u2534" // Table tee
-	markdownTableTeeLeft           = "\u251c" // Table tee
-	markdownTableTeeRight          = "\u2524" // Table tee
+	tableSafetyMargin = 4
+	tableMinColWidth  = 3
+	tableMaxRowLines  = 4
 )
 
 type MarkdownRenderResult struct {
@@ -129,10 +130,12 @@ type markdownCodeBlock struct {
 type markdownTableBlock struct {
 	Header []markdownTableCell
 	Rows   [][]markdownTableCell
+	Align  []extensionast.Alignment
 }
 
 type markdownTableCell struct {
-	Spans []markdownSpan
+	Spans     []markdownSpan
+	Alignment extensionast.Alignment
 }
 
 type markdownSpan struct {
@@ -483,6 +486,9 @@ func buildMarkdownBlock(node gast.Node, source []byte) (markdownBlock, bool) {
 			switch row := child.(type) {
 			case *extensionast.TableHeader:
 				table.Header = extractTableRow(row, source)
+					for _, cell := range table.Header {
+						table.Align = append(table.Align, cell.Alignment)
+					}
 			case *extensionast.TableRow:
 				table.Rows = append(table.Rows, extractTableRow(row, source))
 			}
@@ -519,7 +525,8 @@ func extractTableRow(node gast.Node, source []byte) []markdownTableCell {
 			continue
 		}
 		cells = append(cells, markdownTableCell{
-			Spans: extractInlineSpans(cell, source, markdownSpan{}),
+			Spans:     extractInlineSpans(cell, source, markdownSpan{}),
+				Alignment: cell.Alignment,
 		})
 	}
 	return cells
@@ -1635,6 +1642,112 @@ func padStyledLineRight(display, copy string, width int) string {
 		return display
 	}
 	return display + strings.Repeat(" ", padding)
+}
+
+func wrapANSI(s string, width int) []string {
+	return wrapANSILines(s, width, false)
+}
+
+func wrapANSIHard(s string, width int) []string {
+	return wrapANSILines(s, width, true)
+}
+
+func wrapANSILines(s string, width int, hardBreak bool) []string {
+	s = strings.TrimRight(s, " \t\n\r")
+	if s == "" || width <= 0 {
+		return nil
+	}
+
+	var lines []string
+	var cur strings.Builder
+	curW := 0
+	lastSpacePos := -1
+	inEscape := false
+
+	flushRemaining := func() {
+		if cur.Len() > 0 {
+			line := strings.TrimRight(cur.String(), " ")
+			if line != "" {
+				lines = append(lines, line)
+			}
+			cur.Reset()
+			curW = 0
+		}
+	}
+
+	for _, r := range s {
+		if r == '\x1b' {
+			inEscape = true
+			cur.WriteRune(r)
+			continue
+		}
+		if inEscape {
+			cur.WriteRune(r)
+			if r == 'm' {
+				inEscape = false
+			}
+			continue
+		}
+
+		w := runewidth.RuneWidth(r)
+		if w < 0 {
+			w = 0
+		}
+
+		if curW+w > width && curW > 0 {
+			if !hardBreak && lastSpacePos >= 0 {
+				content := cur.String()
+				line := strings.TrimRight(content[:lastSpacePos], " ")
+				if line != "" {
+					lines = append(lines, line)
+				}
+				after := content[lastSpacePos:]
+				after = strings.TrimLeft(after, " ")
+				cur.Reset()
+				if after != "" {
+					cur.WriteString(after)
+					curW = runewidth.StringWidth(stripANSI(after))
+				}
+				lastSpacePos = -1
+			} else {
+				flushRemaining()
+				cur.WriteRune(r)
+				curW = w
+				lastSpacePos = -1
+			}
+		} else {
+			if r == ' ' {
+				lastSpacePos = cur.Len()
+			}
+			cur.WriteRune(r)
+			curW += w
+		}
+	}
+
+	flushRemaining()
+	return lines
+}
+
+func cellSpansToANSI(spans []markdownSpan, defaultStyle lipgloss.Style) string {
+	chunks := spansToChunks(spans, defaultStyle)
+	return joinChunkDisplay(chunks)
+}
+
+func padAligned(content string, targetWidth int, align extensionast.Alignment) string {
+	displayWidth := runewidth.StringWidth(stripANSI(content))
+	padding := targetWidth - displayWidth
+	if padding <= 0 {
+		return content
+	}
+	switch align {
+	case extensionast.AlignCenter:
+		leftPad := padding / 2
+		return strings.Repeat(" ", leftPad) + content + strings.Repeat(" ", padding-leftPad)
+	case extensionast.AlignRight:
+		return strings.Repeat(" ", padding) + content
+	default:
+		return content + strings.Repeat(" ", padding)
+	}
 }
 
 // Layout and spacing constants for better visual rhythm
