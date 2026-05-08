@@ -43,21 +43,26 @@ func TestSelfCheckDiffRendering(t *testing.T) {
 			if len(dl) == 0 {
 				continue
 			}
-			switch dl[0] {
-			case 0x00:
+			switch {
+			case len(dl) > 0 && dl[0] == 0x00:
 				fmt.Printf("    PATH:  %s\n", dl[1:])
-			case 0x01:
+			case len(dl) > 0 && dl[0] == 0x01:
 				fmt.Printf("    STATS: %s\n", dl[1:])
-			case 0x02:
+			case len(dl) > 0 && dl[0] == 0x02:
 				fmt.Printf("    HUNK:  %s\n", dl[1:])
-			case '+':
-				fmt.Printf("    ADD:   %q\n", dl)
-			case '-':
-				fmt.Printf("    REM:   %q\n", dl)
-			case ' ':
-				fmt.Printf("    CTX:   %q\n", dl)
+			case len(dl) >= 10:
+				switch dl[9] {
+				case '+':
+					fmt.Printf("    ADD:   %q\n", dl)
+				case '-':
+					fmt.Printf("    REM:   %q\n", dl)
+				case ' ':
+					fmt.Printf("    CTX:   %q\n", dl)
+				default:
+					fmt.Printf("    ???:   %q\n", dl)
+				}
 			default:
-				fmt.Printf("    ???:   %q\n", dl[:min(20, len(dl))])
+				fmt.Printf("    ???:   %q\n", dl)
 			}
 		}
 
@@ -65,11 +70,11 @@ func TestSelfCheckDiffRendering(t *testing.T) {
 		if len(rendered.DetailLines) < 3 {
 			t.Errorf("%s: expected at least path + stats + 1 diff line", p.name)
 		}
-		if rendered.DetailLines[0][0] != 0x00 {
-			t.Errorf("%s: first line should be path (0x00)", p.name)
+		if len(rendered.DetailLines[0]) == 0 || rendered.DetailLines[0][0] != 0x00 {
+			t.Errorf("%s: first line should be path", p.name)
 		}
-		if rendered.DetailLines[1][0] != 0x01 {
-			t.Errorf("%s: second line should be stats (0x01)", p.name)
+		if len(rendered.DetailLines[1]) == 0 || rendered.DetailLines[1][0] != 0x01 {
+			t.Errorf("%s: second line should be stats", p.name)
 		}
 	}
 

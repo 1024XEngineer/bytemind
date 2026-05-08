@@ -587,12 +587,13 @@ func renderDiffDetailLine(line string, width int) string {
 		return toolDiffHunkHeaderStyle.Render("  " + line[1:])
 	}
 
-	// Diff content lines: "+", "-", or " " prefix
-	diffMarker := line[0]
-	if diffMarker != '+' && diffMarker != '-' && diffMarker != ' ' {
+	// Diff content lines: all start with space. Marker at position 9
+	// Format: " NNNNNNN X code" (1+7+1+1 = 10 chars prefix, marker at [9])
+	if len(line) < 11 {
 		return line
 	}
-	if len(line) < 11 {
+	diffMarker := line[9]
+	if diffMarker != '+' && diffMarker != '-' && diffMarker != ' ' {
 		return line
 	}
 
@@ -606,7 +607,12 @@ func renderDiffDetailLine(line string, width int) string {
 		style = toolDiffContextStyle
 	}
 
-	return style.Render(line)
+	padded := line
+	lineWidth := runewidth.StringWidth(line)
+	if lineWidth < width {
+		padded = line + strings.Repeat(" ", width-lineWidth)
+	}
+	return style.Render(padded)
 }
 
 func summarizeParallelToolGroup(group []chatEntry, name string) string {
