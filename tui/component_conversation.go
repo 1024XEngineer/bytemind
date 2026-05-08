@@ -557,8 +557,7 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 				detailLines = append(detailLines, indent+toolExpandHintStyle.Render("(ctrl+o to expand)"))
 				break
 			}
-			detail = strings.TrimSpace(detail)
-			if detail == "" {
+			if strings.TrimSpace(detail) == "" {
 				continue
 			}
 			detailLines = append(detailLines, indent+renderDiffDetailLine(detail, contentWidth-len(indent)))
@@ -578,13 +577,13 @@ func renderDiffDetailLine(line string, width int) string {
 
 	// Control-byte prefixed lines (path, stats, hunk header)
 	if line[0] == 0x00 {
-		return toolDiffPathStyle.Render("  " + line[1:])
+		return toolDiffPathStyle.Render(line[1:])
 	}
 	if line[0] == 0x01 {
-		return toolDiffStatsStyle.Render("  " + line[1:])
+		return toolDiffStatsStyle.Render(line[1:])
 	}
 	if line[0] == 0x02 {
-		return toolDiffHunkHeaderStyle.Render("  " + line[1:])
+		return toolDiffHunkHeaderStyle.Render(line[1:])
 	}
 
 	// Diff content lines: all start with space. Marker at position 9
