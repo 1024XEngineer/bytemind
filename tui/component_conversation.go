@@ -546,10 +546,18 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 
 	indent := "  "
 	body := headLine
-	if toolDetailsExpanded && len(item.DetailLines) > 0 {
+	if len(item.DetailLines) > 0 {
 		connectorStyle := lipgloss.NewStyle().Foreground(colorTool)
-		detailLines := make([]string, 0, len(item.DetailLines))
-		for _, detail := range item.DetailLines {
+		limit := len(item.DetailLines)
+		if !toolDetailsExpanded && limit > 5 {
+			limit = 5
+		}
+		detailLines := make([]string, 0, limit+1)
+		for i, detail := range item.DetailLines {
+			if i >= limit {
+				detailLines = append(detailLines, connectorStyle.Render(toolTreeChar)+"(ctrl+o to expand)")
+				break
+			}
 			detail = strings.TrimSpace(detail)
 			if detail == "" {
 				continue
