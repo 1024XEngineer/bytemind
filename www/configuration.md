@@ -11,7 +11,7 @@ If you pass `-config <path>`, ByteMind uses that file for this run.
 
 ## OpenAI-Compatible Providers
 
-Works with OpenAI, DeepSeek, Azure OpenAI, and any service that implements the `/v1/chat/completions` interface:
+Works with OpenAI, DeepSeek, Tongyi Qianwen, Azure OpenAI, and other compatible services:
 
 ```json
 {
@@ -27,7 +27,7 @@ Works with OpenAI, DeepSeek, Azure OpenAI, and any service that implements the `
 }
 ```
 
-Pass the API key via environment variable (recommended 閳?keeps secrets out of files):
+Pass the API key via environment variable (recommended, to avoid writing secrets to files):
 
 ```json
 {
@@ -136,7 +136,7 @@ BYTEMIND_SANDBOX_ENABLED=true BYTEMIND_WRITABLE_ROOTS=./src bytemind
 }
 ```
 
-When the limit is reached, the agent produces a progress summary and stops gracefully 閳?it does not error out. Raise this value for complex refactors or large migrations.
+When the limit is reached, the agent produces a progress summary and stops instead of exiting with an error. Raise this value for complex refactors or large migrations.
 
 ## Token Quota
 
