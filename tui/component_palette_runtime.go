@@ -113,7 +113,35 @@ func (m *model) syncMentionPalette() {
 	if m.mentionIndex == nil {
 		m.mentionIndex = mention.NewWorkspaceFileIndex(m.workspace)
 	}
-	results := m.mentionIndex.SearchWithRecency(token.Query, mentionPageSize*3, m.mentionRecent)
+	results := m.mentionIndex.SearchWithRecency(token.Query, mentionSearchLimit, m.mentionRecent)
+
+	// Merge agent candidates with scoring (only when user has typed a query)
+	if m.agentSource != nil && token.Query != "" {
+		q := strings.ToLower(token.Query)
+		for _, a := range m.agentSource.ListAgents() {
+			nameLower := strings.ToLower(a.Name)
+			score := agentMatchScore(q, nameLower)
+			if score < 0 {
+				continue
+			}
+			results = append(results, mention.Candidate{
+				Path:        a.Name,
+				BaseName:    a.Name,
+				Kind:        "agent",
+				Description: a.Description,
+				Score:       score,
+			})
+		}
+	}
+
+	// Mixed sort: file scores (0=best) and agent scores (0=best) are comparable
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].Score < results[j].Score
+	})
+	if len(results) > mentionSearchLimit {
+		results = results[:mentionSearchLimit]
+	}
+
 	m.mentionOpen = true
 	m.mentionQuery = token.Query
 	m.mentionToken = token
@@ -271,13 +299,21 @@ func (m model) selectedMentionCandidate() (mention.Candidate, bool) {
 	return m.mentionResults[index], true
 }
 
+func (m model) mentionPageSize() int {
+	available := m.height - 3
+	return clamp(available, 3, 8)
+}
+
 func (m model) visibleMentionItemsPage() []mention.Candidate {
-	if len(m.mentionResults) == 0 {
+	n := len(m.mentionResults)
+	if n == 0 {
 		return nil
 	}
-	cursor := clamp(m.mentionCursor, 0, len(m.mentionResults)-1)
-	start := (cursor / mentionPageSize) * mentionPageSize
-	end := min(len(m.mentionResults), start+mentionPageSize)
+	pageSize := m.mentionPageSize()
+	cursor := clamp(m.mentionCursor, 0, n-1)
+	start := cursor - pageSize/2
+	start = clamp(start, 0, max(0, n-pageSize))
+	end := min(n, start+pageSize)
 	return m.mentionResults[start:end]
 }
 
@@ -287,6 +323,36 @@ func (m model) selectedPromptSearchEntry() (history.PromptEntry, bool) {
 	}
 	index := clamp(m.promptSearchCursor, 0, len(m.promptSearchMatches)-1)
 	return m.promptSearchMatches[index], true
+}
+
+func matchesQuery(name, query string) bool {
+	return agentMatchScore(strings.ToLower(query), strings.ToLower(name)) >= 0
+}
+
+func agentMatchScore(query, nameLower string) float64 {
+	if query == "" {
+		return -1
+	}
+	if nameLower == query {
+		return 0.0
+	}
+	if strings.HasPrefix(nameLower, query) {
+		return 0.05
+	}
+	if strings.Contains(nameLower, query) {
+		return 0.15
+	}
+	// Fuzzy subsequence
+	qi := 0
+	for _, r := range nameLower {
+		if qi < len(query) && r == []rune(query)[qi] {
+			qi++
+		}
+	}
+	if qi == len([]rune(query)) {
+		return 0.3
+	}
+	return -1
 }
 
 func (m model) visiblePromptSearchEntriesPage() []history.PromptEntry {

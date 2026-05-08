@@ -37,9 +37,12 @@ type Token struct {
 }
 
 type Candidate struct {
-	Path     string
-	BaseName string
-	TypeTag  string
+	Path        string
+	BaseName    string
+	TypeTag     string
+	Kind        string  // "file", "dir", or "agent"
+	Description string  // agent description, empty for files
+	Score       float64 // normalized relevance score (0 = best)
 }
 
 type IndexStats struct {
@@ -171,8 +174,10 @@ func (idx *WorkspaceFileIndex) SearchWithRecency(query string, limit int, recenc
 		ranked = ranked[:limit]
 	}
 
-	out := make([]Candidate, 0, len(ranked))
-	for _, item := range ranked {
+	n := len(ranked)
+	out := make([]Candidate, 0, n)
+	for i, item := range ranked {
+		item.candidate.Score = float64(i) / max(1, float64(n))
 		out = append(out, item.candidate)
 	}
 	return out
@@ -337,6 +342,13 @@ func buildMentionIndex(root string, maxFiles int, matcher mentionIgnoreMatcher) 
 			}
 			if shouldSkipMentionDir(name) || matcher.SkipDir(name, rel) {
 				return filepath.SkipDir
+			}
+			if rel != "" && rel != "." {
+				files = append(files, Candidate{
+					Path:     rel + "/",
+					BaseName: name,
+					Kind:     "dir",
+				})
 			}
 			return nil
 		}

@@ -133,6 +133,39 @@ func (r *Runner) delegateSubAgent(
 	}
 
 	parentSession := execCtx.Session
+
+	// Worktree isolation: sync path only (background remains read-only).
+	var worktreeHandle *runtimepkg.WorktreeHandle
+	var overrides *SubAgentConfigOverrides
+	if !request.RunInBackground && preflight.Isolation == "worktree" {
+		if r.worktreeManager == nil {
+			result.Error = &tools.DelegateSubAgentError{
+				Code:      "subagent_isolation_required",
+				Message:   "worktree isolation requested but workspace is not a git repository",
+				Retryable: false,
+			}
+			return result, nil
+		}
+		handle, prepareErr := r.worktreeManager.Prepare(ctx, runtimepkg.WorktreeRequest{
+			InvocationID:  result.InvocationID,
+			WorkspaceRoot: r.workspace,
+		})
+		if prepareErr != nil {
+			result.Error = &tools.DelegateSubAgentError{
+				Code:      "subagent_isolation_required",
+				Message:   fmt.Sprintf("failed to create worktree: %v", prepareErr),
+				Retryable: false,
+			}
+			return result, nil
+		}
+		worktreeHandle = handle
+		metadata["worktree_path"] = handle.Path
+		overrides = &SubAgentConfigOverrides{
+			Workspace:     handle.Path,
+			WritableRoots: []string{handle.Path},
+		}
+	}
+
 	runtimeRequest := RuntimeTaskRequest{
 		SessionID:  sessionIDFromExecutionContext(execCtx),
 		Name:       "delegate_subagent/" + preflightResultName(result.Agent),
@@ -149,6 +182,8 @@ func (r *Runner) delegateSubAgent(
 				RunMode:      runMode,
 				ExecCtx:      execCtx,
 				Observer:     streamObserver,
+				Store:        r.store,
+					Overrides:    overrides,
 			})
 			if execErr != nil {
 				return nil, execErr
@@ -178,6 +213,11 @@ func (r *Runner) delegateSubAgent(
 				var parsed tools.DelegateSubAgentResult
 				if jsonErr := json.Unmarshal(task.Output, &parsed); jsonErr == nil {
 					notification.Summary = parsed.Summary
+					if parsed.Worktree != nil {
+						notification.WorktreePath = parsed.Worktree.Path
+						notification.WorktreeBranch = parsed.Worktree.Branch
+						notification.WorktreeState = parsed.Worktree.State
+					}
 				}
 			} else {
 				notification.Status = subAgentResultStatusFailed
@@ -229,15 +269,18 @@ func (r *Runner) delegateSubAgent(
 	}
 
 	execution, runErr := r.runtime.RunSync(ctx, runtimeRequest)
-	if runErr != nil {
-		if execution.TaskID != "" {
-			result.TaskID = string(execution.TaskID)
-		}
-		result.Error = mapDelegateSubAgentError(runErr, subAgentErrorCodeRuntimeUnavailable)
-		return result, nil
-	}
 	if execution.TaskID != "" {
 		result.TaskID = string(execution.TaskID)
+	}
+	if runErr != nil {
+		// RunSync can return a parent wait timeout/cancel while still carrying a
+		// settled terminal result. Prefer the settled completed output when present.
+		waitTimedOutOrCanceled := errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded)
+		settledCompleted := execution.ExecutionError == nil && execution.Result.Status == corepkg.TaskCompleted
+		if !(waitTimedOutOrCanceled && settledCompleted) {
+			result.Error = mapDelegateSubAgentError(runErr, subAgentErrorCodeRuntimeUnavailable)
+			return result, nil
+		}
 	}
 	if execution.ExecutionError != nil {
 		result.Error = mapDelegateSubAgentError(execution.ExecutionError, subAgentErrorCodeNotImplemented)
@@ -252,7 +295,8 @@ func (r *Runner) delegateSubAgent(
 		}
 		return result, nil
 	}
-	if len(strings.TrimSpace(string(execution.Result.Output))) > 0 {
+	rawOutput := strings.TrimSpace(string(execution.Result.Output))
+	if len(rawOutput) > 0 {
 		normalized, normalizeErr := normalizeDelegateSubAgentResult(
 			execution.Result.Output,
 			result.InvocationID,
@@ -260,30 +304,56 @@ func (r *Runner) delegateSubAgent(
 			result.TaskID,
 		)
 		if normalizeErr != nil {
-			result.Error = &tools.DelegateSubAgentError{
-				Code:      subAgentErrorCodeInvalidResult,
-				Message:   fmt.Sprintf("subagent returned invalid structured result: %v", normalizeErr),
-				Retryable: true,
-			}
+			// Structured parse failed — treat raw output as plain text summary.
+			result.OK = true
+			result.Status = subAgentResultStatusCompleted
+			result.Summary = truncateSubAgentSummary(rawOutput)
+			result.Content = result.Summary
+			r.enrichResultWithWorktree(ctx, worktreeHandle, &result)
 			return result, nil
 		}
-		if contractErr := validateDelegateSubAgentOutputContract(normalized, preflight.RequestedOutput); contractErr != nil {
-			result.Error = &tools.DelegateSubAgentError{
-				Code:      subAgentErrorCodeInvalidResult,
-				Message:   fmt.Sprintf("subagent result violates requested output contract: %v", contractErr),
-				Retryable: true,
-			}
-			return result, nil
+		// Structured parse succeeded — fill in summary from raw text if empty.
+		if normalized.Summary == "" {
+			normalized.Summary = truncateSubAgentSummary(rawOutput)
 		}
+		r.enrichResultWithWorktree(ctx, worktreeHandle, &normalized)
 		return normalized, nil
 	}
 
-	result.Error = &tools.DelegateSubAgentError{
-		Code:      subAgentErrorCodeNotImplemented,
-		Message:   "subagent execution returned no structured result",
-		Retryable: true,
-	}
+	// Empty output — use a fallback summary.
+	result.OK = true
+	result.Status = subAgentResultStatusCompleted
+	result.Summary = "SubAgent task completed."
+	result.Content = result.Summary
+	r.enrichResultWithWorktree(ctx, worktreeHandle, &result)
 	return result, nil
+}
+
+// enrichResultWithWorktree checks for worktree changes and populates result.Worktree.
+// Returns the worktree handle (or nil if already cleaned up).
+func (r *Runner) enrichResultWithWorktree(ctx context.Context, handle *runtimepkg.WorktreeHandle, result *tools.DelegateSubAgentResult) *runtimepkg.WorktreeHandle {
+	if handle == nil || r.worktreeManager == nil {
+		return nil
+	}
+	changed, err := r.worktreeManager.HasChanges(ctx, handle)
+	if err != nil {
+		result.Worktree = &tools.WorktreeInfo{
+			Path:   handle.Path,
+			Branch: handle.Branch,
+			State:  "unknown",
+		}
+		return handle
+	}
+	if changed {
+		result.Worktree = &tools.WorktreeInfo{
+			Path:   handle.Path,
+			Branch: handle.Branch,
+			State:  "changed",
+		}
+		return handle
+	}
+	_ = r.worktreeManager.Cleanup(ctx, handle)
+	return nil
 }
 
 func preflightResultName(agent string) string {
@@ -386,9 +456,14 @@ func normalizeDelegateSubAgentResult(
 	result.Agent = firstNonEmpty(result.Agent, fallbackAgent)
 	result.TaskID = firstNonEmpty(result.TaskID, fallbackTaskID)
 	result.Summary = strings.TrimSpace(result.Summary)
+
+	// Reconcile OK/Error: if both are set, prefer the error.
 	if result.OK && result.Error != nil {
-		return tools.DelegateSubAgentResult{}, fmt.Errorf("ok result must not include error")
+		result.OK = false
+		result.Status = subAgentResultStatusFailed
 	}
+
+	// Normalize status.
 	result.Status = strings.ToLower(strings.TrimSpace(result.Status))
 	if result.Status == "" {
 		if result.OK {
@@ -397,28 +472,25 @@ func normalizeDelegateSubAgentResult(
 			result.Status = subAgentResultStatusFailed
 		}
 	}
-	if !isAllowedSubAgentStatus(result.Status) {
-		return tools.DelegateSubAgentResult{}, fmt.Errorf("unsupported status %q", result.Status)
-	}
-	if result.OK && result.Status == subAgentResultStatusFailed {
-		return tools.DelegateSubAgentResult{}, fmt.Errorf("ok result must not use failed status")
-	}
-	if result.OK && requiresTaskIDForStatus(result.Status) && strings.TrimSpace(result.TaskID) == "" {
-		return tools.DelegateSubAgentResult{}, fmt.Errorf("status %q requires non-empty task_id", result.Status)
-	}
-	if !result.OK && result.Status != subAgentResultStatusFailed {
-		return tools.DelegateSubAgentResult{}, fmt.Errorf("failed result must use status %q", subAgentResultStatusFailed)
-	}
-	if !result.OK {
-		if result.Error == nil {
-			return tools.DelegateSubAgentResult{}, fmt.Errorf("failed result must include error")
+
+	// Ensure failed results have an error.
+	if !result.OK && result.Error == nil {
+		result.Error = &tools.DelegateSubAgentError{
+			Code:    subAgentErrorCodeExecutionFailed,
+			Message: "subagent execution failed",
 		}
+	}
+	if result.Error != nil {
 		result.Error.Code = strings.ToLower(strings.TrimSpace(result.Error.Code))
 		result.Error.Message = strings.TrimSpace(result.Error.Message)
-		if result.Error.Code == "" || result.Error.Message == "" {
-			return tools.DelegateSubAgentResult{}, fmt.Errorf("failed result must include non-empty error code/message")
+		if result.Error.Code == "" {
+			result.Error.Code = subAgentErrorCodeExecutionFailed
+		}
+		if result.Error.Message == "" {
+			result.Error.Message = "subagent execution failed"
 		}
 	}
+
 	return result, nil
 }
 
@@ -430,17 +502,14 @@ func firstNonEmpty(value, fallback string) string {
 	return strings.TrimSpace(fallback)
 }
 
-func isAllowedSubAgentStatus(status string) bool {
-	switch strings.TrimSpace(strings.ToLower(status)) {
-	case subAgentResultStatusCompleted,
-		subAgentResultStatusFailed,
-		subAgentResultStatusQueued,
-		subAgentResultStatusRunning,
-		subAgentResultStatusAccepted:
-		return true
-	default:
-		return false
+const maxSubAgentSummaryLen = 500
+
+func truncateSubAgentSummary(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if len(trimmed) <= maxSubAgentSummaryLen {
+		return trimmed
 	}
+	return trimmed[:maxSubAgentSummaryLen-3] + "..."
 }
 
 func validateDelegateSubAgentOutputContract(result tools.DelegateSubAgentResult, requestedOutput string) error {

@@ -243,7 +243,7 @@ func (m *model) handleAgentEvent(event Event) {
 		}
 		title := label + " | " + event.ToolName
 		compactBody, detailLines := summarizeToolCallStart(event.ToolName, event.ToolArguments)
-		m.appendChat(chatEntry{
+		newEntry := chatEntry{
 			Kind:        "tool",
 			Title:       title,
 			Body:        "",
@@ -251,7 +251,20 @@ func (m *model) handleAgentEvent(event Event) {
 			CompactBody: compactBody,
 			DetailLines: detailLines,
 			ToolCallID:  event.ToolCallID,
-		})
+		}
+		// For delegate_subagent, parse agent name and set AgentID for routing.
+		if strings.EqualFold(event.ToolName, "delegate_subagent") {
+			agent, task := summarizeDelegateSubAgent(event.ToolArguments)
+			if agent == "" {
+				agent = "subagent"
+			}
+			newEntry.AgentID = agent
+			if task != "" {
+				newEntry.CompactBody = task
+				newEntry.TaskPrompt = task
+			}
+		}
+		m.appendChat(newEntry)
 		m.statusNote = "Running tool: " + event.ToolName
 	case EventToolCallCompleted:
 		rendered := renderToolPayload(event.ToolName, event.ToolResult)
@@ -260,6 +273,16 @@ func (m *model) handleAgentEvent(event Event) {
 		status := rendered.Status
 		compactBody := rendered.CompactLine
 		m.finishToolCall(event.ToolCallID, event.ToolName, joinSummary(summary, lines), status, compactBody, lines)
+		// Set TotalToolCalls for completed subagent entries so the UI
+		// renders the "Done (N tool uses)" summary.
+		if strings.EqualFold(event.ToolName, "delegate_subagent") && event.ToolCallID != "" {
+			for i := len(m.chatItems) - 1; i >= 0; i-- {
+				if m.chatItems[i].Kind == "tool" && m.chatItems[i].ToolCallID == event.ToolCallID {
+					m.chatItems[i].TotalToolCalls = len(m.chatItems[i].SubAgentTools)
+					break
+				}
+			}
+		}
 		m.statusNote = summary
 		m.phase = "thinking"
 		if m.interruptSafe && m.interrupting && m.pendingInterrupt && m.runCancel != nil {
@@ -305,6 +328,79 @@ func (m *model) handleAgentEvent(event Event) {
 			m.closePlanActionPicker()
 		}
 	}
+}
+
+func (m *model) handleSubAgentEvent(event Event) {
+	switch event.Type {
+	case EventToolCallStarted:
+		entry := m.findActiveSubAgentEntryByID(event.AgentID)
+		if entry == nil {
+			entry = m.findActiveSubAgentEntry()
+		}
+		if entry == nil {
+			return
+		}
+		compactBody, detailLines := summarizeToolCallStart(event.ToolName, event.ToolArguments)
+		entry.SubAgentTools = append(entry.SubAgentTools, SubAgentToolCall{
+			ToolName:    event.ToolName,
+			ToolCallID:  event.ToolCallID,
+			CompactBody: compactBody,
+			Status:      "running",
+			DetailLines: detailLines,
+		})
+	case EventToolCallCompleted:
+		entry := m.findActiveSubAgentEntryByID(event.AgentID)
+		if entry == nil {
+			entry = m.findActiveSubAgentEntry()
+		}
+		if entry == nil {
+			return
+		}
+		// Match by ToolCallID first (precise), then fall back to ToolName+running.
+		for i := len(entry.SubAgentTools) - 1; i >= 0; i-- {
+			if event.ToolCallID != "" && entry.SubAgentTools[i].ToolCallID == event.ToolCallID {
+				rendered := renderToolPayload(event.ToolName, event.ToolResult)
+				entry.SubAgentTools[i].Status = rendered.Status
+				entry.SubAgentTools[i].Summary = rendered.Summary
+				return
+			}
+		}
+		for i := len(entry.SubAgentTools) - 1; i >= 0; i-- {
+			if entry.SubAgentTools[i].Status == "running" && entry.SubAgentTools[i].ToolName == event.ToolName {
+				rendered := renderToolPayload(event.ToolName, event.ToolResult)
+				entry.SubAgentTools[i].Status = rendered.Status
+				entry.SubAgentTools[i].Summary = rendered.Summary
+				return
+			}
+		}
+	}
+}
+
+// findActiveSubAgentEntryByID finds a running delegate_subagent entry by AgentID.
+func (m *model) findActiveSubAgentEntryByID(agentID string) *chatEntry {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return nil
+	}
+	for i := len(m.chatItems) - 1; i >= 0; i-- {
+		if m.chatItems[i].Kind == "tool" &&
+			m.chatItems[i].AgentID == agentID &&
+			m.chatItems[i].Status == "running" {
+			return &m.chatItems[i]
+		}
+	}
+	return nil
+}
+
+func (m *model) findActiveSubAgentEntry() *chatEntry {
+	for i := len(m.chatItems) - 1; i >= 0; i-- {
+		if m.chatItems[i].Kind == "tool" &&
+			strings.Contains(m.chatItems[i].Title, "delegate_subagent") &&
+			m.chatItems[i].Status == "running" {
+			return &m.chatItems[i]
+		}
+	}
+	return nil
 }
 
 func summarizeToolCallStart(toolName, rawArgs string) (string, []string) {
@@ -368,52 +464,3 @@ func (m model) startRunCmd(runCtx context.Context, runID int, prompt RunPromptIn
 	}
 }
 
-func (m *model) handleSubAgentEvent(event Event) {
-	switch event.Type {
-	case EventAssistantDelta:
-		delta := stripStreamControlTags(event.Content)
-		if delta == "" {
-			return
-		}
-		if len(m.subAgentStreamItems) > 0 {
-			last := &m.subAgentStreamItems[len(m.subAgentStreamItems)-1]
-			if last.Kind == "assistant" && last.Status == "streaming" {
-				last.Body += delta
-				return
-			}
-		}
-		m.subAgentStreamItems = append(m.subAgentStreamItems, chatEntry{
-			Kind:   "assistant",
-			Title:  event.AgentID,
-			Body:   delta,
-			Status: "streaming",
-		})
-	case EventToolCallStarted:
-		m.subAgentStreamItems = append(m.subAgentStreamItems, chatEntry{
-			Kind:   "tool",
-			Title:  toolEntryTitle(event.ToolName),
-			Body:   "",
-			Status: "running",
-		})
-	case EventToolCallCompleted:
-		rendered := renderToolPayload(event.ToolName, event.ToolResult)
-		summary := rendered.Summary
-		lines := rendered.DetailLines
-		status := rendered.Status
-		body := joinSummary(summary, lines)
-		for i := len(m.subAgentStreamItems) - 1; i >= 0; i-- {
-			item := &m.subAgentStreamItems[i]
-			if item.Kind == "tool" && item.Status == "running" {
-				item.Body = body
-				item.Status = status
-				return
-			}
-		}
-		m.subAgentStreamItems = append(m.subAgentStreamItems, chatEntry{
-			Kind:   "tool",
-			Title:  toolEntryTitle(event.ToolName),
-			Body:   body,
-			Status: status,
-		})
-	}
-}

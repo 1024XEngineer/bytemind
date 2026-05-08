@@ -331,6 +331,89 @@ func (webSearchRenderer) Render(payload string) ToolRenderResult {
 	}
 }
 
+// delegateSubAgentRenderer handles "delegate_subagent" tool.
+type delegateSubAgentRenderer struct{}
+
+func (delegateSubAgentRenderer) DisplayLabel() string { return "SUBAGENT" }
+
+func (delegateSubAgentRenderer) Render(payload string) ToolRenderResult {
+	var result struct {
+		OK       bool   `json:"ok"`
+		Status   string `json:"status,omitempty"`
+		Agent    string `json:"agent"`
+		Task     string `json:"task,omitempty"`
+		Summary  string `json:"summary,omitempty"`
+		Content  string `json:"content,omitempty"`
+		Error    *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error,omitempty"`
+		Transcript []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"transcript,omitempty"`
+	}
+	if json.Unmarshal([]byte(payload), &result) == nil {
+		status := "done"
+		if !result.OK {
+			status = "error"
+		} else if strings.HasPrefix(strings.TrimSpace(result.Summary), "SubAgent error:") {
+			status = "warn"
+		} else if result.Status == "running" || result.Status == "accepted" {
+			status = "running"
+		}
+
+		// Prefer Content (natural language) over Summary (structured) for display.
+		displayText := strings.TrimSpace(result.Content)
+		if displayText == "" {
+			displayText = strings.TrimSpace(result.Summary)
+		}
+
+		// Summary: stats overview (agent name + summary or tool count).
+		summary := fmt.Sprintf("SubAgent %s", result.Agent)
+		if text := displayText; text != "" {
+			summary += ": " + compact(text, 72)
+		}
+
+		// DetailLines (Ctrl+O expanded): Prompt + transcript + Response.
+		detailLines := make([]string, 0, len(result.Transcript)+4)
+		if task := strings.TrimSpace(result.Task); task != "" {
+			detailLines = append(detailLines, "Prompt: "+compactToolText(task, 72))
+			detailLines = append(detailLines, "")
+		}
+		for _, msg := range result.Transcript {
+			text := compactToolText(msg.Content, 72)
+			if text != "" {
+				detailLines = append(detailLines, text)
+			}
+		}
+		if text := displayText; text != "" {
+			detailLines = append(detailLines, "")
+			detailLines = append(detailLines, "Response: "+compactToolText(text, 200))
+		}
+
+		compactLine := result.Agent
+		if task := strings.TrimSpace(result.Task); task != "" {
+			compactLine += "(" + compact(task, 48) + ")"
+		} else if text := strings.TrimSpace(result.Summary); text != "" {
+			compactLine += ": " + compact(text, 60)
+		}
+
+		return ToolRenderResult{
+			Summary:     summary,
+			DetailLines: detailLines,
+			Status:      status,
+			CompactLine: compactLine,
+		}
+	}
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "done",
+		CompactLine: compact(payload, 80),
+	}
+}
+
 // webFetchRenderer handles "web_fetch" tool.
 type webFetchRenderer struct{}
 

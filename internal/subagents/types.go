@@ -25,7 +25,9 @@ type Agent struct {
 	Timeout         string
 	Output          string
 	Isolation       string
+	PermissionMode  string // reserved: subagent permission strategy (inherit, bubble, acceptEdits, plan); MVP ignores
 	Aliases         []string
+	WhenToUse       string
 	DiscoveredAt    time.Time
 }
 

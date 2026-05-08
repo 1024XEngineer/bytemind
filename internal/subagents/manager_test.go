@@ -39,8 +39,8 @@ project explorer body
 
 	manager := NewManagerWithDirs(workspace, builtinDir, userDir, projectDir)
 	catalog := manager.Reload()
-	if len(catalog.Agents) != 2 {
-		t.Fatalf("expected 2 effective subagents, got %d", len(catalog.Agents))
+	if len(catalog.Agents) != 3 {
+		t.Fatalf("expected 3 effective subagents, got %d", len(catalog.Agents))
 	}
 
 	// Hardcoded builtins generate overrides when directory/user/project scopes provide same-name definitions.
@@ -115,9 +115,9 @@ body
 
 	manager := NewManagerWithDirs(workspace, builtinDir, filepath.Join(workspace, "user"), filepath.Join(workspace, "project"))
 	catalog := manager.Reload()
-	// Hardcoded builtins (explorer, review) are always present; the invalid file should not add to them.
-	if len(catalog.Agents) != 2 {
-		t.Fatalf("expected 2 hardcoded subagent definitions, got %#v", catalog.Agents)
+	// Hardcoded builtins (explorer, review, general) are always present; the invalid file should not add to them.
+	if len(catalog.Agents) != 3 {
+		t.Fatalf("expected 3 hardcoded subagent definitions, got %#v", catalog.Agents)
 	}
 	if len(catalog.Diagnostics) == 0 {
 		t.Fatal("expected diagnostics for invalid name")

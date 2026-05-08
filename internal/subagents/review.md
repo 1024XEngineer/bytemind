@@ -1,6 +1,7 @@
 ---
 name: review
 description: Read-only reviewer agent focused on defects, regressions, and test gaps.
+when_to_use: Use when the user asks to review code, check for bugs, assess code quality, or identify missing tests.
 tools: [read_file, list_files, search_files, search_text]
 disallowed_tools: [delegate_subagent, run_shell, write_file, edit_file, delete_file]
 mode: build

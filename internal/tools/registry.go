@@ -104,7 +104,11 @@ type Registry struct {
 	meta  map[string]RegistrationMeta
 }
 
-func DefaultRegistry() *Registry {
+func DefaultRegistry(agentInfos ...[]AgentInfo) *Registry {
+	var agents []AgentInfo
+	if len(agentInfos) > 0 {
+		agents = agentInfos[0]
+	}
 	r := &Registry{}
 	r.mustRegisterBuiltin(ListFilesTool{})
 	r.mustRegisterBuiltin(ReadFileTool{})
@@ -115,7 +119,7 @@ func DefaultRegistry() *Registry {
 	r.mustRegisterBuiltin(ReplaceInFileTool{})
 	r.mustRegisterBuiltin(ApplyPatchTool{})
 	r.mustRegisterBuiltin(RunShellTool{})
-	r.mustRegisterBuiltin(DelegateSubAgentTool{})
+	r.mustRegisterBuiltin(NewDelegateSubAgentTool(agents))
 	r.mustRegisterBuiltin(TaskOutputTool{})
 	r.mustRegisterBuiltin(TaskStopTool{})
 	return r

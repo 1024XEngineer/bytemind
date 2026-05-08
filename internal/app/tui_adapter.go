@@ -127,6 +127,13 @@ func (a *tuiRunnerAdapter) CompactSession(ctx context.Context, sess *session.Ses
 	return a.runner.CompactSession(ctx, sess)
 }
 
+func (a *tuiRunnerAdapter) SubAgentManager() *subagentspkg.Manager {
+	if a == nil || a.runner == nil {
+		return nil
+	}
+	return a.runner.SubAgentManager()
+}
+
 func (a *tuiRunnerAdapter) ListModels(ctx context.Context) ([]provider.ModelInfo, []provider.Warning, error) {
 	if a == nil || a.runner == nil {
 		return nil, nil, errors.New("runner is unavailable")
