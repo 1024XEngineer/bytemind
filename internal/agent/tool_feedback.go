@@ -203,11 +203,29 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 		}
 	case "write_file":
 		var result struct {
-			Path         string `json:"path"`
-			BytesWritten int    `json:"bytes_written"`
+			Path         string            `json:"path"`
+			BytesWritten int               `json:"bytes_written"`
+			DiffPreview  tools.DiffPreview `json:"diff_preview"`
 		}
 		if err := json.Unmarshal([]byte(payload), &result); err == nil {
-			fmt.Fprintf(out, "  %swrote%s %s (%d bytes)\n", ansiGreen, ansiReset, result.Path, result.BytesWritten)
+			if len(result.DiffPreview.Files) > 0 {
+				f := result.DiffPreview.Files[0]
+				fmt.Fprintf(out, "  %swrote%s %s +%d -%d\n", ansiGreen, ansiReset, result.Path, f.Added, f.Removed)
+				for _, h := range f.Hunks {
+					for _, line := range h.Lines {
+						switch line[0] {
+						case '+':
+							fmt.Fprintf(out, "    %s%s%s\n", ansiGreen, compactWhitespace(line, 100), ansiReset)
+						case '-':
+							fmt.Fprintf(out, "    %s%s%s\n", ansiRed, compactWhitespace(line, 100), ansiReset)
+						default:
+							fmt.Fprintf(out, "    %s%s%s\n", ansiDim, compactWhitespace(line, 100), ansiReset)
+						}
+					}
+				}
+			} else {
+				fmt.Fprintf(out, "  %swrote%s %s (%d bytes)\n", ansiGreen, ansiReset, result.Path, result.BytesWritten)
+			}
 		}
 	case "replace_in_file":
 		var result struct {
