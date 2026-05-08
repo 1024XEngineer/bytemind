@@ -126,7 +126,7 @@ Field overview:
 
 | Field | Description | Example |
 | ----- | ----------- | ------- |
-| `provider.type` | Provider type: `openai-compatible` or `anthropic` | `openai-compatible` `anthropic` |
+| `provider.type` | Provider type: `openai-compatible` `anthropic` `gemini` | `openai-compatible` |
 | `provider.base_url` | API endpoint | `https://api.openai.com/v1` |
 | `provider.model` | Model ID | `gpt-5.4-mini` |
 | `provider.api_key` | API key in plain text | `sk-xxxxxxxxxxxxxxxxxx` |
