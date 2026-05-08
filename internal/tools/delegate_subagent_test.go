@@ -147,3 +147,38 @@ func TestDelegateSubAgentToolRunInvalidJSONAndHandlerError(t *testing.T) {
 		t.Fatalf("expected handler error to be returned directly, got %v", err)
 	}
 }
+
+func TestDelegateSubAgentResultModifiedFiles(t *testing.T) {
+	result := DelegateSubAgentResult{
+		OK:            true,
+		InvocationID:  "inv-1",
+		Agent:         "general",
+		Summary:       "changed foo.go and bar.go",
+		ModifiedFiles: []string{"foo.go", "bar.go"},
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("failed to marshal result: %v", err)
+	}
+	if !strings.Contains(string(data), "modified_files") {
+		t.Fatal("expected modified_files in JSON output")
+	}
+	if !strings.Contains(string(data), "foo.go") {
+		t.Fatal("expected foo.go in JSON output")
+	}
+
+	// Verify omitempty: empty ModifiedFiles should not appear in JSON
+	resultEmpty := DelegateSubAgentResult{
+		OK:           true,
+		InvocationID: "inv-2",
+		Agent:        "explorer",
+		Summary:      "done",
+	}
+	dataEmpty, err := json.Marshal(resultEmpty)
+	if err != nil {
+		t.Fatalf("failed to marshal result: %v", err)
+	}
+	if strings.Contains(string(dataEmpty), "modified_files") {
+		t.Fatal("expected modified_files to be omitted when empty")
+	}
+}

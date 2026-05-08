@@ -62,6 +62,7 @@ type DelegateSubAgentResult struct {
 	Transcript          []TranscriptMessage    `json:"transcript,omitempty"`
 	TranscriptSessionID string                 `json:"transcript_session_id,omitempty"`
 	Task                string                 `json:"task,omitempty"`
+	ModifiedFiles       []string               `json:"modified_files,omitempty"`
 	// ToolCalls carries structured tool call records from the subagent session.
 	// Populated by the executor for TUI restoration; excluded from JSON via
 	// json:"-" so it never reaches the parent LLM context.

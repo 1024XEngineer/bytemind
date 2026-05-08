@@ -528,6 +528,18 @@ func hardcodedBuiltinAgents() []Agent {
 			WhenToUse:   "Use when the user asks to review code, check for bugs, assess code quality, or identify missing tests.",
 			Aliases:     []string{"review", "/review"},
 		},
+		{
+			Name:            "general",
+			Description:     "General-purpose coding agent for complex multi-step tasks including file modifications. Use when the task requires both reading and writing code across multiple files.",
+			Scope:           ScopeBuiltin,
+			Tools:           []string{"list_files", "read_file", "search_text", "replace_in_file", "write_file"},
+			DisallowedTools: []string{"delegate_subagent"},
+			MaxTurns:        12,
+			Isolation:       "none",
+			Instruction:     "You are a focused coding agent. Prefer editing existing files over creating new ones.\nOnly modify files directly related to the assigned task.\nReturn a concise summary of every file you modified.\n\n## Output format\nReturn your final answer as a single JSON object (no markdown fences):\n{\"summary\":\"<one-paragraph overview of changes>\",\"findings\":[{\"title\":\"<short heading>\",\"body\":\"<detail>\"}],\"references\":[{\"path\":\"<file>\",\"line\":<int>,\"note\":\"<why relevant>\"}],\"modified_files\":[\"<path>\"]}\nIf you have no findings or references, use empty arrays [].",
+			WhenToUse:       "Use for complex multi-file edits, refactoring, implementing features, or any task requiring both reading and modifying code.",
+			Aliases:         []string{"general", "/general"},
+		},
 	}
 }
 

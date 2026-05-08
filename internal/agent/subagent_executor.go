@@ -211,6 +211,15 @@ func buildSubAgentTaskInput(request tools.DelegateSubAgentRequest) string {
 }
 
 func buildSubAgentPromptInput(request tools.DelegateSubAgentRequest, preflight subagentspkg.PreflightResult) *SubAgentPromptInput {
+	definitionBody := strings.TrimSpace(preflight.Definition.Instruction)
+	guardrails := buildToolSafetyGuardrails(preflight.EffectiveTools)
+	if guardrails != "" {
+		if definitionBody != "" {
+			definitionBody = guardrails + "\n\n" + definitionBody
+		} else {
+			definitionBody = guardrails
+		}
+	}
 	return &SubAgentPromptInput{
 		Name:           strings.TrimSpace(preflight.Definition.Name),
 		Task:           strings.TrimSpace(request.Task),
@@ -219,8 +228,33 @@ func buildSubAgentPromptInput(request tools.DelegateSubAgentRequest, preflight s
 		AllowedTools:   append([]string(nil), preflight.EffectiveTools...),
 		Isolation:      strings.TrimSpace(preflight.Isolation),
 		ResultPolicy:   subAgentResultPolicyCompressed,
-		DefinitionBody: strings.TrimSpace(preflight.Definition.Instruction),
+		DefinitionBody: definitionBody,
 	}
+}
+
+// writeToolNames is the set of tool names that indicate the agent can modify files.
+var writeToolNames = map[string]bool{
+	"write_file":      true,
+	"replace_in_file": true,
+	"apply_patch":     true,
+	"run_shell":       true,
+}
+
+// buildToolSafetyGuardrails returns behavioral guardrail text based on the
+// effective toolset. Write-capable agents receive edit guidelines; read-only
+// agents receive a strict prohibition on file modifications.
+func buildToolSafetyGuardrails(effectiveTools []string) string {
+	hasWrite := false
+	for _, name := range effectiveTools {
+		if writeToolNames[strings.TrimSpace(name)] {
+			hasWrite = true
+			break
+		}
+	}
+	if hasWrite {
+		return "=== WRITE MODE - FILE MODIFICATIONS ALLOWED ===\nYou have access to file modification tools. Follow these rules:\n- Only modify files directly related to the assigned task.\n- Do NOT delete files unless explicitly instructed.\n- Prefer targeted edits over full-file rewrites.\n- Report every file you modified in the modified_files field of your result."
+	}
+	return "=== READ-ONLY MODE - NO FILE MODIFICATIONS ===\nYou are STRICTLY PROHIBITED from:\n- Creating or modifying any files\n- Running shell commands that change system state\n- Deleting any files\nYour role is EXCLUSIVELY to read, search, and analyze existing code."
 }
 
 func applySubAgentPreflightSetup(setup *runPromptSetup, preflight subagentspkg.PreflightResult) {

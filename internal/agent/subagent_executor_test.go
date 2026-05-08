@@ -287,8 +287,71 @@ func TestBuildSubAgentPromptInput(t *testing.T) {
 	if input.Isolation != "sandbox" {
 		t.Fatalf("expected isolation sandbox, got %q", input.Isolation)
 	}
-	if input.DefinitionBody != "scan code" {
-		t.Fatalf("expected definition body, got %q", input.DefinitionBody)
+	if !strings.Contains(input.DefinitionBody, "READ-ONLY MODE") {
+		t.Fatalf("expected read-only guardrails, got %q", input.DefinitionBody)
+	}
+	if !strings.Contains(input.DefinitionBody, "scan code") {
+		t.Fatalf("expected definition body to contain original instruction, got %q", input.DefinitionBody)
+	}
+}
+
+func TestBuildSubAgentPromptInputWriteModeGuardrails(t *testing.T) {
+	req := tools.DelegateSubAgentRequest{
+		Task: "edit config",
+	}
+	preflight := subagentspkg.PreflightResult{
+		Definition: subagentspkg.Agent{
+			Name:        "general",
+			Instruction: "edit files",
+		},
+		EffectiveTools: []string{"read_file", "write_file", "replace_in_file"},
+		Isolation:      "none",
+	}
+	input := buildSubAgentPromptInput(req, preflight)
+	if !strings.Contains(input.DefinitionBody, "=== WRITE MODE - FILE MODIFICATIONS ALLOWED ===") {
+		t.Fatalf("expected WRITE MODE guardrails, got %q", input.DefinitionBody)
+	}
+	if !strings.Contains(input.DefinitionBody, "edit files") {
+		t.Fatalf("expected definition body to contain original instruction, got %q", input.DefinitionBody)
+	}
+}
+
+func TestBuildSubAgentPromptInputReadOnlyGuardrails(t *testing.T) {
+	req := tools.DelegateSubAgentRequest{
+		Task: "find files",
+	}
+	preflight := subagentspkg.PreflightResult{
+		Definition: subagentspkg.Agent{
+			Name:        "explorer",
+			Instruction: "search only",
+		},
+		EffectiveTools: []string{"read_file", "search_text"},
+		Isolation:      "none",
+	}
+	input := buildSubAgentPromptInput(req, preflight)
+	if !strings.Contains(input.DefinitionBody, "=== READ-ONLY MODE - NO FILE MODIFICATIONS ===") {
+		t.Fatalf("expected READ-ONLY MODE guardrails, got %q", input.DefinitionBody)
+	}
+	if !strings.Contains(input.DefinitionBody, "search only") {
+		t.Fatalf("expected definition body to contain original instruction, got %q", input.DefinitionBody)
+	}
+}
+
+func TestBuildToolSafetyGuardrailsEmptyDefinition(t *testing.T) {
+	req := tools.DelegateSubAgentRequest{
+		Task: "do something",
+	}
+	preflight := subagentspkg.PreflightResult{
+		Definition: subagentspkg.Agent{
+			Name:        "worker",
+			Instruction: "",
+		},
+		EffectiveTools: []string{"write_file"},
+		Isolation:      "none",
+	}
+	input := buildSubAgentPromptInput(req, preflight)
+	if !strings.Contains(input.DefinitionBody, "WRITE MODE") {
+		t.Fatalf("expected WRITE MODE guardrails even with empty instruction, got %q", input.DefinitionBody)
 	}
 }
 
