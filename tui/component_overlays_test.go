@@ -36,10 +36,32 @@ func TestRenderModelsModalSwitchModeIncludesFlagsAndMetadata(t *testing.T) {
 	}
 
 	view := m.renderModelsModal()
-	for _, want := range []string{"Models", "Delete to remove", "Current: openai/gpt-5.4", "openai/gpt-5.4  (active, default)", "family=gpt", "context=128000", "source=metadata", "Warnings:", "deepseek: provider_list_models_failed"} {
+	for _, want := range []string{"Models", "Delete configured rows", "Current: openai/gpt-5.4", "openai/gpt-5.4  (active, default, configured)", "family=gpt", "context=128000", "source=metadata", "Warnings:", "deepseek: provider_list_models_failed"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected models modal to contain %q, got %q", want, view)
 		}
+	}
+}
+
+func TestRenderModelsModalLabelsDiscoveredOnlyRows(t *testing.T) {
+	m := model{
+		width:         120,
+		commandCursor: 0,
+		cfg: config.Config{
+			ProviderRuntime: config.ProviderRuntimeConfig{
+				DefaultProvider: "openai",
+				DefaultModel:    "gpt-5.4",
+				Providers: map[string]config.ProviderConfig{
+					"openai": {Type: "openai-compatible", Model: "gpt-5.4"},
+				},
+			},
+		},
+		discoveredModels: []provider.ModelInfo{{ProviderID: "openai", ModelID: "gpt-5.4-mini"}},
+	}
+
+	view := m.renderModelsModal()
+	if !strings.Contains(view, "openai/gpt-5.4-mini  (discovered)") {
+		t.Fatalf("expected discovered-only row to be labeled, got %q", view)
 	}
 }
 

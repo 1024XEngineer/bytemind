@@ -142,6 +142,8 @@ func TestOpenModelPickerWithModeFallsBackToConfiguredTargetsOnRefreshError(t *te
 				},
 			},
 		},
+		discoveredModels: []provider.ModelInfo{{ProviderID: "deepseek", ModelID: "stale-discovered-only"}},
+		modelWarnings:    []provider.Warning{{ProviderID: "deepseek", Reason: "stale_warning"}},
 	}
 
 	if err := m.openModelPicker(); err != nil {
@@ -152,6 +154,21 @@ func TestOpenModelPickerWithModeFallsBackToConfiguredTargetsOnRefreshError(t *te
 	}
 	if m.statusNote != "Opened models list from configured targets." {
 		t.Fatalf("unexpected status note %q", m.statusNote)
+	}
+	if len(m.discoveredModels) != 0 {
+		t.Fatalf("expected stale discovered models to be cleared, got %#v", m.discoveredModels)
+	}
+	if len(m.modelWarnings) != 0 {
+		t.Fatalf("expected stale warnings to be cleared, got %#v", m.modelWarnings)
+	}
+	targets := m.modelPickerTargets()
+	if len(targets) != 2 {
+		t.Fatalf("expected configured-only fallback targets, got %#v", targets)
+	}
+	for _, target := range targets {
+		if modelTargetLabel(target) == "deepseek/stale-discovered-only" {
+			t.Fatalf("expected stale discovered-only target to be excluded, got %#v", targets)
+		}
 	}
 }
 
@@ -467,6 +484,64 @@ func TestDeleteCurrentModelTargetRejectsDeletingLastConfiguredTarget(t *testing.
 	err := m.deleteCurrentModelTarget()
 	if err == nil || !strings.Contains(err.Error(), "cannot delete the last configured model") {
 		t.Fatalf("expected last-target delete to fail, got %v", err)
+	}
+}
+
+func TestDeleteCurrentModelTargetRejectsDiscoveredOnlyRows(t *testing.T) {
+	m := &model{
+		runner: &subAgentCommandRunnerStub{},
+		cfg: config.Config{
+			ProviderRuntime: config.ProviderRuntimeConfig{
+				DefaultProvider: "openai",
+				DefaultModel:    "gpt-5.4",
+				Providers: map[string]config.ProviderConfig{
+					"openai":   {Type: "openai-compatible", Model: "gpt-5.4"},
+					"deepseek": {Type: "openai-compatible", Model: "deepseek-chat"},
+				},
+			},
+		},
+		discoveredModels: []provider.ModelInfo{{ProviderID: "deepseek", ModelID: "deepseek-reasoner"}},
+	}
+
+	targets := m.sortedModelCommandTargets()
+	selected := -1
+	for i, target := range targets {
+		if modelTargetLabel(target) == "deepseek/deepseek-reasoner" {
+			selected = i
+			break
+		}
+	}
+	if selected < 0 {
+		t.Fatalf("expected discovered-only target, got %#v", targets)
+	}
+	m.commandCursor = selected
+
+	err := m.deleteCurrentModelTarget()
+	if err == nil || !strings.Contains(err.Error(), "discovered only") {
+		t.Fatalf("expected discovered-only delete to fail clearly, got %v", err)
+	}
+	if _, ok := m.cfg.ProviderRuntime.Providers["deepseek"]; !ok {
+		t.Fatalf("expected configured provider to remain after discovered-only delete rejection")
+	}
+}
+
+func TestStartupGuideAcceptsGeminiProviderType(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	m := &model{startupGuide: StartupGuide{ConfigPath: configPath}}
+
+	if err := m.applyStartupConfigField("type", "gemini"); err != nil {
+		t.Fatalf("expected gemini provider type to be accepted, got %v", err)
+	}
+	if m.cfg.Provider.Type != "gemini" {
+		t.Fatalf("expected provider type to normalize to gemini, got %q", m.cfg.Provider.Type)
+	}
+
+	cfg, err := config.Load("", configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Provider.Type != "gemini" || cfg.Provider.BaseURL != "https://generativelanguage.googleapis.com/v1beta" || cfg.Provider.Model != "gemini-2.5-flash" {
+		t.Fatalf("expected persisted gemini defaults, got provider=%#v", cfg.Provider)
 	}
 }
 

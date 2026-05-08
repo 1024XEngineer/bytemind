@@ -68,6 +68,11 @@ func (m *model) openModelPicker() error {
 
 	refreshErr := m.refreshDiscoveredModels()
 	targets := m.sortedModelCommandTargets()
+	if refreshErr != nil {
+		m.discoveredModels = nil
+		m.modelWarnings = nil
+		targets = m.sortedConfiguredModelCommandTargets()
+	}
 	if len(targets) == 0 {
 		if refreshErr != nil {
 			return refreshErr
@@ -186,6 +191,9 @@ func (m *model) deleteCurrentModelTarget() error {
 	}
 	selected := targets[clamp(m.commandCursor, 0, len(targets)-1)]
 	target := modelTargetLabel(selected)
+	if !m.isConfiguredModelCommandTarget(selected) {
+		return fmt.Errorf("selected model %q is discovered only; only configured models can be deleted", target)
+	}
 	return m.deleteModelCommandTarget("Delete model "+target, target)
 }
 
@@ -220,13 +228,23 @@ func (m model) configuredModelCommandTargets() []provider.ModelInfo {
 
 func (m model) sortedModelCommandTargets() []provider.ModelInfo {
 	targets := append([]provider.ModelInfo(nil), m.modelCommandTargets()...)
+	sortModelCommandTargets(targets)
+	return targets
+}
+
+func (m model) sortedConfiguredModelCommandTargets() []provider.ModelInfo {
+	targets := append([]provider.ModelInfo(nil), m.configuredModelCommandTargets()...)
+	sortModelCommandTargets(targets)
+	return targets
+}
+
+func sortModelCommandTargets(targets []provider.ModelInfo) {
 	sort.Slice(targets, func(i, j int) bool {
 		if targets[i].ProviderID == targets[j].ProviderID {
 			return targets[i].ModelID < targets[j].ModelID
 		}
 		return targets[i].ProviderID < targets[j].ProviderID
 	})
-	return targets
 }
 
 func (m model) persistModelCommandSelection(runtimeCfg config.ProviderRuntimeConfig) (string, error) {
@@ -265,6 +283,14 @@ func hasModelCommandTarget(targets []provider.ModelInfo, providerID, modelID str
 
 func modelTargetLabel(target provider.ModelInfo) string {
 	return strings.TrimSpace(string(target.ProviderID)) + "/" + strings.TrimSpace(string(target.ModelID))
+}
+
+func (m model) isConfiguredModelCommandTarget(target provider.ModelInfo) bool {
+	return hasModelCommandTarget(
+		m.configuredModelCommandTargets(),
+		strings.TrimSpace(string(target.ProviderID)),
+		strings.TrimSpace(string(target.ModelID)),
+	)
 }
 
 func (m model) modelPickerTargets() []provider.ModelInfo {

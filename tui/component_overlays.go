@@ -41,7 +41,7 @@ func (m model) renderSkillsModal() string {
 
 func (m model) renderModelsModal() string {
 	title := "Models"
-	hint := "Up/Down to select, Enter to switch, Delete to remove, Esc to close"
+	hint := "Up/Down to select, Enter to switch, Delete configured rows, Esc to close"
 	lines := []string{
 		modalTitleStyle.Render(title),
 		mutedStyle.Render(hint),
@@ -73,6 +73,11 @@ func (m model) renderModelsModal() string {
 			if strings.EqualFold(strings.TrimSpace(string(target.ProviderID)), defaultProvider) &&
 				strings.TrimSpace(string(target.ModelID)) == defaultModel {
 				flags = append(flags, "default")
+			}
+			if m.isConfiguredModelCommandTarget(target) {
+				flags = append(flags, "configured")
+			} else {
+				flags = append(flags, "discovered")
 			}
 			if len(flags) > 0 {
 				label += "  (" + strings.Join(flags, ", ") + ")"

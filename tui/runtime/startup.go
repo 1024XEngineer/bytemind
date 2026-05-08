@@ -54,7 +54,7 @@ func (s *Service) ApplyStartupField(req StartupFieldRequest) (StartupFieldResult
 	case "type":
 		normalized, ok := NormalizeProviderType(value)
 		if !ok {
-			return StartupFieldResult{}, fmt.Errorf("provider must be openai-compatible or anthropic")
+			return StartupFieldResult{}, fmt.Errorf("provider must be openai-compatible, anthropic, or gemini")
 		}
 		providerCfg.Type = normalized
 		persistValue = normalized
@@ -122,6 +122,8 @@ func NormalizeProviderType(value string) (string, bool) {
 		return "openai-compatible", true
 	case "anthropic":
 		return "anthropic", true
+	case "gemini", "google", "google-gemini":
+		return "gemini", true
 	default:
 		return "", false
 	}

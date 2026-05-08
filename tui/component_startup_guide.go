@@ -138,7 +138,7 @@ func (m *model) applyStartupConfigField(field, value string) error {
 	case "type":
 		normalized, ok := normalizeStartupProviderType(value)
 		if !ok {
-			return fmt.Errorf("provider must be openai-compatible or anthropic")
+			return fmt.Errorf("provider must be openai-compatible, anthropic, or gemini")
 		}
 		m.cfg.Provider.Type = normalized
 		persistValue = normalized
@@ -219,6 +219,8 @@ func normalizeStartupProviderType(value string) (string, bool) {
 		return "openai-compatible", true
 	case "anthropic":
 		return "anthropic", true
+	case "gemini", "google", "google-gemini":
+		return "gemini", true
 	default:
 		return "", false
 	}
@@ -273,6 +275,8 @@ func startupProviderDefaultBaseURL(providerType string) string {
 	switch strings.ToLower(strings.TrimSpace(providerType)) {
 	case "anthropic":
 		return "https://api.anthropic.com"
+	case "gemini":
+		return "https://generativelanguage.googleapis.com/v1beta"
 	default:
 		return "https://api.openai.com/v1"
 	}
@@ -282,6 +286,8 @@ func startupProviderDefaultModel(providerType string) string {
 	switch strings.ToLower(strings.TrimSpace(providerType)) {
 	case "anthropic":
 		return ""
+	case "gemini":
+		return "gemini-2.5-flash"
 	default:
 		return "GPT-5.4"
 	}
@@ -355,7 +361,7 @@ func startupGuideStepLines(field string, cfg config.Config, configPath, issue st
 	lines := make([]string, 0, 8)
 	switch field {
 	case startupFieldType:
-		lines = append(lines, "Enter provider: openai-compatible or anthropic.")
+		lines = append(lines, "Enter provider: openai-compatible, anthropic, or gemini.")
 	case startupFieldBaseURL:
 		lines = append(lines, "Enter provider base_url.")
 		lines = append(lines, "Example: https://api.deepseek.com/v1")

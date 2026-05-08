@@ -43,7 +43,7 @@ ByteMind 的 Provider / Model 管理用于让用户在 TUI 内完成模型目标
 - 当前 default provider/model。
 - 已配置的 provider/model 目标。
 - 可展示的 discovered model 目标。
-- provider 分组。
+- provider/model 目标按 provider id 与 model id 排序展示。
 - `active`、`default`、`family=<value>` 等标签。
 - provider 列表失败时的 warning。
 

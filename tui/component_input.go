@@ -142,7 +142,7 @@ func startupGuideInputHint(field string) string {
 func startupGuideInputPlaceholder(field string) string {
 	switch strings.TrimSpace(field) {
 	case startupFieldType:
-		return "Step 1/4: provider (openai-compatible or anthropic)"
+		return "Step 1/4: provider (openai-compatible, anthropic, or gemini)"
 	case startupFieldBaseURL:
 		return "Step 2/4: base_url (example: https://api.deepseek.com)"
 	case startupFieldModel:
