@@ -572,55 +572,47 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 }
 
 func renderDiffDetailLine(line string, width int) string {
-	// Find diff marker: first +, -, or space after the line number digits
-	marker := byte(0)
-	markerPos := -1
-	for i := 0; i < len(line); i++ {
-		c := line[i]
-		if c >= '0' && c <= '9' {
-			if markerPos < 0 {
-				markerPos = i
-			}
-			continue
-		}
-		if c == '+' || c == '-' || c == ' ' {
-			marker = c
-			markerPos = i
-			break
-		}
-	}
-	if marker == 0 {
+	if len(line) == 0 {
 		return line
 	}
 
-	// Rebuild: line number part + marker + content
-	lineNumStr := line[:markerPos]
-	content := line[markerPos+1:]
-
-	// Pad line number to 7 chars with leading spaces (Claude CLI format)
-	paddedNum := lineNumStr
-	for len(paddedNum) < 7 {
-		paddedNum = " " + paddedNum
+	// Control-byte prefixed lines (path, stats, hunk header)
+	if line[0] == 0x00 {
+		return toolDiffPathStyle.Render("  " + line[1:])
+	}
+	if line[0] == 0x01 {
+		return toolDiffStatsStyle.Render("  " + line[1:])
+	}
+	if line[0] == 0x02 {
+		return toolDiffHunkHeaderStyle.Render("  " + line[1:])
 	}
 
-	fullLine := paddedNum + string(marker) + content
-
-	// Pad to card width for full-row background
-	lineWidth := runewidth.StringWidth(fullLine)
-	if lineWidth < width {
-		fullLine = fullLine + strings.Repeat(" ", width-lineWidth)
+	// Diff content lines: "+", "-", or " " prefix followed by 7-char line number
+	if len(line) < 9 {
+		return line
 	}
 
-	var style lipgloss.Style
-	switch marker {
+	// Line format: "XnnnnnnnYcontent" where X is diff marker, nnnnnnn is 7-char line num, Y is marker repeated
+	diffMarker := line[0] // +, -, or space
+	if diffMarker != '+' && diffMarker != '-' && diffMarker != ' ' {
+		return line
+	}
+	lineNumPart := line[1:8] // 7-char line number
+	rest := line[8:]         // marker + code content
+
+	var contentStyle lipgloss.Style
+	switch diffMarker {
 	case '+':
-		style = toolDiffAddStyle
+		contentStyle = toolDiffAddStyle
 	case '-':
-		style = toolDiffRemoveStyle
+		contentStyle = toolDiffRemoveStyle
 	default:
-		style = toolDiffContextStyle
+		contentStyle = toolDiffContextStyle
 	}
-	return style.Render(fullLine)
+
+	// Line number dim, content colored
+	styled := toolDiffLineNumStyle.Render(" " + lineNumPart) + contentStyle.Render(rest)
+	return styled
 }
 
 func summarizeParallelToolGroup(group []chatEntry, name string) string {

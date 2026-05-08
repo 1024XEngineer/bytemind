@@ -1,9 +1,6 @@
 package tui
 
-import (
-	"fmt"
-	"strconv"
-)
+import "fmt"
 
 // diffPreviewLocal mirrors tools.DiffPreview for JSON unmarshaling in the TUI layer.
 type diffPreviewLocal struct {
@@ -15,13 +12,13 @@ type diffPreviewLocal struct {
 }
 
 type diffFileLocal struct {
-	Path       string         `json:"path"`
-	NewPath    string         `json:"new_path,omitempty"`
-	ChangeType string         `json:"change_type"`
-	Added      int            `json:"added"`
-	Removed    int            `json:"removed"`
+	Path       string          `json:"path"`
+	NewPath    string          `json:"new_path,omitempty"`
+	ChangeType string          `json:"change_type"`
+	Added      int             `json:"added"`
+	Removed    int             `json:"removed"`
 	Hunks      []diffHunkLocal `json:"hunks"`
-	Truncated  bool           `json:"truncated"`
+	Truncated  bool            `json:"truncated"`
 }
 
 type diffHunkLocal struct {
@@ -32,79 +29,77 @@ type diffHunkLocal struct {
 	Lines    []string `json:"lines"`
 }
 
-func diffHunkPreviewLines(hunks []diffHunkLocal) []string {
-	if len(hunks) == 0 {
-		return nil
-	}
-	const maxPreview = 4
-	h := hunks[0]
-	count := len(h.Lines)
-	if count > maxPreview {
-		count = maxPreview
-	}
-	preview := make([]string, 0, count+1)
-	for _, line := range h.Lines[:count] {
-		preview = append(preview, line)
-	}
-	if len(h.Lines) > maxPreview {
-		preview = append(preview, "  ("+strconv.Itoa(len(h.Lines)-maxPreview)+" more lines)")
-	}
-	return preview
-}
+// diffDetailLine types: prefixed with a control byte so renderDiffDetailLine
+// can style each line correctly.
+const (
+	diffPath   = "\x00" // file path line (cyan)
+	diffStats  = "\x01" // stats line (dim gray)
+	diffHunkHdr = "\x02" // @@ hunk header (cyan)
+)
 
-func lineNum(n int) string {
+func lineNumStr(n int) string {
 	return fmt.Sprintf("%7d", n)
 }
 
-func diffHunkExpandedLines(hunks []diffHunkLocal) []string {
-	if len(hunks) == 0 {
-		return nil
-	}
-	lines := make([]string, 0)
-	for _, h := range hunks {
-		oldLine := h.OldStart
-		newLine := h.NewStart
-		for _, l := range h.Lines {
-			if len(l) < 1 {
-				continue
-			}
-			prefix := l[0]
-			content := l[1:]
-			switch prefix {
-			case ' ':
-				lines = append(lines, lineNum(oldLine)+" "+content)
-				oldLine++
-				newLine++
-			case '-':
-				lines = append(lines, lineNum(oldLine)+"-"+content)
-				oldLine++
-			case '+':
-				lines = append(lines, lineNum(newLine)+"+"+content)
-				newLine++
-			}
-		}
-	}
-	return lines
+func diffDetailLine(prefix, text string) string {
+	return prefix + text
 }
 
+// diffExpandedDetailLines generates detail lines for the TUI card.
+// Each line is prefixed with a control byte for styling:
+//
+//	\x00 = file path (toolDiffPathStyle)
+//	\x01 = stats (toolDiffStatsStyle)
+//	\x02 = hunk header (toolDiffHunkHeaderStyle)
+//	+/-/space = diff content lines (toolDiffAddStyle / RemoveStyle / ContextStyle)
 func diffExpandedDetailLines(dp diffPreviewLocal) []string {
 	if len(dp.Files) == 0 {
 		return nil
 	}
 	lines := make([]string, 0)
 	for _, f := range dp.Files {
-		// Summary line like Claude CLI: "Added X line(s), removed Y line(s)"
-		if f.Added > 0 || f.Removed > 0 {
-			addedText := fmt.Sprintf("Added %d line(s), removed %d line(s)", f.Added, f.Removed)
-			if len(dp.Files) > 1 {
-				addedText = f.ChangeType + " " + f.Path + ": " + addedText
-			}
-			lines = append(lines, addedText)
+		// File path line
+		pathDisplay := f.ChangeType + " " + f.Path
+		if f.NewPath != "" && f.NewPath != f.Path {
+			pathDisplay = f.ChangeType + " " + f.Path + " → " + f.NewPath
 		}
-		lines = append(lines, diffHunkExpandedLines(f.Hunks)...)
+		lines = append(lines, diffDetailLine(diffPath, pathDisplay))
+
+		// Stats line
+		statsText := fmt.Sprintf("+%d -%d", f.Added, f.Removed)
+		lines = append(lines, diffDetailLine(diffStats, statsText))
+
+		// Hunk content
+		for _, h := range f.Hunks {
+			// Hunk header
+			hdr := fmt.Sprintf("@@ -%d,%d +%d,%d @@", h.OldStart, h.OldLines, h.NewStart, h.NewLines)
+			lines = append(lines, diffDetailLine(diffHunkHdr, hdr))
+
+			oldLine := h.OldStart
+			newLine := h.NewStart
+			for _, l := range h.Lines {
+				if len(l) < 1 {
+					continue
+				}
+				prefix := l[0]
+				content := l[1:]
+				switch prefix {
+				case ' ':
+					lines = append(lines, " "+lineNumStr(oldLine)+" "+content)
+					oldLine++
+					newLine++
+				case '-':
+					lines = append(lines, "-"+lineNumStr(oldLine)+"-"+content)
+					oldLine++
+				case '+':
+					lines = append(lines, "+"+lineNumStr(newLine)+"+"+content)
+					newLine++
+				}
+			}
+		}
 	}
 	if dp.Truncated {
-		lines = append(lines, "  (diff truncated, ctrl+o to expand)")
+		lines = append(lines, diffDetailLine(diffStats, "(diff truncated)"))
 	}
 	return lines
 }

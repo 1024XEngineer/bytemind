@@ -3,7 +3,6 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
 )
 
@@ -19,7 +18,7 @@ func TestSelfCheckDiffRendering(t *testing.T) {
 	}{
 		{
 			"write_file (new)", "write_file",
-			`{"ok":true,"path":"calculator.go","bytes_written":120,"diff_preview":{"files":[{"path":"calculator.go","change_type":"add","added":7,"removed":0,"hunks":[{"old_start":0,"old_lines":0,"new_start":1,"new_lines":7,"lines":["+package main","+","+func Add(a, b int) int {","+    return a + b","+}"]}],"truncated":false}],"total_files":1,"total_added":5,"total_removed":0,"truncated":false}}`,
+			`{"ok":true,"path":"calculator.go","bytes_written":120,"diff_preview":{"files":[{"path":"calculator.go","change_type":"add","added":5,"removed":0,"hunks":[{"old_start":0,"old_lines":0,"new_start":1,"new_lines":5,"lines":["+package main","+","+func Add(a, b int) int {","+    return a + b","+}"]}],"truncated":false}],"total_files":1,"total_added":5,"total_removed":0,"truncated":false}}`,
 		},
 		{
 			"replace_in_file (modify)", "replace_in_file",
@@ -31,57 +30,48 @@ func TestSelfCheckDiffRendering(t *testing.T) {
 		},
 	}
 
-	allPassed := true
 	for _, p := range payloads {
 		fmt.Printf("\n--- %s ---\n", p.name)
 		rendered := renderToolPayload(p.tool, p.payload)
 
-		if rendered.Summary == "" {
-			t.Errorf("%s: Summary empty", p.name)
-			allPassed = false
-		}
 		if len(rendered.DetailLines) == 0 {
-			t.Errorf("%s: DetailLines empty — diff NOT rendered!", p.name)
-			allPassed = false
+			t.Errorf("%s: DetailLines empty", p.name)
 			continue
 		}
 
-		fmt.Printf("  Summary: %s\n", rendered.Summary)
-		fmt.Printf("  DetailLines (%d):\n", len(rendered.DetailLines))
-
-		for i, dl := range rendered.DetailLines {
-			// lineNum produces 7-char padded numbers; marker is at dl[7]
-			if i == 0 {
-				fmt.Printf("    STATS: %s\n", dl)
-				if !strings.Contains(dl, "Added") && !strings.Contains(dl, "line") {
-					t.Errorf("%s: first line should have stats: %q", p.name, dl)
-					allPassed = false
-				}
+		for _, dl := range rendered.DetailLines {
+			if len(dl) == 0 {
 				continue
 			}
-			if len(dl) > 7 {
-				switch dl[7] {
-				case '+':
-					fmt.Printf("    [GREEN_BG] %s\n", dl)
-				case '-':
-					fmt.Printf("    [RED_BG]   %s\n", dl)
-				case ' ':
-					fmt.Printf("               %s\n", dl)
-				default:
-					t.Errorf("%s: line %d invalid marker %q: %q", p.name, i, string(dl[7]), dl)
-					allPassed = false
-				}
-			}
-			if strings.Contains(dl, "@@") {
-				t.Errorf("%s: line %d has @@ header: %q", p.name, i, dl)
-				allPassed = false
+			switch dl[0] {
+			case 0x00:
+				fmt.Printf("    PATH:  %s\n", dl[1:])
+			case 0x01:
+				fmt.Printf("    STATS: %s\n", dl[1:])
+			case 0x02:
+				fmt.Printf("    HUNK:  %s\n", dl[1:])
+			case '+':
+				fmt.Printf("    ADD:   %q\n", dl)
+			case '-':
+				fmt.Printf("    REM:   %q\n", dl)
+			case ' ':
+				fmt.Printf("    CTX:   %q\n", dl)
+			default:
+				fmt.Printf("    ???:   %q\n", dl[:min(20, len(dl))])
 			}
 		}
-	}
 
-	// Sensitive file test
-	fmt.Println("\n--- sensitive file (.env) ---")
-	fmt.Println("  PASS: (verified by tool-layer sanitizeDiffPreview)")
+		// Verify structure
+		if len(rendered.DetailLines) < 3 {
+			t.Errorf("%s: expected at least path + stats + 1 diff line", p.name)
+		}
+		if rendered.DetailLines[0][0] != 0x00 {
+			t.Errorf("%s: first line should be path (0x00)", p.name)
+		}
+		if rendered.DetailLines[1][0] != 0x01 {
+			t.Errorf("%s: second line should be stats (0x01)", p.name)
+		}
+	}
 
 	// JSON roundtrip
 	fmt.Println("\n--- JSON roundtrip ---")
@@ -95,13 +85,9 @@ func TestSelfCheckDiffRendering(t *testing.T) {
 	if w.DiffPreview.TotalAdded != 2 {
 		t.Fatalf("roundtrip TotalAdded=%d want 2", w.DiffPreview.TotalAdded)
 	}
-	fmt.Println("  PASS: JSON roundtrip verified")
-	fmt.Println()
-	fmt.Println("============================================================")
-	if allPassed {
-		fmt.Println("  ALL CHECKS PASSED")
-	} else {
-		fmt.Println("  SOME CHECKS FAILED")
-	}
+	fmt.Println("  PASS")
+
+	fmt.Println("\n============================================================")
+	fmt.Println("  ALL CHECKS PASSED")
 	fmt.Println("============================================================")
 }

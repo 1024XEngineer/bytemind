@@ -400,15 +400,25 @@ var (
 			Foreground(semanticColors.TextMuted)
 
 	toolDiffAddStyle = lipgloss.NewStyle().
-			Background(semanticColors.HighlightGreen).
-			Foreground(lipgloss.Color("#1B1B1B"))
+			Foreground(lipgloss.Color("#4CFF4C"))
 
 	toolDiffRemoveStyle = lipgloss.NewStyle().
-			Background(semanticColors.HighlightRed).
-			Foreground(lipgloss.Color("#1B1B1B"))
+			Foreground(lipgloss.Color("#FF6666"))
 
 	toolDiffContextStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextBase)
+
+	toolDiffLineNumStyle = lipgloss.NewStyle().
 				Foreground(semanticColors.TextMuted)
+
+	toolDiffPathStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FFFF"))
+
+	toolDiffStatsStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextMuted)
+
+	toolDiffHunkHeaderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#00CCCC"))
 
 	toolExpandHintStyle = lipgloss.NewStyle().
 				Foreground(semanticColors.TextMuted)
