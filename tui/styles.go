@@ -401,11 +401,11 @@ var (
 
 	toolDiffAddStyle = lipgloss.NewStyle().
 			Background(semanticColors.HighlightGreen).
-			Foreground(semanticColors.TextBase)
+			Foreground(lipgloss.Color("#1B1B1B"))
 
 	toolDiffRemoveStyle = lipgloss.NewStyle().
 			Background(semanticColors.HighlightRed).
-			Foreground(semanticColors.TextBase)
+			Foreground(lipgloss.Color("#1B1B1B"))
 
 	toolDiffContextStyle = lipgloss.NewStyle().
 				Foreground(semanticColors.TextMuted)
