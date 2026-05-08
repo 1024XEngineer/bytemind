@@ -2622,22 +2622,44 @@ func summarizeTool(name, payload string) (string, []string, string) {
 		var result struct {
 			Path     string `json:"path"`
 			Replaced int    `json:"replaced"`
-			OldCount int    `json:"old_count"`
+			OldCount    int         `json:"old_count"`
+			DiffPreview diffPreviewLocal `json:"diff_preview"`
 		}
 		if json.Unmarshal([]byte(payload), &result) == nil {
+			lines := make([]string, 0, 4)
+			if len(result.DiffPreview.Files) > 0 {
+				f := result.DiffPreview.Files[0]
+				lines = append(lines, fmt.Sprintf("+%d -%d", f.Added, f.Removed))
+				lines = append(lines, diffHunkPreviewLines(f.Hunks)...)
+				if result.DiffPreview.Truncated {
+					lines = append(lines, "diff: truncated")
+				}
+				return "改动 " + filepath.Base(result.Path), lines, "done"
+			}
 			return "改动 " + filepath.Base(result.Path), []string{
 				fmt.Sprintf("改动 %d 行", result.Replaced),
 			}, "done"
 		}
 	case "apply_patch":
 		var result struct {
-			Operations []struct {
+			Operations  []struct {
 				Type string `json:"type"`
 				Path string `json:"path"`
 			} `json:"operations"`
+			DiffPreview diffPreviewLocal `json:"diff_preview"`
 		}
 		if json.Unmarshal([]byte(payload), &result) == nil {
-			// 只显示前10个操作，后面用省略号表示
+			if len(result.DiffPreview.Files) > 0 {
+				lines := make([]string, 0, 6)
+				for _, f := range result.DiffPreview.Files {
+					lines = append(lines, fmt.Sprintf("%s %s  +%d -%d", f.ChangeType, compactDisplayPath(f.Path), f.Added, f.Removed))
+				}
+				lines = append(lines, diffHunkPreviewLines(result.DiffPreview.Files[0].Hunks)...)
+				if result.DiffPreview.Truncated {
+					lines = append(lines, "diff: truncated")
+				}
+				return fmt.Sprintf("改动 %d 个文件, +%d -%d", result.DiffPreview.TotalFiles, result.DiffPreview.TotalAdded, result.DiffPreview.TotalRemoved), lines, "done"
+			}
 			operationLines := make([]string, 0, min(10, len(result.Operations)))
 			for i := 0; i < min(10, len(result.Operations)); i++ {
 				operationLines = append(operationLines, result.Operations[i].Type+" "+compactDisplayPath(result.Operations[i].Path))
