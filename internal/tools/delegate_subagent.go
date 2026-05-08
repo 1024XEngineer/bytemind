@@ -38,6 +38,13 @@ type TranscriptMessage struct {
 	Content string `json:"content"`
 }
 
+// WorktreeInfo carries worktree isolation metadata in a subagent result.
+type WorktreeInfo struct {
+	Path   string `json:"path,omitempty"`
+	Branch string `json:"branch,omitempty"`
+	State  string `json:"state,omitempty"` // "changed" | "unknown"
+}
+
 // SubAgentToolCallRecord is a JSON-serializable record of a tool call made
 // by a subagent. JSON tags match tui.SubAgentToolCall for direct unmarshal.
 type SubAgentToolCallRecord struct {
@@ -63,6 +70,7 @@ type DelegateSubAgentResult struct {
 	TranscriptSessionID string                 `json:"transcript_session_id,omitempty"`
 	Task                string                 `json:"task,omitempty"`
 	ModifiedFiles       []string               `json:"modified_files,omitempty"`
+	Worktree            *WorktreeInfo          `json:"worktree,omitempty"`
 	// ToolCalls carries structured tool call records from the subagent session.
 	// Populated by the executor for TUI restoration; excluded from JSON via
 	// json:"-" so it never reaches the parent LLM context.

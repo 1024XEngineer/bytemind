@@ -29,6 +29,14 @@ type SubAgentExecutor interface {
 	Execute(ctx context.Context, input SubAgentExecutionInput) (tools.DelegateSubAgentResult, error)
 }
 
+// SubAgentConfigOverrides allows the delegate layer to override config fields
+// inherited from the parent runner when creating a child runner. Zero/nil fields
+// mean "inherit from parent".
+type SubAgentConfigOverrides struct {
+	Workspace     string
+	WritableRoots []string
+}
+
 // SubAgentExecutionInput carries all resolved parameters needed to execute a subagent task.
 type SubAgentExecutionInput struct {
 	Request      tools.DelegateSubAgentRequest
@@ -37,8 +45,9 @@ type SubAgentExecutionInput struct {
 	Agent        string
 	RunMode      planpkg.AgentMode
 	ExecCtx      *tools.ExecutionContext
-	Observer     Observer    // optional: receives streaming events from the child runner
-	Store        SessionStore // optional: used to persist child session transcript
+	Observer     Observer               // optional: receives streaming events from the child runner
+	Store        SessionStore            // optional: used to persist child session transcript
+	Overrides    *SubAgentConfigOverrides // optional: overrides for child runner config
 }
 
 type defaultSubAgentExecutor struct {
@@ -66,7 +75,7 @@ func (e *defaultSubAgentExecutor) Execute(
 		parentSessionID = strings.TrimSpace(input.ExecCtx.Session.ID)
 	}
 
-	childRunner := e.newSubAgentChildRunner(workspace, input.Preflight.Definition.MaxTurns, input.Observer)
+	childRunner := e.newSubAgentChildRunner(workspace, input.Preflight.Definition.MaxTurns, input.Observer, input.Overrides)
 	if childRunner == nil || childRunner.client == nil {
 		return subAgentErrorAsContent(
 			input.InvocationID,
@@ -155,7 +164,7 @@ func (e *defaultSubAgentExecutor) Execute(
 	return result, nil
 }
 
-func (e *defaultSubAgentExecutor) newSubAgentChildRunner(workspace string, maxTurns int, streamObserver Observer) *Runner {
+func (e *defaultSubAgentExecutor) newSubAgentChildRunner(workspace string, maxTurns int, streamObserver Observer, overrides *SubAgentConfigOverrides) *Runner {
 	r := e.runner
 	cfg := r.config
 	cfg.MaxIterations = resolveSubAgentMaxIterations(cfg.MaxIterations, maxTurns)
@@ -163,6 +172,15 @@ func (e *defaultSubAgentExecutor) newSubAgentChildRunner(workspace string, maxTu
 	cfg.WritableRoots = append([]string(nil), cfg.WritableRoots...)
 	cfg.ExecAllowlist = append([]config.ExecAllowRule(nil), cfg.ExecAllowlist...)
 	cfg.NetworkAllowlist = append([]config.NetworkAllowRule(nil), cfg.NetworkAllowlist...)
+
+	if overrides != nil {
+		if overrides.Workspace != "" {
+			workspace = overrides.Workspace
+		}
+		if overrides.WritableRoots != nil {
+			cfg.WritableRoots = overrides.WritableRoots
+		}
+	}
 
 	childObserver := Observer(&noOpObserver{})
 	if streamObserver != nil {

@@ -1,7 +1,7 @@
 ---
 name: frontend-developer
 description: "Use when building complete frontend applications across React, Vue, and Angular frameworks requiring multi-framework expertise and full-stack integration."
-tools: Read, Write, Edit, Bash, Glob, Grep
+tools: [read_file, write_file, replace_in_file, run_shell, search_text, list_files]
 model: sonnet
 ---
 

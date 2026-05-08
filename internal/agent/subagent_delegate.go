@@ -133,6 +133,39 @@ func (r *Runner) delegateSubAgent(
 	}
 
 	parentSession := execCtx.Session
+
+	// Worktree isolation: sync path only (background remains read-only).
+	var worktreeHandle *runtimepkg.WorktreeHandle
+	var overrides *SubAgentConfigOverrides
+	if !request.RunInBackground && preflight.Isolation == "worktree" {
+		if r.worktreeManager == nil {
+			result.Error = &tools.DelegateSubAgentError{
+				Code:      "subagent_isolation_required",
+				Message:   "worktree isolation requested but workspace is not a git repository",
+				Retryable: false,
+			}
+			return result, nil
+		}
+		handle, prepareErr := r.worktreeManager.Prepare(ctx, runtimepkg.WorktreeRequest{
+			InvocationID:  result.InvocationID,
+			WorkspaceRoot: r.workspace,
+		})
+		if prepareErr != nil {
+			result.Error = &tools.DelegateSubAgentError{
+				Code:      "subagent_isolation_required",
+				Message:   fmt.Sprintf("failed to create worktree: %v", prepareErr),
+				Retryable: false,
+			}
+			return result, nil
+		}
+		worktreeHandle = handle
+		metadata["worktree_path"] = handle.Path
+		overrides = &SubAgentConfigOverrides{
+			Workspace:     handle.Path,
+			WritableRoots: []string{handle.Path},
+		}
+	}
+
 	runtimeRequest := RuntimeTaskRequest{
 		SessionID:  sessionIDFromExecutionContext(execCtx),
 		Name:       "delegate_subagent/" + preflightResultName(result.Agent),
@@ -150,6 +183,7 @@ func (r *Runner) delegateSubAgent(
 				ExecCtx:      execCtx,
 				Observer:     streamObserver,
 				Store:        r.store,
+					Overrides:    overrides,
 			})
 			if execErr != nil {
 				return nil, execErr
@@ -179,6 +213,11 @@ func (r *Runner) delegateSubAgent(
 				var parsed tools.DelegateSubAgentResult
 				if jsonErr := json.Unmarshal(task.Output, &parsed); jsonErr == nil {
 					notification.Summary = parsed.Summary
+					if parsed.Worktree != nil {
+						notification.WorktreePath = parsed.Worktree.Path
+						notification.WorktreeBranch = parsed.Worktree.Branch
+						notification.WorktreeState = parsed.Worktree.State
+					}
 				}
 			} else {
 				notification.Status = subAgentResultStatusFailed
@@ -270,12 +309,14 @@ func (r *Runner) delegateSubAgent(
 			result.Status = subAgentResultStatusCompleted
 			result.Summary = truncateSubAgentSummary(rawOutput)
 			result.Content = result.Summary
+			r.enrichResultWithWorktree(ctx, worktreeHandle, &result)
 			return result, nil
 		}
 		// Structured parse succeeded — fill in summary from raw text if empty.
 		if normalized.Summary == "" {
 			normalized.Summary = truncateSubAgentSummary(rawOutput)
 		}
+		r.enrichResultWithWorktree(ctx, worktreeHandle, &normalized)
 		return normalized, nil
 	}
 
@@ -284,7 +325,35 @@ func (r *Runner) delegateSubAgent(
 	result.Status = subAgentResultStatusCompleted
 	result.Summary = "SubAgent task completed."
 	result.Content = result.Summary
+	r.enrichResultWithWorktree(ctx, worktreeHandle, &result)
 	return result, nil
+}
+
+// enrichResultWithWorktree checks for worktree changes and populates result.Worktree.
+// Returns the worktree handle (or nil if already cleaned up).
+func (r *Runner) enrichResultWithWorktree(ctx context.Context, handle *runtimepkg.WorktreeHandle, result *tools.DelegateSubAgentResult) *runtimepkg.WorktreeHandle {
+	if handle == nil || r.worktreeManager == nil {
+		return nil
+	}
+	changed, err := r.worktreeManager.HasChanges(ctx, handle)
+	if err != nil {
+		result.Worktree = &tools.WorktreeInfo{
+			Path:   handle.Path,
+			Branch: handle.Branch,
+			State:  "unknown",
+		}
+		return handle
+	}
+	if changed {
+		result.Worktree = &tools.WorktreeInfo{
+			Path:   handle.Path,
+			Branch: handle.Branch,
+			State:  "changed",
+		}
+		return handle
+	}
+	_ = r.worktreeManager.Cleanup(ctx, handle)
+	return nil
 }
 
 func preflightResultName(agent string) string {

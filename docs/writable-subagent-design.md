@@ -1,33 +1,25 @@
-# ByteMind 可写 SubAgent 设计方案
+# ByteMind 可写 SubAgent 设计方案（修订版）
 
 ## 1. 现状分析
 
 ### 1.1 当前能力
 
-ByteMind 当前有 2 个内置 SubAgent（`explorer`、`review`），均为只读型。架构层面已具备可写 SubAgent 的基础设施：
+ByteMind 当前有 2 个内置只读 SubAgent（`explorer`、`review`）和 1 个同步可写 SubAgent（`general`）。架构层面已具备可写 SubAgent 的基础设施：
 
 | 已具备 | 状态 | 位置 |
 |--------|------|------|
 | Agent 定义类型（含 Tools/DisallowedTools/Isolation 字段） | 已完成 | `internal/subagents/types.go:13-31` |
-| 多层工具过滤（交集+差集） | 已完成 | `internal/subagents/gateway.go:143-160` |
+| 多层工具过滤（交集+差集，永不扩权） | 已完成 | `internal/subagents/gateway.go:143-160` |
 | ToolSpec 分级（ReadOnly/Destructive/SafetyClass） | 已完成 | `internal/tools/spec.go:20-33` |
-| 写工具强行 worktree 隔离的规则 | 已设计未实现 | `docs/subagent-architecture.md:845` |
 | 会话/Observer/Approval 隔离 | 已完成 | `internal/agent/subagent_isolation.go` |
-| 同步/异步执行 | 已完成 | `internal/agent/subagent_delegate.go` |
+| 同步可写 SubAgent（`general`，isolation=none） | 已完成 | `internal/subagents/general.md` |
+| 同步/异步执行框架 | 已完成 | `internal/agent/subagent_delegate.go` |
+| 子 agent 通知机制 | 已完成 | `internal/agent/subagent_notifier.go` |
+| 系统提示词分级（只读警告 vs 写操作指南） | 已完成 | `internal/agent/subagent_executor.go:246` |
+| Session 恢复/续接 | 已完成 | `internal/agent/subagent_executor.go:80-91` |
+| Quota 并发控制 | 已完成 | `internal/runtime/quota.go` |
 
-### 1.2 缺失的关键组件
-
-| 缺失组件 | 影响 |
-|----------|------|
-| WorktreeManager（创建/清理/补偿） | 写操作无法隔离，直接污染父工作区 |
-| 权限快照（SubAgentApprovalSnapshot） | 无法在启动前预审批写操作 |
-| 系统提示词分级（只读警告 vs 写操作指南） | 只读/可写 agent 行为约束无软防护 |
-| 上下文优化（omitContext / omitGitStatus） | 不必要的 token 消耗 |
-| 可写 SubAgent 示例定义 | 用户无参考模板 |
-| 审批策略差异化（nonInteractiveApproval 过于宽松） | 写操作无用户确认环节 |
-| 结果通知增强（worktree 信息注入） | 父 agent 无法得知 worktree 位置和变更状态 |
-
-### 1.3 当前硬限制
+### 1.2 当前硬限制
 
 `internal/agent/subagent_delegate.go:201` 处有强制限制：
 
@@ -41,88 +33,88 @@ if !r.isReadOnlySubAgentToolset(preflight.EffectiveTools) {
 }
 ```
 
-这意味着即使定义了可写 SubAgent，后台模式下也会被拒绝。
+同步可写 SubAgent（`general`）可以正常工作——它走的是 `RunSync` 路径，不经过这个检查。但后台模式下，即使配置了 `isolation: worktree`，也会被这行硬限制拒绝。
+
+### 1.3 缺失的关键组件
+
+| 缺失组件 | 影响 |
+|----------|------|
+| WorktreeManager（创建/清理/补偿/幂等） | 后台写操作无法隔离，是放开后台可写的阻塞项 |
+| Gateway 后台隔离自动升级（background+write → worktree） | 需在 Preflight 中实现 |
+| 审批策略差异化 | 当前 `nonInteractiveApproval()` 对所有子 agent 一视同仁，worktree 场景下这是正确的 |
+
+### 1.4 明确不做的事
+
+经过安全性分析，以下设计被评估为**过度设计**，不在本方案中：
+
+- **权限快照（SubAgentApprovalSnapshot）**：任务元数据（invocation_id、effective_tools、effective_toolset_hash、isolation）已完整记录启动时的权限状态。快照要校验的"运行时扩权"威胁场景在 ByteMind 中不存在——子 agent 工具集由 `applySubAgentPreflightSetup()` 静态注入，运行期无路径动态获取新工具。新增独立的快照文件只会增加 I/O 失败点、清理逻辑和测试负担，收益为零。
+- **bubble 权限模式**：bubble 用于"用户在线审批子 agent 工具调用"，与后台 fire-and-forget 语义矛盾。后台 + worktree 隔离 + nonInteractiveApproval 自动批准是更合理的组合。
 
 ---
 
-## 2. Claude Code 可参考的设计精华
+## 2. 安全模型
 
-### 2.1 声明式差异而非两套代码路径
+### 2.1 核心原则
 
-Claude Code 的只读型和可写型 SubAgent 共用同一套 `runAgent()` 引擎，差异完全由 `AgentDefinition` 的字段声明决定：
-
-```
-可写型: tools: ['*'], 无 disallowedTools
-只读型: tools: undefined, disallowedTools: [Edit, Write, NotebookEdit]
-```
-
-ByteMind 已经具备这种声明式架构基础（`Agent.Tools` / `Agent.DisallowedTools`），只需补全其余层次。
-
-### 2.2 五层纵深防御
+**隔离维度的正确判断标准不是工具集（读 vs 写），而是执行模式（同步 vs 后台）。**
 
 ```
-Layer 1: 工具过滤      → disallowedTools 阻止写工具（硬限制）
-Layer 2: 系统提示词    → READ-ONLY 警告（软防护，纵深防御）
-Layer 3: 权限模式      → permissionMode 控制是否需要用户确认
-Layer 4: 隔离机制      → worktree 隔离文件系统（可选但推荐）
-Layer 5: 安全分类/审计 → 完成后安全检查 + cleanup 防僵尸进程
+同步可写  → isolation 尊重用户声明，默认 none
+            用户在回路中，可看见/中断 → 不需要 worktree
+
+后台可写  → isolation 自动升级为 worktree
+            用户不在审批回路中 → 必须沙箱隔离
+
+后台只读  → 保持现状，不需要 worktree
 ```
 
-### 2.3 Worktree 自动清理策略
+### 2.2 五层安全边界
 
-Claude Code 的关键设计决策：**子 agent 完成后检测是否有改动。无改动自动删除 worktree，有改动保留并通知父 agent。**
+子 agent 的权限在所有维度上都 ≤ 父 agent：
 
-```typescript
-// AgentTool.tsx — 伪代码表达
-if (headCommit) {
-  const changed = await hasWorktreeChanges(worktreePath, headCommit);
-  if (!changed) {
-    await removeAgentWorktree(...);  // 无改动 → 自动删除
-    return {};
-  }
-}
-// 有改动 → 保留 worktree，通知父 agent
-return { worktreePath, worktreeBranch };
+| 维度 | 父 Agent | 子 Agent（同步/后台只读） | 子 Agent（后台可写） |
+|------|---------|--------------------------|---------------------|
+| 可用工具 | 全部注册工具 | Preflight 交集收窄 | Preflight 交集收窄 |
+| 可写路径 | WritableRoots | 深拷贝自父（子 = 父） | 覆盖为 worktree 路径（子 ⊆ 父） |
+| 可执行命令 | ExecAllowlist | 深拷贝自父 | 深拷贝自父 |
+| 可访问网络 | NetworkAllowlist | 深拷贝自父 | 深拷贝自父 |
+| 沙箱 | Sandbox | 深拷贝自父 | 强制 enabled + required |
+
+工具执行经过两道审批闸门：
+
+```
+第一道：PolicyGateway.DecideTool()
+  → 允许清单命中 → DecisionAllow → 工具开始执行
+  → 拒绝清单命中 → DecisionDeny  → 直接拒绝
+
+第二道：execCtx.Approval() — 工具执行期间内部调用
+  → executor.go  → 通用执行器审批
+  → run_shell.go → shell 命令审批（sandbox 兜底）
+  → worker.go    → worker 进程审批
 ```
 
-### 2.4 上下文优化
+第一道闸门由 Gateway.Preflight 的工具过滤保证。第二道闸门由 `nonInteractiveApproval()`（自动批准）保证。两道闸门互补，不能相互替代。
 
-只读 agent 跳过 CLAUDE.md 和 gitStatus，节省 token：
+### 2.3 worktree 的作用与局限
 
-| 优化项 | 只读型 (Explore/Plan) | 可写型 (general-purpose) |
-|--------|----------------------|--------------------------|
-| CLAUDE.md | 省略 (omitClaudeMd: true) | 包含 |
-| gitStatus | 省略 | 包含 |
-| 系统提示词 | 显式 READ-ONLY 警告 | 通用任务指令 + 编辑指南 |
+worktree 不是替代工具过滤的，而是替代"缺失的用户审批回路"的。
 
-### 2.5 权限模式差异化
+- **同步执行**：用户在回路中 → 不需要 worktree
+- **后台执行**：用户离线 → worktree 提供沙箱，使 `nonInteractiveApproval` 自动批准的文件写入不会污染主工作区
 
-- **同步执行**：继承父级权限模式
-- **异步执行**：默认 `shouldAvoidPermissionPrompts: true`（自动拒绝权限请求）
-- **Fork agent**：`permissionMode: 'bubble'`（权限请求冒泡到用户终端）
+**worktree 的隔离范围仅限于文件工具**（`write_file`、`replace_in_file`、`apply_patch`）。这些工具通过 `WritableRoots` + workspace 路径限制写入边界。`run_shell` 不受 worktree 约束——`cmd.Dir` 落在 worktree 目录内，但 shell 命令本身可执行任意系统操作（`rm -rf /`、网络请求等）。
+
+因此后台可写 subagent 需要额外强制 `sandbox=required`，由系统沙箱约束 shell 的文件系统访问和网络访问。worktree + sandbox 组合才能覆盖完整的"后台无人审批"安全需求。
 
 ---
 
-## 3. ByteMind 可写 SubAgent 设计方案
+## 3. 实施方案
 
-### 3.1 总体原则
-
-1. **不新增代码路径**：可写和只读共用 `Runner` / `Engine` / `Gateway.Preflight`，差异仅在于 Agent 定义的配置字段
-2. **纵深防御**：工具过滤 → 系统提示词 → 权限快照 → worktree 隔离 → 审计日志
-3. **最小实现**：MVP 只打通前台同步可写 SubAgent，后台可写留待后续
-4. **安全优先**：写工具默认强制 worktree 隔离，无法隔离则拒绝启动
-5. **对齐 Claude Code**：worktree 回传用通知机制而非自动 merge
-
-### 3.2 实现计划
-
-#### 阶段 1：WorktreeManager 实现（基础设施）
-
-这是可写 SubAgent 的前置依赖，当前完全未实现。
+### 阶段 1：WorktreeManager 实现（P0 — 阻塞项）
 
 **新增文件**：`internal/runtime/worktree.go`
 
 ```go
-// WorktreeManager 管理临时 git worktree 的创建、清理和补偿
 type WorktreeManager struct {
     workspaceRoot string
     worktreesRoot string  // <workspace>/.bytemind/worktrees
@@ -135,21 +127,23 @@ func (m *WorktreeManager) Prepare(ctx context.Context, req WorktreeRequest) (*Wo
 // Cleanup 清理 worktree（幂等）
 func (m *WorktreeManager) Cleanup(ctx context.Context, handle WorktreeHandle) error
 
+// HasChanges 检测 worktree 是否有改动
+func (m *WorktreeManager) HasChanges(ctx context.Context, handle WorktreeHandle) (bool, error)
+
 // Reconcile 启动期补偿清理陈旧/异常 worktree
 func (m *WorktreeManager) Reconcile(ctx context.Context) []ReconcileDiagnostic
 ```
 
 **关键行为**：
-
-- worktree_root 固定为 `<workspace>/.bytemind/worktrees`
-- worktree_path 格式：`<workspace>/.bytemind/worktrees/subagent-<invocation_id>`
-- 创建时落 owner 元数据到 `${BYTEMIND_HOME}/runtime/subagents/worktrees/<id>.json`
-- Cleanup 成功时同步删除 worktree 和 owner 元数据
-- Cleanup 失败时标记 `state=cleanup_failed` 等待补偿
-- Runner 启动时执行一次 Reconcile 扫描补偿
+- worktree root 固定为 `<workspace>/.bytemind/worktrees`
+- worktree path 格式：`<workspace>/.bytemind/worktrees/subagent-<invocation_id>`
 - 所有操作必须幂等
+- Cleanup 失败时标记状态等待补偿
+- Runner 启动时执行一次 Reconcile 扫描补偿
 
-**owner 元数据最小字段**：
+**BumpMtime**：resume 时更新 worktree 目录的 mtime，防止 stale cleanup 误删正在恢复使用的 worktree。
+
+**owner 元数据字段**：
 
 ```json
 {
@@ -158,304 +152,295 @@ func (m *WorktreeManager) Reconcile(ctx context.Context) []ReconcileDiagnostic
   "task_id": "...",
   "workspace_root": "/path/to/repo",
   "path": "/path/to/.bytemind/worktrees/subagent-xxx",
+  "transcript_session_id": "...",
   "created_at": "2026-05-08T10:00:00Z",
+  "last_resumed_at": "...",
   "state": "active"
 }
 ```
 
-#### 阶段 2：自动隔离升级（安全核心）
+`transcript_session_id` 建立 session 与 worktree 的双向绑定，resume 时通过该字段验证 worktree 是否仍存在。worktree 不存在时降级为只读模式（fallback 到父 workspace），不阻塞恢复。
 
-在 `Gateway.Preflight()` 中实现"包含写工具则强制 worktree"的规则（当前架构文档已规定但未实现）。
+**Reconcile 四重守卫**（任何一条失败就跳过）：
+
+1. 名称前缀匹配 → 只清理 `subagent-*` 前缀的 worktree，永不触碰用户命名的工作树
+2. 跳过活跃 session → 当前 session 的 worktree 跳过
+3. Mtime cutoff → 只清理超过截止时间（默认 30 天）的陈旧 worktree
+4. Git 状态检查 → `git status --porcelain` 有未提交变更 → 跳过；有未推送提交 → 跳过
+
+### 阶段 2：Gateway 后台隔离自动升级（P0 — 阻塞项）
 
 **修改文件**：`internal/subagents/gateway.go`
 
-在 Preflight 函数末尾，计算 `effectiveIsolation` 的逻辑改为：
+在 Preflight 末尾增加 `resolveEffectiveIsolation`。判定用的写工具集合在 `gateway.go` 内独立定义（与 `subagent_executor.go:236` 的 `writeToolNames` 语义一致，但属于不同包，不跨包引用）：
 
 ```go
-// 当前实现（gateway.go:172-178）：
-isolation := strings.TrimSpace(request.RequestedIsolation)
-if isolation == "" {
-    isolation = strings.TrimSpace(definition.Isolation)
+// gatewayWriteTools 定义哪些工具能修改文件系统，后台执行时需隔离
+// 与 subagent_executor.go 的 writeToolNames 保持同步
+var gatewayWriteTools = map[string]bool{
+    "write_file":      true,
+    "replace_in_file": true,
+    "apply_patch":     true,
+    "run_shell":       true,
 }
-if isolation == "" {
-    isolation = isolationNone
-}
-
-// 改为：
-effectiveIsolation := resolveEffectiveIsolation(
-    request.RequestedIsolation,
-    definition.Isolation,
-    effectiveTools,  // 传入最终工具集
-    toolSpecLookup,   // 传入 ToolSpec 查询接口
-)
 
 func resolveEffectiveIsolation(
     requestedIsolation string,
     definitionIsolation string,
     effectiveTools []string,
-    lookup ToolSpecLookup,
+    runInBackground bool,
 ) string {
-    // 1. 优先级：请求参数 > 定义默认 > 空
     isolation := firstNonEmpty(requestedIsolation, definitionIsolation)
-    
-    // 2. 如果工具集包含写工具，强制升级为 worktree
-    hasWrite := hasDestructiveTools(effectiveTools, lookup)
-    if hasWrite && isolation != isolationWorktree {
-        isolation = isolationWorktree
+
+    // 后台 + 写工具（含 run_shell）→ 自动升级为 worktree
+    // 同步模式不受影响（用户在回路中）
+    if runInBackground && hasWriteTool(effectiveTools, gatewayWriteTools) {
+        if isolation != "worktree" {
+            isolation = "worktree"
+        }
     }
-    
+
     if isolation == "" {
-        isolation = isolationNone
+        isolation = "none"
     }
     return isolation
 }
 ```
 
-**新增辅助函数**：
+**判定依据**：`gatewayWriteTools` 在 `gateway.go` 内独立定义，包含 `write_file`、`replace_in_file`、`apply_patch`、`run_shell`。`run_shell` 必须包含在内——shell 命令可写入文件系统，不触发 worktree 会导致后台 shell 在父 workspace 执行。`gatewayWriteTools` 与 `subagent_executor.go:236` 的 `writeToolNames` 语义一致，但由于两个包不互相引用，各自独立维护。
 
-```go
-func hasDestructiveTools(toolNames []string, lookup ToolSpecLookup) bool {
-    for _, name := range toolNames {
-        spec, ok := lookup.Spec(name)
-        if !ok {
-            continue
-        }
-        if !spec.ReadOnly || spec.Destructive {
-            return true
-        }
-    }
-    return false
-}
-```
+**无需 ToolSpec 查询**：用显式工具名集合判定。`!ReadOnly` 会误伤 `task_stop`（ReadOnly=false 但非文件写工具），显式集合避免了这个问题。
 
-**注意**：Gateway 当前没有 ToolSpec 查询能力。需要注入或通过接口扩展。建议在 `PreflightRequest` 中增加可选的 `ToolSpecLookup` 字段，或在 Gateway 构造时注入。
+### 新增错误码
 
-#### 阶段 3：权限快照机制
+本方案在 `subagent_delegate.go` 新增以下错误码，遵循现有的 `subagent_<category>_<reason>` 命名约定：
 
-对于可写 SubAgent，需要在启动前生成权限快照，用于审计和运行期校验。
+| 错误码 | 字符串 | 语义 | 可重试 |
+|--------|--------|------|--------|
+| `subagent_isolation_required` | `"subagent_isolation_required"` | worktree 创建失败，无法隔离后台写操作 | false |
+| `subagent_sandbox_unavailable` | `"subagent_sandbox_unavailable"` | 后台可写要求 sandbox=required 但系统沙箱不可用 | false |
 
-**新增文件**：`internal/agent/subagent_approval_snapshot.go`
+现有错误码 `subagent_background_write_not_allowed` 保留（防御性），语义收窄为"后台写 tool 无 worktree"（理论上不应到达，Gateway 已自动升级）。
 
-```go
-type SubAgentApprovalSnapshot struct {
-    SnapshotID           string    `json:"snapshot_id"`
-    InvocationID         string    `json:"invocation_id"`
-    TaskID               string    `json:"task_id"`
-    ApprovalPolicy       string    `json:"approval_policy"`
-    WritableRoots        []string  `json:"writable_roots"`
-    AllowedTools         []string  `json:"allowed_tools"`
-    EffectiveToolSetHash string    `json:"effective_toolset_hash"`
-    Isolation            string    `json:"isolation"`
-    WorktreePath         string    `json:"worktree_path,omitempty"`
-    CreatedAt            time.Time `json:"created_at"`
-}
-```
-
-**写入时机**：Preflight 通过后、子任务启动前
+### 阶段 3：放开后台可写 + 绑定 worktree 到执行环境（P0 — 阻塞项）
 
 **修改文件**：`internal/agent/subagent_delegate.go`
 
-在 `runtimeRequest.Execute` 闭包启动前，生成并持久化快照：
+这是 P0-2 修复的关键：将 Preflight 产出的 `Isolation` 字符串转为具体的 worktree 句柄，并注入到子执行环境。
+
+**数据流**：
+
+```
+Preflight → Isolation="worktree"
+  → WorktreeManager.Prepare()           // 创建 worktree
+  → childWorkspace = handle.Path        // 覆盖子 runner 工作目录
+  → metadata["worktree_path"] = path    // 持久化绑定（供 resume 使用）
+  → cfg.SandboxEnabled = true           // 后台可写强制沙箱
+  → cfg.SystemSandboxMode = "required"  // 约束 shell 文件系统和网络访问
+  → Execute
+  → Cleanup / 保留通知
+```
+
+**具体修改**：
+
+1. 放开只读硬限制，改为条件性检查：
 
 ```go
-// 在 delegateSubAgent() 中，遍历 preflight.EffectiveTools 后：
-if !isReadOnly {
-    snapshot := buildApprovalSnapshot(...)
-    if err := persistSnapshot(snapshot); err != nil {
-        // 快照写入失败 → 启动前失败
+// 移除 isReadOnlySubAgentToolset 调用，改为：
+if request.RunInBackground && hasFileWriteTools && preflight.Isolation != "worktree" {
+    result.Error = &tools.DelegateSubAgentError{
+        Code:      subAgentErrorCodeBackgroundWriteDenied,
+        Message:   "background subagents with write tools require isolation=worktree",
+        Retryable: false,
+    }
+    return result, nil
+}
+```
+
+2. 在 `runtimeRequest.Execute` 闭包之前，创建 worktree 并切换 workspace：
+
+```go
+var worktreeHandle *WorktreeHandle
+if preflight.Isolation == "worktree" {
+    handle, err := worktreeManager.Prepare(ctx, WorktreeRequest{...})
+    if err != nil {
+        // worktree 创建失败 → 启动前拒绝
         result.Error = &tools.DelegateSubAgentError{
-            Code:    "subagent_snapshot_failed",
-            Message: "failed to persist approval snapshot",
+            Code:      subAgentErrorCodeIsolationRequired,
+            Message:   fmt.Sprintf("failed to create worktree: %v", err),
+            Retryable: false,
         }
         return result, nil
     }
+    worktreeHandle = handle
+    // 将子执行环境切换到 worktree 路径
+    workspace = handle.Path
+    // 限制 writable_roots 为仅 worktree，防止绝对路径写入父 workspace
+    cfg.WritableRoots = []string{handle.Path}
+    // 持久化绑定
+    metadata["worktree_path"] = handle.Path
+    // 后台可写强制 sandbox=required
+    cfg.SandboxEnabled = true
+    cfg.SystemSandboxMode = "required"
 }
 ```
 
-#### 阶段 4：审批策略差异化
+`WritableRoots` 覆盖是关键——子 runner 原样继承父级的 WritableRoots（`subagent_executor.go:163`），其中包含父 workspace 路径。若不覆盖，`write_file("/parent/workspace/secret.txt")` 可绕过 worktree 写入父工作区。覆盖为 `[worktreePath]` 后，文件工具的写入边界收缩到 worktree 内。
 
-当前 `nonInteractiveApproval()` 对所有子 agent 一视同仁地自动批准。对于可写 SubAgent 需要更精细的控制。
-
-**修改文件**：`internal/agent/subagent_isolation.go`
+**配置覆盖如何传入子 runner**：当前子 runner 配置在 `newSubAgentChildRunner`（`subagent_executor.go:158`）内从父 runner 深拷贝。为支持 delegate 层的覆盖，在 `SubAgentExecutionInput` 增加 `Overrides` 字段：
 
 ```go
-// 当前：所有子 agent 自动批准
-func nonInteractiveApproval() tools.ApprovalHandler {
-    return func(req tools.ApprovalRequest) (tools.ApprovalDecision, error) {
-        return tools.ApprovalDecision{Disposition: tools.ApprovalApproveOnce}, nil
-    }
+// SubAgentConfigOverrides 由 delegate 层设置，覆盖子 runner 的继承配置
+type SubAgentConfigOverrides struct {
+    Workspace         string
+    WritableRoots     []string
+    SandboxEnabled    *bool    // nil = 不覆盖
+    SystemSandboxMode string   // "" = 不覆盖
 }
 
-// 改为：根据工具集和 isolation 模式决定审批策略
-func subAgentApproval(isolation string, tools []string, lookup ToolSpecLookup) tools.ApprovalHandler {
-    hasWrite := hasDestructiveTools(tools, lookup)
-    
-    return func(req tools.ApprovalRequest) (tools.ApprovalDecision, error) {
-        switch {
-        case hasWrite && isolation == "worktree":
-            // worktree 隔离下，写操作在独立副本中进行 → 自动批准
-            return tools.ApprovalDecision{Disposition: tools.ApprovalApproveOnce}, nil
-        case hasWrite && isolation != "worktree":
-            // 理论上不应到达这里（Preflight 强制 worktree），防御性拒绝
-            return tools.ApprovalDecision{
-                Disposition: tools.ApprovalDeny,
-                Reason:      "write operations require worktree isolation",
-            }, nil
-        default:
-            // 只读工具集 → 自动批准
-            return tools.ApprovalDecision{Disposition: tools.ApprovalApproveOnce}, nil
-        }
-    }
+type SubAgentExecutionInput struct {
+    // ... 现有字段 ...
+    Overrides *SubAgentConfigOverrides  // 可选，后台可写时由 delegate 设置
 }
 ```
 
-#### 阶段 5：系统提示词分级（软防护）
+`newSubAgentChildRunner` 在深拷贝父 config 之后应用 `Overrides`（非零值覆盖）。数据流：
 
-为只读和可写 SubAgent 注入不同的行为约束提示词。
+```
+delegateSubAgent()                        // subagent_delegate.go
+  ├─ 创建 worktree → workspace = handle.Path
+  ├─ 设置 input.Overrides = {workspace, writableRoots, sandbox}
+  └─ r.subAgentExecutor.Execute(input)    // subagent_executor.go
+       └─ newSubAgentChildRunner(overrides)
+            ├─ cfg = deepCopy(parentConfig)       // 现有逻辑
+            ├─ if overrides.Workspace != "" → workspace = overrides.Workspace
+            ├─ if overrides.WritableRoots != nil → cfg.WritableRoots = overrides.WritableRoots
+            └─ if overrides.SandboxEnabled != nil → cfg.SandboxEnabled = *ov.SandboxEnabled
+```
 
-**修改文件**：`internal/agent/subagent_executor.go` 或 `internal/agent/prompt.go`
-
-在子会话 prompt 的 `[SubAgent Runtime]` 块中增加行为约束：
+3. Resume 时 worktree 缺失的降级处理：
 
 ```go
-func renderSubAgentGuardrails(definition subagentspkg.Agent, effectiveTools []string, toolSpecs ToolSpecLookup) string {
-    isReadOnly := !hasDestructiveTools(effectiveTools, toolSpecs)
-    
-    if isReadOnly {
-        return `=== CRITICAL: READ-ONLY MODE ===
-You are STRICTLY PROHIBITED from:
-- Creating or modifying files
-- Running shell commands that change system state
-- Deleting any files
-
-Your role is EXCLUSIVELY to read, search, and analyze existing code.`
+// 在 subagent_executor.go resume 路径中：
+if resumeID != "" && preflight.Isolation == "worktree" {
+    // 通过 transcript_session_id 查找 worktree
+    exists, handle, err := worktreeManager.FindBySession(ctx, resumeID)
+    if err != nil || !exists {
+        // worktree 不存在 → 降级为只读
+        // 从 effectiveTools 中移除文件写工具和 run_shell
+        preflight.EffectiveTools = removeWriteTools(preflight.EffectiveTools)
+        preflight.Isolation = "none"
+        workspace = parentWorkspace
+        // 重新构建 allowedTools
+        preflight.AllowedTools = buildAllowedToolSet(preflight.EffectiveTools)
+    } else {
+        // worktree 存在 → BumpMtime + 恢复
+        worktreeManager.BumpMtime(ctx, handle)
+        workspace = handle.Path
     }
-    
-    return `=== WRITE MODE - FILE MODIFICATIONS ALLOWED ===
-You have access to file editing tools. Follow these rules:
-- Prefer editing existing files to creating new ones
-- Respect the project conventions described in AGENTS.md
-- Only modify files within the workspace boundary
-- All changes are made in an isolated worktree — they will NOT affect the main workspace until merged`
 }
 ```
 
-#### 阶段 6：上下文优化
+降级不是靠修改审批策略（`nonInteractiveApproval` 仍自动批准），而是**直接收窄工具集**——移除文件写工具和 `run_shell` 后，子 agent 没有可用的写入口。比改审批策略更可靠（第一道闸门拦截，而非依赖第二道）。
 
-只读 agent 跳过不必要的上下文以节省 token。
-
-**修改文件**：`internal/agent/engine_run_setup.go` 或 `internal/agent/subagent_executor.go`
-
-在子会话的 `prepareRunPrompt` 中增加判断：
+4. Sandbox 可用性预检查（后台可写的前置条件）：
 
 ```go
-// 在 prepareRunPrompt 或等效位置：
-isReadOnly := !hasDestructiveTools(preflight.EffectiveTools, toolSpecs)
-
-if isReadOnly {
-    // 只读 agent 不需要项目约定和 git 状态
-    promptInput.OmitClaudeMd = true
-    promptInput.OmitGitStatus = true
+// 在强制 sandbox=required 之前检查
+if sandboxStatus, err := resolveAgentSystemSandboxRuntimeStatus(true, "required"); err != nil {
+    // sandbox required 不可用（如 Windows 无 bwrap、Linux 无 unshare）
+    result.Error = &tools.DelegateSubAgentError{
+        Code:      subAgentErrorCodeSandboxUnavailable,
+        Message:   fmt.Sprintf("background writable subagent requires system sandbox: %v", err),
+        Retryable: false,
+    }
+    return result, nil
 }
 ```
 
-这需要在 `PromptInput` 或等效结构中增加 `OmitClaudeMd` 和 `OmitGitStatus` 字段。
+不做静默降级——sandbox 不可用时直接拒绝，给出明确错误信息。避免用户以为有沙箱保护实际没有。
 
-#### 阶段 7：结果通知增强（Worktree 回传）
+5. 新增错误码常量（在 `subagent_delegate.go` 头部的常量块中）：
 
-当 worktree 中有改动时，将 worktree 信息注入到结果通知中。
+```go
+subAgentErrorCodeIsolationRequired  = "subagent_isolation_required"
+subAgentErrorCodeSandboxUnavailable = "subagent_sandbox_unavailable"
+```
+
+6. 后台可写需要 `hasWriteTool` 检查，复用阶段 2 相同的 `gatewayWriteTools` 集合。
+
+逻辑：
+- 后台 + 只读工具 → 放行（不变）
+- 后台 + 文件写工具 + worktree → 创建 worktree + 切换 workspace + 强制 sandbox → 放行（新路径）
+- 后台 + 文件写工具 + 无 worktree → 拒绝（防御性保留）
+- worktree 创建失败 → 启动前拒绝（错误码 `subagent_isolation_required`）
+
+### 阶段 4：Worktree 结果通知增强（P1）
 
 **修改文件**：`internal/agent/subagent_delegate.go` 和 `internal/agent/subagent_notifier.go`
 
-在子 agent 完成后、cleanup 之前：
+子 agent 完成后，检测 worktree 状态并注入到结果和通知中：
 
 ```go
 // 检测 worktree 改动
-if preflight.Isolation == isolationWorktree && worktreeHandle != nil {
+if preflight.Isolation == "worktree" && worktreeHandle != nil {
     changed, err := worktreeManager.HasChanges(ctx, worktreeHandle)
     if err != nil {
-        // 检测失败：保守保留 worktree
         result.Worktree = &WorktreeInfo{
             Path:   worktreeHandle.Path,
             Branch: worktreeHandle.Branch,
             State:  "unknown",
         }
     } else if changed {
-        // 有改动：保留 worktree，通知父 agent
         result.Worktree = &WorktreeInfo{
             Path:   worktreeHandle.Path,
             Branch: worktreeHandle.Branch,
             State:  "changed",
         }
     } else {
-        // 无改动：自动清理
+        // 无改动 → 自动清理
         worktreeManager.Cleanup(ctx, worktreeHandle)
     }
 }
 ```
 
-同时更新 `SubAgentCompletionNotification` 以包含 worktree 信息：
+- 无改动 → 自动清理 worktree
+- 有改动 → 保留 worktree，通过 `SubAgentCompletionNotification` 通知父 agent（含 path、branch、state）
+- 检测失败 → 保守保留，state 标记为 "unknown"
 
-```go
-type SubAgentCompletionNotification struct {
-    // ... 现有字段 ...
-    WorktreePath   string `json:"worktree_path,omitempty"`
-    WorktreeBranch string `json:"worktree_branch,omitempty"`
-    WorktreeState  string `json:"worktree_state,omitempty"`  // "changed" | "clean" | "unknown"
-}
-```
-
-#### 阶段 8：内置可写 SubAgent 模板
-
-提供 `general` 作为可写 SubAgent 的参考定义。
-
-**新增文件**：`internal/subagents/general.md`
-
-```markdown
----
-name: general
-description: General-purpose agent for complex multi-step tasks including file modifications. Use when the task requires both reading and writing code.
-tools:
-  - read_file
-  - list_files
-  - search_text
-  - run_shell
-  - write_file
-  - replace_in_file
-  - apply_patch
-disallowed_tools:
-  - delegate_subagent
-max_turns: 15
-timeout: 5m
-isolation: worktree
 ---
 
-You are a general-purpose coding agent. You can read, search, and modify code.
-Prefer editing existing files to creating new ones. Only modify files within
-the task scope. Return a structured summary with findings and references.
-```
-
-### 3.3 修改清单汇总
+## 4. 修改清单汇总
 
 | 文件 | 变更类型 | 说明 |
 |------|----------|------|
-| `internal/runtime/worktree.go` | **新增** | WorktreeManager 实现 |
+| `internal/runtime/worktree.go` | **新增** | WorktreeManager（Prepare/Cleanup/HasChanges/BumpMtime/Reconcile） |
 | `internal/runtime/worktree_test.go` | **新增** | WorktreeManager 测试 |
-| `internal/subagents/gateway.go` | 修改 | 自动升级 isolation 为 worktree |
-| `internal/subagents/gateway_test.go` | 修改 | 增加写工具强制隔离测试 |
-| `internal/agent/subagent_isolation.go` | 修改 | 审批策略差异化 |
-| `internal/agent/subagent_approval_snapshot.go` | **新增** | 权限快照机制 |
-| `internal/agent/subagent_delegate.go` | 修改 | 集成 worktree + 快照 + 结果增强 |
-| `internal/agent/subagent_executor.go` | 修改 | 系统提示词分级、上下文优化 |
+| `internal/subagents/gateway.go` | 修改 | 后台+写工具自动升级 isolation；复用 writeToolNames 判定 |
+| `internal/subagents/gateway_test.go` | 修改 | 自动升级 + 不误升级 + 不误伤非文件写工具 测试 |
+| `internal/agent/subagent_delegate.go` | 修改 | 放开后台可写；创建 worktree + 切换 workspace + 覆盖 WritableRoots；sandbox 可用性预检查 + 强制 required；注入 worktree_path |
+| `internal/agent/subagent_executor.go` | 修改 | 新增 `SubAgentConfigOverrides` 类型；`SubAgentExecutionInput` 增加 `Overrides` 字段；`newSubAgentChildRunner` 应用覆盖；resume 降级逻辑 |
 | `internal/agent/subagent_notifier.go` | 修改 | 通知增加 worktree 字段 |
-| `internal/subagents/general.md` | **新增** | 可写 SubAgent 模板定义 |
-| `internal/agent/prompt_subagents.go` | 修改 | 渲染行为约束提示词 |
-| `docs/subagent-architecture.md` | 修改 | 更新实现状态，标记可写 SubAgent 为已实现 |
 
-### 3.4 安全边界再确认
+### 不需要修改的代码文件
+
+| 文件 | 原因 |
+|------|------|
+| `internal/agent/subagent_isolation.go` | `nonInteractiveApproval()` 保持不变——worktree 隔离下自动批准是正确的行为 |
+| `internal/agent/subagent_approval_snapshot.go` | **不创建**——评估为过度设计，现有任务元数据已足够 |
+
+### 需要同步的文档
+
+| 文件 | 说明 |
+|------|------|
+| `docs/subagent-architecture.md` | 更新"MVP 后台仅只读 + 预审批快照"为"后台可写 + worktree 自动升级"，同步错误码说明 |
+
+---
+
+## 5. 安全边界总览
 
 ```
-用户定义可写 SubAgent
+后台可写 SubAgent 启动
   │
   ├─ 工具声明
   │   └─ 交集收窄：definition.Tools ∩ parent_visible_tools
@@ -463,82 +448,115 @@ the task scope. Return a structured summary with findings and references.
   │         └─ 最终工具集 ⊆ 父会话工具集（永不扩权）
   │
   ├─ 隔离策略
-  │   └─ 包含写工具 → 自动升级为 worktree
+  │   └─ 后台 + 文件写工具 → 自动升级为 worktree
+  │      └─ worktree 创建 → 切换 runner workspace 为 worktree 路径
+  │      └─ worktree_path 写入 task metadata（供 resume 绑定）
   │      └─ worktree 创建失败 → 启动前拒绝
+  │      └─ 同步可写 → 不受影响（isolation 尊重用户声明）
   │
-  ├─ 权限快照
-  │   └─ 启动前生成并持久化
-  │      └─ 运行期校验：不允许快照外的新权限请求
+  ├─ Shell 安全
+  │   └─ 后台可写 → 强制 SandboxEnabled=true + SystemSandboxMode="required"
+  │      └─ 约束 shell 的文件系统访问和网络访问
+  │      └─ worktree 仅隔离文件工具，shell 由 sandbox 兜底
   │
   ├─ 审批策略
-  │   └─ worktree 内写操作 → 自动批准（在隔离副本中执行）
-  │      └─ 非 worktree 写操作 → 拒绝（不应到达，防御性编码）
+  │   └─ worktree 内写操作 → nonInteractiveApproval 自动批准（沙箱内安全）
+  │      └─ 非 worktree 后台写 → 不应到达（Gateway 已自动升级，防御性拒绝）
   │
   ├─ 文件系统
   │   └─ worktree 模式 → 写入独立副本 → 父工作区不受影响
   │      └─ 无改动 → 自动清理
   │      └─ 有改动 → 保留 worktree + 通知父 agent
   │
-  └─ 审计
-      └─ task event + approval snapshot + worktree state 全链路可追溯
+  ├─ 续接
+  │   └─ resume 时通过 transcript_session_id 查找 worktree
+  │      └─ worktree 存在 → BumpMtime + 恢复
+  │      └─ worktree 不存在 → 从 effectiveTools 移除写工具+run_shell（收窄工具集而非改审批策略）
+  │
+  └─ 配置继承
+      └─ WritableRoots / ExecAllowlist / NetworkAllowlist
+         └─ 深拷贝自父配置 → 所有维度 ≤ 父 agent
 ```
 
-### 3.5 MVP 不做的事
-
-- 后台可写 SubAgent（当前后台强制只读，这个限制在 MVP 阶段保持）
-- worktree 改动自动 merge 回父分支
-- 跨会话 worktree 复用
-- 自定义 `worktree_root` 路径配置
-- 写操作的用户交互式审批（worktree 内自动批准）
-- 多个可写 SubAgent 的并行执行
-
-### 3.6 与 Claude Code 设计对比
-
-| 维度 | Claude Code | ByteMind 当前 | ByteMind 目标 |
-|------|-------------|--------------|--------------|
-| 工具过滤 | `disallowedTools` 列表 | `Gateway.Preflight` 交集+差集 | 保持现有（更严格的数学集合模型） |
-| 隔离级别 | `worktree` / 无隔离 / Fork | `none` / `worktree`（设计） | 实现 worktree + 自动升级规则 |
-| 审批策略 | 继承/bubble/自动拒绝 | 统一自动批准 | 按 isolation+工具集差异化 |
-| 系统提示词 | READ-ONLY 警告 | 无区分 | 增加行为约束提示词 |
-| 上下文优化 | omitClaudeMd + omitGitStatus | 无 | 按只读/可写区分 |
-| Worktree 清理 | 无改动自动删除 | 设计但未实现 | 实现完整清理+补偿+幂等 |
-| 结果通知 | `<task-notification>` XML | `SubAgentCompletionNotification` | 增加 worktree 字段 |
-| 安全分类器 | `classifyHandoffIfNeeded` | 无 | MVP 不做（后续扩展） |
-| 内置可写 Agent | `general-purpose` | 无 | `general` 模板 |
-| 一键只读 | Explore/Plan agent | explorer/review | 保持现有 |
-
----
-
-## 4. 实施优先级
-
-### P0（阻塞可写 SubAgent 上线）
-1. WorktreeManager 实现（创建/清理/补偿/幂等）
-2. Gateway 自动隔离升级（写工具 → worktree）
-3. 审批策略差异化
-
-### P1（质量与安全增强）
-4. 权限快照机制
-5. 结果通知中的 worktree 回传
-6. 可写 SubAgent 模板定义 (`general`)
-
-### P2（体验优化）
-7. 系统提示词分级（软防护）
-8. 上下文优化（省略 CLAUDE.md/gitStatus）
-
----
-
-## 5. 测试策略
+## 6. 测试策略
 
 | 测试场景 | 类型 | 覆盖点 |
 |----------|------|--------|
 | WorktreeManager.Prepare 创建成功 | 单元 | 目录结构、分支名、owner 元数据 |
 | WorktreeManager.Cleanup 删除成功 | 单元 | worktree + 元数据同步删除 |
 | WorktreeManager.Cleanup 幂等 | 单元 | 重复调用不报错 |
-| WorktreeManager.Reconcile 补偿清理 | 单元 | 陈旧/异常 worktree 回收 |
-| Preflight 包含写工具 → isolation=worktree | 单元 | 自动升级逻辑 |
-| Preflight 只读工具 + 显式 isolation=none → 保持 none | 单元 | 不误升级 |
-| 可写 SubAgent 同步执行成功 + worktree 有改动 | 集成 | 完整链路 + 通知含 worktree |
-| 可写 SubAgent 同步执行成功 + worktree 无改动 | 集成 | 自动清理 + 通知无 worktree |
-| 可写 SubAgent worktree 创建失败 → 启动前拒绝 | 集成 | 错误码 `subagent_isolation_required` |
-| 后台可写 SubAgent → 拒绝 | 单元 | 错误码 `subagent_background_write_not_allowed` |
-| 快照持久化成功 + 运行期校验通过 | 单元 | 完整的快照生命周期 |
+| WorktreeManager.HasChanges 无改动 | 单元 | 返回 false |
+| WorktreeManager.HasChanges 有改动 | 单元 | 返回 true |
+| WorktreeManager.BumpMtime 更新 mtime | 单元 | resume 时防止 stale cleanup 误删 |
+| WorktreeManager.Reconcile 四重守卫 | 单元 | 名称模式 + session + mtime + git 状态 |
+| WorktreeManager.Reconcile 有未提交变更 → 跳过 | 单元 | git status --porcelain 检查 |
+| Preflight 后台+文件写工具 → isolation=worktree | 单元 | 自动升级逻辑 |
+| Preflight 同步+文件写工具 → 保持用户声明的 isolation | 单元 | 不误升级 |
+| Preflight 后台+只读工具 → 保持 none | 单元 | 不误升级 |
+| Preflight 后台+task_stop 不会触发升级 | 单元 | writeToolNames 集合不会误伤非文件写工具 |
+| Preflight 后台+run_shell 触发 worktree 升级 | 单元 | run_shell 在 writeToolNames 中 |
+| 后台可写：worktree 创建成功 → 切换 workspace + 强制 sandbox + 覆盖 WritableRoots | 集成 | 完整绑定链路 |
+| 后台可写：WritableRoots 被限制为 worktree 路径 | 单元 | 绝对路径无法写入父 workspace |
+| 后台可写：worktree 有改动 → 保留 + 通知含 worktree | 集成 | 完整链路 + 通知含 worktree |
+| 后台可写：worktree 无改动 → 自动清理 | 集成 | 自动清理 + 通知无 worktree |
+| 后台可写：worktree 创建失败 → 启动前拒绝 | 集成 | 错误码 `subagent_isolation_required` |
+| 后台可写 SubAgent 无 worktree → 拒绝 | 单元 | 防御性拒绝 |
+| resume：worktree 存在 → BumpMtime + 恢复 | 集成 | resume 时不触发 stale cleanup |
+| resume：worktree 不存在 → 收窄工具集（移除写工具+run_shell） | 集成 | 降级靠工具集收窄，不崩溃 |
+| resume：worktree 不存在 → 仍有写工具但限制写入路径的场景不存在 | 单元 | 降级后的工具集不包含文件写工具 |
+| Sandbox 不可用 + 后台可写 → 启动前拒绝 | 单元 | 明确错误码，不做静默降级 |
+| Sandbox 强制启用：后台可写 → SandboxEnabled=true, mode=required | 单元 | delegate 中配置检查 |
+| 同步可写 SubAgent（general）正常运行 | 回归 | 现有行为不受影响 |
+
+## 7. 与 Claude Code 设计对比
+
+| 维度 | Claude Code | ByteMind 当前 | ByteMind 目标 |
+|------|-------------|--------------|--------------|
+| 工具过滤 | `disallowedTools` 列表 | `Gateway.Preflight` 交集+差集 | 保持现有（更严格的数学集合模型） |
+| 隔离级别 | worktree / 无隔离 | none / worktree（部分实现） | 实现 worktree + 后台写自动升级 |
+| 审批策略 | 继承/bubble/auto-deny | 统一 nonInteractiveApproval 自动批准 | 保持现有（worktree 隔离下合理） |
+| 系统提示词 | READ-ONLY 警告 | 已有（buildToolSafetyGuardrails） | 保持现有 |
+| 结果通知 | `<task-notification>` XML | `SubAgentCompletionNotification` | 增加 worktree 字段 |
+| Shell 沙箱 | OS sandbox (bwrap) | SandboxEnabled 继承父级 | 后台可写强制 required |
+| Worktree 数据流 | AsyncLocalStorage CWD 劫持 | 未实现 | Preflight → Prepare → 切换 workspace |
+| 写工具判定 | 精确枚举白名单 | `!ReadOnly` 误伤 task_stop 等 | 显式 fileWriteToolNames 集合 |
+| 续接补偿 | metadata 绑定 + mtime bump + 降级 | session resume 已有 | worktree 绑定 + BumpMtime + 降级 |
+| 内置可写 Agent | general-purpose | general（同步已可用） | 扩展为后台也可用 |
+| 审批快照 | 无 | 无（设计但评估为过度设计） | 不做 |
+
+## 8. MVP 预留（为后续迭代预留的接口/字段）
+
+当前只实现最小路径（P0: WorktreeManager + Gateway 自动升级 + 放开后台可写），但以下预留以零成本避免将来的 breaking change：
+
+### 已预留
+
+**`Agent.PermissionMode` 字段**（`internal/subagents/types.go:28`）
+
+```go
+PermissionMode string // reserved: inherit, bubble, acceptEdits, plan
+```
+
+MVP 中该字段为空，`nonInteractiveApproval()` 统一处理所有审批。将来启用后，用户可在 agent 定义中声明 `permission_mode: bubble` 将审批请求冒泡到父终端。
+
+### 无需预留（现有机制已覆盖）
+
+**异步工具白名单**：`Gateway.Preflight` 的交集+差集模型 + `Agent.DisallowedTools` 已能精确控制后台可用工具集，不需要额外的 `ASYNC_DISALLOWED_TOOLS` 常量。用户定义后台可写 agent 时，在 `disallowed_tools` 中排除交互类工具即可。
+
+**Transcript 持久化**：`subagent_executor.go:147-153` 已通过 `SessionStore.Save()` 持久化子会话，`TranscriptSessionID` 回写到结果中。恢复路径已验证。
+
+**自动后台化**：`DelegateSubAgentResult.Status` 当前值为 `"completed"` / `"accepted"`，将来可加 `"auto_backgrounded"`，不破坏现有协议。
+
+### 将来扩展点（非 MVP 范围，但设计了扩展方式）
+
+**中间进度事件**：`SubAgentNotifier` 当前有 `NotifyCompletion` / `DrainPending` 两个方法。进度追踪可通过**可选接口**扩展，不破坏现有实现者：
+
+```go
+// 将来定义，非 MVP
+type SubAgentProgressNotifier interface {
+    NotifyProgress(SubAgentProgressNotification)
+}
+```
+
+调用方做类型断言：`if pn, ok := notifier.(SubAgentProgressNotifier); ok { pn.NotifyProgress(...) }`。这是 Go 的标准扩展模式。
+
+**安全分类器**：在 `SubAgentCompletionNotification` 中预留 `SecurityWarning string` 字段（当前为空），将来分类器检测到问题时填入。无需新接口。
