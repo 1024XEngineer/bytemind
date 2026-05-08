@@ -2618,7 +2618,7 @@ func summarizeTool(name, payload string) (string, []string, string) {
 			if len(result.DiffPreview.Files) > 0 {
 				f := result.DiffPreview.Files[0]
 				lines := []string{fmt.Sprintf("+%d -%d", f.Added, f.Removed)}
-				lines = append(lines, diffHunkPreviewLines(f.Hunks)...)
+				lines = append(lines, diffExpandedDetailLines(result.DiffPreview)...)
 				return "Write " + filepath.Base(result.Path), lines, "done"
 			}
 			return "Write " + filepath.Base(result.Path), []string{
@@ -2637,10 +2637,7 @@ func summarizeTool(name, payload string) (string, []string, string) {
 			if len(result.DiffPreview.Files) > 0 {
 				f := result.DiffPreview.Files[0]
 				lines = append(lines, fmt.Sprintf("+%d -%d", f.Added, f.Removed))
-				lines = append(lines, diffHunkPreviewLines(f.Hunks)...)
-				if result.DiffPreview.Truncated {
-					lines = append(lines, "diff: truncated")
-				}
+				lines = append(lines, diffExpandedDetailLines(result.DiffPreview)...)
 				return "改动 " + filepath.Base(result.Path), lines, "done"
 			}
 			return "改动 " + filepath.Base(result.Path), []string{
@@ -2661,9 +2658,8 @@ func summarizeTool(name, payload string) (string, []string, string) {
 				for _, f := range result.DiffPreview.Files {
 					lines = append(lines, fmt.Sprintf("%s %s  +%d -%d", f.ChangeType, compactDisplayPath(f.Path), f.Added, f.Removed))
 				}
-				lines = append(lines, diffHunkPreviewLines(result.DiffPreview.Files[0].Hunks)...)
+				lines = append(lines, diffExpandedDetailLines(result.DiffPreview)...)
 				if result.DiffPreview.Truncated {
-					lines = append(lines, "diff: truncated")
 				}
 				return fmt.Sprintf("改动 %d 个文件, +%d -%d", result.DiffPreview.TotalFiles, result.DiffPreview.TotalAdded, result.DiffPreview.TotalRemoved), lines, "done"
 			}

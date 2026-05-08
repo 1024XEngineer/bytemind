@@ -48,3 +48,44 @@ func diffHunkPreviewLines(hunks []diffHunkLocal) []string {
 	}
 	return preview
 }
+
+func diffHunkExpandedLines(hunks []diffHunkLocal) []string {
+	if len(hunks) == 0 {
+		return nil
+	}
+	lines := make([]string, 0)
+	for hi, h := range hunks {
+		if hi > 0 {
+			lines = append(lines, "  ---")
+		}
+		if h.OldStart > 0 || h.NewStart > 0 {
+			lines = append(lines,
+				"  @@"+" -"+strconv.Itoa(h.OldStart)+","+strconv.Itoa(h.OldLines)+
+					" +"+strconv.Itoa(h.NewStart)+","+strconv.Itoa(h.NewLines)+" @@")
+		}
+		for _, line := range h.Lines {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func diffExpandedDetailLines(dp diffPreviewLocal) []string {
+	if len(dp.Files) == 0 {
+		return nil
+	}
+	lines := make([]string, 0)
+	for fi, f := range dp.Files {
+		if fi > 0 {
+			lines = append(lines, "  ---")
+		}
+		if fi == 0 && len(dp.Files) > 1 {
+			lines = append(lines, f.ChangeType+" "+f.Path+"  +"+strconv.Itoa(f.Added)+" -"+strconv.Itoa(f.Removed))
+		}
+		lines = append(lines, diffHunkExpandedLines(f.Hunks)...)
+	}
+	if dp.Truncated {
+		lines = append(lines, "  (diff truncated)")
+	}
+	return lines
+}
