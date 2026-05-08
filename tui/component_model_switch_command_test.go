@@ -9,6 +9,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/config"
 	"github.com/1024XEngineer/bytemind/internal/provider"
 	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestRunModelsCommandOpensListAndRefreshesTargets(t *testing.T) {
@@ -127,35 +128,6 @@ func TestRunModelAddCommandOpensStartupGuide(t *testing.T) {
 	}
 }
 
-func TestRunModelDeleteCommandOpensDeletePicker(t *testing.T) {
-	m := &model{
-		runner: &subAgentCommandRunnerStub{},
-		cfg: config.Config{
-			ProviderRuntime: config.ProviderRuntimeConfig{
-				DefaultProvider: "openai",
-				DefaultModel:    "gpt-5.4",
-				Providers: map[string]config.ProviderConfig{
-					"openai":   {Type: "openai-compatible", Model: "gpt-5.4"},
-					"deepseek": {Type: "openai-compatible", Model: "deepseek-chat"},
-				},
-			},
-		},
-	}
-
-	if err := m.runModelCommand("/model delete", []string{"/model", "delete"}); err != nil {
-		t.Fatalf("expected /model delete to open picker, got %v", err)
-	}
-	if !m.modelsOpen {
-		t.Fatal("expected delete picker to open")
-	}
-	if normalizeModelPickerMode(m.modelPickerMode) != modelPickerModeDelete {
-		t.Fatalf("expected delete picker mode, got %q", m.modelPickerMode)
-	}
-	if m.statusNote != "Opened model delete picker." {
-		t.Fatalf("unexpected status note %q", m.statusNote)
-	}
-}
-
 func TestOpenModelPickerWithModeFallsBackToConfiguredTargetsOnRefreshError(t *testing.T) {
 	runner := &subAgentCommandRunnerStub{modelsErr: os.ErrDeadlineExceeded}
 	m := &model{
@@ -179,19 +151,6 @@ func TestOpenModelPickerWithModeFallsBackToConfiguredTargetsOnRefreshError(t *te
 		t.Fatal("expected picker to open from configured fallback")
 	}
 	if m.statusNote != "Opened models list from configured targets." {
-		t.Fatalf("unexpected status note %q", m.statusNote)
-	}
-}
-
-func TestOpenModelPickerWithModeReportsEmptyDeleteTargets(t *testing.T) {
-	m := &model{runner: &subAgentCommandRunnerStub{}}
-	if err := m.openModelDeletePicker(); err != nil {
-		t.Fatalf("expected empty delete picker to be handled, got %v", err)
-	}
-	if m.modelsOpen {
-		t.Fatal("expected picker to stay closed when nothing can be deleted")
-	}
-	if m.statusNote != "No configured models are available to delete." {
 		t.Fatalf("unexpected status note %q", m.statusNote)
 	}
 }
@@ -351,7 +310,7 @@ func TestActivateSelectedModelTargetSwitchesRuntimePersistsConfigAndRefreshesBud
 	}
 }
 
-func TestDeleteSelectedModelTargetRemovesConfiguredProviderAndPersistsConfig(t *testing.T) {
+func TestDeleteKeyRemovesSelectedConfiguredProviderAndPersistsConfig(t *testing.T) {
 	workspace := t.TempDir()
 	configPath := filepath.Join(workspace, "config.json")
 	if err := os.WriteFile(configPath, []byte(`{
@@ -388,6 +347,10 @@ func TestDeleteSelectedModelTargetRemovesConfiguredProviderAndPersistsConfig(t *
 			{ProviderID: "openai", ModelID: "gpt-5.4-mini", Metadata: map[string]string{"context_window": "128000"}},
 			{ProviderID: "deepseek", ModelID: "deepseek-chat", Metadata: map[string]string{"context_window": "64000"}},
 			{ProviderID: "deepseek", ModelID: "deepseek-reasoner", Metadata: map[string]string{"context_window": "64000"}},
+		},
+		warnings: []provider.Warning{
+			{ProviderID: "deepseek", Reason: "provider_list_models_failed"},
+			{ProviderID: "openai", Reason: "provider_list_models_failed"},
 		},
 	}
 	m := &model{
@@ -428,10 +391,10 @@ func TestDeleteSelectedModelTargetRemovesConfiguredProviderAndPersistsConfig(t *
 		},
 	}
 
-	if err := m.openModelDeletePicker(); err != nil {
-		t.Fatalf("expected delete picker to open, got %v", err)
+	if err := m.openModelPicker(); err != nil {
+		t.Fatalf("expected models list to open, got %v", err)
 	}
-	targets := m.sortedConfiguredModelCommandTargets()
+	targets := m.sortedModelCommandTargets()
 	selected := -1
 	for i, target := range targets {
 		if modelTargetLabel(target) == "deepseek/deepseek-chat" {
@@ -444,8 +407,11 @@ func TestDeleteSelectedModelTargetRemovesConfiguredProviderAndPersistsConfig(t *
 	}
 	m.commandCursor = selected
 
-	if err := m.deleteSelectedModelTarget(); err != nil {
-		t.Fatalf("expected picker deletion to succeed, got %v", err)
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyDelete})
+	updated := got.(model)
+	m = &updated
+	if m.modelsOpen {
+		t.Fatal("expected models list to close after deletion")
 	}
 	if _, ok := m.cfg.ProviderRuntime.Providers["deepseek"]; ok {
 		t.Fatalf("expected deepseek provider to be removed, got %#v", m.cfg.ProviderRuntime.Providers)
@@ -481,7 +447,7 @@ func TestDeleteSelectedModelTargetRemovesConfiguredProviderAndPersistsConfig(t *
 	}
 }
 
-func TestDeleteSelectedModelTargetRejectsDeletingLastConfiguredTarget(t *testing.T) {
+func TestDeleteCurrentModelTargetRejectsDeletingLastConfiguredTarget(t *testing.T) {
 	m := &model{
 		runner: &subAgentCommandRunnerStub{},
 		cfg: config.Config{
@@ -495,10 +461,10 @@ func TestDeleteSelectedModelTargetRejectsDeletingLastConfiguredTarget(t *testing
 		},
 	}
 
-	if err := m.openModelDeletePicker(); err != nil {
-		t.Fatalf("expected delete picker to open, got %v", err)
+	if err := m.openModelPicker(); err != nil {
+		t.Fatalf("expected models list to open, got %v", err)
 	}
-	err := m.deleteSelectedModelTarget()
+	err := m.deleteCurrentModelTarget()
 	if err == nil || !strings.Contains(err.Error(), "cannot delete the last configured model") {
 		t.Fatalf("expected last-target delete to fail, got %v", err)
 	}
@@ -510,6 +476,7 @@ func TestRunModelCommandRejectsLegacyForms(t *testing.T) {
 	for _, fields := range [][]string{
 		{"/model"},
 		{"/model", "picker"},
+		{"/model", "delete"},
 		{"/model", "list"},
 		{"/model", "set", "openai/gpt-5.4"},
 		{"/model", "openai/gpt-5.4"},
@@ -537,7 +504,7 @@ func TestFormatModelSelectionStatusUsesCurrentCommands(t *testing.T) {
 
 	for _, want := range []string{
 		"add: /model add",
-		"delete: /model delete",
+		"delete: select in /models and press Delete",
 		"models: /models",
 		"status: /models",
 		"available: 1 target(s)",

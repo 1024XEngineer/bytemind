@@ -7,7 +7,7 @@
 - 关联 Issue：1024XEngineer/bytemind#323
 - 文档日期：2026-05-08
 - 文档状态：当前产品口径
-- 覆盖范围：模型列表、模型切换、模型新增、模型删除、provider 配置持久化
+- 覆盖范围：模型列表、模型切换、模型新增、列表内模型删除、provider 配置持久化
 
 本文只描述当前应保留的 Provider / Model 管理闭环，不写未来规划。
 
@@ -15,18 +15,19 @@
 
 ByteMind 的 Provider / Model 管理用于让用户在 TUI 内完成模型目标的查看、切换、新增和删除。
 
-当前只保留三个用户入口：
+当前只保留两个 slash command 入口：
 
 - `/models`
 - `/model add`
-- `/model delete`
 
-其中 `/models` 同时承担模型状态查看和模型切换；用户输入 `/models` 后，TUI 展示可用 provider/model 列表，用户直接在该列表中选择目标并切换。系统不再提供单独的 `/model picker` 入口，也不保留 `/add model`、`/delete model` 这种反向命令格式。
+其中 `/models` 同时承担模型状态查看、模型切换和模型删除；用户输入 `/models` 后，TUI 展示可用 provider/model 列表。用户在该列表中移动光标，按 Enter 切换到选中的模型，按 Delete 删除选中的已配置模型。
+
+系统不再提供单独的 `/model picker` 或 `/model delete` 入口，也不保留 `/add model`、`/delete model` 这种反向命令格式。
 
 ## 2. 设计原则
 
-- 入口收敛：provider/model 管理只暴露三条命令，避免命令体系发散。
-- 列表即操作：`/models` 展示列表后即可完成切换，不再让用户记住额外切换命令。
+- 入口收敛：provider/model 管理只暴露 `/models` 和 `/model add` 两条命令，避免命令体系发散。
+- 列表即操作：`/models` 展示列表后即可完成切换和删除，不再让用户记住额外的删除命令。
 - 配置即状态：新增、删除、切换都需要同步更新运行时状态，并在成功后写回配置。
 - 当前优先：默认围绕本地 TUI 和当前 workspace 配置工作，不引入远程控制台或批处理管理界面。
 
@@ -46,7 +47,13 @@ ByteMind 的 Provider / Model 管理用于让用户在 TUI 内完成模型目标
 - `active`、`default`、`family=<value>` 等标签。
 - provider 列表失败时的 warning。
 
-用户在 `/models` 展示的列表中直接移动光标并按 Enter 选择目标。选择后系统完成模型切换：
+用户在 `/models` 展示的列表中直接移动光标并操作目标：
+
+- 按 Enter：切换到选中的 provider/model。
+- 按 Delete：删除选中的已配置 provider/model。
+- 按 Esc：关闭列表。
+
+切换模型时，系统需要完成：
 
 - 校验目标是否存在。
 - 更新 `provider_runtime.default_provider`。
@@ -57,7 +64,15 @@ ByteMind 的 Provider / Model 管理用于让用户在 TUI 内完成模型目标
 - 刷新 token budget 与 token usage 状态。
 - 将选择写回配置文件。
 
-切换成功后，当前会话后续请求立即使用新 provider/model。
+切换成功后，当前会话后续请求立即使用新的 provider/model。
+
+删除模型时，系统需要遵守：
+
+- 只允许删除配置中存在的 provider/model 目标。
+- 不允许删除最后一个已配置目标。
+- 如果删除的是当前 active/default 目标，系统从剩余目标中选择一个新的默认目标。
+- 删除成功后更新当前 runner runtime。
+- 删除成功后写回配置文件。
 
 ### 3.2 `/model add`
 
@@ -81,31 +96,17 @@ api_key=sk-...
 
 配置校验通过后，系统写回 `provider` 和 `provider_runtime`，并立即更新当前运行时 client。
 
-### 3.3 `/model delete`
-
-`/model delete` 用于删除已配置的 provider/model 目标。
-
-输入 `/model delete` 后，TUI 展示已配置模型目标列表。用户在列表中选择目标并确认删除。
-
-删除规则：
-
-- 只允许删除配置中存在的 provider/model 目标。
-- 不允许删除最后一个已配置目标。
-- 如果删除的是当前 active/default 目标，系统从剩余目标中选择一个新的默认目标。
-- 删除成功后更新当前 runner runtime。
-- 删除成功后写回配置文件。
-
 ## 4. Slash Command
 
 | 命令 | 行为 |
 | --- | --- |
-| `/models` | 展示 provider/model 列表，并允许在列表中直接切换 active 模型 |
+| `/models` | 展示 provider/model 列表，并允许在列表中按 Enter 切换 active 模型、按 Delete 删除已配置模型 |
 | `/model add` | 打开 provider/model 配置引导，新增或修正模型目标 |
-| `/model delete` | 打开已配置模型目标列表，删除一个模型目标 |
 
 不保留以下入口：
 
 - `/model picker`
+- `/model delete`
 - `/add model`
 - `/delete model`
 - `/models add ...`
@@ -233,7 +234,7 @@ provider 相关环境变量：
 - 获取 provider/model 目标。
 - 合并配置中的模型目标和可发现模型目标。
 - 按 provider id 和 model id 排序。
-- 返回 warning，不让单个 provider 失败中断整个列表。
+- 返回 warning，不让单一 provider 失败中断整个列表。
 
 模型请求由 provider router 执行：
 
@@ -257,10 +258,10 @@ provider 相关环境变量：
 
 ## 10. 验收口径
 
-- `/models` 可以展示当前 active/default provider/model。
-- `/models` 展示列表后可以直接选择并切换模型。
+- `/models` 可以显示当前 active/default provider/model。
+- `/models` 显示列表后可以按 Enter 直接选择并切换模型。
+- `/models` 显示列表后可以按 Delete 删除一个已配置模型目标。
+- `/models` 的 Delete 操作不允许删除最后一个模型目标。
 - `/model add` 可以完成 provider/base_url/model/api_key 配置引导。
 - `/model add` 成功后，新模型目标进入 provider runtime，并立即可用。
-- `/model delete` 可以删除一个已配置模型目标。
-- `/model delete` 不允许删除最后一个模型目标。
 - 切换、新增、删除都能写回配置并更新当前 runner。

@@ -344,9 +344,8 @@ var commandItems = []commandItem{
 	{Name: "/mcp list", Usage: "/mcp list", Description: "List configured MCP servers and current status.", Kind: "command"},
 	{Name: "/mcp help", Usage: "/mcp help", Description: "Show MCP command help.", Kind: "command"},
 	{Name: "/mcp show", Usage: "/mcp show <id>", Description: "Show one MCP server config and runtime state.", Kind: "command"},
-	{Name: "/models", Usage: "/models", Description: "Show configured providers and available models; switch with Up/Down + Enter.", Kind: "command"},
+	{Name: "/models", Usage: "/models", Description: "Show configured providers and available models; switch with Enter or delete with Delete.", Kind: "command"},
 	{Name: "/model add", Usage: "/model add", Description: "Open the setup flow to add or configure a provider/model.", Kind: "command"},
-	{Name: "/model delete", Usage: "/model delete", Description: "Open the configured model list and remove one target.", Kind: "command"},
 	{Name: "/new", Usage: "/new", Description: "Start a fresh session in this workspace.", Kind: "command"},
 	{Name: "/compact", Usage: "/compact", Description: "Compress long session history into a continuation summary.", Kind: "command"},
 	{Name: "/commit", Usage: "/commit <message>", Description: "Stage all changes and create a local Git commit.", Kind: "command"},
@@ -1761,12 +1760,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.commandCursor = min(len(items)-1, m.commandCursor+1)
 			}
 		case "enter":
-			var err error
-			if normalizeModelPickerMode(m.modelPickerMode) == modelPickerModeDelete {
-				err = m.deleteSelectedModelTarget()
-			} else {
-				err = m.activateSelectedModelTarget()
+			err := m.activateSelectedModelTarget()
+			if err != nil {
+				m.statusNote = err.Error()
+				return m, nil
 			}
+			m.closeModelPicker()
+		case "delete":
+			err := m.deleteCurrentModelTarget()
 			if err != nil {
 				m.statusNote = err.Error()
 				return m, nil
@@ -2874,7 +2875,7 @@ func shouldExecuteFromPalette(item commandItem) bool {
 		return true
 	}
 	switch item.Name {
-	case "/models", "/model add", "/model delete", "/help", "/session", "/agents", "/skills", "/skill clear", "/mcp list", "/mcp help", "/new", "/compact", "/undo-commit", "/quit":
+	case "/models", "/model add", "/help", "/session", "/agents", "/skills", "/skill clear", "/mcp list", "/mcp help", "/new", "/compact", "/undo-commit", "/quit":
 		return true
 	default:
 		return false

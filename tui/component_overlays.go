@@ -41,11 +41,7 @@ func (m model) renderSkillsModal() string {
 
 func (m model) renderModelsModal() string {
 	title := "Models"
-	hint := "Up/Down to select, Enter to switch, Esc to close"
-	if normalizeModelPickerMode(m.modelPickerMode) == modelPickerModeDelete {
-		title = "Delete Model"
-		hint = "Up/Down to select, Enter to delete, Esc to close"
-	}
+	hint := "Up/Down to select, Enter to switch, Delete to remove, Esc to close"
 	lines := []string{
 		modalTitleStyle.Render(title),
 		mutedStyle.Render(hint),
@@ -55,11 +51,7 @@ func (m model) renderModelsModal() string {
 	}
 	targets := m.modelPickerTargets()
 	if len(targets) == 0 {
-		if normalizeModelPickerMode(m.modelPickerMode) == modelPickerModeDelete {
-			lines = append(lines, "No configured models available to delete.")
-		} else {
-			lines = append(lines, "No switchable models available.")
-		}
+		lines = append(lines, "No switchable models available.")
 	} else {
 		activeProvider, activeModel := activeProviderAndModel(m.cfg)
 		defaultProvider := strings.TrimSpace(m.cfg.ProviderRuntime.DefaultProvider)

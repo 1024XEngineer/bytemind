@@ -24,7 +24,7 @@ func formatModelsStatus(cfg config.Config, models []provider.ModelInfo, warnings
 		fmt.Sprintf("active: %s", activeModelLabel(cfg)),
 		fmt.Sprintf("default provider: %s", defaultProviderLabel(cfg)),
 		"add: /model add",
-		"delete: /model delete",
+		"delete: select a configured model from /models and press Delete",
 		"switch: select a model from /models",
 	}
 	if len(models) == 0 {

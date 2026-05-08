@@ -12,9 +12,8 @@ import (
 )
 
 const (
-	modelCommandUsage     = "Usage: /model add|delete"
+	modelCommandUsage     = "Usage: /model add"
 	modelPickerModeSwitch = "switch"
-	modelPickerModeDelete = "delete"
 )
 
 type runnerRuntimeUpdater interface {
@@ -31,8 +30,6 @@ func (m *model) runModelCommand(input string, fields []string) error {
 	switch strings.ToLower(strings.TrimSpace(fields[1])) {
 	case "add":
 		return m.openAddModelGuide()
-	case "delete":
-		return m.openModelDeletePicker()
 	default:
 		return fmt.Errorf(modelCommandUsage)
 	}
@@ -65,39 +62,22 @@ func (m *model) openAddModelGuide() error {
 }
 
 func (m *model) openModelPicker() error {
-	return m.openModelPickerWithMode(modelPickerModeSwitch)
-}
-
-func (m *model) openModelDeletePicker() error {
-	return m.openModelPickerWithMode(modelPickerModeDelete)
-}
-
-func (m *model) openModelPickerWithMode(mode string) error {
 	if m == nil || m.runner == nil {
 		return fmt.Errorf("runner is unavailable")
 	}
-	mode = normalizeModelPickerMode(mode)
 
-	var refreshErr error
-	targets := m.sortedConfiguredModelCommandTargets()
-	if mode == modelPickerModeSwitch {
-		refreshErr = m.refreshDiscoveredModels()
-		targets = m.sortedModelCommandTargets()
-	}
+	refreshErr := m.refreshDiscoveredModels()
+	targets := m.sortedModelCommandTargets()
 	if len(targets) == 0 {
 		if refreshErr != nil {
 			return refreshErr
 		}
-		if mode == modelPickerModeDelete {
-			m.statusNote = "No configured models are available to delete."
-		} else {
-			m.statusNote = "No switchable models available. Use /model add to configure one."
-		}
+		m.statusNote = "No switchable models available. Use /model add to configure one."
 		return nil
 	}
 
 	m.modelsOpen = true
-	m.modelPickerMode = mode
+	m.modelPickerMode = modelPickerModeSwitch
 	m.skillsOpen = false
 	m.commandOpen = false
 	m.sessionsOpen = false
@@ -117,11 +97,7 @@ func (m *model) openModelPickerWithMode(mode string) error {
 		m.statusNote = "Opened models list from configured targets."
 		return nil
 	}
-	if mode == modelPickerModeDelete {
-		m.statusNote = "Opened model delete picker."
-	} else {
-		m.statusNote = "Opened models list."
-	}
+	m.statusNote = "Opened models list."
 	return nil
 }
 
@@ -200,17 +176,17 @@ func (m *model) activateSelectedModelTarget() error {
 	}
 	selected := targets[clamp(m.commandCursor, 0, len(targets)-1)]
 	target := modelTargetLabel(selected)
-	return m.switchModelCommandTarget("/models "+target, target)
+	return m.switchModelCommandTarget("Switch model to "+target, target)
 }
 
-func (m *model) deleteSelectedModelTarget() error {
-	targets := m.sortedConfiguredModelCommandTargets()
+func (m *model) deleteCurrentModelTarget() error {
+	targets := m.sortedModelCommandTargets()
 	if len(targets) == 0 {
 		return nil
 	}
 	selected := targets[clamp(m.commandCursor, 0, len(targets)-1)]
 	target := modelTargetLabel(selected)
-	return m.deleteModelCommandTarget("/model delete", target)
+	return m.deleteModelCommandTarget("Delete model "+target, target)
 }
 
 func (m *model) refreshDiscoveredModels() error {
@@ -244,17 +220,6 @@ func (m model) configuredModelCommandTargets() []provider.ModelInfo {
 
 func (m model) sortedModelCommandTargets() []provider.ModelInfo {
 	targets := append([]provider.ModelInfo(nil), m.modelCommandTargets()...)
-	sort.Slice(targets, func(i, j int) bool {
-		if targets[i].ProviderID == targets[j].ProviderID {
-			return targets[i].ModelID < targets[j].ModelID
-		}
-		return targets[i].ProviderID < targets[j].ProviderID
-	})
-	return targets
-}
-
-func (m model) sortedConfiguredModelCommandTargets() []provider.ModelInfo {
-	targets := append([]provider.ModelInfo(nil), m.configuredModelCommandTargets()...)
 	sort.Slice(targets, func(i, j int) bool {
 		if targets[i].ProviderID == targets[j].ProviderID {
 			return targets[i].ModelID < targets[j].ModelID
@@ -302,17 +267,7 @@ func modelTargetLabel(target provider.ModelInfo) string {
 	return strings.TrimSpace(string(target.ProviderID)) + "/" + strings.TrimSpace(string(target.ModelID))
 }
 
-func normalizeModelPickerMode(mode string) string {
-	if strings.EqualFold(strings.TrimSpace(mode), modelPickerModeDelete) {
-		return modelPickerModeDelete
-	}
-	return modelPickerModeSwitch
-}
-
 func (m model) modelPickerTargets() []provider.ModelInfo {
-	if normalizeModelPickerMode(m.modelPickerMode) == modelPickerModeDelete {
-		return m.sortedConfiguredModelCommandTargets()
-	}
 	return m.sortedModelCommandTargets()
 }
 
@@ -415,7 +370,7 @@ func formatModelSelectionStatus(cfg config.Config, targets []provider.ModelInfo)
 	lines := []string{
 		"current: " + activeModelLabel(cfg),
 		"add: /model add",
-		"delete: /model delete",
+		"delete: select in /models and press Delete",
 		"models: /models",
 		"status: /models",
 	}
