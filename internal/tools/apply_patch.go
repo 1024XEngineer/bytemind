@@ -445,3 +445,57 @@ func detectLineEnding(text string) string {
 	}
 	return "\n"
 }
+
+func buildDiffFromPatchHunks(chunkLines []string) ([]DiffHunk, int, int) {
+	hunks, err := parsePatchHunks(chunkLines)
+	if err != nil || len(hunks) == 0 {
+		return nil, 0, 0
+	}
+	added, removed := 0, 0
+	result := make([]DiffHunk, 0, len(hunks))
+	for _, h := range hunks {
+		lines := make([]string, 0, len(h.Lines))
+		for _, l := range h.Lines {
+			lines = append(lines, string(l.Prefix)+l.Text)
+			switch l.Prefix {
+			case '+':
+				added++
+			case '-':
+				removed++
+			}
+		}
+		result = append(result, DiffHunk{
+			OldStart: h.OldRange.Start,
+			OldLines: h.OldRange.Count,
+			NewStart: h.NewRange.Start,
+			NewLines: h.NewRange.Count,
+			Lines:    lines,
+		})
+	}
+	return result, added, removed
+}
+
+func contentToAddHunk(lines []string) []DiffHunk {
+	if len(lines) == 0 {
+		return nil
+	}
+	display := make([]string, 0, len(lines))
+	for _, l := range lines {
+		display = append(display, "+"+l)
+	}
+	return []DiffHunk{{
+		OldStart: 0,
+		OldLines: 0,
+		NewStart: 1,
+		NewLines: len(lines),
+		Lines:    display,
+	}}
+}
+
+func lineCount(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(data), "\n")
+}
