@@ -60,9 +60,10 @@ func isSensitivePath(path string) bool {
 	for _, pat := range sensitivePathPatterns {
 		pat = strings.ToLower(pat)
 		if strings.Contains(pat, "*") {
-			prefix := strings.TrimSuffix(pat, "*")
-			suffix := strings.TrimPrefix(pat, "*")
-			if strings.HasPrefix(base, prefix) && strings.HasSuffix(base, suffix) {
+			if strings.HasPrefix(pat, "*") && strings.HasSuffix(base, pat[1:]) {
+				return true
+			}
+			if strings.HasSuffix(pat, "*") && strings.HasPrefix(base, pat[:len(pat)-1]) {
 				return true
 			}
 		} else if base == pat {

@@ -99,7 +99,7 @@ func buildWriteFileDiff(original, content string, existed bool, relPath string) 
 
 func newFileDiff(content, relPath string) *DiffPreview {
 	lines := strings.Split(content, "\n")
-	if len(lines) == 0 {
+	if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
 		return nil
 	}
 	added := len(lines)
