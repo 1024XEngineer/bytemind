@@ -306,9 +306,13 @@ func LoadWithMCPConfigPath(workspace, configPath, mcpConfigPath string) (Config,
 		}
 	}
 
-	applyEnv(&cfg)
+	overrideProvider := applyEnv(&cfg)
 	if err := normalize(&cfg); err != nil {
 		return cfg, err
+	}
+	if overrideProvider {
+		applyProviderEnvOverrides(&cfg)
+		cfg.ProviderRuntime = SyncProviderRuntimeWithProvider(cfg.ProviderRuntime, cfg.Provider)
 	}
 	if err := normalizeWritableRoots(workspace, &cfg); err != nil {
 		return cfg, err
@@ -635,8 +639,7 @@ func mergeMCPConfigFromFile(path string, cfg *MCPConfig) error {
 	return nil
 }
 
-func applyEnv(cfg *Config) {
-	providerOverride := false
+func applyEnv(cfg *Config) (providerOverride bool) {
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_PROVIDER_TYPE")); value != "" {
 		cfg.Provider.Type = value
 		providerOverride = true
@@ -732,9 +735,35 @@ func applyEnv(cfg *Config) {
 			cfg.Notifications.Desktop.CooldownSeconds = parsed
 		}
 	}
-	if providerOverride {
-		cfg.ProviderRuntime = SyncProviderRuntimeWithProvider(cfg.ProviderRuntime, cfg.Provider)
+	return providerOverride
+}
+
+func applyProviderEnvOverrides(cfg *Config) {
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_PROVIDER_TYPE")); value != "" {
+		cfg.Provider.Type = value
 	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_PROVIDER_FAMILY")); value != "" {
+		cfg.Provider.Family = value
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_PROVIDER_AUTO_DETECT_TYPE")); value != "" {
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			cfg.Provider.AutoDetectType = parsed
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_BASE_URL")); value != "" {
+		cfg.Provider.BaseURL = value
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_MODEL")); value != "" {
+		cfg.Provider.Model = value
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_API_KEY")); value != "" {
+		cfg.Provider.APIKey = value
+	}
+	if value := strings.TrimSpace(os.Getenv("BYTEMIND_API_KEY_ENV")); value != "" {
+		cfg.Provider.APIKeyEnv = value
+	}
+	cfg.Provider.Type = normalizeProviderType(cfg.Provider.Type)
+	cfg.Provider.Family = normalizeProviderFamily(cfg.Provider.Family)
 }
 
 // NormalizeApprovalMode validates and normalizes approval_mode values.
