@@ -85,6 +85,9 @@ func (r *Runner) recordTokenUsage(ctx context.Context, sess *session.Session, re
 	if r.tokenManager == nil || sess == nil {
 		return
 	}
+	if ctx.Err() != nil {
+		return
+	}
 
 	req := &tokenusage.TokenRecordRequest{
 		SessionID:    sess.ID,
