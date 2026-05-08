@@ -710,14 +710,14 @@ func TestRenderRunSectionGroupDelegateSubagentAggregation(t *testing.T) {
 		},
 	}
 
-	collapsed := stripANSI(renderRunSectionGroup(group, 140, false, true))
+	collapsed := stripANSI(renderRunSectionGroup(group, 140, false, true, model{}))
 	for _, want := range []string{"2 x explorer", "scan service wiring", "verify tests", "(ctrl+o to expand)"} {
 		if !strings.Contains(collapsed, want) {
 			t.Fatalf("expected collapsed delegate group to contain %q, got %q", want, collapsed)
 		}
 	}
 
-	expanded := stripANSI(renderRunSectionGroup(group, 140, true, true))
+	expanded := stripANSI(renderRunSectionGroup(group, 140, true, true, model{}))
 	for _, want := range []string{"2 x explorer", "prompt: scan service wiring", "read_file(service.go)", "run_shell(go test ./...)"} {
 		if !strings.Contains(expanded, want) {
 			t.Fatalf("expected expanded delegate group to contain %q, got %q", want, expanded)
