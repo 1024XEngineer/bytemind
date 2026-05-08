@@ -1,27 +1,33 @@
 {
-  "provider": {
-    "type": "openai-compatible",
-    "auto_detect_type": false,
-    "base_url": "https://api.openai.com/v1",
-    "model": "gpt-5.4-mini",
-    "api_key": ""
-  },
-  "approval_policy": "on-request",
-  "notifications": {
-    "desktop": {
-      "enabled": true,
-      "on_approval_required": true,
-      "on_run_completed": true,
-      "on_run_failed": true,
-      "on_run_canceled": false,
-      "cooldown_seconds": 3
+  "provider_runtime": {
+    "current_provider": "deepseek",
+    "providers": {
+      "deepseek": {
+        "type": "openai-compatible",
+        "base_url": "https://api.deepseek.com",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model": "deepseek-v4-flash",
+        "models": [
+          "deepseek-v4-flash",
+          "deepseek-v4-pro"
+        ]
+      },
+      "openai": {
+        "type": "openai-compatible",
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "OPENAI_API_KEY",
+        "model": "gpt-5.4-mini",
+        "models": [
+          "gpt-5.4-mini",
+          "gpt-5.4"
+        ]
+      }
     }
   },
+  "approval_policy": "on-request",
+  "approval_mode": "interactive",
   "max_iterations": 32,
   "stream": true,
-  "update_check": {
-    "enabled": true
-  },
   "context_budget": {
     "warning_ratio": 0.85,
     "critical_ratio": 0.95,

@@ -3982,12 +3982,12 @@ func TestFilteredCommandsShowsRootSelectorGroups(t *testing.T) {
 		usages = append(usages, item.Usage)
 	}
 
-	for _, want := range []string{"/add model", "/delete model", "/help", "/session", "/skills-select", "/model picker", "/new", "/compact", "/commit <message>", "/undo-commit", "/quit"} {
+	for _, want := range []string{"/help", "/session", "/skills-select", "/model", "/models", "/new", "/compact", "/commit <message>", "/undo-commit", "/quit"} {
 		if !containsString(usages, want) {
 			t.Fatalf("expected root selector to contain %q, got %v", want, usages)
 		}
 	}
-	for _, unwanted := range []string{"/sessions [limit]", "/resume <id>", "/plan", "/plan add <step>"} {
+	for _, unwanted := range []string{"/add model", "/delete model", "/model picker", "/sessions [limit]", "/resume <id>", "/plan", "/plan add <step>"} {
 		if containsString(usages, unwanted) {
 			t.Fatalf("did not expect root selector to contain %q", unwanted)
 		}
@@ -8244,8 +8244,8 @@ func TestCompressedPasteRequiresExplicitConfirmationBeforeSubmit(t *testing.T) {
 	if len(afterSecondEnter.chatItems) == 0 {
 		t.Fatalf("expected second enter after compressed paste to submit")
 	}
-		if !strings.Contains(afterSecondEnter.chatItems[0].Body, "line 1") {
-			t.Fatalf("expected submitted body to include expanded paste content, got %q", afterSecondEnter.chatItems[0].Body)
+	if !strings.Contains(afterSecondEnter.chatItems[0].Body, "line 1") {
+		t.Fatalf("expected submitted body to include expanded paste content, got %q", afterSecondEnter.chatItems[0].Body)
 	}
 }
 
@@ -8299,7 +8299,7 @@ func TestManualTypedTailAfterCompressedPasteSubmitsLiterally(t *testing.T) {
 		t.Fatalf("expected second enter after typed tail to submit")
 	}
 	if body := afterSecondEnter.chatItems[0].Body; !strings.Contains(body, "line 1") && !strings.Contains(body, typedTail) {
-			t.Fatalf("expected submitted body to contain expanded content and manual tail, got %q", body)
+		t.Fatalf("expected submitted body to contain expanded content and manual tail, got %q", body)
 	}
 }
 

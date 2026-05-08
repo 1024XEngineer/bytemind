@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,30 +13,14 @@ func (m *model) runModelsCommand(input string, fields []string) error {
 	if m == nil || m.runner == nil {
 		return fmt.Errorf("runner is unavailable")
 	}
-	if len(fields) > 1 {
-		sub := strings.ToLower(strings.TrimSpace(fields[1]))
-		if sub != "list" && sub != "status" {
-			return fmt.Errorf("usage: /models [list|status]")
-		}
-	}
-	models, warnings, err := m.runner.ListModels(context.Background())
-	if err != nil {
-		return err
-	}
-	m.setDiscoveredModels(models)
-	response := formatModelsStatus(m.cfg, models, warnings)
-	m.appendCommandExchange(input, response)
-	m.statusNote = fmt.Sprintf("Listed %d model(s).", len(models))
-	return nil
+	return m.openModelPicker()
 }
 
 func formatModelsStatus(cfg config.Config, models []provider.ModelInfo, warnings []provider.Warning) string {
 	lines := []string{
 		fmt.Sprintf("active: %s", activeModelLabel(cfg)),
 		fmt.Sprintf("default provider: %s", defaultProviderLabel(cfg)),
-		"add: /add model",
-		"delete: /delete model",
-		"switch: /model picker",
+		"switch: /model",
 	}
 	if len(models) == 0 {
 		lines = append(lines, "", "No models discovered.")
@@ -68,7 +51,7 @@ func formatModelsStatus(cfg config.Config, models []provider.ModelInfo, warnings
 				if providerID == activeProvider && string(entry.ModelID) == activeModel {
 					labels = append(labels, "active")
 				}
-				if providerID == strings.TrimSpace(cfg.ProviderRuntime.DefaultProvider) && string(entry.ModelID) == strings.TrimSpace(cfg.ProviderRuntime.DefaultModel) {
+				if providerID == config.SelectedProviderID(cfg.ProviderRuntime) && string(entry.ModelID) == config.SelectedModelID(cfg.ProviderRuntime) {
 					labels = append(labels, "default")
 				}
 				if metadata.Family != "" {
@@ -106,8 +89,8 @@ func activeModelLabel(cfg config.Config) string {
 }
 
 func activeProviderAndModel(cfg config.Config) (string, string) {
-	providerID := strings.TrimSpace(cfg.ProviderRuntime.DefaultProvider)
-	modelID := strings.TrimSpace(cfg.ProviderRuntime.DefaultModel)
+	providerID := config.SelectedProviderID(cfg.ProviderRuntime)
+	modelID := config.SelectedModelID(cfg.ProviderRuntime)
 	if modelID == "" {
 		modelID = strings.TrimSpace(cfg.Provider.Model)
 	}
@@ -115,7 +98,7 @@ func activeProviderAndModel(cfg config.Config) (string, string) {
 }
 
 func defaultProviderLabel(cfg config.Config) string {
-	providerID := strings.TrimSpace(cfg.ProviderRuntime.DefaultProvider)
+	providerID := config.SelectedProviderID(cfg.ProviderRuntime)
 	if providerID == "" {
 		return "unknown"
 	}

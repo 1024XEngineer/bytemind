@@ -52,8 +52,8 @@ func TestRunModelCommandOpensPickerAndRefreshesTargets(t *testing.T) {
 	if m.statusNote != "Opened model picker." {
 		t.Fatalf("unexpected status note %q", m.statusNote)
 	}
-	if len(m.discoveredModels) != 2 {
-		t.Fatalf("expected discovered models to refresh, got %#v", m.discoveredModels)
+	if len(m.discoveredModels) != 0 {
+		t.Fatalf("expected /model to use configured targets without remote refresh, got %#v", m.discoveredModels)
 	}
 	targets := m.sortedModelCommandTargets()
 	if len(targets) != 2 {
@@ -100,34 +100,19 @@ func TestRunModelCommandAllowsPickerWhenOnlyOneTargetExists(t *testing.T) {
 	}
 }
 
-func TestRunAddCommandOpensStartupGuide(t *testing.T) {
-	workspace := t.TempDir()
-	m := &model{
-		workspace: workspace,
-		input:     textarea.New(),
-	}
+func TestRunAddCommandDoesNotManageProviderConfig(t *testing.T) {
+	m := &model{input: textarea.New()}
 
-	if err := m.runAddCommand("/add model", []string{"/add", "model"}); err != nil {
-		t.Fatalf("expected /add model to open startup guide, got %v", err)
+	err := m.runAddCommand("/add model", []string{"/add", "model"})
+	if err == nil || !strings.Contains(err.Error(), "config.json") {
+		t.Fatalf("expected /add model to point users at config.json, got %v", err)
 	}
-	if !m.startupGuide.Active {
-		t.Fatal("expected startup guide to be active")
-	}
-	if m.startupGuide.Title != "Add model" {
-		t.Fatalf("unexpected startup guide title %q", m.startupGuide.Title)
-	}
-	if m.startupGuide.CurrentField != startupFieldType {
-		t.Fatalf("expected startup guide to start at provider type, got %q", m.startupGuide.CurrentField)
-	}
-	if strings.TrimSpace(m.startupGuide.ConfigPath) == "" {
-		t.Fatal("expected writable config path to be resolved")
-	}
-	if m.statusNote != "Opened add model guide." {
-		t.Fatalf("unexpected status note %q", m.statusNote)
+	if m.startupGuide.Active {
+		t.Fatal("expected /add model not to open the startup guide")
 	}
 }
 
-func TestRunDeleteCommandOpensDeletePicker(t *testing.T) {
+func TestRunDeleteCommandDoesNotManageProviderConfig(t *testing.T) {
 	m := &model{
 		runner: &subAgentCommandRunnerStub{},
 		cfg: config.Config{
@@ -142,18 +127,14 @@ func TestRunDeleteCommandOpensDeletePicker(t *testing.T) {
 		},
 	}
 
-	if err := m.runDeleteCommand("/delete model", []string{"/delete", "model"}); err != nil {
-		t.Fatalf("expected /delete model to open picker, got %v", err)
+	err := m.runDeleteCommand("/delete model", []string{"/delete", "model"})
+	if err == nil || !strings.Contains(err.Error(), "config.json") {
+		t.Fatalf("expected /delete model to point users at config.json, got %v", err)
 	}
 	if !m.modelsOpen {
-		t.Fatal("expected delete picker to open")
+		return
 	}
-	if normalizeModelPickerMode(m.modelPickerMode) != modelPickerModeDelete {
-		t.Fatalf("expected delete picker mode, got %q", m.modelPickerMode)
-	}
-	if m.statusNote != "Opened model delete picker." {
-		t.Fatalf("unexpected status note %q", m.statusNote)
-	}
+	t.Fatal("expected /delete model not to open the model picker")
 }
 
 func TestOpenModelPickerWithModeFallsBackToConfiguredTargetsOnRefreshError(t *testing.T) {
@@ -178,7 +159,7 @@ func TestOpenModelPickerWithModeFallsBackToConfiguredTargetsOnRefreshError(t *te
 	if !m.modelsOpen {
 		t.Fatal("expected picker to open from configured fallback")
 	}
-	if m.statusNote != "Opened model picker from configured targets." {
+	if m.statusNote != "Opened model picker." {
 		t.Fatalf("unexpected status note %q", m.statusNote)
 	}
 }
@@ -213,7 +194,7 @@ func TestSwitchModelCommandTargetRejectsUnknownTargetAfterRefresh(t *testing.T) 
 	}
 
 	err := m.switchModelCommandTarget("/model picker deepseek/deepseek-chat", "deepseek/deepseek-chat")
-	if err == nil || !strings.Contains(err.Error(), "unknown model target") {
+	if err == nil || !strings.Contains(err.Error(), "unknown configured model target") {
 		t.Fatalf("expected unknown target error, got %v", err)
 	}
 }
@@ -242,6 +223,7 @@ func TestActivateSelectedModelTargetSwitchesRuntimePersistsConfigAndRefreshesBud
         "type": "openai-compatible",
         "base_url": "https://api.deepseek.com",
         "model": "deepseek-chat",
+        "models": ["deepseek-chat", "deepseek-reasoner"],
         "api_key": "deepseek-key"
       }
     }
@@ -277,12 +259,17 @@ func TestActivateSelectedModelTargetSwitchesRuntimePersistsConfigAndRefreshesBud
 						Type:    "openai-compatible",
 						BaseURL: "https://api.deepseek.com",
 						Model:   "deepseek-chat",
+						Models:  []string{"deepseek-chat", "deepseek-reasoner"},
 						APIKey:  "deepseek-key",
 					},
 				},
 			},
 		},
 		startupGuide: StartupGuide{ConfigPath: configPath},
+		discoveredModels: []provider.ModelInfo{
+			{ProviderID: "openai", ModelID: "gpt-5.4-mini", Metadata: map[string]string{"context_window": "128000"}},
+			{ProviderID: "deepseek", ModelID: "deepseek-reasoner", Metadata: map[string]string{"context_window": "64000"}},
+		},
 	}
 
 	if err := m.openModelPicker(); err != nil {
@@ -488,8 +475,6 @@ func TestRunModelCommandRejectsLegacyForms(t *testing.T) {
 	m := &model{runner: &subAgentCommandRunnerStub{}}
 
 	for _, fields := range [][]string{
-		{"/model"},
-		{"/model", "list"},
 		{"/model", "set", "openai/gpt-5.4"},
 		{"/model", "openai/gpt-5.4"},
 	} {
@@ -522,7 +507,7 @@ func TestRunModelCommandRejectsUnknownTarget(t *testing.T) {
 	}
 
 	err := m.switchModelCommandTarget("/model openai/missing", "openai/missing")
-	if err == nil || !strings.Contains(err.Error(), "unknown model target") {
+	if err == nil || !strings.Contains(err.Error(), "unknown configured model target") {
 		t.Fatalf("expected unknown target error, got %v", err)
 	}
 }

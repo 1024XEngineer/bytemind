@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/1024XEngineer/bytemind/internal/config"
-	"github.com/1024XEngineer/bytemind/internal/provider"
 )
 
 func TestRenderModelsModalSwitchModeIncludesFlagsAndMetadata(t *testing.T) {
@@ -19,23 +18,14 @@ func TestRenderModelsModalSwitchModeIncludesFlagsAndMetadata(t *testing.T) {
 				DefaultProvider: "openai",
 				DefaultModel:    "gpt-5.4",
 				Providers: map[string]config.ProviderConfig{
-					"openai": {Type: "openai-compatible", Model: "gpt-5.4"},
+					"openai": {Type: "openai-compatible", Family: "gpt", Model: "gpt-5.4"},
 				},
 			},
 		},
-		discoveredModels: []provider.ModelInfo{{
-			ProviderID: "openai",
-			ModelID:    "gpt-5.4",
-			Metadata: map[string]string{
-				"family":         "gpt",
-				"context_window": "128000",
-				"usage_source":   "metadata",
-			},
-		}},
 	}
 
 	view := m.renderModelsModal()
-	for _, want := range []string{"Models", "Current: openai/gpt-5.4", "openai/gpt-5.4  (active, default)", "family=gpt", "context=128000", "source=metadata"} {
+	for _, want := range []string{"Models", "Current: openai/gpt-5.4", "openai/gpt-5.4  (active, default)", "family=gpt", "source=config"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected models modal to contain %q, got %q", want, view)
 		}
@@ -54,7 +44,7 @@ func TestRenderModelsModalDeleteModeAndEmptyStates(t *testing.T) {
 
 	m.modelPickerMode = modelPickerModeSwitch
 	view = m.renderModelsModal()
-	if !strings.Contains(view, "No switchable models available.") {
+	if !strings.Contains(view, "No configured models are available.") {
 		t.Fatalf("expected switch empty state, got %q", view)
 	}
 }

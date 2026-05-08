@@ -15,9 +15,11 @@ import (
 )
 
 const (
-	envBytemindHome = "BYTEMIND_HOME"
-	defaultHomeDir  = ".bytemind"
-	defaultModelID  = "gpt-5.4-mini"
+	envBytemindHome            = "BYTEMIND_HOME"
+	defaultHomeDir             = ".bytemind"
+	defaultProviderID          = "deepseek"
+	defaultModelID             = "deepseek-v4-flash"
+	legacyOpenAIDefaultModelID = "gpt-5.4-mini"
 	// EnvAllowAwayFullAccessCompat is a temporary migration gate that permits
 	// approval_mode=away to map to full_access.
 	EnvAllowAwayFullAccessCompat = "BYTEMIND_ALLOW_AWAY_FULL_ACCESS"
@@ -66,6 +68,7 @@ type ProviderConfig struct {
 	BaseURL          string            `json:"base_url"`
 	APIPath          string            `json:"api_path"`
 	Model            string            `json:"model"`
+	Models           []string          `json:"models,omitempty"`
 	APIKey           string            `json:"api_key"`
 	APIKeyEnv        string            `json:"api_key_env"`
 	AuthHeader       string            `json:"auth_header"`
@@ -173,9 +176,24 @@ func Default(workspace string) Config {
 	return Config{
 		Provider: ProviderConfig{
 			Type:      "openai-compatible",
-			BaseURL:   "https://api.openai.com/v1",
+			BaseURL:   "https://api.deepseek.com",
 			Model:     defaultModelID,
-			APIKeyEnv: "BYTEMIND_API_KEY",
+			Models:    []string{defaultModelID, "deepseek-v4-pro"},
+			APIKeyEnv: "DEEPSEEK_API_KEY",
+		},
+		ProviderRuntime: ProviderRuntimeConfig{
+			CurrentProvider: defaultProviderID,
+			DefaultProvider: defaultProviderID,
+			DefaultModel:    defaultModelID,
+			Providers: map[string]ProviderConfig{
+				defaultProviderID: {
+					Type:      "openai-compatible",
+					BaseURL:   "https://api.deepseek.com",
+					Model:     defaultModelID,
+					Models:    []string{defaultModelID, "deepseek-v4-pro"},
+					APIKeyEnv: "DEEPSEEK_API_KEY",
+				},
+			},
 		},
 		ApprovalPolicy:    "on-request",
 		ApprovalMode:      "interactive",
@@ -303,7 +321,9 @@ func (p ProviderConfig) ResolveAPIKey() string {
 		return strings.TrimSpace(p.APIKey)
 	}
 	if env := strings.TrimSpace(p.APIKeyEnv); env != "" {
-		return strings.TrimSpace(os.Getenv(env))
+		if value := strings.TrimSpace(os.Getenv(env)); value != "" {
+			return value
+		}
 	}
 	return strings.TrimSpace(os.Getenv("BYTEMIND_API_KEY"))
 }
@@ -359,10 +379,26 @@ func ensureDefaultConfigFile(home string) error {
 	cfg := Config{
 		Provider: ProviderConfig{
 			Type:             "openai-compatible",
-			BaseURL:          "https://api.openai.com/v1",
+			BaseURL:          "https://api.deepseek.com",
 			Model:            defaultModelID,
-			APIKeyEnv:        "BYTEMIND_API_KEY",
+			Models:           []string{defaultModelID, "deepseek-v4-pro"},
+			APIKeyEnv:        "DEEPSEEK_API_KEY",
 			AnthropicVersion: "2023-06-01",
+		},
+		ProviderRuntime: ProviderRuntimeConfig{
+			CurrentProvider: defaultProviderID,
+			DefaultProvider: defaultProviderID,
+			DefaultModel:    defaultModelID,
+			Providers: map[string]ProviderConfig{
+				defaultProviderID: {
+					Type:             "openai-compatible",
+					BaseURL:          "https://api.deepseek.com",
+					Model:            defaultModelID,
+					Models:           []string{defaultModelID, "deepseek-v4-pro"},
+					APIKeyEnv:        "DEEPSEEK_API_KEY",
+					AnthropicVersion: "2023-06-01",
+				},
+			},
 		},
 		ApprovalPolicy:    "on-request",
 		ApprovalMode:      "interactive",
@@ -481,6 +517,15 @@ func mergeConfigFromFile(path string, cfg *Config) error {
 	if err != nil {
 		return err
 	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["provider_runtime"]; ok {
+		cfg.ProviderRuntime = ProviderRuntimeConfig{}
+	} else if _, ok := raw["provider"]; ok {
+		cfg.ProviderRuntime = ProviderRuntimeConfig{}
+	}
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return err
 	}
@@ -591,28 +636,36 @@ func mergeMCPConfigFromFile(path string, cfg *MCPConfig) error {
 }
 
 func applyEnv(cfg *Config) {
+	providerOverride := false
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_PROVIDER_TYPE")); value != "" {
 		cfg.Provider.Type = value
+		providerOverride = true
 	}
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_PROVIDER_FAMILY")); value != "" {
 		cfg.Provider.Family = value
+		providerOverride = true
 	}
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_PROVIDER_AUTO_DETECT_TYPE")); value != "" {
 		if parsed, err := strconv.ParseBool(value); err == nil {
 			cfg.Provider.AutoDetectType = parsed
+			providerOverride = true
 		}
 	}
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_BASE_URL")); value != "" {
 		cfg.Provider.BaseURL = value
+		providerOverride = true
 	}
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_MODEL")); value != "" {
 		cfg.Provider.Model = value
+		providerOverride = true
 	}
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_API_KEY")); value != "" {
 		cfg.Provider.APIKey = value
+		providerOverride = true
 	}
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_API_KEY_ENV")); value != "" {
 		cfg.Provider.APIKeyEnv = value
+		providerOverride = true
 	}
 	if value := strings.TrimSpace(os.Getenv("BYTEMIND_APPROVAL_POLICY")); value != "" {
 		cfg.ApprovalPolicy = value
@@ -679,6 +732,9 @@ func applyEnv(cfg *Config) {
 			cfg.Notifications.Desktop.CooldownSeconds = parsed
 		}
 	}
+	if providerOverride {
+		cfg.ProviderRuntime = SyncProviderRuntimeWithProvider(cfg.ProviderRuntime, cfg.Provider)
+	}
 }
 
 // NormalizeApprovalMode validates and normalizes approval_mode values.
@@ -714,6 +770,7 @@ func allowAwayFullAccessCompat() bool {
 }
 
 func normalize(cfg *Config) error {
+	explicitCurrentProvider := strings.TrimSpace(cfg.ProviderRuntime.CurrentProvider) != ""
 	cfg.Provider.Type = normalizeProviderType(cfg.Provider.Type)
 	cfg.Provider.Family = normalizeProviderFamily(cfg.Provider.Family)
 	if cfg.Provider.Type == "" {
@@ -748,8 +805,12 @@ func normalize(cfg *Config) error {
 	if cfg.Provider.ExtraHeaders == nil {
 		cfg.Provider.ExtraHeaders = map[string]string{}
 	}
+	cfg.Provider.Models = normalizeStringList(cfg.Provider.Models)
 	if len(cfg.ProviderRuntime.Providers) == 0 {
 		legacy := LegacyProviderRuntimeConfig(cfg.Provider)
+		if strings.TrimSpace(cfg.ProviderRuntime.CurrentProvider) == "" && strings.TrimSpace(cfg.ProviderRuntime.DefaultProvider) == "" {
+			cfg.ProviderRuntime.CurrentProvider = legacy.CurrentProvider
+		}
 		if strings.TrimSpace(cfg.ProviderRuntime.DefaultProvider) == "" {
 			cfg.ProviderRuntime.DefaultProvider = legacy.DefaultProvider
 		}
@@ -758,7 +819,14 @@ func normalize(cfg *Config) error {
 		}
 		cfg.ProviderRuntime.Providers = legacy.Providers
 	}
+	cfg.ProviderRuntime.CurrentProvider = strings.ToLower(strings.TrimSpace(cfg.ProviderRuntime.CurrentProvider))
 	cfg.ProviderRuntime.DefaultProvider = strings.ToLower(strings.TrimSpace(cfg.ProviderRuntime.DefaultProvider))
+	if cfg.ProviderRuntime.CurrentProvider == "" {
+		cfg.ProviderRuntime.CurrentProvider = cfg.ProviderRuntime.DefaultProvider
+	}
+	if cfg.ProviderRuntime.DefaultProvider == "" {
+		cfg.ProviderRuntime.DefaultProvider = cfg.ProviderRuntime.CurrentProvider
+	}
 	cfg.ProviderRuntime.DefaultModel = strings.TrimSpace(cfg.ProviderRuntime.DefaultModel)
 	if cfg.ProviderRuntime.DefaultModel == "" {
 		cfg.ProviderRuntime.DefaultModel = cfg.Provider.Model
@@ -807,10 +875,24 @@ func normalize(cfg *Config) error {
 		if providerCfg.ExtraHeaders == nil {
 			providerCfg.ExtraHeaders = map[string]string{}
 		}
+		providerCfg.Models = normalizeStringList(providerCfg.Models)
 		normalizedProviders[normalizedID] = providerCfg
 		normalizedSources[normalizedID] = id
 	}
 	cfg.ProviderRuntime.Providers = normalizedProviders
+	if explicitCurrentProvider {
+		if _, ok := cfg.ProviderRuntime.Providers[cfg.ProviderRuntime.CurrentProvider]; !ok {
+			return fmt.Errorf("provider_runtime.current_provider %q is not configured", cfg.ProviderRuntime.CurrentProvider)
+		}
+	}
+	if providerID, providerCfg, ok := SelectedProviderConfig(cfg.ProviderRuntime); ok {
+		cfg.ProviderRuntime.CurrentProvider = providerID
+		cfg.ProviderRuntime.DefaultProvider = providerID
+		if model := strings.TrimSpace(providerCfg.Model); model != "" {
+			cfg.ProviderRuntime.DefaultModel = model
+		}
+		cfg.Provider = providerCfg
+	}
 	for key, value := range cfg.Provider.ExtraHeaders {
 		trimmedKey := strings.TrimSpace(key)
 		trimmedValue := strings.TrimSpace(value)
@@ -1162,7 +1244,9 @@ func defaultBaseURL(providerType string) string {
 func usesOpenAIDefaultBaseURLForNativeProvider(providerType, baseURL string) bool {
 	switch normalizeProviderType(providerType) {
 	case "anthropic", "gemini":
-		return strings.EqualFold(strings.TrimRight(strings.TrimSpace(baseURL), "/"), "https://api.openai.com/v1")
+		baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+		return strings.EqualFold(baseURL, "https://api.openai.com/v1") ||
+			strings.EqualFold(baseURL, "https://api.deepseek.com")
 	default:
 		return false
 	}
@@ -1171,7 +1255,8 @@ func usesOpenAIDefaultBaseURLForNativeProvider(providerType, baseURL string) boo
 func usesOpenAIDefaultModelForNativeProvider(providerType, model string) bool {
 	switch normalizeProviderType(providerType) {
 	case "anthropic", "gemini":
-		return strings.TrimSpace(model) == defaultModelID
+		model = strings.TrimSpace(model)
+		return model == defaultModelID || model == legacyOpenAIDefaultModelID
 	default:
 		return false
 	}
@@ -1181,9 +1266,9 @@ func defaultModel(providerType, baseURL string) string {
 	switch normalizeProviderType(providerType) {
 	case "openai-compatible", "openai", "":
 		if strings.Contains(strings.ToLower(strings.TrimSpace(baseURL)), "deepseek.com") {
-			return "deepseek-chat"
+			return defaultModelID
 		}
-		return defaultModelID
+		return legacyOpenAIDefaultModelID
 	case "gemini":
 		return "gemini-2.5-flash"
 	default:

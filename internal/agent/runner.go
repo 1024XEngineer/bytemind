@@ -127,7 +127,12 @@ type Runner struct {
 
 func NewRunner(opts Options) *Runner {
 	cfg := opts.Config
-	if model := strings.TrimSpace(cfg.ProviderRuntime.DefaultModel); model != "" {
+	if providerID, providerCfg, ok := config.SelectedProviderConfig(cfg.ProviderRuntime); ok {
+		cfg.ProviderRuntime.CurrentProvider = providerID
+		cfg.ProviderRuntime.DefaultProvider = providerID
+		cfg.ProviderRuntime.DefaultModel = strings.TrimSpace(providerCfg.Model)
+		cfg.Provider = providerCfg
+	} else if model := strings.TrimSpace(config.SelectedModelID(cfg.ProviderRuntime)); model != "" {
 		cfg.Provider.Model = model
 	}
 
@@ -303,7 +308,7 @@ func (r *Runner) modelID() string {
 	if r == nil {
 		return ""
 	}
-	if model := strings.TrimSpace(r.config.ProviderRuntime.DefaultModel); model != "" {
+	if model := strings.TrimSpace(config.SelectedModelID(r.config.ProviderRuntime)); model != "" {
 		return model
 	}
 	return strings.TrimSpace(r.config.Provider.Model)

@@ -46,8 +46,11 @@ func UpsertProviderRuntimeSelection(configPath string, runtimeCfg ProviderRuntim
 		return "", err
 	}
 
-	selectedProvider := strings.ToLower(strings.TrimSpace(runtimeCfg.DefaultProvider))
+	selectedProvider := SelectedProviderID(runtimeCfg)
 	selectedModel := strings.TrimSpace(runtimeCfg.DefaultModel)
+	if selectedModel == "" {
+		selectedModel = SelectedModelID(runtimeCfg)
+	}
 	runtimeCfg, providerCfg, err := SelectProviderRuntimeModel(runtimeCfg, selectedProvider, selectedModel)
 	if err != nil {
 		return "", err

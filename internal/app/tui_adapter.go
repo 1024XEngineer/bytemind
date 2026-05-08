@@ -78,6 +78,13 @@ func (a *tuiRunnerAdapter) UpdateProvider(providerCfg config.ProviderConfig, cli
 	a.runner.UpdateProvider(providerCfg, client)
 }
 
+func (a *tuiRunnerAdapter) UpdateProviderRuntime(runtimeCfg config.ProviderRuntimeConfig, providerCfg config.ProviderConfig, client llm.Client) {
+	if a == nil || a.runner == nil {
+		return
+	}
+	a.runner.UpdateProviderRuntime(runtimeCfg, providerCfg, client)
+}
+
 func (a *tuiRunnerAdapter) UpdateApprovalMode(mode string) {
 	if a == nil || a.runner == nil {
 		return

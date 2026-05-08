@@ -177,8 +177,8 @@ func (m *model) refreshTokenBudget() {
 	}
 	budget := max(1, m.cfg.TokenQuota)
 	runtimeCfg := m.cfg.ProviderRuntime
-	providerID := strings.TrimSpace(runtimeCfg.DefaultProvider)
-	modelID := strings.TrimSpace(runtimeCfg.DefaultModel)
+	providerID := config.SelectedProviderID(runtimeCfg)
+	modelID := config.SelectedModelID(runtimeCfg)
 	if modelID == "" {
 		modelID = strings.TrimSpace(m.cfg.Provider.Model)
 	}

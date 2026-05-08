@@ -585,9 +585,9 @@ func TestLoadUserProviderPrecedenceResetsProjectProviderRuntime(t *testing.T) {
 	if cfg.ProviderRuntime.DefaultModel != "deepseek-reasoner" {
 		t.Fatalf("expected runtime to be rebuilt from user provider, got default model %q", cfg.ProviderRuntime.DefaultModel)
 	}
-	runtimeProvider, ok := cfg.ProviderRuntime.Providers["openai"]
+	runtimeProvider, ok := cfg.ProviderRuntime.Providers["deepseek"]
 	if !ok {
-		t.Fatalf("expected rebuilt legacy openai runtime provider, got %#v", cfg.ProviderRuntime.Providers)
+		t.Fatalf("expected rebuilt legacy deepseek runtime provider, got %#v", cfg.ProviderRuntime.Providers)
 	}
 	if runtimeProvider.BaseURL != "https://api.deepseek.com" {
 		t.Fatalf("expected user provider base_url in runtime provider, got %q", runtimeProvider.BaseURL)
@@ -845,8 +845,8 @@ func TestLoadDefaultsModelFromProviderEndpointWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Provider.Model != "deepseek-chat" {
-		t.Fatalf("expected default model deepseek-chat, got %q", cfg.Provider.Model)
+	if cfg.Provider.Model != "deepseek-v4-flash" {
+		t.Fatalf("expected default model deepseek-v4-flash, got %q", cfg.Provider.Model)
 	}
 }
 
@@ -881,8 +881,8 @@ func TestLoadNormalizesProviderFamily(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Provider.Family != "zai" {
-		t.Fatalf("expected top-level provider family zai, got %q", cfg.Provider.Family)
+	if cfg.Provider.Family != "moonshot" {
+		t.Fatalf("expected selected provider family moonshot, got %q", cfg.Provider.Family)
 	}
 	runtimeProvider := cfg.ProviderRuntime.Providers["moonshot"]
 	if runtimeProvider.Family != "moonshot" {
@@ -1421,6 +1421,9 @@ func TestUpsertProviderRuntimeSelectionPersistsProviderAndRuntime(t *testing.T) 
 	if cfg.ProviderRuntime.DefaultProvider != "deepseek" || cfg.ProviderRuntime.DefaultModel != "deepseek-reasoner" {
 		t.Fatalf("expected runtime defaults to switch, got %#v", cfg.ProviderRuntime)
 	}
+	if cfg.ProviderRuntime.CurrentProvider != "deepseek" {
+		t.Fatalf("expected current provider to switch, got %#v", cfg.ProviderRuntime)
+	}
 	if cfg.ProviderRuntime.Providers["openai"].Model != "gpt-5.4-mini" {
 		t.Fatalf("expected non-selected runtime provider to remain unchanged, got %#v", cfg.ProviderRuntime.Providers["openai"])
 	}
@@ -1451,7 +1454,7 @@ func TestUpsertProviderFieldBackfillsModelForDeepseekEndpointWhenMissing(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Provider.Model != "deepseek-chat" {
+	if cfg.Provider.Model != "deepseek-v4-flash" {
 		t.Fatalf("expected deepseek model fallback, got %q", cfg.Provider.Model)
 	}
 }

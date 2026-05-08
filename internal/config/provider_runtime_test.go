@@ -51,11 +51,51 @@ func TestConfigLoadPreservesExplicitProviderRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ProviderRuntime.DefaultProvider != "openai" || cfg.ProviderRuntime.DefaultModel != "gpt-5.4-mini" || !cfg.ProviderRuntime.AllowFallback {
+	if cfg.ProviderRuntime.CurrentProvider != "openai" || cfg.ProviderRuntime.DefaultProvider != "openai" || cfg.ProviderRuntime.DefaultModel != "gpt-5.4-mini" || !cfg.ProviderRuntime.AllowFallback {
 		t.Fatalf("unexpected provider runtime %#v", cfg.ProviderRuntime)
 	}
 	if len(cfg.ProviderRuntime.Providers) != 1 {
 		t.Fatalf("unexpected provider runtime providers %#v", cfg.ProviderRuntime.Providers)
+	}
+}
+
+func TestConfigLoadDefaultsToDeepSeekRuntime(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ProviderRuntime.CurrentProvider != "deepseek" || cfg.ProviderRuntime.DefaultProvider != "deepseek" {
+		t.Fatalf("expected deepseek current provider, got %#v", cfg.ProviderRuntime)
+	}
+	if cfg.Provider.Model != "deepseek-v4-flash" || cfg.ProviderRuntime.Providers["deepseek"].Model != "deepseek-v4-flash" {
+		t.Fatalf("expected deepseek-v4-flash default model, got provider=%#v runtime=%#v", cfg.Provider, cfg.ProviderRuntime)
+	}
+	if cfg.Provider.BaseURL != "https://api.deepseek.com" || cfg.Provider.APIKeyEnv != "DEEPSEEK_API_KEY" {
+		t.Fatalf("unexpected default deepseek provider config %#v", cfg.Provider)
+	}
+}
+
+func TestConfigLoadRejectsUnknownCurrentProvider(t *testing.T) {
+	workspace := t.TempDir()
+	writeProviderRuntimeConfigFile(t, workspace, map[string]any{
+		"provider_runtime": map[string]any{
+			"current_provider": "missing",
+			"providers": map[string]any{
+				"openai": map[string]any{
+					"type":     "openai-compatible",
+					"base_url": "https://api.openai.com/v1",
+					"model":    "gpt-5.4-mini",
+				},
+			},
+		},
+	})
+
+	_, err := Load(workspace, "")
+	if err == nil || !strings.Contains(err.Error(), "provider_runtime.current_provider") {
+		t.Fatalf("expected unknown current_provider error, got %v", err)
 	}
 }
 
@@ -81,6 +121,9 @@ func TestLegacyProviderRuntimeConfigNormalizesProviderIDs(t *testing.T) {
 			runtime := LegacyProviderRuntimeConfig(cfg)
 			if runtime.DefaultProvider != tt.want {
 				t.Fatalf("unexpected default provider %q", runtime.DefaultProvider)
+			}
+			if runtime.CurrentProvider != tt.want {
+				t.Fatalf("unexpected current provider %q", runtime.CurrentProvider)
 			}
 			if runtime.DefaultModel != "test-model" {
 				t.Fatalf("unexpected default model %q", runtime.DefaultModel)
@@ -154,6 +197,9 @@ func TestSelectProviderRuntimeModelUpdatesSelectedProviderOnly(t *testing.T) {
 	if runtime.DefaultProvider != "deepseek" || runtime.DefaultModel != "deepseek-reasoner" {
 		t.Fatalf("unexpected runtime defaults %#v", runtime)
 	}
+	if runtime.CurrentProvider != "deepseek" {
+		t.Fatalf("expected current provider to switch to deepseek, got %#v", runtime)
+	}
 	if runtime.Providers["openai"].Model != "gpt-5.4-mini" {
 		t.Fatalf("expected non-selected provider to remain unchanged, got %#v", runtime.Providers["openai"])
 	}
@@ -189,6 +235,9 @@ func TestDeleteProviderRuntimeProviderRemovesTargetAndPreservesCurrentDefault(t 
 	}
 	if runtime.DefaultProvider != "openai" || runtime.DefaultModel != "gpt-5.4-mini" {
 		t.Fatalf("unexpected runtime defaults %#v", runtime)
+	}
+	if runtime.CurrentProvider != "openai" {
+		t.Fatalf("expected current provider to remain openai, got %#v", runtime)
 	}
 	if _, ok := runtime.Providers["deepseek"]; ok {
 		t.Fatalf("expected deepseek provider to be removed, got %#v", runtime.Providers)
