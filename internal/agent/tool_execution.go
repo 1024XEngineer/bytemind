@@ -58,6 +58,16 @@ func consumeSubAgentToolCalls(invocationID string) []tools.SubAgentToolCallRecor
 	return toolCalls
 }
 
+// toolCallResult carries the outcome of a single tool execution back to the
+// caller. The ToolMessage must be appended to sess.Messages by the caller;
+// observer events, audit records, and stdout feedback are already emitted.
+type toolCallResult struct {
+	Index       int
+	ToolCallID  string
+	ToolName    string
+	ToolMessage llm.Message
+}
+
 func (e *defaultEngine) executeToolCall(
 	ctx context.Context,
 	sess *session.Session,
@@ -68,21 +78,21 @@ func (e *defaultEngine) executeToolCall(
 	deniedTools map[string]struct{},
 	approval tools.ApprovalHandler,
 	sandboxAudit sandboxAuditContext,
-) error {
+) (toolCallResult, error) {
 	if e == nil || e.runner == nil {
-		return fmt.Errorf("agent engine is unavailable")
+		return toolCallResult{}, fmt.Errorf("agent engine is unavailable")
 	}
 	runner := e.runner
 
 	if runner.executor == nil {
-		return fmt.Errorf("tool executor is unavailable")
+		return toolCallResult{}, fmt.Errorf("tool executor is unavailable")
 	}
 	if runner.policyGateway == nil {
-		return fmt.Errorf("policy gateway is unavailable")
+		return toolCallResult{}, fmt.Errorf("policy gateway is unavailable")
 	}
 	executeDirectly := shouldExecuteToolDirectly(call.Function.Name)
 	if !executeDirectly && runner.runtime == nil {
-		return fmt.Errorf("runtime gateway is unavailable")
+		return toolCallResult{}, fmt.Errorf("runtime gateway is unavailable")
 	}
 
 	traceID := buildToolTraceID(call)
@@ -105,7 +115,7 @@ func (e *defaultEngine) executeToolCall(
 		SandboxWorkerNetwork: sandboxAudit.WorkerNetwork,
 	})
 	if err != nil {
-		return err
+		return toolCallResult{}, err
 	}
 	permissionMetadata := toolAuditMetadata(call.Function.Name, map[string]string{
 		"reason": decision.Reason,
@@ -178,7 +188,8 @@ func (e *defaultEngine) executeToolCall(
 			AllowedTools:      allowedTools,
 			DeniedTools:       deniedTools,
 			DelegateSubAgent: func(ctx context.Context, req tools.DelegateSubAgentRequest, execCtx *tools.ExecutionContext) (tools.DelegateSubAgentResult, error) {
-				return runner.delegateSubAgent(ctx, req, execCtx, SubAgentObserver(runner.observer, req.Agent))
+				invocationID := newSubAgentInvocationID()
+				return runner.delegateSubAgent(ctx, req, execCtx, SubAgentObserver(runner.observer, req.Agent, invocationID), invocationID)
 			},
 		})
 	}
@@ -329,15 +340,13 @@ func (e *defaultEngine) executeToolCall(
 		}
 	}
 	if err := llm.ValidateMessage(toolMessage); err != nil {
-		return err
+		return toolCallResult{}, err
 	}
-	sess.Messages = append(sess.Messages, toolMessage)
-	if runner.store != nil {
-		if err := runner.store.Save(sess); err != nil {
-			return err
-		}
-	}
-	return nil
+	return toolCallResult{
+		ToolCallID:  call.ID,
+		ToolName:    call.Function.Name,
+		ToolMessage: toolMessage,
+	}, nil
 }
 
 func (e *defaultEngine) toolSafetyClass(name string) tools.SafetyClass {
@@ -378,9 +387,9 @@ func (e *defaultEngine) handleRejectedToolCall(
 	out io.Writer,
 	decision ToolDecision,
 	sandboxAudit sandboxAuditContext,
-) error {
+) (toolCallResult, error) {
 	if e == nil || e.runner == nil {
-		return fmt.Errorf("agent engine is unavailable")
+		return toolCallResult{}, fmt.Errorf("agent engine is unavailable")
 	}
 	runner := e.runner
 	sandboxAudit = normalizeSandboxAuditContext(sandboxAudit)
@@ -443,15 +452,13 @@ func (e *defaultEngine) handleRejectedToolCall(
 
 	toolMessage := llm.NewToolResultMessage(call.ID, result)
 	if err := llm.ValidateMessage(toolMessage); err != nil {
-		return err
+		return toolCallResult{}, err
 	}
-	sess.Messages = append(sess.Messages, toolMessage)
-	if runner.store != nil {
-		if err := runner.store.Save(sess); err != nil {
-			return err
-		}
-	}
-	return nil
+	return toolCallResult{
+		ToolCallID:  call.ID,
+		ToolName:    call.Function.Name,
+		ToolMessage: toolMessage,
+	}, nil
 }
 
 func (r *Runner) executeToolCall(
@@ -464,7 +471,7 @@ func (r *Runner) executeToolCall(
 	deniedTools map[string]struct{},
 	approval tools.ApprovalHandler,
 	sandboxAudit sandboxAuditContext,
-) error {
+) (toolCallResult, error) {
 	engine := &defaultEngine{runner: r}
 	return engine.executeToolCall(ctx, sess, runMode, call, out, allowedTools, deniedTools, approval, sandboxAudit)
 }
@@ -481,7 +488,7 @@ func (r *Runner) handleRejectedToolCall(
 	out io.Writer,
 	decision ToolDecision,
 	sandboxAudit sandboxAuditContext,
-) error {
+) (toolCallResult, error) {
 	engine := &defaultEngine{runner: r}
 	return engine.handleRejectedToolCall(ctx, sess, call, out, decision, sandboxAudit)
 }

@@ -48,11 +48,15 @@ func (r *Runner) delegateSubAgent(
 	request tools.DelegateSubAgentRequest,
 	execCtx *tools.ExecutionContext,
 	streamObserver Observer,
+	invocationID string,
 ) (tools.DelegateSubAgentResult, error) {
+	if invocationID == "" {
+		invocationID = newSubAgentInvocationID()
+	}
 	result := tools.DelegateSubAgentResult{
 		OK:           false,
 		Status:       subAgentResultStatusFailed,
-		InvocationID: newSubAgentInvocationID(),
+		InvocationID: invocationID,
 		Agent:        request.Agent,
 	}
 

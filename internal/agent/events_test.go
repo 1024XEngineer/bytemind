@@ -29,13 +29,13 @@ func TestObserverFuncHandleEvent(t *testing.T) {
 }
 
 func TestSubAgentObserver(t *testing.T) {
-	t.Run("wraps and tags events with agentID", func(t *testing.T) {
+	t.Run("wraps and tags events with agentID and invocationID", func(t *testing.T) {
 		var receivedEvent Event
 		inner := ObserverFunc(func(event Event) {
 			receivedEvent = event
 		})
 
-		wrapped := SubAgentObserver(inner, "subagent-123")
+		wrapped := SubAgentObserver(inner, "subagent-123", "inv-001")
 
 		event := Event{
 			Type:      EventAssistantMessage,
@@ -48,13 +48,16 @@ func TestSubAgentObserver(t *testing.T) {
 		if receivedEvent.AgentID != "subagent-123" {
 			t.Errorf("expected AgentID 'subagent-123', got: %s", receivedEvent.AgentID)
 		}
+		if receivedEvent.InvocationID != "inv-001" {
+			t.Errorf("expected InvocationID 'inv-001', got: %s", receivedEvent.InvocationID)
+		}
 		if receivedEvent.Content != "hello" {
 			t.Errorf("expected Content 'hello', got: %s", receivedEvent.Content)
 		}
 	})
 
 	t.Run("nil inner returns no-op observer", func(t *testing.T) {
-		wrapped := SubAgentObserver(nil, "agent-456")
+		wrapped := SubAgentObserver(nil, "agent-456", "inv-002")
 
 		event := Event{
 			Type:    EventRunFinished,
@@ -76,13 +79,13 @@ func TestSubAgentObserver(t *testing.T) {
 		}
 	})
 
-	t.Run("empty agentID still works", func(t *testing.T) {
+	t.Run("empty IDs still work", func(t *testing.T) {
 		var receivedEvent Event
 		inner := ObserverFunc(func(event Event) {
 			receivedEvent = event
 		})
 
-		wrapped := SubAgentObserver(inner, "")
+		wrapped := SubAgentObserver(inner, "", "")
 
 		event := Event{
 			Type:    EventToolCallCompleted,
@@ -93,6 +96,9 @@ func TestSubAgentObserver(t *testing.T) {
 
 		if receivedEvent.AgentID != "" {
 			t.Errorf("expected empty AgentID, got: %s", receivedEvent.AgentID)
+		}
+		if receivedEvent.InvocationID != "" {
+			t.Errorf("expected empty InvocationID, got: %s", receivedEvent.InvocationID)
 		}
 	})
 }

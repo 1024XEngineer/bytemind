@@ -62,5 +62,5 @@ func (r *Runner) DispatchSubAgent(
 		Session:   sess,
 		Mode:      planpkg.NormalizeMode(mode),
 	}
-	return r.delegateSubAgent(ctx, request, execCtx, streamObserver)
+	return r.delegateSubAgent(ctx, request, execCtx, streamObserver, newSubAgentInvocationID())
 }

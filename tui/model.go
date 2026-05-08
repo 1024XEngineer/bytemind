@@ -142,6 +142,7 @@ type chatEntry struct {
 	Status         string
 	ToolCallID     string   // precise matching for tool call completion
 	AgentID        string   // subagent agent name (e.g. "explorer") for AgentID-based routing
+	InvocationID   string   // globally unique subagent invocation ID for precise event routing
 	CompactBody    string   // collapsed tree view text (e.g. "Read model.go (1-50)")
 	DetailLines    []string // expanded detail lines
 	SubAgentTools  []SubAgentToolCall // tool calls made by a subagent
@@ -2374,10 +2375,12 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 				}
 				payload := part.ToolResult.Content
 				agentID := ""
+				invocationID := ""
 				if strings.EqualFold(name, "delegate_subagent") {
 					agentID = resolveAgentIDFromArgs(callArgs, part.ToolResult.ToolUseID)
 					if fullJSON := resolveFullSubAgentResult(message, part.ToolResult.ToolUseID); fullJSON != "" {
 						payload = fullJSON
+						invocationID = extractInvocationIDFromResult(payload)
 					}
 				}
 				rendered := renderToolPayload(name, payload)
@@ -2396,6 +2399,7 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 					Body:           joinSummary(summary, lines),
 					Status:         status,
 					AgentID:        agentID,
+					InvocationID:   invocationID,
 					CompactBody:    compactBody,
 					DetailLines:    lines,
 					SubAgentTools:  toolCalls,
@@ -2461,6 +2465,18 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 		}
 	}
 	return items
+}
+
+// extractInvocationIDFromResult parses the invocation_id out of a serialised
+// delegate_subagent result JSON. Returns "" when parsing fails or the field is absent.
+func extractInvocationIDFromResult(raw string) string {
+	var result struct {
+		InvocationID string `json:"invocation_id"`
+	}
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(result.InvocationID)
 }
 
 // resolveAgentIDFromArgs extracts the agent name from cached delegate_subagent arguments.

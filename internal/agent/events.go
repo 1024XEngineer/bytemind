@@ -32,6 +32,7 @@ type Event struct {
 	Plan          planpkg.State
 	Usage         llm.Usage
 	AgentID       string // non-empty when emitted by a subagent
+	InvocationID  string // non-empty when emitted by a subagent, globally unique per invocation
 }
 
 type Observer interface {
@@ -44,14 +45,17 @@ func (f ObserverFunc) HandleEvent(event Event) {
 	f(event)
 }
 
-// SubAgentObserver wraps an Observer to tag all events with the given agentID,
-// so the TUI can distinguish subagent events from main agent events.
-func SubAgentObserver(inner Observer, agentID string) Observer {
+// SubAgentObserver wraps an Observer to tag all events with the given agentID
+// and invocationID so the TUI can distinguish subagent events from main agent
+// events, and route them to the correct subagent entry even when multiple
+// subagents of the same type run concurrently.
+func SubAgentObserver(inner Observer, agentID, invocationID string) Observer {
 	if inner == nil {
 		return ObserverFunc(func(Event) {})
 	}
 	return ObserverFunc(func(event Event) {
 		event.AgentID = agentID
+		event.InvocationID = invocationID
 		inner.HandleEvent(event)
 	})
 }
