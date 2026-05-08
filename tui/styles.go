@@ -399,6 +399,15 @@ var (
 	toolDetailStyle = lipgloss.NewStyle().
 			Foreground(semanticColors.TextMuted)
 
+	toolDiffAddStyle = lipgloss.NewStyle().
+			Foreground(semanticColors.Success)
+
+	toolDiffRemoveStyle = lipgloss.NewStyle().
+			Foreground(semanticColors.Danger)
+
+	toolDiffContextStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextMuted)
+
 	toolExpandHintStyle = lipgloss.NewStyle().
 				Foreground(semanticColors.TextMuted)
 

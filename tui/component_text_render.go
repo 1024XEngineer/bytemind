@@ -27,7 +27,7 @@ func formatChatBodyMode(item chatEntry, width int, copyMode bool) string {
 	}
 	if item.Kind == "tool" {
 		if !copyMode {
-			text = firstToolBodyLines(text, 3)
+			text = firstToolBodyLines(text, 5)
 		}
 		if copyMode {
 			return strings.TrimRight(renderToolCopyBody(text, width), "\n")
@@ -255,6 +255,20 @@ func firstNonEmptyLine(text string) string {
 func renderToolLine(line string, width int, first bool) string {
 	trimmed := strings.TrimSpace(line)
 	contentWidth := max(8, width)
+
+	if isDiffLine(trimmed) {
+		var style lipgloss.Style
+		switch trimmed[0] {
+		case '+':
+			style = toolDiffAddStyle
+		case '-':
+			style = toolDiffRemoveStyle
+		default:
+			style = toolDiffContextStyle
+		}
+		return renderStyledWrappedLine(trimmed, contentWidth, style)
+	}
+
 	switch {
 	case isToolErrorLine(trimmed) && first:
 		return renderStyledWrappedLine(trimmed, contentWidth, toolErrorSummaryStyle)
@@ -271,6 +285,19 @@ func renderToolLine(line string, width int, first bool) string {
 	default:
 		return renderStyledWrappedLine(trimmed, contentWidth, toolDetailStyle)
 	}
+}
+
+func isDiffLine(line string) bool {
+	if len(line) < 2 {
+		return false
+	}
+	switch line[0] {
+	case '+', '-':
+		return true
+	case ' ':
+		return true
+	}
+	return false
 }
 
 func renderStyledWrappedLine(line string, width int, style lipgloss.Style) string {

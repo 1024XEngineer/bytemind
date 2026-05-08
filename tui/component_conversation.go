@@ -554,7 +554,7 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 			if detail == "" {
 				continue
 			}
-			detailLines = append(detailLines, connectorStyle.Render(toolTreeChar)+detail)
+			detailLines = append(detailLines, connectorStyle.Render(toolTreeChar)+renderDiffDetailLine(detail))
 		}
 		if len(detailLines) > 0 {
 			body = headLine + "\n" + indent + strings.Join(detailLines, "\n"+indent)
@@ -562,6 +562,21 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 	}
 
 	return style.Width(contentWidth).Render(body)
+}
+
+func renderDiffDetailLine(line string) string {
+	if len(line) < 2 {
+		return line
+	}
+	switch line[0] {
+	case '+':
+		return toolDiffAddStyle.Render(line)
+	case '-':
+		return toolDiffRemoveStyle.Render(line)
+	case ' ':
+		return toolDiffContextStyle.Render(line)
+	}
+	return line
 }
 
 func summarizeParallelToolGroup(group []chatEntry, name string) string {
