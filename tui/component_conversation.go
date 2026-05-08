@@ -575,18 +575,24 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 
 	indent := "  "
 	body := headLine
-	if toolDetailsExpanded && len(item.DetailLines) > 0 {
-		connectorStyle := lipgloss.NewStyle().Foreground(colorTool)
-		detailLines := make([]string, 0, len(item.DetailLines))
-		for _, detail := range item.DetailLines {
-			detail = strings.TrimSpace(detail)
-			if detail == "" {
+	if len(item.DetailLines) > 0 {
+		limit := len(item.DetailLines)
+		if !toolDetailsExpanded && limit > 8 {
+			limit = 8
+		}
+		detailLines := make([]string, 0, limit+1)
+		for i, detail := range item.DetailLines {
+			if i >= limit {
+				detailLines = append(detailLines, indent+toolExpandHintStyle.Render("(ctrl+o to expand)"))
+				break
+			}
+			if strings.TrimSpace(detail) == "" {
 				continue
 			}
-			detailLines = append(detailLines, connectorStyle.Render(toolTreeLead)+detail)
+			detailLines = append(detailLines, indent+renderDiffDetailLine(detail, contentWidth-len(indent)))
 		}
 		if len(detailLines) > 0 {
-			body = headLine + "\n" + indent + strings.Join(detailLines, "\n"+indent)
+			body = headLine + "\n" + strings.Join(detailLines, "\n")
 		}
 	}
 
@@ -907,6 +913,50 @@ func renderSubAgentBlock(item chatEntry, agentID, compactBody string, width int,
 	}
 
 	return style.Width(contentWidth).Render(body)
+}
+
+func renderDiffDetailLine(line string, width int) string {
+	if len(line) == 0 {
+		return line
+	}
+
+	// Control-byte prefixed lines (path, stats, hunk header)
+	if line[0] == 0x00 {
+		return toolDiffPathStyle.Render(line[1:])
+	}
+	if line[0] == 0x01 {
+		return toolDiffStatsStyle.Render(line[1:])
+	}
+	if line[0] == 0x02 {
+		return toolDiffHunkHeaderStyle.Render(line[1:])
+	}
+
+	// Diff content lines: all start with space. Marker at position 9
+	// Format: " NNNNNNN X code" (1+7+1+1 = 10 chars prefix, marker at [9])
+	if len(line) < 11 {
+		return line
+	}
+	diffMarker := line[9]
+	if diffMarker != '+' && diffMarker != '-' && diffMarker != ' ' {
+		return line
+	}
+
+	var style lipgloss.Style
+	switch diffMarker {
+	case '+':
+		style = toolDiffAddStyle
+	case '-':
+		style = toolDiffRemoveStyle
+	default:
+		style = toolDiffContextStyle
+	}
+
+	padded := line
+	lineWidth := runewidth.StringWidth(line)
+	if lineWidth < width {
+		padded = line + strings.Repeat(" ", width-lineWidth)
+	}
+	return style.Render(padded)
 }
 
 func summarizeParallelToolGroup(group []chatEntry, name string) string {

@@ -77,13 +77,11 @@ func (ApplyPatchTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execu
 
 	i := 1
 	operations := make([]map[string]any, 0, 4)
+	diffFiles := make([]DiffFile, 0, 4)
 	for i < len(lines) {
 		line := lines[i]
 		if line == "*** End Patch" {
-			return toJSON(map[string]any{
-				"ok":         true,
-				"operations": operations,
-			})
+			return toJSON(buildPatchResult(operations, diffFiles))
 		}
 
 		switch {
@@ -109,17 +107,31 @@ func (ApplyPatchTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execu
 			if err := os.WriteFile(resolved, []byte(content), 0o644); err != nil {
 				return "", err
 			}
-			operations = append(operations, map[string]any{"type": "add", "path": filepath.ToSlash(mustRel(execCtx.Workspace, resolved))})
+			relPath := filepath.ToSlash(mustRel(execCtx.Workspace, resolved))
+			operations = append(operations, map[string]any{"type": "add", "path": relPath})
+			diffFiles = append(diffFiles, DiffFile{
+				Path:       relPath,
+				ChangeType: "add",
+				Added:      len(contentLines),
+				Hunks:      contentToAddHunk(contentLines),
+			})
 		case strings.HasPrefix(line, "*** Delete File: "):
 			path := strings.TrimSpace(strings.TrimPrefix(line, "*** Delete File: "))
 			resolved, err := resolvePath(execCtx.Workspace, path, writableRootsFromExecContext(execCtx)...)
 			if err != nil {
 				return "", err
 			}
+			removed := lineCount(resolved)
 			if err := os.Remove(resolved); err != nil {
 				return "", err
 			}
-			operations = append(operations, map[string]any{"type": "delete", "path": filepath.ToSlash(mustRel(execCtx.Workspace, resolved))})
+			relPath := filepath.ToSlash(mustRel(execCtx.Workspace, resolved))
+			operations = append(operations, map[string]any{"type": "delete", "path": relPath})
+			diffFiles = append(diffFiles, DiffFile{
+				Path:       relPath,
+				ChangeType: "delete",
+				Removed:    removed,
+			})
 			i++
 		case strings.HasPrefix(line, "*** Update File: "):
 			path := strings.TrimSpace(strings.TrimPrefix(line, "*** Update File: "))
@@ -160,11 +172,27 @@ func (ApplyPatchTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execu
 					return "", err
 				}
 			}
+			relOld := filepath.ToSlash(mustRel(execCtx.Workspace, oldPath))
+			relNew := filepath.ToSlash(mustRel(execCtx.Workspace, newPath))
 			operations = append(operations, map[string]any{
 				"type":     "update",
-				"path":     filepath.ToSlash(mustRel(execCtx.Workspace, oldPath)),
-				"new_path": filepath.ToSlash(mustRel(execCtx.Workspace, newPath)),
+				"path":     relOld,
+				"new_path": relNew,
 			})
+			hunks, added, removed := buildDiffFromPatchHunks(chunkLines)
+			changeType := "modify"
+			df := DiffFile{
+				Path:       relOld,
+				ChangeType: changeType,
+				Added:      added,
+				Removed:    removed,
+				Hunks:      hunks,
+			}
+			if newPath != oldPath {
+				df.ChangeType = "move"
+				df.NewPath = relNew
+			}
+			diffFiles = append(diffFiles, df)
 		default:
 			return "", fmt.Errorf("unsupported patch header: %q", line)
 		}
@@ -444,4 +472,80 @@ func detectLineEnding(text string) string {
 		return "\r\n"
 	}
 	return "\n"
+}
+
+func buildDiffFromPatchHunks(chunkLines []string) ([]DiffHunk, int, int) {
+	hunks, err := parsePatchHunks(chunkLines)
+	if err != nil || len(hunks) == 0 {
+		return nil, 0, 0
+	}
+	added, removed := 0, 0
+	result := make([]DiffHunk, 0, len(hunks))
+	for _, h := range hunks {
+		lines := make([]string, 0, len(h.Lines))
+		for _, l := range h.Lines {
+			lines = append(lines, string(l.Prefix)+l.Text)
+			switch l.Prefix {
+			case '+':
+				added++
+			case '-':
+				removed++
+			}
+		}
+		result = append(result, DiffHunk{
+			OldStart: h.OldRange.Start,
+			OldLines: h.OldRange.Count,
+			NewStart: h.NewRange.Start,
+			NewLines: h.NewRange.Count,
+			Lines:    lines,
+		})
+	}
+	return result, added, removed
+}
+
+func contentToAddHunk(lines []string) []DiffHunk {
+	if len(lines) == 0 {
+		return nil
+	}
+	display := make([]string, 0, len(lines))
+	for _, l := range lines {
+		display = append(display, "+"+l)
+	}
+	return []DiffHunk{{
+		OldStart: 0,
+		OldLines: 0,
+		NewStart: 1,
+		NewLines: len(lines),
+		Lines:    display,
+	}}
+}
+
+func lineCount(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(data), "\n")
+}
+
+func buildPatchResult(operations []map[string]any, diffFiles []DiffFile) map[string]any {
+	totalAdded, totalRemoved := 0, 0
+	for _, f := range diffFiles {
+		totalAdded += f.Added
+		totalRemoved += f.Removed
+	}
+	truncated := truncateDiff(diffFiles)
+	dp := DiffPreview{
+		Files:        diffFiles,
+		TotalFiles:   len(diffFiles),
+		TotalAdded:   totalAdded,
+		TotalRemoved: totalRemoved,
+		Truncated:    truncated,
+	}
+	sanitizeDiffPreview(&dp)
+	return map[string]any{
+		"ok":           true,
+		"operations":   operations,
+		"diff_preview": dp,
+	}
 }

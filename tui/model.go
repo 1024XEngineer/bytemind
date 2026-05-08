@@ -2762,33 +2762,58 @@ func summarizeTool(name, payload string) (string, []string, string) {
 	case "write_file":
 		var result struct {
 			Path         string `json:"path"`
-			BytesWritten int    `json:"bytes_written"`
+			BytesWritten int               `json:"bytes_written"`
+			DiffPreview  diffPreviewLocal  `json:"diff_preview"`
 		}
 		if json.Unmarshal([]byte(payload), &result) == nil {
-			return "创建 " + filepath.Base(result.Path), []string{
-				fmt.Sprintf("写入 %d 字节", result.BytesWritten),
+			if len(result.DiffPreview.Files) > 0 {
+				f := result.DiffPreview.Files[0]
+				lines := []string{fmt.Sprintf("+%d -%d", f.Added, f.Removed)}
+				lines = append(lines, diffExpandedDetailLines(result.DiffPreview)...)
+				return "Write " + filepath.Base(result.Path), lines, "done"
+			}
+			return "Write " + filepath.Base(result.Path), []string{
+				fmt.Sprintf("%d bytes", result.BytesWritten),
 			}, "done"
 		}
 	case "replace_in_file":
 		var result struct {
 			Path     string `json:"path"`
 			Replaced int    `json:"replaced"`
-			OldCount int    `json:"old_count"`
+			OldCount    int         `json:"old_count"`
+			DiffPreview diffPreviewLocal `json:"diff_preview"`
 		}
 		if json.Unmarshal([]byte(payload), &result) == nil {
+			lines := make([]string, 0, 4)
+			if len(result.DiffPreview.Files) > 0 {
+				f := result.DiffPreview.Files[0]
+				lines = append(lines, fmt.Sprintf("+%d -%d", f.Added, f.Removed))
+				lines = append(lines, diffExpandedDetailLines(result.DiffPreview)...)
+				return "改动 " + filepath.Base(result.Path), lines, "done"
+			}
 			return "改动 " + filepath.Base(result.Path), []string{
 				fmt.Sprintf("改动 %d 行", result.Replaced),
 			}, "done"
 		}
 	case "apply_patch":
 		var result struct {
-			Operations []struct {
+			Operations  []struct {
 				Type string `json:"type"`
 				Path string `json:"path"`
 			} `json:"operations"`
+			DiffPreview diffPreviewLocal `json:"diff_preview"`
 		}
 		if json.Unmarshal([]byte(payload), &result) == nil {
-			// 只显示前10个操作，后面用省略号表示
+			if len(result.DiffPreview.Files) > 0 {
+				lines := make([]string, 0, 6)
+				for _, f := range result.DiffPreview.Files {
+					lines = append(lines, fmt.Sprintf("%s %s  +%d -%d", f.ChangeType, compactDisplayPath(f.Path), f.Added, f.Removed))
+				}
+				lines = append(lines, diffExpandedDetailLines(result.DiffPreview)...)
+				if result.DiffPreview.Truncated {
+				}
+				return fmt.Sprintf("改动 %d 个文件, +%d -%d", result.DiffPreview.TotalFiles, result.DiffPreview.TotalAdded, result.DiffPreview.TotalRemoved), lines, "done"
+			}
 			operationLines := make([]string, 0, min(10, len(result.Operations)))
 			for i := 0; i < min(10, len(result.Operations)); i++ {
 				operationLines = append(operationLines, result.Operations[i].Type+" "+compactDisplayPath(result.Operations[i].Path))

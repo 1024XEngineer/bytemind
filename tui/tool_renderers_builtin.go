@@ -172,11 +172,21 @@ func (writeFileRenderer) DisplayLabel() string { return "WRITE" }
 
 func (writeFileRenderer) Render(payload string) ToolRenderResult {
 	var result struct {
-		Path         string `json:"path"`
-		BytesWritten int    `json:"bytes_written"`
+		Path         string           `json:"path"`
+		BytesWritten int              `json:"bytes_written"`
+		DiffPreview  diffPreviewLocal `json:"diff_preview"`
 	}
 	if json.Unmarshal([]byte(payload), &result) == nil {
 		name := filepath.Base(result.Path)
+		if len(result.DiffPreview.Files) > 0 {
+			compactLine := name
+			return ToolRenderResult{
+				Summary:     fmt.Sprintf("Created %s", name),
+				DetailLines: diffExpandedDetailLines(result.DiffPreview),
+				Status:      "done",
+				CompactLine: compactLine,
+			}
+		}
 		return ToolRenderResult{
 			Summary: "Created " + name,
 			DetailLines: []string{
@@ -201,12 +211,22 @@ func (replaceInFileRenderer) DisplayLabel() string { return "EDIT" }
 
 func (replaceInFileRenderer) Render(payload string) ToolRenderResult {
 	var result struct {
-		Path     string `json:"path"`
-		Replaced int    `json:"replaced"`
-		OldCount int    `json:"old_count"`
+		Path        string           `json:"path"`
+		Replaced    int              `json:"replaced"`
+		OldCount    int              `json:"old_count"`
+		DiffPreview diffPreviewLocal `json:"diff_preview"`
 	}
 	if json.Unmarshal([]byte(payload), &result) == nil {
 		name := filepath.Base(result.Path)
+		if len(result.DiffPreview.Files) > 0 {
+			compactLine := name
+			return ToolRenderResult{
+				Summary:     fmt.Sprintf("Updated %s", name),
+				DetailLines: diffExpandedDetailLines(result.DiffPreview),
+				Status:      "done",
+				CompactLine: compactLine,
+			}
+		}
 		return ToolRenderResult{
 			Summary: "Updated " + name,
 			DetailLines: []string{
@@ -231,12 +251,22 @@ func (applyPatchRenderer) DisplayLabel() string { return "PATCH" }
 
 func (applyPatchRenderer) Render(payload string) ToolRenderResult {
 	var result struct {
-		Operations []struct {
+		Operations  []struct {
 			Type string `json:"type"`
 			Path string `json:"path"`
 		} `json:"operations"`
+		DiffPreview diffPreviewLocal `json:"diff_preview"`
 	}
 	if json.Unmarshal([]byte(payload), &result) == nil {
+		if len(result.DiffPreview.Files) > 0 {
+			compactLine := fmt.Sprintf("%d files", result.DiffPreview.TotalFiles)
+			return ToolRenderResult{
+				Summary:     fmt.Sprintf("Updated %d files", result.DiffPreview.TotalFiles),
+				DetailLines: diffExpandedDetailLines(result.DiffPreview),
+				Status:      "done",
+				CompactLine: compactLine,
+			}
+		}
 		operationLines := make([]string, 0, min(10, len(result.Operations)))
 		for i := 0; i < min(10, len(result.Operations)); i++ {
 			operationLines = append(operationLines, result.Operations[i].Type+" "+compactDisplayPath(result.Operations[i].Path))

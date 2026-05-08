@@ -27,7 +27,7 @@ func formatChatBodyMode(item chatEntry, width int, copyMode bool) string {
 	}
 	if item.Kind == "tool" {
 		if !copyMode {
-			text = firstNonEmptyLine(text)
+			text = firstToolBodyLines(text, 5)
 		}
 		if copyMode {
 			return strings.TrimRight(renderToolCopyBody(text, width), "\n")
@@ -228,6 +228,20 @@ func renderToolBodyLegacy(text string, width int) string {
 	return strings.Join(out, "\n")
 }
 
+func firstToolBodyLines(text string, maxLines int) string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	out := make([]string, 0, maxLines)
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, line)
+			if len(out) >= maxLines {
+				break
+			}
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
 func firstNonEmptyLine(text string) string {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	for _, line := range lines {
@@ -241,6 +255,20 @@ func firstNonEmptyLine(text string) string {
 func renderToolLine(line string, width int, first bool) string {
 	trimmed := strings.TrimSpace(line)
 	contentWidth := max(8, width)
+
+	if isDiffLine(trimmed) {
+		var style lipgloss.Style
+		switch trimmed[7] {
+		case '+':
+			style = toolDiffAddStyle
+		case '-':
+			style = toolDiffRemoveStyle
+		default:
+			style = toolDiffContextStyle
+		}
+		return renderStyledWrappedLine(trimmed, contentWidth, style)
+	}
+
 	switch {
 	case isToolErrorLine(trimmed) && first:
 		return renderStyledWrappedLine(trimmed, contentWidth, toolErrorSummaryStyle)
@@ -257,6 +285,15 @@ func renderToolLine(line string, width int, first bool) string {
 	default:
 		return renderStyledWrappedLine(trimmed, contentWidth, toolDetailStyle)
 	}
+}
+
+func isDiffLine(line string) bool {
+	// Claude CLI format: "    554 content", "    557 -removed", "    557 +added"
+	if len(line) < 9 {
+		return false
+	}
+	marker := line[7]
+	return marker == '+' || marker == '-' || marker == ' '
 }
 
 func renderStyledWrappedLine(line string, width int, style lipgloss.Style) string {
