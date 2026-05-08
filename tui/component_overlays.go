@@ -119,75 +119,143 @@ func (m model) renderHelpModal() string {
 func (m model) renderApprovalBanner() string {
 	bannerWidth := max(24, m.chatPanelInnerWidth())
 	innerWidth := max(20, bannerWidth-approvalBannerStyle.GetHorizontalFrameSize())
+
 	toolName := strings.TrimSpace(m.approval.ToolName)
 	if toolName == "" {
 		toolName = "unknown"
 	}
 	command := strings.TrimSpace(m.approval.Command)
-	if command == "" {
-		command = "-"
-	}
+	reason := strings.TrimSpace(m.approval.Reason)
 
 	isFullAccessConfirm := strings.EqualFold(strings.TrimSpace(m.approval.Kind), approvalPromptKindEnableFullAccess)
-	title := "Approval required"
-	lines := []string{}
+
 	if isFullAccessConfirm {
-		toolPrefix := "Action: "
-		confirmLabel := "Enable"
-		rejectLabel := "Cancel"
-		confirmTone := "warning"
-		title = "Enable full access?"
+		return m.renderFullAccessApproval(innerWidth)
+	}
 
-		reasonBudget := max(0, innerWidth-lipgloss.Width(title)-2)
-		reason := trimPreview(m.approval.Reason, reasonBudget)
-		line1 := approvalTitleStyle.Render(title)
-		if reason != "" {
-			line1 += "  " + approvalReasonStyle.Render(reason)
+	lines := make([]string, 0, 10)
+
+	// Title line: "Bytemind needs your permission to use {tool}"
+	title := fmt.Sprintf("Bytemind needs your permission to use %s", toolName)
+	lines = append(lines, approvalTitleStyle.Render(title))
+
+	// Command subtitle
+	if command != "" {
+		lines = append(lines, approvalReasonStyle.Render(trimToWidth(command, innerWidth)))
+	}
+
+	// Reason line if present
+	if reason != "" {
+		lines = append(lines, approvalReasonStyle.Render(wrapPlainText(reason, innerWidth)))
+	}
+
+	lines = append(lines, "") // blank separator
+
+	// Numbered options with ❯ arrow for selected
+	options := m.approvalOptions()
+	cursor := clamp(m.approval.Cursor, 0, len(options)-1)
+	for i, option := range options {
+		numStr := fmt.Sprintf("%d", i+1)
+		arrow := " "
+		style := approvalOptionStyle
+		descStyle := approvalOptionDescriptionStyle
+
+		if i == cursor {
+			arrow = approvalArrowStyle.Render("❯")
+			style = approvalOptionSelectedStyle
+			descStyle = approvalOptionDescriptionStyle
 		}
 
-		actionLine := approvalCommandStyle.Render(toolPrefix + trimPreview(command, max(6, innerWidth-lipgloss.Width(toolPrefix))))
+		// Format: "  1. Yes" or " ❯ 1. Yes"
+		optLine := fmt.Sprintf(" %s %s. %s", arrow, approvalNumberStyle.Render(numStr), style.Render(option.Label))
+		lines = append(lines, optLine)
 
-		choice := m.currentApprovalChoice()
-		confirmChoice := renderApprovalChoice(confirmLabel, confirmTone, choice == approvalChoiceApprove)
-		rejectChoice := renderApprovalChoice(rejectLabel, "error", choice == approvalChoiceReject)
-		choiceLine := lipgloss.JoinHorizontal(lipgloss.Left, confirmChoice, "  ", rejectChoice)
+		if option.Description != "" {
+			descPrefix := strings.Repeat(" ", 4) // indent under option text
+			lines = append(lines, descStyle.Render(descPrefix+wrapPlainText(option.Description, max(8, innerWidth-4))))
+		}
+	}
 
-		hintLine := approvalHintStyle.Render("Use Left/Right to choose, Enter to confirm, Esc to cancel")
-		if lipgloss.Width(choiceLine)+2+lipgloss.Width(hintLine) <= innerWidth {
-			choiceLine += strings.Repeat(" ", innerWidth-lipgloss.Width(choiceLine)-lipgloss.Width(hintLine)) + hintLine
-			hintLine = ""
-		}
-		lines = []string{line1, actionLine, choiceLine}
-		if strings.TrimSpace(hintLine) != "" {
-			lines = append(lines, hintLine)
-		}
-	} else {
-		lines = []string{
-			approvalTitleStyle.Render(title),
-			approvalReasonStyle.Render("Tool: " + trimPreview(toolName, innerWidth-6)),
-			approvalCommandStyle.Render("Command: " + trimPreview(command, innerWidth-9)),
-		}
-		if reason := strings.TrimSpace(m.approval.Reason); reason != "" {
-			lines = append(lines, approvalReasonStyle.Render(wrapPlainText(reason, innerWidth)))
-		}
+	// Feedback input mode
+	if m.approval.InFeedback {
 		lines = append(lines, "")
-		for i, option := range m.approvalOptions() {
-			prefix := "  "
-			style := approvalOptionStyle
-			if i == clamp(m.approval.Cursor, 0, len(m.approvalOptions())-1) {
-				prefix = "> "
-				style = approvalOptionSelectedStyle
-			}
-			lines = append(lines, style.Render(prefix+option.Label))
-			lines = append(lines, approvalOptionDescriptionStyle.Render("  "+wrapPlainText(option.Description, max(8, innerWidth-2))))
+		placeholder := "tell Claude what to do next"
+		feedbackText := m.approval.Feedback
+		if feedbackText == "" {
+			lines = append(lines, approvalFeedbackStyle.Render("  "+placeholder))
+		} else {
+			lines = append(lines, approvalFeedbackStyle.Render("  "+feedbackText))
 		}
-		lines = append(lines, "", approvalHintStyle.Render("Up/Down or J/K to select  Enter confirm  Y approve once  N/Esc reject"))
+	}
+
+	// Bottom hint line
+	hint := "Esc to cancel"
+	if m.approval.InFeedback {
+		hint += " · Enter to submit"
+	} else {
+		hint += " · Tab to amend  · ↑↓ navigate  · Enter select"
+	}
+	lines = append(lines, "")
+	lines = append(lines, approvalHintStyle.Render(hint))
+
+	body := lipgloss.NewStyle().
+		Width(innerWidth).
+		Render(strings.Join(lines, "\n"))
+	return approvalBannerStyle.Render(body)
+}
+
+// renderFullAccessApproval renders the simplified enable-full-access confirmation.
+func (m model) renderFullAccessApproval(innerWidth int) string {
+	lines := make([]string, 0, 6)
+	title := "Enable full access?"
+	lines = append(lines, approvalTitleStyle.Render(title))
+
+	if reason := strings.TrimSpace(m.approval.Reason); reason != "" {
+		lines = append(lines, approvalReasonStyle.Render(trimToWidth(reason, innerWidth)))
+	}
+
+	actionText := strings.TrimSpace(m.approval.Command)
+	if actionText == "" {
+		actionText = "full_access"
+	}
+	lines = append(lines, approvalCommandStyle.Render("Action: "+trimToWidth(actionText, max(6, innerWidth-8))))
+
+	lines = append(lines, "")
+
+	choice := m.currentApprovalChoice()
+	confirmLabel := "Enable"
+	rejectLabel := "Cancel"
+	confirmTone := "warning"
+
+	confirmChoice := renderApprovalChoice(confirmLabel, confirmTone, choice == approvalChoiceApprove)
+	rejectChoice := renderApprovalChoice(rejectLabel, "error", choice == approvalChoiceReject)
+	choiceLine := lipgloss.JoinHorizontal(lipgloss.Left, confirmChoice, "  ", rejectChoice)
+
+	hintLine := approvalHintStyle.Render("Use Left/Right to choose, Enter to confirm, Esc to cancel")
+	if lipgloss.Width(choiceLine)+2+lipgloss.Width(hintLine) <= innerWidth {
+		choiceLine += strings.Repeat(" ", innerWidth-lipgloss.Width(choiceLine)-lipgloss.Width(hintLine)) + hintLine
+		hintLine = ""
+	}
+	lines = append(lines, choiceLine)
+	if strings.TrimSpace(hintLine) != "" {
+		lines = append(lines, hintLine)
 	}
 
 	body := lipgloss.NewStyle().
 		Width(innerWidth).
 		Render(strings.Join(lines, "\n"))
 	return approvalBannerStyle.Render(body)
+}
+
+// trimToWidth truncates text to fit within maxWidth chars, adding "…" if needed.
+func trimToWidth(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= maxWidth {
+		return s
+	}
+	return s[:maxWidth-1] + "…"
 }
 
 func renderApprovalChoice(label, tone string, selected bool) string {

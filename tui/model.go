@@ -163,13 +163,15 @@ func (c commandItem) FilterValue() string {
 }
 
 type approvalPrompt struct {
-	ToolName string
-	Command  string
-	Reason   string
-	Cursor   int
-	Reply    chan approvalDecision
-	Kind     string
-	Choice   int
+	ToolName   string
+	Command    string
+	Reason     string
+	Cursor     int
+	Reply      chan approvalDecision
+	Kind       string
+	Choice     int
+	InFeedback bool
+	Feedback   string
 }
 
 type approvalDecision struct {
@@ -504,6 +506,13 @@ type model struct {
 	startupGuide               StartupGuide
 	mouseYOffset               int
 	landingGlowStep            int
+
+	// Status dot animation
+	lastTokenTime    time.Time
+	dotBlinkVisible  bool
+	stagnationStart  time.Time
+	stagnationActive bool
+	reducedMotion    bool
 }
 
 func newModel(opts Options) model {
@@ -599,6 +608,7 @@ func newModel(opts Options) model {
 		clipboardRead:        defaultClipboardTextReader{},
 		clipboardText:        defaultClipboardTextWriter{},
 		startupGuide:         opts.StartupGuide,
+		reducedMotion:        isReducedMotion(),
 		mouseYOffset:         resolveMouseYOffset(),
 	}
 	if opts.StartupGuide.Active {
@@ -798,6 +808,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.interruptSafe = false
 		m.pendingInterrupt = false
 		m.pendingInterruptReason = ""
+		m.stagnationActive = false
+		m.stagnationStart = time.Time{}
 		shouldResumeBTW := m.interrupting && len(m.pendingBTW) > 0
 		m.interrupting = false
 		finishReason := classifyRunFinish(msg.Err, shouldResumeBTW)
@@ -1084,6 +1096,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.landingGlowStep = (m.landingGlowStep + 1) % 2048
 		return m, landingGlowTickCmd()
+		case statusDotTickMsg:
+			if m.reducedMotion {
+				return m, nil
+			}
+			if !m.busy && !m.hasBlinkingDot() {
+				return m, nil
+			}
+			m.dotBlinkVisible = !m.dotBlinkVisible
+			if m.hasBlinkingDot() {
+				m.refreshViewport()
+			}
+			return m, statusDotTickCmd()
+		case stagnationTickMsg:
+			if m.updateStagnation() {
+				m.refreshViewport()
+			}
+			if m.hasActiveDotAnimation() {
+				return m, stagnationTickCmd()
+			}
+			return m, nil
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 	case tea.KeyMsg:
@@ -1686,17 +1718,47 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.resolveApprovalDecision(false)
 			}
 		default:
+			// Number keys 1-9: quick select option
+			if key >= "1" && key <= "9" {
+				n := int(key[0] - '0')
+				options := m.approvalOptions()
+				if n <= len(options) {
+					m.approval.Cursor = n - 1
+					if m.approval.InFeedback && m.approval.Feedback == "" {
+						m.approval.InFeedback = false
+					}
+				}
+				return m, nil
+			}
 			switch key {
 			case "up", "k":
 				m.approval.Cursor = clamp(m.approval.Cursor-1, 0, len(m.approvalOptions())-1)
+				if m.approval.InFeedback && m.approval.Feedback == "" {
+					m.approval.InFeedback = false
+				}
 			case "down", "j":
 				m.approval.Cursor = clamp(m.approval.Cursor+1, 0, len(m.approvalOptions())-1)
+				if m.approval.InFeedback && m.approval.Feedback == "" {
+					m.approval.InFeedback = false
+				}
+			case "tab":
+				m.approval.InFeedback = !m.approval.InFeedback
 			case "y", "Y":
 				m.rememberApprovalDecision(ApprovalRequest{ToolName: m.approval.ToolName, Command: m.approval.Command, Reason: m.approval.Reason}, ApprovalDecision{Disposition: ApprovalApproveOnce})
 				m.approval.Reply <- approvalDecision{Decision: ApprovalDecision{Disposition: ApprovalApproveOnce}}
 				m.statusNote = "Approved current operation."
 				m.phase = "tool"
 				m.approval = nil
+			case "esc":
+				if m.approval.InFeedback {
+					m.approval.InFeedback = false
+					m.approval.Feedback = ""
+				} else {
+					m.approval.Reply <- approvalDecision{Decision: ApprovalDecision{Disposition: ApprovalDeny}}
+					m.statusNote = "Operation rejected."
+					m.phase = "thinking"
+					m.approval = nil
+				}
 			case "enter":
 				options := m.approvalOptions()
 				selected := options[clamp(m.approval.Cursor, 0, len(options)-1)]
@@ -1713,11 +1775,24 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				m.phase = "tool"
 				m.approval = nil
-			case "n", "N", "esc":
+			case "n", "N":
+				if m.approval.InFeedback {
+					m.approval.InFeedback = false
+					m.approval.Feedback = ""
+				}
 				m.approval.Reply <- approvalDecision{Decision: ApprovalDecision{Disposition: ApprovalDeny}}
 				m.statusNote = "Operation rejected."
 				m.phase = "thinking"
 				m.approval = nil
+			case "backspace":
+				if m.approval.InFeedback && len(m.approval.Feedback) > 0 {
+					runes := []rune(m.approval.Feedback)
+					m.approval.Feedback = string(runes[:len(runes)-1])
+				}
+			default:
+				if m.approval.InFeedback && msg.Type == tea.KeyRunes {
+					m.approval.Feedback += string(msg.Runes)
+				}
 			}
 		}
 		return m, nil

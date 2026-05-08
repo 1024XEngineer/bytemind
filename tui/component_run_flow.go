@@ -47,7 +47,7 @@ func (m *model) beginRunWithInput(promptInput RunPromptInput, mode, note string)
 		m.syncLayoutForCurrentScreen()
 		m.refreshViewport()
 	}
-	return tea.Batch(m.startRunCmd(runCtx, runID, promptInput, mode), spinnerTick, waitForAsync(m.async))
+	return tea.Batch(m.startRunCmd(runCtx, runID, promptInput, mode), spinnerTick, waitForAsync(m.async), statusDotTickCmd(), stagnationTickCmd())
 }
 
 func (m model) submitPrompt(value string) (tea.Model, tea.Cmd) {
@@ -71,6 +71,17 @@ func (m model) submitPreparedPrompt(promptInput RunPromptInput, displayText stri
 	m.input.Reset()
 	m.clearPasteTransaction()
 	m.clearVirtualPasteParts()
+
+	// Expand paste references before storing the message body.
+	expandedDisplay, _ := m.resolvePromptPastedInput(displayText)
+	if expandedDisplay != "" {
+		displayText = expandedDisplay
+	}
+
+	// Clear pasted contents after expansion.
+	m.pastedContents = nil
+	m.pastedOrder = nil
+
 	m.screen = screenChat
 	if m.promptHistoryLoaded {
 		entry := history.PromptEntry{

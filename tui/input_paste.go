@@ -1599,36 +1599,23 @@ func (m *model) resolvePastedLineReference(input string) (string, error) {
 
 		full := input[start:end]
 		pasteID := submatchString(input, idx, pasteRefGroupID)
-		lineCount := submatchString(input, idx, pasteRefGroupLineCount)
+			_ = submatchString(input, idx, pasteRefGroupLineCount)
 		startLineStr := submatchString(input, idx, pasteRefGroupLineStart)
 		endLineStr := submatchString(input, idx, pasteRefGroupLineEnd)
 
-		if strings.TrimSpace(startLineStr) == "" && strings.TrimSpace(lineCount) != "" {
+		if strings.TrimSpace(startLineStr) == "" {
 			content, ok := m.findPastedContent(pasteID)
 			if !ok {
 				out.WriteString(full)
 			} else {
-				out.WriteString("```\n")
 				out.WriteString(content.Content)
-				out.WriteString("\n```")
-			}
-		} else if strings.TrimSpace(startLineStr) == "" {
-			content, ok := m.findPastedContent(pasteID)
-			if !ok {
-				out.WriteString(full)
-			} else {
-				out.WriteString("```\n")
-				out.WriteString(content.Content)
-				out.WriteString("\n```")
 			}
 		} else {
 			content, err := m.resolvePastedSelection(pasteID, startLineStr, endLineStr)
 			if err != nil {
 				out.WriteString(full)
 			} else {
-				out.WriteString("```\n")
 				out.WriteString(content)
-				out.WriteString("\n```")
 			}
 		}
 		last = end
