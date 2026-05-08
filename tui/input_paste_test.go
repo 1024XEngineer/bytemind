@@ -409,8 +409,8 @@ func TestResolvePastedLineReferenceWithFullFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve pasted line reference: %v", err)
 	}
-	if !strings.Contains(result, "```\n"+stored.Content+"\n```") {
-		t.Fatalf("expected full content expansion, got %q", result)
+		if !strings.Contains(result, stored.Content) {
+			t.Fatalf("expected plain content expansion, got %q", result)
 	}
 }
 
@@ -451,8 +451,8 @@ func TestBuildPromptInputDefaultsToLatestPastedReference(t *testing.T) {
 		t.Fatalf("build prompt input: %v", err)
 	}
 	text := input.UserMessage.Text()
-	if !strings.Contains(text, "```\nnew2\n```") {
-		t.Fatalf("expected latest pasted line expansion, got %q", text)
+		if !strings.Contains(text, "new2") {
+			t.Fatalf("expected latest pasted content, got %q", text)
 	}
 	if strings.Contains(text, "old2") {
 		t.Fatalf("expected latest pasted content, got %q", text)
@@ -492,8 +492,8 @@ func TestBuildPromptInputAdjustsOutOfRangeLineReference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build prompt input: %v", err)
 	}
-	if !strings.Contains(input.UserMessage.Text(), "```\nl11\n```") {
-		t.Fatalf("expected out-of-range line to clamp to last line, got %q", input.UserMessage.Text())
+		if !strings.Contains(input.UserMessage.Text(), "l11") {
+			t.Fatalf("expected out-of-range line to clamp to last line, got %q", input.UserMessage.Text())
 	}
 }
 

@@ -1596,7 +1596,7 @@ func (m *model) resolvePastedLineReference(input string) (string, error) {
 
 		full := input[start:end]
 		pasteID := submatchString(input, idx, pasteRefGroupID)
-		_ = submatchString(input, idx, pasteRefGroupLineCount)
+			_ = submatchString(input, idx, pasteRefGroupLineCount)
 		startLineStr := submatchString(input, idx, pasteRefGroupLineStart)
 		endLineStr := submatchString(input, idx, pasteRefGroupLineEnd)
 
@@ -1605,14 +1605,14 @@ func (m *model) resolvePastedLineReference(input string) (string, error) {
 			if !ok {
 				out.WriteString(full)
 			} else {
-				out.WriteString("```\n" + content.Content + "\n```")
+				out.WriteString(content.Content)
 			}
 		} else {
 			content, err := m.resolvePastedSelection(pasteID, startLineStr, endLineStr)
 			if err != nil {
 				out.WriteString(full)
 			} else {
-				out.WriteString("```\n" + content + "\n```")
+				out.WriteString(content)
 			}
 		}
 		last = end

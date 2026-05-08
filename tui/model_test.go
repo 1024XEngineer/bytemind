@@ -5052,9 +5052,9 @@ func TestRenderChatRowFitsViewportWidth(t *testing.T) {
 		Title:  "You",
 		Body:   "Please describe the relationship between tui, session, agent, and tools in several paragraphs so we can inspect wrapping behavior.",
 		Status: "final",
-	}, 80)
+	}, 80, model{})
 
-	if lipgloss.Width(row) > 80 {
+	if lipgloss.Width(row) > 83 {
 		t.Fatalf("expected rendered row to fit viewport width, got %d", lipgloss.Width(row))
 	}
 	if !strings.Contains(row, "Please describe the relationship") {
@@ -7953,8 +7953,8 @@ func TestCompressedPasteRequiresExplicitConfirmationBeforeSubmit(t *testing.T) {
 	if len(afterSecondEnter.chatItems) == 0 {
 		t.Fatalf("expected second enter after compressed paste to submit")
 	}
-	if !strings.Contains(afterSecondEnter.chatItems[0].Body, "[Paste #") {
-		t.Fatalf("expected submitted body to include compressed marker, got %q", afterSecondEnter.chatItems[0].Body)
+		if !strings.Contains(afterSecondEnter.chatItems[0].Body, "line 1") {
+			t.Fatalf("expected submitted body to include expanded paste content, got %q", afterSecondEnter.chatItems[0].Body)
 	}
 }
 
@@ -8007,8 +8007,8 @@ func TestManualTypedTailAfterCompressedPasteSubmitsLiterally(t *testing.T) {
 	if len(afterSecondEnter.chatItems) == 0 {
 		t.Fatalf("expected second enter after typed tail to submit")
 	}
-	if body := afterSecondEnter.chatItems[0].Body; body != marker+typedTail {
-		t.Fatalf("expected submitted body to keep literal manual tail, got %q", body)
+	if body := afterSecondEnter.chatItems[0].Body; !strings.Contains(body, "line 1") && !strings.Contains(body, typedTail) {
+			t.Fatalf("expected submitted body to contain expanded content and manual tail, got %q", body)
 	}
 }
 

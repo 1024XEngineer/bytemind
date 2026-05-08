@@ -67,6 +67,17 @@ func (m model) submitPreparedPrompt(promptInput RunPromptInput, displayText stri
 	m.input.Reset()
 	m.clearPasteTransaction()
 	m.clearVirtualPasteParts()
+
+	// Expand paste references before storing the message body.
+	expandedDisplay, _ := m.resolvePromptPastedInput(displayText)
+	if expandedDisplay != "" {
+		displayText = expandedDisplay
+	}
+
+	// Clear pasted contents after expansion.
+	m.pastedContents = nil
+	m.pastedOrder = nil
+
 	m.screen = screenChat
 	if m.promptHistoryLoaded {
 		entry := history.PromptEntry{
