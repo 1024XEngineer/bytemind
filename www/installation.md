@@ -1,132 +1,209 @@
 # Installation
 
+This page focuses on installing ByteMind itself. After installation, continue to [Quick Start](/quick-start) to configure an API key and run your first task.
+
 ## System Requirements
 
-| Requirement  | Details                                     |
-| ------------ | ------------------------------------------- |
-| OS           | macOS 12+, Linux (glibc 2.17+), Windows 10+ |
-| Architecture | amd64, arm64                                |
-| Disk space   | < 20 MB                                     |
+| Requirement | Details |
+| ----------- | ------- |
+| OS | Windows 10+, Linux, MacOS 12+ |
+| Architecture | amd64, arm64 |
+| Linux | glibc 2.17+ |
+| Disk space | < 20 MB |
 
-The install script automatically detects your platform and downloads the correct binary — **no Go installation required**.
+The install script automatically detects your platform and downloads the correct binary, so **you do not need to install Go first**.
 
 ## One-Line Install (Recommended)
 
-### macOS / Linux
+Select your current system and copy the corresponding command. After the script finishes, it prints the actual install path.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
-```
-
-### Windows (PowerShell)
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
 
 ```powershell
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
-:::warning Windows users: copy the PowerShell command
-Do not run `curl ... install.sh | bash` from Windows PowerShell or CMD. That command is for macOS, Linux, or a working WSL shell; from a Windows terminal it starts WSL. If you see an `ext4.vhdx`, `HCS`, or `Bash/Service/CreateInstance` error, re-run the PowerShell command above instead.
+Defaults to `%USERPROFILE%\bin\bytemind.exe`.
+
+:::warning Windows users: use the PowerShell command
+Do not run `curl ... install.sh | bash` in Windows PowerShell or CMD. If you accidentally run it and see WSL-related errors, see [Troubleshooting](/troubleshooting#windows-wsl-error-when-running-the-bash-install-command).
 :::
 
-After the script finishes it prints the install path. If `bytemind` is not found, see [Configuring PATH](#configuring-path) below.
+</Tab>
 
-## Install a Specific Version
-
-Pin a version in production environments to avoid unexpected behavior changes from updates.
-
-### macOS / Linux
+<Tab title="Linux">
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=vX.Y.Z bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
 ```
 
-### Windows (PowerShell)
+Defaults to `~/bin/bytemind`.
+
+</Tab>
+
+<Tab title="MacOS">
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
+```
+
+Defaults to `~/bin/bytemind`.
+
+</Tab>
+</Tabs>
+
+## Verify the Installation
+
+```bash
+bytemind --version
+```
+
+Example output:
+
+```text
+vX.Y.Z
+```
+
+If the terminal says `bytemind` is not found, see [Command not found](/troubleshooting#bytemind-command-not-found). If Windows still shows the old version after updating, see [Windows still shows the old version after updating](/troubleshooting#windows-still-shows-the-old-version-after-updating).
+
+## Updating
+
+Re-run the install script to overwrite the existing binary with the latest release.
+
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
+```
+
+</Tab>
+
+<Tab title="Linux">
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
+```
+
+</Tab>
+
+<Tab title="MacOS">
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
+```
+
+</Tab>
+</Tabs>
+
+To disable update-check prompts, see `update_check` in [Config Reference](/reference/config-reference).
+
+## Uninstalling
+
+Delete the corresponding binary to uninstall. Session data and config remain in the `.bytemind` directory and can be removed separately if desired.
+
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
+
+```powershell
+Remove-Item "$env:USERPROFILE\bin\bytemind.exe"
+```
+
+Session data and config are stored in `%USERPROFILE%\.bytemind` by default.
+
+</Tab>
+
+<Tab title="Linux">
+
+```bash
+rm ~/bin/bytemind
+```
+
+Session data and config are stored in `~/.bytemind/` by default.
+
+</Tab>
+
+<Tab title="MacOS">
+
+```bash
+rm ~/bin/bytemind
+```
+
+Session data and config are stored in `~/.bytemind/` by default.
+
+</Tab>
+</Tabs>
+
+If you used a custom install directory, or you are not sure which binary is running, see [Troubleshooting](/troubleshooting#windows-uninstall-says-the-path-does-not-exist) to confirm the actual path first.
+
+## Advanced Installation
+
+Read this section only if you need to pin a version, change the install directory, or build from source.
+
+### Specific Version
+
+Pin a version in production environments to avoid unexpected behavior changes from updates. Replace `vX.Y.Z` with a release tag from the [GitHub Releases](https://github.com/1024XEngineer/bytemind/releases) page.
+
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
 
 ```powershell
 $env:BYTEMIND_VERSION = 'vX.Y.Z'
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
-:::tip Browse available versions
-Replace `vX.Y.Z` with a release tag from the [GitHub Releases](https://github.com/1024XEngineer/bytemind/releases) page.
-:::
+</Tab>
 
-## Configuring PATH
-
-The install script places the binary at:
-
-- **Linux / macOS**: `~/bin/bytemind`
-- **Windows**: `%USERPROFILE%\bin\bytemind.exe`
-
-If `bytemind --version` reports command not found, add the directory to your `PATH`:
+<Tab title="Linux">
 
 ```bash
-# bash / zsh — add to ~/.bashrc or ~/.zshrc
-export PATH="$HOME/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=vX.Y.Z bash
 ```
 
-```powershell
-# PowerShell: update this terminal now and future terminals permanently
-$target = "$env:USERPROFILE\bin"
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if (-not (($userPath -split ";") -contains $target)) {
-  [Environment]::SetEnvironmentVariable("Path", ($target + ";" + $userPath), "User")
-}
-$env:Path = $target + ";" + $env:Path
-```
+</Tab>
 
-If `bytemind --version` still prints an older version after updating, check which binary PowerShell is resolving:
-
-```powershell
-Get-Command bytemind -All
-& "$env:USERPROFILE\bin\bytemind.exe" --version
-```
-
-If the first `Get-Command` result is not `%USERPROFILE%\bin\bytemind.exe`, an older copy appears earlier in `PATH`; remove that copy or move `%USERPROFILE%\bin` before it.
-
-Use `BYTEMIND_INSTALL_DIR` to install to a custom location:
-
-### macOS / Linux
+<Tab title="MacOS">
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_INSTALL_DIR=/usr/local/bin bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=vX.Y.Z bash
 ```
 
-### Windows (PowerShell)
+</Tab>
+</Tabs>
+
+### Custom Install Directory
+
+Use the `BYTEMIND_INSTALL_DIR` environment variable to choose the install directory.
+
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
 
 ```powershell
 $env:BYTEMIND_INSTALL_DIR = "$env:LOCALAPPDATA\Programs\ByteMind"
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
-## Windows: Version Still Looks Old After Updating
+</Tab>
 
-If the install script downloads a new version but `bytemind --version` still prints the old version, an older `bytemind.exe` is usually earlier in `PATH`. Run:
+<Tab title="Linux">
 
-```powershell
-Get-Command bytemind -All | Select-Object Source
-& "$env:USERPROFILE\bin\bytemind.exe" --version
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_INSTALL_DIR=/usr/local/bin bash
 ```
 
-If the second command prints the new version but the first `Get-Command` result is not `$env:USERPROFILE\bin\bytemind.exe`, move the new install directory to the front of your user `PATH`:
+</Tab>
 
-```powershell
-$target = "$env:USERPROFILE\bin"
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-$parts = $userPath -split ";" | Where-Object { $_ -and ($_ -ine $target) }
-[Environment]::SetEnvironmentVariable("Path", ($target + ";" + ($parts -join ";")), "User")
-$env:Path = $target + ";" + $env:Path
-bytemind --version
+<Tab title="MacOS">
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_INSTALL_DIR=/usr/local/bin bash
 ```
 
-If it still prints the old version, close the terminal, open a new PowerShell window, and run:
+</Tab>
+</Tabs>
 
-```powershell
-Get-Command bytemind -All | Select-Object Source
-bytemind --version
-```
-
-## Build from Source
+### Build from Source
 
 Requires Go 1.24 or later.
 
@@ -141,66 +218,3 @@ Run without installing:
 ```bash
 go run ./cmd/bytemind
 ```
-
-## Verify the Installation
-
-```bash
-bytemind --version
-```
-
-Example output:
-
-```
-vX.Y.Z
-```
-
-## Updating
-
-Re-run the install script to upgrade to the latest release:
-
-### macOS / Linux
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
-```
-
-### Windows (PowerShell)
-
-```powershell
-iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
-```
-
-If you accidentally ran `curl ... install.sh | bash` in a Windows terminal and got a WSL error, you do not need to fix ByteMind; run the PowerShell command above. WSL and Windows are separate environments, so a WSL `~/bin/bytemind` install does not update Windows `%USERPROFILE%\bin\bytemind.exe`.
-
-To suppress the update-check prompt, set in your config:
-
-```json
-{
-  "update_check": { "enabled": false }
-}
-```
-
-## Uninstalling
-
-Remove the binary to uninstall:
-
-### macOS / Linux
-
-```bash
-rm ~/bin/bytemind
-```
-
-### Windows (PowerShell)
-
-```powershell
-Remove-Item "$env:USERPROFILE\bin\bytemind.exe"
-```
-
-If you used a custom install directory, or you are not sure which binary is running, check the actual path before deleting:
-
-```powershell
-Get-Command bytemind -All | Select-Object Source
-Remove-Item "<path to bytemind.exe from the previous command>"
-```
-
-Session data and config files live in `.bytemind/` and can be removed separately if desired. On Windows, the default location is `%USERPROFILE%\.bytemind`.

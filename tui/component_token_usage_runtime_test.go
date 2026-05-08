@@ -105,26 +105,22 @@ func TestRenderStartupGuidePanelDefaultsAndLineFiltering(t *testing.T) {
 	}
 }
 
-func TestRestoreTokenUsageFromSessionNilResetsCounters(t *testing.T) {
+func TestSyncTokenUsageComponentShowsEstimateWhenUsageIsNotOfficialYet(t *testing.T) {
 	m := model{
-		tokenUsedTotal:        88,
-		tokenInput:            40,
-		tokenOutput:           33,
-		tokenContext:          15,
-		tokenHasOfficialUsage: true,
-		tempEstimatedOutput:   10,
+		tokenUsage:            newTokenUsageComponent(),
+		tokenHasOfficialUsage: false,
+		tokenUsedTotal:        18,
+		tokenOutput:           18,
+		tokenBudget:           5000,
 	}
 
-	m.restoreTokenUsageFromSession(nil)
+	m.syncTokenUsageComponent()
 
-	if m.tokenHasOfficialUsage {
-		t.Fatal("expected nil-session restore to clear official-usage flag")
+	if m.tokenUsage.unavailable {
+		t.Fatal("expected estimated usage to remain visible before official usage arrives")
 	}
-	if m.tokenUsedTotal != 0 || m.tokenInput != 0 || m.tokenOutput != 0 || m.tokenContext != 0 {
-		t.Fatalf("expected nil-session restore to zero counters, got used=%d input=%d output=%d context=%d", m.tokenUsedTotal, m.tokenInput, m.tokenOutput, m.tokenContext)
-	}
-	if m.tempEstimatedOutput != 0 {
-		t.Fatalf("expected nil-session restore to clear temporary estimate, got %d", m.tempEstimatedOutput)
+	if m.tokenUsage.used != 18 {
+		t.Fatalf("expected token monitor to keep estimated used value, got %d", m.tokenUsage.used)
 	}
 }
 

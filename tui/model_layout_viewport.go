@@ -144,17 +144,13 @@ func (m model) conversationViewportBoundsByLayout() (left, right, top, bottom in
 
 func (m model) conversationViewportOffsetInMainPanel() int {
 	width := max(24, m.chatPanelInnerWidth())
+	offset := lipgloss.Height(m.renderStatusBar())
 	badge := strings.TrimSpace(m.renderTopRightCluster(width))
-	if badge == "" {
-		return lipgloss.Height(m.renderStatusBar()) + 1
-	}
-	badgeW := lipgloss.Width(badge)
-	statusW := max(12, width-badgeW-2)
-	status := m.renderStatusBarWithWidth(statusW)
-	header := lipgloss.JoinHorizontal(lipgloss.Top, status, "  ", badge)
-	offset := lipgloss.Height(header)
-	if popup := strings.TrimSpace(m.tokenUsage.PopupView()); popup != "" {
-		offset += lipgloss.Height(lipgloss.PlaceHorizontal(width, lipgloss.Right, popup))
+	if badge != "" {
+		offset += lipgloss.Height(lipgloss.PlaceHorizontal(width, lipgloss.Right, badge))
+		if popup := strings.TrimSpace(m.tokenUsage.PopupView()); popup != "" {
+			offset += lipgloss.Height(lipgloss.PlaceHorizontal(width, lipgloss.Right, popup))
+		}
 	}
 	return offset + 1
 }

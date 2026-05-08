@@ -12,6 +12,7 @@ import (
 const (
 	toolIcon                  = "●"
 	toolTreeChar              = "└"
+	toolTreeLead              = "└ "
 	maxSubAgentToolsCollapsed = 3
 )
 
@@ -33,7 +34,7 @@ func (m model) renderConversation() string {
 			if strings.Contains(item.Body, "[Paste #") || strings.Contains(item.Body, "[Pasted #") {
 				resolvedItem.Body = m.resolveUserBodyPastes(item.Body)
 			}
-			blocks = append(blocks, renderChatRow(resolvedItem, width))
+			blocks = append(blocks, renderChatRow(resolvedItem, width, m))
 			i++
 			continue
 		}
@@ -47,7 +48,7 @@ func (m model) renderConversation() string {
 		for j < len(m.chatItems) && m.chatItems[j].Kind != "user" {
 			j++
 		}
-		blocks = append(blocks, renderBytemindRunRow(m.chatItems[i:j], width, m.toolDetailExpanded, runningIndicatorVisible))
+		blocks = append(blocks, renderBytemindRunRow(m.chatItems[i:j], width, m.toolDetailExpanded, runningIndicatorVisible, m))
 		i = j
 	}
 
@@ -298,31 +299,33 @@ func renderChatSection(item chatEntry, width int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, head, body)
 }
 
-func renderChatRow(item chatEntry, width int) string {
+func renderChatRow(item chatEntry, width int, m model) string {
+	dot := m.renderStatusDot(item)
 	bubbleWidth := chatBubbleWidth(item, width)
 	card := renderChatCard(item, bubbleWidth)
+	row := lipgloss.JoinHorizontal(lipgloss.Left, dot, " ", card)
 	return lipgloss.NewStyle().
 		MarginBottom(1).
-		Render(lipgloss.PlaceHorizontal(width, lipgloss.Left, card))
+		Render(lipgloss.PlaceHorizontal(width, lipgloss.Left, row))
 }
 
-func renderBytemindRunRow(items []chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool) string {
+func renderBytemindRunRow(items []chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool, m model) string {
 	if len(items) == 0 {
 		return ""
 	}
-	card := renderBytemindRunCard(items, width, toolDetailsExpanded, runningIndicatorVisible)
+	card := renderBytemindRunCard(items, width, toolDetailsExpanded, runningIndicatorVisible, m)
 	return lipgloss.NewStyle().
 		MarginBottom(1).
 		Render(lipgloss.PlaceHorizontal(width, lipgloss.Left, card))
 }
 
-func renderBytemindRunCard(items []chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool) string {
+func renderBytemindRunCard(items []chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool, m model) string {
 	outer := resolveRunCardStyle(items)
 	contentWidth := max(8, width-outer.GetHorizontalFrameSize())
 	sectionGroups := collapseRunSectionGroupsForView(items, toolDetailsExpanded)
 	sections := make([]string, 0, len(sectionGroups))
 	for _, group := range sectionGroups {
-		sections = append(sections, renderRunSectionGroup(group, contentWidth, toolDetailsExpanded, runningIndicatorVisible))
+		sections = append(sections, renderRunSectionGroup(group, contentWidth, toolDetailsExpanded, runningIndicatorVisible, m))
 	}
 	// Do NOT apply outer.Width() here — each section already manages its own
 	// width via .Width() inside renderRunSectionGroup. Applying .Width() again
@@ -426,19 +429,19 @@ func collapsibleParallelToolName(item chatEntry) (string, bool) {
 	return name, true
 }
 
-func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool) string {
+func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool, m model) string {
 	if len(group) == 0 {
 		return ""
 	}
 	if len(group) == 1 {
-		return renderRunSection(group[0], width, toolDetailsExpanded, runningIndicatorVisible)
+		return renderRunSection(group[0], width, toolDetailsExpanded, runningIndicatorVisible, m)
 	}
 	// Delegate subagent group: same AgentID, aggregated header.
 	if isSubAgentGroup(group) {
 		return renderSubAgentGroup(group, width, toolDetailsExpanded, runningIndicatorVisible)
 	}
 	if !toolDetailsExpanded && isLiveInspectGroup(group) {
-		return renderLiveInspectGroup(group, width, runningIndicatorVisible)
+		return renderLiveInspectGroup(group, width, runningIndicatorVisible, m)
 	}
 
 	_, name := toolDisplayParts(group[0].Title)
@@ -483,7 +486,7 @@ func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded boo
 		if runewidth.StringWidth(compact) > maxDetail {
 			compact = runewidth.Truncate(compact, maxDetail, "…")
 		}
-		detailLines = append(detailLines, connectorStyle.Render(toolTreeChar)+compact)
+		detailLines = append(detailLines, connectorStyle.Render(toolTreeLead)+compact)
 	}
 
 	indent := "  "
@@ -501,15 +504,19 @@ func renderRunSectionGroup(group []chatEntry, width int, toolDetailsExpanded boo
 	return style.Width(contentWidth).Render(body)
 }
 
-func renderRunSection(item chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool) string {
+func renderRunSection(item chatEntry, width int, toolDetailsExpanded bool, runningIndicatorVisible bool, m model) string {
+	var inner string
 	if item.Kind == "tool" {
+		// Tools already render their own icon; no extra status dot needed.
 		return renderToolTreeItem(item, width, toolDetailsExpanded, runningIndicatorVisible)
-	}
-	if item.Kind == "assistant" && item.Status == "final" {
+	} else if item.Kind == "assistant" && item.Status == "final" {
 		contentWidth := max(8, width-runAnswerSectionStyle.GetHorizontalFrameSize())
-		return runAnswerSectionStyle.Width(contentWidth).Render(renderChatSection(item, contentWidth))
+		inner = runAnswerSectionStyle.Width(contentWidth).Render(renderChatSection(item, contentWidth))
+	} else {
+		inner = renderChatSection(item, width)
 	}
-	return renderChatSection(item, width)
+	dot := m.renderStatusDot(item)
+	return lipgloss.JoinHorizontal(lipgloss.Left, dot, " ", inner)
 }
 
 // summarizeDelegateSubAgent parses delegate_subagent tool arguments to extract
@@ -576,7 +583,7 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 			if detail == "" {
 				continue
 			}
-			detailLines = append(detailLines, connectorStyle.Render(toolTreeChar)+detail)
+			detailLines = append(detailLines, connectorStyle.Render(toolTreeLead)+detail)
 		}
 		if len(detailLines) > 0 {
 			body = headLine + "\n" + indent + strings.Join(detailLines, "\n"+indent)
@@ -940,7 +947,7 @@ func isLiveInspectGroup(group []chatEntry) bool {
 	return true
 }
 
-func renderLiveInspectGroup(group []chatEntry, width int, runningIndicatorVisible bool) string {
+func renderLiveInspectGroup(group []chatEntry, width int, runningIndicatorVisible bool, m model) string {
 	status := aggregateToolGroupStatus(group)
 	style := resolveToolRunSectionStyle(status)
 	contentWidth := max(8, width-style.GetHorizontalFrameSize())
@@ -963,7 +970,7 @@ func renderLiveInspectGroup(group []chatEntry, width int, runningIndicatorVisibl
 		if detail := latestLiveInspectHint(group); detail != "" {
 			connectorStyle := lipgloss.NewStyle().Foreground(colorTool)
 			maxDetailWidth := max(12, contentWidth-6)
-			headLine += "\n  " + connectorStyle.Render(toolTreeChar) + " " + compact(detail, maxDetailWidth)
+			headLine += "\n  " + connectorStyle.Render(toolTreeLead) + compact(detail, maxDetailWidth)
 		}
 	}
 
