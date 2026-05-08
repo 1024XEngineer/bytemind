@@ -545,7 +545,6 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 	}
 
 	indent := "  "
-	indentWidth := 2
 	body := headLine
 	if len(item.DetailLines) > 0 {
 		limit := len(item.DetailLines)
@@ -562,7 +561,7 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 			if detail == "" {
 				continue
 			}
-			detailLines = append(detailLines, renderDiffDetailLine(detail, contentWidth-indentWidth))
+			detailLines = append(detailLines, renderDiffDetailLine(detail, contentWidth-2))
 		}
 		if len(detailLines) > 0 {
 			body = headLine + "\n" + indent + strings.Join(detailLines, "\n"+indent)
@@ -589,9 +588,12 @@ func renderDiffDetailLine(line string, width int) string {
 	default:
 		return line
 	}
-	// pad to full width for row-level background highlighting
-	styled := style.Render(line)
-	return styled + style.Width(width - runewidth.StringWidth(line)).Render("")
+	// pad line to full width with spaces so background spans the row
+	lineWidth := runewidth.StringWidth(line)
+	if lineWidth < width {
+		line = line + strings.Repeat(" ", width-lineWidth)
+	}
+	return style.Render(line)
 }
 
 func summarizeParallelToolGroup(group []chatEntry, name string) string {
