@@ -587,32 +587,26 @@ func renderDiffDetailLine(line string, width int) string {
 		return toolDiffHunkHeaderStyle.Render("  " + line[1:])
 	}
 
-	// Diff content lines: "+", "-", or " " prefix followed by 7-char line number
-	if len(line) < 9 {
-		return line
-	}
-
-	// Line format: "XnnnnnnnYcontent" where X is diff marker, nnnnnnn is 7-char line num, Y is marker repeated
-	diffMarker := line[0] // +, -, or space
+	// Diff content lines: "+", "-", or " " prefix
+	diffMarker := line[0]
 	if diffMarker != '+' && diffMarker != '-' && diffMarker != ' ' {
 		return line
 	}
-	lineNumPart := line[1:8] // 7-char line number
-	rest := line[8:]         // marker + code content
-
-	var contentStyle lipgloss.Style
-	switch diffMarker {
-	case '+':
-		contentStyle = toolDiffAddStyle
-	case '-':
-		contentStyle = toolDiffRemoveStyle
-	default:
-		contentStyle = toolDiffContextStyle
+	if len(line) < 11 {
+		return line
 	}
 
-	// Line number dim, content colored
-	styled := toolDiffLineNumStyle.Render(" " + lineNumPart) + contentStyle.Render(rest)
-	return styled
+	var style lipgloss.Style
+	switch diffMarker {
+	case '+':
+		style = toolDiffAddStyle
+	case '-':
+		style = toolDiffRemoveStyle
+	default:
+		style = toolDiffContextStyle
+	}
+
+	return style.Render(line)
 }
 
 func summarizeParallelToolGroup(group []chatEntry, name string) string {

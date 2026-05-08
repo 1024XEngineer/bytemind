@@ -85,14 +85,14 @@ func diffExpandedDetailLines(dp diffPreviewLocal) []string {
 				content := l[1:]
 				switch prefix {
 				case ' ':
-					lines = append(lines, " "+lineNumStr(oldLine)+" "+content)
+					lines = append(lines, " "+lineNumStr(oldLine)+"   "+content)
 					oldLine++
 					newLine++
 				case '-':
-					lines = append(lines, "-"+lineNumStr(oldLine)+"-"+content)
+					lines = append(lines, "-"+lineNumStr(oldLine)+" - "+content)
 					oldLine++
 				case '+':
-					lines = append(lines, "+"+lineNumStr(newLine)+"+"+content)
+					lines = append(lines, "+"+lineNumStr(newLine)+" + "+content)
 					newLine++
 				}
 			}
