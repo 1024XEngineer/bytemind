@@ -2611,11 +2611,18 @@ func summarizeTool(name, payload string) (string, []string, string) {
 	case "write_file":
 		var result struct {
 			Path         string `json:"path"`
-			BytesWritten int    `json:"bytes_written"`
+			BytesWritten int               `json:"bytes_written"`
+			DiffPreview  diffPreviewLocal  `json:"diff_preview"`
 		}
 		if json.Unmarshal([]byte(payload), &result) == nil {
-			return "创建 " + filepath.Base(result.Path), []string{
-				fmt.Sprintf("写入 %d 字节", result.BytesWritten),
+			if len(result.DiffPreview.Files) > 0 {
+				f := result.DiffPreview.Files[0]
+				lines := []string{fmt.Sprintf("+%d -%d", f.Added, f.Removed)}
+				lines = append(lines, diffHunkPreviewLines(f.Hunks)...)
+				return "Write " + filepath.Base(result.Path), lines, "done"
+			}
+			return "Write " + filepath.Base(result.Path), []string{
+				fmt.Sprintf("%d bytes", result.BytesWritten),
 			}, "done"
 		}
 	case "replace_in_file":

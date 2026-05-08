@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/1024XEngineer/bytemind/internal/llm"
 )
@@ -58,13 +59,115 @@ func (WriteFileTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execut
 			return "", err
 		}
 	}
+
+	relPath := filepath.ToSlash(mustRel(execCtx.Workspace, path))
+	_, statErr := os.Stat(path)
+	exists := statErr == nil
+
+	var original string
+	if exists {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		original = string(data)
+	}
+
 	if err := os.WriteFile(path, []byte(args.Content), 0o644); err != nil {
 		return "", err
 	}
 
-	return toJSON(map[string]any{
+	result := map[string]any{
 		"ok":            true,
-		"path":          filepath.ToSlash(mustRel(execCtx.Workspace, path)),
+		"path":          relPath,
 		"bytes_written": len(args.Content),
-	})
+	}
+
+	if dp := buildWriteFileDiff(original, args.Content, exists, relPath); dp != nil {
+		result["diff_preview"] = dp
+	}
+
+	return toJSON(result)
+}
+
+func buildWriteFileDiff(original, content string, existed bool, relPath string) *DiffPreview {
+	if !existed {
+		return newFileDiff(content, relPath)
+	}
+	return overwriteFileDiff(original, content, relPath)
+}
+
+func newFileDiff(content, relPath string) *DiffPreview {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 {
+		return nil
+	}
+	added := len(lines)
+	hunks := contentToAddHunk(lines)
+	return &DiffPreview{
+		Files: []DiffFile{{
+			Path:       relPath,
+			ChangeType: "add",
+			Added:      added,
+			Hunks:      hunks,
+		}},
+		TotalFiles:   1,
+		TotalAdded:   added,
+		TotalRemoved: 0,
+	}
+}
+
+func overwriteFileDiff(original, content, relPath string) *DiffPreview {
+	origLines := strings.Split(original, "\n")
+	newLines := strings.Split(content, "\n")
+
+	diffAdded := len(newLines) - len(origLines)
+	diffRemoved := 0
+	if diffAdded < 0 {
+		diffRemoved = -diffAdded
+		diffAdded = 0
+	}
+
+	hunkLines := make([]string, 0, 10)
+	maxLen := len(origLines)
+	if len(newLines) < maxLen {
+		maxLen = len(newLines)
+	}
+	show := maxLen
+	if show > 6 {
+		show = 6
+	}
+	for i := 0; i < show; i++ {
+		if i < len(origLines) && i < len(newLines) && origLines[i] != newLines[i] {
+			hunkLines = append(hunkLines, "-"+origLines[i])
+			hunkLines = append(hunkLines, "+"+newLines[i])
+		}
+	}
+	if len(hunkLines) == 0 && len(origLines) != len(newLines) {
+		if len(origLines) > 0 {
+			hunkLines = append(hunkLines, "-"+origLines[0])
+		}
+		if len(newLines) > 0 {
+			hunkLines = append(hunkLines, "+"+newLines[0])
+		}
+	}
+
+	truncated := len(hunkLines) > diffMaxLinesPerHunk
+	if truncated {
+		hunkLines = hunkLines[:diffMaxLinesPerHunk]
+	}
+
+	return &DiffPreview{
+		Files: []DiffFile{{
+			Path:       relPath,
+			ChangeType: "modify",
+			Added:      diffAdded,
+			Removed:    diffRemoved,
+			Hunks:      []DiffHunk{{OldStart: 1, OldLines: len(origLines), NewStart: 1, NewLines: len(newLines), Lines: hunkLines}},
+		}},
+		TotalFiles:   1,
+		TotalAdded:   diffAdded,
+		TotalRemoved: diffRemoved,
+		Truncated:    truncated,
+	}
 }
