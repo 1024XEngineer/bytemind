@@ -1,5 +1,10 @@
 package tools
 
+import (
+	"path/filepath"
+	"strings"
+)
+
 // DiffPreview carries structured code change detail for editing tools.
 // It is an optional, backward-compatible field added to tool result JSON.
 type DiffPreview struct {
@@ -36,6 +41,48 @@ const (
 	diffMaxTotalLines    = 1200
 	diffContextLineCount = 3
 )
+
+// sensitivePathPatterns lists filename patterns whose line-level content is hidden.
+var sensitivePathPatterns = []string{
+	".env",
+	"*.pem",
+	"id_rsa",
+	"id_ed25519",
+	"*.key",
+	"credentials.json",
+	"secrets.yaml",
+	"secrets.yml",
+}
+
+// isSensitivePath checks whether a file path matches any sensitive pattern.
+func isSensitivePath(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	for _, pat := range sensitivePathPatterns {
+		pat = strings.ToLower(pat)
+		if strings.Contains(pat, "*") {
+			prefix := strings.TrimSuffix(pat, "*")
+			suffix := strings.TrimPrefix(pat, "*")
+			if strings.HasPrefix(base, prefix) && strings.HasSuffix(base, suffix) {
+				return true
+			}
+		} else if base == pat {
+			return true
+		}
+	}
+	return false
+}
+
+// sanitizeDiffPreview clears line-level hunks for sensitive files but keeps stats.
+func sanitizeDiffPreview(dp *DiffPreview) {
+	if dp == nil {
+		return
+	}
+	for fi := range dp.Files {
+		if isSensitivePath(dp.Files[fi].Path) {
+			dp.Files[fi].Hunks = nil
+		}
+	}
+}
 
 // truncateDiff enforces hard limits on diff size.
 // It mutates hunks in-place and sets the truncated flag when limits are hit.

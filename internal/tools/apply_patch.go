@@ -535,15 +535,17 @@ func buildPatchResult(operations []map[string]any, diffFiles []DiffFile) map[str
 		totalRemoved += f.Removed
 	}
 	truncated := truncateDiff(diffFiles)
+	dp := DiffPreview{
+		Files:        diffFiles,
+		TotalFiles:   len(diffFiles),
+		TotalAdded:   totalAdded,
+		TotalRemoved: totalRemoved,
+		Truncated:    truncated,
+	}
+	sanitizeDiffPreview(&dp)
 	return map[string]any{
 		"ok":           true,
 		"operations":   operations,
-		"diff_preview": DiffPreview{
-			Files:        diffFiles,
-			TotalFiles:   len(diffFiles),
-			TotalAdded:   totalAdded,
-			TotalRemoved: totalRemoved,
-			Truncated:    truncated,
-		},
+		"diff_preview": dp,
 	}
 }

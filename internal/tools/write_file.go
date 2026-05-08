@@ -104,7 +104,7 @@ func newFileDiff(content, relPath string) *DiffPreview {
 	}
 	added := len(lines)
 	hunks := contentToAddHunk(lines)
-	return &DiffPreview{
+	dp := &DiffPreview{
 		Files: []DiffFile{{
 			Path:       relPath,
 			ChangeType: "add",
@@ -115,6 +115,8 @@ func newFileDiff(content, relPath string) *DiffPreview {
 		TotalAdded:   added,
 		TotalRemoved: 0,
 	}
+	sanitizeDiffPreview(dp)
+	return dp
 }
 
 func overwriteFileDiff(original, content, relPath string) *DiffPreview {
@@ -157,7 +159,7 @@ func overwriteFileDiff(original, content, relPath string) *DiffPreview {
 		hunkLines = hunkLines[:diffMaxLinesPerHunk]
 	}
 
-	return &DiffPreview{
+	dp := &DiffPreview{
 		Files: []DiffFile{{
 			Path:       relPath,
 			ChangeType: "modify",
@@ -170,4 +172,6 @@ func overwriteFileDiff(original, content, relPath string) *DiffPreview {
 		TotalRemoved: diffRemoved,
 		Truncated:    truncated,
 	}
+	sanitizeDiffPreview(dp)
+	return dp
 }

@@ -165,7 +165,7 @@ func buildReplaceDiff(original, oldStr, newStr string, replaceAll bool, path str
 			truncated = true
 		}
 	}
-	return &DiffPreview{
+	dp := &DiffPreview{
 		Files: []DiffFile{{
 			Path:       path,
 			ChangeType: "modify",
@@ -179,6 +179,8 @@ func buildReplaceDiff(original, oldStr, newStr string, replaceAll bool, path str
 		TotalRemoved: totalRemoved,
 		Truncated:    truncated,
 	}
+	sanitizeDiffPreview(dp)
+	return dp
 }
 
 func findLineMatches(lines, pattern []string) []int {
