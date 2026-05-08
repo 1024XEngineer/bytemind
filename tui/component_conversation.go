@@ -572,10 +572,12 @@ func renderToolTreeItem(item chatEntry, width int, toolDetailsExpanded bool, run
 }
 
 func renderDiffDetailLine(line string) string {
-	if len(line) < 2 {
+	if len(line) < 9 {
 		return line
 	}
-	switch line[0] {
+	// Claude CLI format: "    554 " context, "    557 -" removed, "    557 +" added
+	marker := line[7]
+	switch marker {
 	case '+':
 		return toolDiffAddStyle.Render(line)
 	case '-':

@@ -258,7 +258,7 @@ func renderToolLine(line string, width int, first bool) string {
 
 	if isDiffLine(trimmed) {
 		var style lipgloss.Style
-		switch trimmed[0] {
+		switch trimmed[7] {
 		case '+':
 			style = toolDiffAddStyle
 		case '-':
@@ -288,16 +288,12 @@ func renderToolLine(line string, width int, first bool) string {
 }
 
 func isDiffLine(line string) bool {
-	if len(line) < 2 {
+	// Claude CLI format: "    554 content", "    557 -removed", "    557 +added"
+	if len(line) < 9 {
 		return false
 	}
-	switch line[0] {
-	case '+', '-':
-		return true
-	case ' ':
-		return true
-	}
-	return false
+	marker := line[7]
+	return marker == '+' || marker == '-' || marker == ' '
 }
 
 func renderStyledWrappedLine(line string, width int, style lipgloss.Style) string {

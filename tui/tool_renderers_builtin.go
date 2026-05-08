@@ -179,10 +179,9 @@ func (writeFileRenderer) Render(payload string) ToolRenderResult {
 	if json.Unmarshal([]byte(payload), &result) == nil {
 		name := filepath.Base(result.Path)
 		if len(result.DiffPreview.Files) > 0 {
-			f := result.DiffPreview.Files[0]
-			compactLine := fmt.Sprintf("%s +%d -%d", name, f.Added, f.Removed)
+			compactLine := name
 			return ToolRenderResult{
-				Summary:     fmt.Sprintf("Created %s  +%d -%d", name, f.Added, f.Removed),
+				Summary:     fmt.Sprintf("Created %s", name),
 				DetailLines: diffExpandedDetailLines(result.DiffPreview),
 				Status:      "done",
 				CompactLine: compactLine,
@@ -220,10 +219,9 @@ func (replaceInFileRenderer) Render(payload string) ToolRenderResult {
 	if json.Unmarshal([]byte(payload), &result) == nil {
 		name := filepath.Base(result.Path)
 		if len(result.DiffPreview.Files) > 0 {
-			f := result.DiffPreview.Files[0]
-			compactLine := fmt.Sprintf("%s +%d -%d", name, f.Added, f.Removed)
+			compactLine := name
 			return ToolRenderResult{
-				Summary:     fmt.Sprintf("Updated %s  +%d -%d", name, f.Added, f.Removed),
+				Summary:     fmt.Sprintf("Updated %s", name),
 				DetailLines: diffExpandedDetailLines(result.DiffPreview),
 				Status:      "done",
 				CompactLine: compactLine,
@@ -261,9 +259,9 @@ func (applyPatchRenderer) Render(payload string) ToolRenderResult {
 	}
 	if json.Unmarshal([]byte(payload), &result) == nil {
 		if len(result.DiffPreview.Files) > 0 {
-			compactLine := fmt.Sprintf("%d files, +%d -%d", result.DiffPreview.TotalFiles, result.DiffPreview.TotalAdded, result.DiffPreview.TotalRemoved)
+			compactLine := fmt.Sprintf("%d files", result.DiffPreview.TotalFiles)
 			return ToolRenderResult{
-				Summary:     fmt.Sprintf("Updated %d files  +%d -%d", result.DiffPreview.TotalFiles, result.DiffPreview.TotalAdded, result.DiffPreview.TotalRemoved),
+				Summary:     fmt.Sprintf("Updated %d files", result.DiffPreview.TotalFiles),
 				DetailLines: diffExpandedDetailLines(result.DiffPreview),
 				Status:      "done",
 				CompactLine: compactLine,

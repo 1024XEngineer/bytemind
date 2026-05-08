@@ -1,6 +1,9 @@
 package tui
 
-import "strconv"
+import (
+	"fmt"
+	"strconv"
+)
 
 // diffPreviewLocal mirrors tools.DiffPreview for JSON unmarshaling in the TUI layer.
 type diffPreviewLocal struct {
@@ -49,22 +52,36 @@ func diffHunkPreviewLines(hunks []diffHunkLocal) []string {
 	return preview
 }
 
+func lineNum(n int) string {
+	return fmt.Sprintf("%7d", n)
+}
+
 func diffHunkExpandedLines(hunks []diffHunkLocal) []string {
 	if len(hunks) == 0 {
 		return nil
 	}
 	lines := make([]string, 0)
-	for hi, h := range hunks {
-		if hi > 0 {
-			lines = append(lines, "  ---")
-		}
-		if h.OldStart > 0 || h.NewStart > 0 {
-			lines = append(lines,
-				"  @@"+" -"+strconv.Itoa(h.OldStart)+","+strconv.Itoa(h.OldLines)+
-					" +"+strconv.Itoa(h.NewStart)+","+strconv.Itoa(h.NewLines)+" @@")
-		}
-		for _, line := range h.Lines {
-			lines = append(lines, line)
+	for _, h := range hunks {
+		oldLine := h.OldStart
+		newLine := h.NewStart
+		for _, l := range h.Lines {
+			if len(l) < 1 {
+				continue
+			}
+			prefix := l[0]
+			content := l[1:]
+			switch prefix {
+			case ' ':
+				lines = append(lines, lineNum(oldLine)+" "+content)
+				oldLine++
+				newLine++
+			case '-':
+				lines = append(lines, lineNum(oldLine)+"-"+content)
+				oldLine++
+			case '+':
+				lines = append(lines, lineNum(newLine)+"+"+content)
+				newLine++
+			}
 		}
 	}
 	return lines
@@ -75,17 +92,19 @@ func diffExpandedDetailLines(dp diffPreviewLocal) []string {
 		return nil
 	}
 	lines := make([]string, 0)
-	for fi, f := range dp.Files {
-		if fi > 0 {
-			lines = append(lines, "  ---")
-		}
-		if fi == 0 && len(dp.Files) > 1 {
-			lines = append(lines, f.ChangeType+" "+f.Path+"  +"+strconv.Itoa(f.Added)+" -"+strconv.Itoa(f.Removed))
+	for _, f := range dp.Files {
+		// Summary line like Claude CLI: "Added X line(s), removed Y line(s)"
+		if f.Added > 0 || f.Removed > 0 {
+			addedText := fmt.Sprintf("Added %d line(s), removed %d line(s)", f.Added, f.Removed)
+			if len(dp.Files) > 1 {
+				addedText = f.ChangeType + " " + f.Path + ": " + addedText
+			}
+			lines = append(lines, addedText)
 		}
 		lines = append(lines, diffHunkExpandedLines(f.Hunks)...)
 	}
 	if dp.Truncated {
-		lines = append(lines, "  (diff truncated)")
+		lines = append(lines, "  (diff truncated, ctrl+o to expand)")
 	}
 	return lines
 }
