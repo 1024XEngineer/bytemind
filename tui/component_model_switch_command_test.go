@@ -196,6 +196,19 @@ func TestOpenModelPickerWithModeReportsEmptyDeleteTargets(t *testing.T) {
 	}
 }
 
+func TestOpenModelPickerReportsEmptySwitchTargets(t *testing.T) {
+	m := &model{runner: &subAgentCommandRunnerStub{}}
+	if err := m.openModelPicker(); err != nil {
+		t.Fatalf("expected empty switch picker to be handled, got %v", err)
+	}
+	if m.modelsOpen {
+		t.Fatal("expected picker to stay closed when nothing can be switched")
+	}
+	if m.statusNote != "No switchable models available. Use /model add to configure one." {
+		t.Fatalf("unexpected status note %q", m.statusNote)
+	}
+}
+
 func TestSwitchModelCommandTargetRejectsUnknownTargetAfterRefresh(t *testing.T) {
 	m := &model{
 		runner: &subAgentCommandRunnerStub{
@@ -409,6 +422,10 @@ func TestDeleteSelectedModelTargetRemovesConfiguredProviderAndPersistsConfig(t *
 			{ProviderID: "deepseek", ModelID: "deepseek-chat", Metadata: map[string]string{"context_window": "64000"}},
 			{ProviderID: "deepseek", ModelID: "deepseek-reasoner", Metadata: map[string]string{"context_window": "64000"}},
 		},
+		modelWarnings: []provider.Warning{
+			{ProviderID: "deepseek", Reason: "provider_list_models_failed"},
+			{ProviderID: "openai", Reason: "provider_list_models_failed"},
+		},
 	}
 
 	if err := m.openModelDeletePicker(); err != nil {
@@ -441,6 +458,9 @@ func TestDeleteSelectedModelTargetRemovesConfiguredProviderAndPersistsConfig(t *
 	}
 	if len(m.discoveredModels) != 1 || modelTargetLabel(m.discoveredModels[0]) != "openai/gpt-5.4-mini" {
 		t.Fatalf("expected discovered models for deleted provider to be pruned, got %#v", m.discoveredModels)
+	}
+	if len(m.modelWarnings) != 1 || m.modelWarnings[0].ProviderID != "openai" {
+		t.Fatalf("expected warnings for deleted provider to be pruned, got %#v", m.modelWarnings)
 	}
 	if m.statusNote != "Model deleted and saved." {
 		t.Fatalf("unexpected status note %q", m.statusNote)
@@ -496,6 +516,34 @@ func TestRunModelCommandRejectsLegacyForms(t *testing.T) {
 	} {
 		if err := m.runModelCommand(strings.Join(fields, " "), fields); err == nil || err.Error() != modelCommandUsage {
 			t.Fatalf("expected legacy model form %v to fail with %q, got %v", fields, modelCommandUsage, err)
+		}
+	}
+}
+
+func TestRunModelCommandRejectsNilModel(t *testing.T) {
+	err := (*model)(nil).runModelCommand("/model add", []string{"/model", "add"})
+	if err == nil || err.Error() != "model command is unavailable" {
+		t.Fatalf("expected nil model error, got %v", err)
+	}
+}
+
+func TestFormatModelSelectionStatusUsesCurrentCommands(t *testing.T) {
+	status := formatModelSelectionStatus(config.Config{
+		ProviderRuntime: config.ProviderRuntimeConfig{
+			DefaultProvider: "openai",
+			DefaultModel:    "gpt-5.4",
+		},
+	}, []provider.ModelInfo{{ProviderID: "openai", ModelID: "gpt-5.4"}})
+
+	for _, want := range []string{
+		"add: /model add",
+		"delete: /model delete",
+		"models: /models",
+		"status: /models",
+		"available: 1 target(s)",
+	} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("expected selection status to contain %q, got:\n%s", want, status)
 		}
 	}
 }

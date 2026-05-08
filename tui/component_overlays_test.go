@@ -59,3 +59,14 @@ func TestRenderModelsModalDeleteModeAndEmptyStates(t *testing.T) {
 		t.Fatalf("expected switch empty state, got %q", view)
 	}
 }
+
+func TestRenderModelsModalDefaultsBlankWarnings(t *testing.T) {
+	m := model{
+		width:         120,
+		modelWarnings: []provider.Warning{{}},
+	}
+	view := m.renderModelsModal()
+	if !strings.Contains(view, "unknown: provider warning") {
+		t.Fatalf("expected blank warning defaults, got %q", view)
+	}
+}
