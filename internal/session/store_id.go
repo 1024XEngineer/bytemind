@@ -25,3 +25,14 @@ func normalizeSessionID(raw string) (string, error) {
 	}
 	return id, nil
 }
+
+// FlattenSubAgentSessionID converts a subagent session ID (which contains '/')
+// into a filesystem-safe ID by replacing '/' with '_'.
+func FlattenSubAgentSessionID(raw string) string {
+	return strings.ReplaceAll(strings.TrimSpace(raw), "/", "_")
+}
+
+// UnflattenSubAgentSessionID reverses FlattenSubAgentSessionID.
+func UnflattenSubAgentSessionID(raw string) string {
+	return strings.ReplaceAll(raw, "_", "/")
+}

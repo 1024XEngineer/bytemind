@@ -399,6 +399,29 @@ var (
 	toolDetailStyle = lipgloss.NewStyle().
 			Foreground(semanticColors.TextMuted)
 
+	toolDiffAddStyle = lipgloss.NewStyle().
+			Background(lipgloss.Color("#1A5C2A")).
+			Foreground(lipgloss.Color("#FFFFFF"))
+
+	toolDiffRemoveStyle = lipgloss.NewStyle().
+			Background(lipgloss.Color("#5C1A1A")).
+			Foreground(lipgloss.Color("#FFFFFF"))
+
+	toolDiffContextStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextBase)
+
+	toolDiffLineNumStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextMuted)
+
+	toolDiffPathStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FFFF"))
+
+	toolDiffStatsStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextMuted)
+
+	toolDiffHunkHeaderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#00CCCC"))
+
 	toolExpandHintStyle = lipgloss.NewStyle().
 				Foreground(semanticColors.TextMuted)
 

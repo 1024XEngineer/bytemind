@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
 func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
@@ -201,20 +203,59 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 		}
 	case "write_file":
 		var result struct {
-			Path         string `json:"path"`
-			BytesWritten int    `json:"bytes_written"`
+			Path         string            `json:"path"`
+			BytesWritten int               `json:"bytes_written"`
+			DiffPreview  tools.DiffPreview `json:"diff_preview"`
 		}
 		if err := json.Unmarshal([]byte(payload), &result); err == nil {
-			fmt.Fprintf(out, "  %swrote%s %s (%d bytes)\n", ansiGreen, ansiReset, result.Path, result.BytesWritten)
+			if len(result.DiffPreview.Files) > 0 {
+				f := result.DiffPreview.Files[0]
+				fmt.Fprintf(out, "  %swrote%s %s +%d -%d\n", ansiGreen, ansiReset, result.Path, f.Added, f.Removed)
+				for _, h := range f.Hunks {
+					for _, line := range h.Lines {
+						switch line[0] {
+						case '+':
+							fmt.Fprintf(out, "    %s%s%s\n", ansiGreen, compactWhitespace(line, 100), ansiReset)
+						case '-':
+							fmt.Fprintf(out, "    %s%s%s\n", ansiRed, compactWhitespace(line, 100), ansiReset)
+						default:
+							fmt.Fprintf(out, "    %s%s%s\n", ansiDim, compactWhitespace(line, 100), ansiReset)
+						}
+					}
+				}
+			} else {
+				fmt.Fprintf(out, "  %swrote%s %s (%d bytes)\n", ansiGreen, ansiReset, result.Path, result.BytesWritten)
+			}
 		}
 	case "replace_in_file":
 		var result struct {
-			Path     string `json:"path"`
-			Replaced int    `json:"replaced"`
-			OldCount int    `json:"old_count"`
+			Path        string            `json:"path"`
+			Replaced    int               `json:"replaced"`
+			OldCount    int               `json:"old_count"`
+			DiffPreview tools.DiffPreview `json:"diff_preview"`
 		}
 		if err := json.Unmarshal([]byte(payload), &result); err == nil {
-			fmt.Fprintf(out, "  %supdated%s %s (%d/%d matches replaced)\n", ansiGreen, ansiReset, result.Path, result.Replaced, result.OldCount)
+			if len(result.DiffPreview.Files) > 0 {
+				f := result.DiffPreview.Files[0]
+				fmt.Fprintf(out, "  %supdated%s %s +%d -%d\n", ansiGreen, ansiReset, result.Path, f.Added, f.Removed)
+				for _, h := range f.Hunks {
+					for _, line := range h.Lines {
+						switch line[0] {
+						case '+':
+							fmt.Fprintf(out, "    %s%s%s\n", ansiGreen, compactWhitespace(line, 100), ansiReset)
+						case '-':
+							fmt.Fprintf(out, "    %s%s%s\n", ansiRed, compactWhitespace(line, 100), ansiReset)
+						default:
+							fmt.Fprintf(out, "    %s%s%s\n", ansiDim, compactWhitespace(line, 100), ansiReset)
+						}
+					}
+				}
+				if result.DiffPreview.Truncated {
+					fmt.Fprintf(out, "    %sdiff truncated%s\n", ansiDim, ansiReset)
+				}
+			} else {
+				fmt.Fprintf(out, "  %supdated%s %s (%d/%d matches replaced)\n", ansiGreen, ansiReset, result.Path, result.Replaced, result.OldCount)
+			}
 		}
 	case "run_shell":
 		var result struct {
@@ -267,15 +308,38 @@ func (r *Runner) renderToolFeedback(out io.Writer, name, payload string) {
 		}
 	case "apply_patch":
 		var result struct {
-			Operations []struct {
+			Operations  []struct {
 				Type string `json:"type"`
 				Path string `json:"path"`
 			} `json:"operations"`
+			DiffPreview tools.DiffPreview `json:"diff_preview"`
 		}
 		if err := json.Unmarshal([]byte(payload), &result); err == nil {
-			fmt.Fprintf(out, "  %spatch%s %d operations\n", ansiGreen, ansiReset, len(result.Operations))
-			for _, op := range result.Operations {
-				fmt.Fprintf(out, "    %s %s\n", op.Type, op.Path)
+			if len(result.DiffPreview.Files) > 0 {
+				fmt.Fprintf(out, "  %spatch%s %d files, +%d -%d\n", ansiGreen, ansiReset, result.DiffPreview.TotalFiles, result.DiffPreview.TotalAdded, result.DiffPreview.TotalRemoved)
+				for _, f := range result.DiffPreview.Files {
+					fmt.Fprintf(out, "    %s %s  +%d -%d\n", f.ChangeType, f.Path, f.Added, f.Removed)
+				}
+				if len(result.DiffPreview.Files) > 0 && len(result.DiffPreview.Files[0].Hunks) > 0 {
+					for _, line := range result.DiffPreview.Files[0].Hunks[0].Lines {
+						switch line[0] {
+						case '+':
+							fmt.Fprintf(out, "    %s%s%s\n", ansiGreen, compactWhitespace(line, 100), ansiReset)
+						case '-':
+							fmt.Fprintf(out, "    %s%s%s\n", ansiRed, compactWhitespace(line, 100), ansiReset)
+						default:
+							fmt.Fprintf(out, "    %s%s%s\n", ansiDim, compactWhitespace(line, 100), ansiReset)
+						}
+					}
+				}
+				if result.DiffPreview.Truncated {
+					fmt.Fprintf(out, "    %sdiff truncated%s\n", ansiDim, ansiReset)
+				}
+			} else {
+				fmt.Fprintf(out, "  %spatch%s %d operations\n", ansiGreen, ansiReset, len(result.Operations))
+				for _, op := range result.Operations {
+					fmt.Fprintf(out, "    %s %s\n", op.Type, op.Path)
+				}
 			}
 		}
 	case "delegate_subagent":

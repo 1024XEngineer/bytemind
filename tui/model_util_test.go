@@ -571,14 +571,14 @@ func TestRenderRunSectionGroupSingleErrorTool(t *testing.T) {
 		Body:   "Request failed: provider rate limited",
 		Status: "error",
 	}
-	rendered := renderRunSectionGroup([]chatEntry{item}, 80, false, true)
+	rendered := renderRunSectionGroup([]chatEntry{item}, 80, false, true, model{})
 	if rendered == "" {
 		t.Fatalf("expected non-empty rendering")
 	}
 }
 
 func TestRenderRunSectionGroupEmpty(t *testing.T) {
-	rendered := renderRunSectionGroup(nil, 80, false, true)
+	rendered := renderRunSectionGroup(nil, 80, false, true, model{})
 	if rendered != "" {
 		t.Fatalf("expected empty rendering, got %q", rendered)
 	}
@@ -1161,5 +1161,88 @@ func TestResolveActiveChoiceSelectionNoMatch(t *testing.T) {
 	_, ok := resolveActiveChoiceSelection("nonexistent option", state)
 	if ok {
 		t.Fatalf("expected no match")
+	}
+}
+
+func TestParseMessageCreatedAtSupportsRFC3339Variants(t *testing.T) {
+	if ts, ok := parseMessageCreatedAt("2026-05-08T03:04:05.123456Z"); !ok || ts.IsZero() {
+		t.Fatalf("expected RFC3339Nano timestamp to parse, got ok=%v ts=%v", ok, ts)
+	}
+	if ts, ok := parseMessageCreatedAt("2026-05-08T03:04:05Z"); !ok || ts.IsZero() {
+		t.Fatalf("expected RFC3339 timestamp to parse, got ok=%v ts=%v", ok, ts)
+	}
+	if _, ok := parseMessageCreatedAt("2026/05/08 03:04:05"); ok {
+		t.Fatalf("expected non-RFC3339 timestamp to fail parsing")
+	}
+	if _, ok := parseMessageCreatedAt(""); ok {
+		t.Fatalf("expected empty timestamp to fail parsing")
+	}
+}
+
+func TestDelegateSubAgentArgumentHelpers(t *testing.T) {
+	callArgs := map[string]string{
+		"call-1": `{"agent":"explorer","task":"scan files"}`,
+		"call-2": `{"task":"missing agent"}`,
+	}
+
+	if got := resolveAgentIDFromArgs(callArgs, "call-1"); got != "explorer" {
+		t.Fatalf("expected explicit agent name, got %q", got)
+	}
+	if got := resolveAgentIDFromArgs(callArgs, "call-2"); got != "subagent" {
+		t.Fatalf("expected missing agent to fall back to subagent, got %q", got)
+	}
+	if got := resolveAgentIDFromArgs(callArgs, "missing"); got != "" {
+		t.Fatalf("expected missing call id to return empty agent, got %q", got)
+	}
+
+	agent, task := resolveDelegateSubAgentArgs(callArgs, "call-1")
+	if agent != "explorer" || task != "scan files" {
+		t.Fatalf("expected delegate args to round-trip, got agent=%q task=%q", agent, task)
+	}
+	agent, task = resolveDelegateSubAgentArgs(callArgs, "missing")
+	if agent != "" || task != "" {
+		t.Fatalf("expected missing delegate args to return empty values, got agent=%q task=%q", agent, task)
+	}
+}
+
+func TestResolveFullSubAgentResultGuards(t *testing.T) {
+	if got := resolveFullSubAgentResult(llm.Message{}, "call-1"); got != "" {
+		t.Fatalf("expected empty result when meta is nil, got %q", got)
+	}
+
+	msgWithNonString := llm.Message{
+		Meta: llm.MessageMeta{
+			"delegate_subagent_result": 123,
+		},
+	}
+	if got := resolveFullSubAgentResult(msgWithNonString, "call-1"); got != "" {
+		t.Fatalf("expected non-string meta payload to be ignored, got %q", got)
+	}
+
+	msgWithString := llm.Message{
+		Meta: llm.MessageMeta{
+			"delegate_subagent_result": `{"ok":true}`,
+		},
+	}
+	if got := resolveFullSubAgentResult(msgWithString, "call-1"); got != `{"ok":true}` {
+		t.Fatalf("expected string payload passthrough, got %q", got)
+	}
+}
+
+func TestTruncatePathMiddleKeepsTailContext(t *testing.T) {
+	path := "a/very/long/path/for/bytemind/internal/tui/component_conversation.go"
+	truncated := truncatePathMiddle(path, 40)
+	if !strings.Contains(truncated, "/...component_conversation.go") && !strings.Contains(truncated, "/.../component_conversation.go") {
+		t.Fatalf("expected middle truncation to preserve file tail, got %q", truncated)
+	}
+
+	short := truncatePathMiddle("tui/model.go", 40)
+	if short != "tui/model.go" {
+		t.Fatalf("expected short path to remain unchanged, got %q", short)
+	}
+
+	tiny := truncatePathMiddle(path, 10)
+	if len(tiny) == 0 {
+		t.Fatalf("expected tiny limit to still return non-empty compact output")
 	}
 }

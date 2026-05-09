@@ -15,16 +15,17 @@ func (emptyResultRenderer) Render(string) ToolRenderResult { return ToolRenderRe
 
 func TestBuiltinToolRenderersRegistered(t *testing.T) {
 	tests := map[string]string{
-		"read_file":       "READ",
-		"list_files":      "LIST",
-		"search_text":     "SEARCH",
-		"run_shell":       "SHELL",
-		"write_file":      "WRITE",
-		"replace_in_file": "EDIT",
-		"apply_patch":     "PATCH",
-		"update_plan":     "PLAN",
-		"web_search":      "SEARCH",
-		"web_fetch":       "FETCH",
+		"read_file":         "READ",
+		"list_files":        "LIST",
+		"search_text":       "SEARCH",
+		"run_shell":         "SHELL",
+		"write_file":        "WRITE",
+		"replace_in_file":   "EDIT",
+		"apply_patch":       "PATCH",
+		"update_plan":       "PLAN",
+		"delegate_subagent": "SUBAGENT",
+		"web_search":        "SEARCH",
+		"web_fetch":         "FETCH",
 	}
 
 	for name, wantLabel := range tests {
@@ -366,6 +367,7 @@ func TestBuiltinRenderersFallbackOnInvalidJSON(t *testing.T) {
 		replaceInFileRenderer{},
 		applyPatchRenderer{},
 		updatePlanRenderer{},
+		delegateSubAgentRenderer{},
 		webSearchRenderer{},
 		webFetchRenderer{},
 	}
@@ -382,5 +384,56 @@ func TestBuiltinRenderersFallbackOnInvalidJSON(t *testing.T) {
 		if got.CompactLine != payload {
 			t.Fatalf("expected fallback compact line %q for %T, got %q", payload, renderer, got.CompactLine)
 		}
+	}
+}
+
+func TestDelegateSubAgentRendererRenderBranches(t *testing.T) {
+	runningPayload := `{
+		"ok": true,
+		"status": "running",
+		"agent": "explorer",
+		"task": "scan auth flow",
+		"summary": "accepted",
+		"content": "still processing",
+		"transcript": [{"role":"assistant","content":"planning next read"}]
+	}`
+	running := delegateSubAgentRenderer{}.Render(runningPayload)
+	if running.Status != "running" {
+		t.Fatalf("expected running status, got %q", running.Status)
+	}
+	if running.CompactLine != "explorer(scan auth flow)" {
+		t.Fatalf("expected compact agent/task line, got %q", running.CompactLine)
+	}
+	if !strings.Contains(running.Summary, "SubAgent explorer") {
+		t.Fatalf("expected summary to include agent name, got %q", running.Summary)
+	}
+	if len(running.DetailLines) == 0 || !strings.Contains(strings.Join(running.DetailLines, "\n"), "Prompt: scan auth flow") {
+		t.Fatalf("expected prompt details in expanded output, got %#v", running.DetailLines)
+	}
+
+	warnPayload := `{
+		"ok": true,
+		"agent": "reviewer",
+		"summary": "SubAgent error: partial failure while checking docs"
+	}`
+	warn := delegateSubAgentRenderer{}.Render(warnPayload)
+	if warn.Status != "warn" {
+		t.Fatalf("expected warn status from SubAgent error summary, got %q", warn.Status)
+	}
+	if !strings.Contains(warn.CompactLine, "SubAgent error") {
+		t.Fatalf("expected summary text to appear in compact line, got %q", warn.CompactLine)
+	}
+
+	errorPayload := `{
+		"ok": false,
+		"agent": "planner",
+		"summary": "request failed"
+	}`
+	errResult := delegateSubAgentRenderer{}.Render(errorPayload)
+	if errResult.Status != "error" {
+		t.Fatalf("expected error status when ok=false, got %q", errResult.Status)
+	}
+	if !strings.Contains(errResult.Summary, "SubAgent planner") {
+		t.Fatalf("expected error summary to keep agent context, got %q", errResult.Summary)
 	}
 }

@@ -23,6 +23,7 @@ func (r *Runner) promptSubAgents() []PromptSubAgent {
 		out = append(out, PromptSubAgent{
 			Name:        name,
 			Description: description,
+			WhenToUse:   strings.TrimSpace(item.WhenToUse),
 			Mode:        strings.TrimSpace(item.Mode),
 		})
 	}

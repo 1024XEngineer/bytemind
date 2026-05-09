@@ -409,8 +409,8 @@ func TestResolvePastedLineReferenceWithFullFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve pasted line reference: %v", err)
 	}
-	if !strings.Contains(result, "```\n"+stored.Content+"\n```") {
-		t.Fatalf("expected full content expansion, got %q", result)
+		if !strings.Contains(result, stored.Content) {
+			t.Fatalf("expected plain content expansion, got %q", result)
 	}
 }
 
@@ -451,14 +451,43 @@ func TestBuildPromptInputDefaultsToLatestPastedReference(t *testing.T) {
 		t.Fatalf("build prompt input: %v", err)
 	}
 	text := input.UserMessage.Text()
-	if !strings.Contains(text, "```\nnew2\n```") {
-		t.Fatalf("expected latest pasted line expansion, got %q", text)
+		if !strings.Contains(text, "new2") {
+			t.Fatalf("expected latest pasted content, got %q", text)
 	}
 	if strings.Contains(text, "old2") {
 		t.Fatalf("expected latest pasted content, got %q", text)
 	}
 	if latest.ID == "" {
 		t.Fatalf("expected latest pasted content id")
+	}
+}
+
+func TestSubmitPromptExpandsPasteReferenceForDisplayedChatBodyAndClearsPasteState(t *testing.T) {
+	m := newImagePipelineModel(t)
+	_, stored, err := m.compressPastedText("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11")
+	if err != nil {
+		t.Fatalf("compress pasted text: %v", err)
+	}
+
+	raw := "inspect [Paste #" + stored.ID + " ~11 lines]"
+	got, _ := m.submitPrompt(raw)
+	updated := got.(model)
+
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected user chat item to be appended")
+	}
+	body := updated.chatItems[len(updated.chatItems)-1].Body
+	if !strings.Contains(body, stored.Content) {
+		t.Fatalf("expected displayed chat body to expand pasted content, got %q", body)
+	}
+	if strings.Contains(body, "[Paste #"+stored.ID) {
+		t.Fatalf("expected displayed chat body not to keep paste marker, got %q", body)
+	}
+	if updated.pastedContents != nil {
+		t.Fatalf("expected pasted contents state to be cleared after submit")
+	}
+	if updated.pastedOrder != nil {
+		t.Fatalf("expected pasted order state to be cleared after submit")
 	}
 }
 
@@ -492,8 +521,8 @@ func TestBuildPromptInputAdjustsOutOfRangeLineReference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build prompt input: %v", err)
 	}
-	if !strings.Contains(input.UserMessage.Text(), "```\nl11\n```") {
-		t.Fatalf("expected out-of-range line to clamp to last line, got %q", input.UserMessage.Text())
+		if !strings.Contains(input.UserMessage.Text(), "l11") {
+			t.Fatalf("expected out-of-range line to clamp to last line, got %q", input.UserMessage.Text())
 	}
 }
 

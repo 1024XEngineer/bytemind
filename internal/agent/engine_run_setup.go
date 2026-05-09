@@ -16,6 +16,8 @@ import (
 
 var resolveAgentSystemSandboxRuntimeStatus = tools.ResolveSystemSandboxRuntimeStatus
 
+const userMessageModelMetaKey = "user_model"
+
 func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptInput, mode string) (runPromptSetup, error) {
 	if e == nil || e.runner == nil {
 		return runPromptSetup{}, fmt.Errorf("agent engine is unavailable")
@@ -24,6 +26,28 @@ func (e *defaultEngine) prepareRunPrompt(sess *session.Session, input RunPromptI
 
 	input = normalizeRunPromptInput(input)
 	userInput := input.DisplayText
+
+	// Enhance user message with agent mentions
+	if input.SubAgent == nil && runner.subAgentManager != nil {
+		agents, _ := runner.subAgentManager.List()
+		if len(agents) > 0 {
+			knownAgents := make(map[string]struct{}, len(agents))
+			agentDescs := make(map[string]string, len(agents))
+			for _, a := range agents {
+				name := strings.TrimSpace(a.Name)
+				if name != "" {
+					knownAgents[name] = struct{}{}
+					agentDescs[name] = strings.TrimSpace(a.Description)
+				}
+			}
+			enhanced := enhanceUserMessageWithAgentMentions(userInput, knownAgents, agentDescs)
+			if enhanced != userInput {
+				input.UserMessage = llm.NewUserTextMessage(enhanced)
+				input.PersistDisplayTextAsUserMessage = true
+			}
+		}
+	}
+
 	persistedUserMessage := input.UserMessage
 	if input.PersistDisplayTextAsUserMessage && strings.TrimSpace(userInput) != "" {
 		persistedUserMessage = llm.NewUserTextMessage(userInput)
@@ -114,6 +138,21 @@ func (e *defaultEngine) beginRunSession(sess *session.Session, userMessage llm.M
 		return fmt.Errorf("agent engine is unavailable")
 	}
 	runner := e.runner
+	now := time.Now().UTC()
+
+	// Persist minimal user-turn metadata so TUI can rebuild a consistent header
+	// after session reload/switch.
+	if strings.TrimSpace(userMessage.CreatedAt) == "" {
+		userMessage.CreatedAt = now.Format(time.RFC3339Nano)
+	}
+	if userMessage.Role == llm.RoleUser {
+		if model := strings.TrimSpace(runner.modelID()); model != "" {
+			if userMessage.Meta == nil {
+				userMessage.Meta = llm.MessageMeta{}
+			}
+			userMessage.Meta[userMessageModelMetaKey] = model
+		}
+	}
 
 	if err := llm.ValidateMessage(userMessage); err != nil {
 		return err
@@ -124,7 +163,7 @@ func (e *defaultEngine) beginRunSession(sess *session.Session, userMessage llm.M
 			return err
 		}
 	}
-	runner.appendPromptHistory(corepkg.SessionID(sess.ID), userInput, time.Now().UTC())
+	runner.appendPromptHistory(corepkg.SessionID(sess.ID), userInput, now)
 	runner.emit(Event{
 		Type:      EventRunStarted,
 		SessionID: corepkg.SessionID(sess.ID),

@@ -38,7 +38,7 @@ const (
 	scrollbarWidth             = 1
 	mouseZoneAutoProbeMaxDelta = 4
 	commandPageSize            = 5
-	mentionPageSize            = 5
+	mentionSearchLimit         = 15
 	maxPendingBTW              = 5
 	promptSearchPageSize       = 5
 	promptSearchLoadLimit      = 50000
@@ -57,6 +57,7 @@ const (
 	pasteAggregateDebounce     = 120 * time.Millisecond
 	pasteBurstSettleDelay      = 120 * time.Millisecond
 	hiddenPasteProbeDelay      = 45 * time.Millisecond
+	userMessageModelMetaKey    = "user_model"
 )
 
 type footerShortcutHint struct {
@@ -123,15 +124,29 @@ var startupFieldOrder = []string{
 	startupFieldAPIKey,
 }
 
+// SubAgentToolCall tracks a single tool call made by a running subagent.
+type SubAgentToolCall struct {
+	ToolName    string
+	ToolCallID  string   // precise matching for EventToolCallCompleted
+	CompactBody string   // short description, e.g. "search_text: config"
+	Status      string   // "running" / "done" / "error"
+	Summary     string   // summary after completion
+	DetailLines []string // expanded detail lines (ctrl+o)
+}
+
 type chatEntry struct {
-	Kind        string
-	Title       string
-	Meta        string
-	Body        string
-	Status      string
-	ToolCallID  string   // precise matching for tool call completion
-	CompactBody string   // collapsed tree view text (e.g. "Read model.go (1-50)")
-	DetailLines []string // expanded detail lines
+	Kind           string
+	Title          string
+	Meta           string
+	Body           string
+	Status         string
+	ToolCallID     string   // precise matching for tool call completion
+	AgentID        string   // subagent agent name (e.g. "explorer") for AgentID-based routing
+	CompactBody    string   // collapsed tree view text (e.g. "Read model.go (1-50)")
+	DetailLines    []string // expanded detail lines
+	SubAgentTools  []SubAgentToolCall // tool calls made by a subagent
+	TaskPrompt     string   // full task prompt text for expanded subagent view
+	TotalToolCalls int      // total tool call count for completed subagent summary
 }
 
 type viewportSelectionPoint struct {
@@ -292,14 +307,6 @@ type mcpCommandResultMsg struct {
 	Err      error
 }
 
-type subAgentResultMsg struct {
-	Input    string
-	Response string
-	Summary  string
-	Status   string
-	Err      error
-}
-
 type pasteSessionState struct {
 	active       bool
 	startedAt    time.Time
@@ -341,9 +348,7 @@ var commandItems = []commandItem{
 	{Name: "/delete model", Usage: "/delete model", Description: "Open the configured model picker and remove one target.", Kind: "command"},
 	{Name: "/help", Usage: "/help", Description: "Show usage and supported commands.", Kind: "command"},
 	{Name: "/session", Usage: "/session", Description: "Open the recent session list.", Kind: "command"},
-	{Name: "/agents", Usage: "/agents [name]", Description: "List available subagents or show one definition.", Kind: "command"},
-	{Name: "/review", Usage: "/review", Description: "Delegate a focused code review task to the builtin review subagent.", Kind: "command"},
-	{Name: "/explorer", Usage: "/explorer", Description: "Delegate a focused repository exploration task to the builtin explorer subagent.", Kind: "command"},
+	{Name: "/agents", Usage: "/agents", Description: "List available subagents.", Kind: "command"},
 	{Name: "/skills-select", Usage: "/skills-select", Description: "Open the loaded skills picker.", Kind: "command"},
 	{Name: "/mcp list", Usage: "/mcp list", Description: "List configured MCP servers and current status.", Kind: "command"},
 	{Name: "/mcp help", Usage: "/mcp help", Description: "Show MCP command help.", Kind: "command"},
@@ -404,11 +409,6 @@ type model struct {
 	promptSearchOpen           bool
 	mcpCommandPending          bool
 	busy                       bool
-	subAgentPending            bool
-	subAgentName               string
-	subAgentTask               string
-	subAgentStreamItems        []chatEntry
-	subAgentExpanded           bool
 	runStartedAt               time.Time
 	lastRunDuration            time.Duration
 	lastTokenReceivedAt        time.Time
@@ -426,6 +426,7 @@ type model struct {
 	mentionToken               mention.Token
 	mentionResults             []mention.Candidate
 	mentionIndex               *mention.WorkspaceFileIndex
+	agentSource                mention.AgentSource
 	mentionRecent              map[string]int
 	mentionSeq                 int
 	lastPasteAt                time.Time
@@ -506,6 +507,13 @@ type model struct {
 	startupGuide               StartupGuide
 	mouseYOffset               int
 	landingGlowStep            int
+
+	// Status dot animation
+	lastTokenTime    time.Time
+	dotBlinkVisible  bool
+	stagnationStart  time.Time
+	stagnationActive bool
+	reducedMotion    bool
 }
 
 func newModel(opts Options) model {
@@ -584,6 +592,7 @@ func newModel(opts Options) model {
 		sessionApprovedTools: make(map[string]struct{}),
 		chatAutoFollow:       true,
 		mentionIndex:         mention.NewWorkspaceFileIndex(opts.Workspace),
+		agentSource:          opts.AgentSource,
 		tokenUsage:           newTokenUsageComponent(),
 		tokenBudget:          max(1, opts.Config.TokenQuota),
 		tokenEstimator:       newRealtimeTokenEstimator(opts.Config.Provider.Model),
@@ -601,6 +610,7 @@ func newModel(opts Options) model {
 		clipboardRead:        defaultClipboardTextReader{},
 		clipboardText:        defaultClipboardTextWriter{},
 		startupGuide:         opts.StartupGuide,
+		reducedMotion:        isReducedMotion(),
 		mouseYOffset:         resolveMouseYOffset(),
 	}
 	if opts.StartupGuide.Active {
@@ -800,6 +810,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.interruptSafe = false
 		m.pendingInterrupt = false
 		m.pendingInterruptReason = ""
+		m.stagnationActive = false
+		m.stagnationStart = time.Time{}
 		shouldResumeBTW := m.interrupting && len(m.pendingBTW) > 0
 		m.interrupting = false
 		finishReason := classifyRunFinish(msg.Err, shouldResumeBTW)
@@ -944,74 +956,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refreshViewport()
 		return m, waitForAsync(m.async)
-	case subAgentResultMsg:
-		elapsed := time.Duration(0)
-		if !m.runStartedAt.IsZero() {
-			elapsed = time.Since(m.runStartedAt)
-			if elapsed < 0 {
-				elapsed = 0
-			}
-		}
-		m.runStartedAt = time.Time{}
-		m.lastRunDuration = elapsed
-		m.busy = false
-		m.subAgentPending = false
-		m.subAgentName = ""
-		m.subAgentTask = ""
-		m.phase = "idle"
-		m.streamingIndex = -1
-
-		// Remove the thinking card
-		m.removeThinkingCard()
-
-		if msg.Err != nil {
-			if errors.Is(msg.Err, context.Canceled) {
-				m.runIndicatorState = runIndicatorCanceled
-			} else {
-				m.runIndicatorState = runIndicatorFailed
-			}
-			errBody := "Subagent failed: " + msg.Err.Error()
-			m.appendChat(chatEntry{
-				Kind:   "assistant",
-				Title:  assistantLabel,
-				Body:   errBody,
-				Status: "error",
-			})
-			if m.sess != nil {
-				m.sess.Messages = append(m.sess.Messages, llm.NewAssistantTextMessage(errBody))
-			}
-			m.statusNote = "Subagent error: " + msg.Err.Error()
-			m.subAgentStreamItems = nil
-			m.refreshViewport()
-			return m, waitForAsync(m.async)
-		}
-		m.runIndicatorState = runIndicatorComplete
-
-		// Append accumulated subagent stream items (tool calls, text output)
-		for _, item := range m.subAgentStreamItems {
-			m.appendChat(item)
-		}
-		m.subAgentStreamItems = nil
-
-		// Append the result card
-		m.appendChat(chatEntry{
-			Kind:   "assistant",
-			Title:  assistantLabel,
-			Body:   msg.Response,
-			Status: "final",
-		})
-		if m.sess != nil {
-			summary := strings.TrimSpace(msg.Summary)
-			if summary == "" {
-				summary = "SubAgent task completed."
-			}
-			m.sess.Messages = append(m.sess.Messages, llm.NewAssistantTextMessage(summary))
-		}
-		if strings.TrimSpace(msg.Status) != "" {
-			m.statusNote = msg.Status
-		}
-		m.refreshViewport()
-		return m, waitForAsync(m.async)
 	case tokenUsagePulledMsg:
 		// Account-level usage is not session-accurate; ignore in session-only mode.
 		return m, nil
@@ -1086,6 +1030,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.landingGlowStep = (m.landingGlowStep + 1) % 2048
 		return m, landingGlowTickCmd()
+		case statusDotTickMsg:
+			if m.reducedMotion {
+				return m, nil
+			}
+			if !m.busy && !m.hasBlinkingDot() {
+				return m, nil
+			}
+			m.dotBlinkVisible = !m.dotBlinkVisible
+			if m.hasBlinkingDot() {
+				m.refreshViewport()
+			}
+			return m, statusDotTickCmd()
+		case stagnationTickMsg:
+			if m.updateStagnation() {
+				m.refreshViewport()
+			}
+			if m.hasActiveDotAnimation() {
+				return m, stagnationTickCmd()
+			}
+			return m, nil
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 	case tea.KeyMsg:
@@ -2390,6 +2354,7 @@ func waitForAsync(ch <-chan tea.Msg) tea.Cmd {
 func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 	items := make([]chatEntry, 0, len(sess.Messages))
 	callNames := map[string]string{}
+	callArgs := map[string]string{} // tool call ID -> arguments (for delegate_subagent AgentID recovery)
 
 	for _, message := range sess.Messages {
 		message.Normalize()
@@ -2407,27 +2372,53 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 				if name == "" {
 					name = "tool"
 				}
-				rendered := renderToolPayload(name, part.ToolResult.Content)
+				payload := part.ToolResult.Content
+				agentID := ""
+				if strings.EqualFold(name, "delegate_subagent") {
+					agentID = resolveAgentIDFromArgs(callArgs, part.ToolResult.ToolUseID)
+					if fullJSON := resolveFullSubAgentResult(message, part.ToolResult.ToolUseID); fullJSON != "" {
+						payload = fullJSON
+					}
+				}
+				rendered := renderToolPayload(name, payload)
 				summary := rendered.Summary
 				lines := rendered.DetailLines
 				status := rendered.Status
 				compactBody := rendered.CompactLine
+				toolCalls := resolveSubAgentToolCallsFromMeta(message)
+				taskPrompt := ""
+				if strings.EqualFold(name, "delegate_subagent") {
+					_, taskPrompt = resolveDelegateSubAgentArgs(callArgs, part.ToolResult.ToolUseID)
+				}
 				items = append(items, chatEntry{
-					Kind:        "tool",
-					Title:       toolEntryTitle(name),
-					Body:        joinSummary(summary, lines),
-					Status:      status,
-					CompactBody: compactBody,
-					DetailLines: lines,
+					Kind:           "tool",
+					Title:          toolEntryTitle(name),
+					Body:           joinSummary(summary, lines),
+					Status:         status,
+					AgentID:        agentID,
+					CompactBody:    compactBody,
+					DetailLines:    lines,
+					SubAgentTools:  toolCalls,
+					TaskPrompt:     taskPrompt,
+					TotalToolCalls: len(toolCalls),
 				})
 			}
 			userText := strings.Join(userTextParts, "")
 			if strings.TrimSpace(userText) != "" {
-				items = append(items, chatEntry{Kind: "user", Title: "You", Body: userText, Status: "final"})
+				items = append(items, chatEntry{
+					Kind:   "user",
+					Title:  "You",
+					Meta:   resolveUserMessageMeta(message),
+					Body:   userText,
+					Status: "final",
+				})
 			}
 		case "assistant":
 			for _, call := range message.ToolCalls {
 				callNames[call.ID] = call.Function.Name
+				if strings.EqualFold(call.Function.Name, "delegate_subagent") {
+					callArgs[call.ID] = call.Function.Arguments
+				}
 			}
 			if strings.TrimSpace(message.Text()) != "" {
 				items = append(items, chatEntry{Kind: "assistant", Title: assistantLabel, Body: message.Text(), Status: "final"})
@@ -2437,22 +2428,137 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 			if name == "" {
 				name = "tool"
 			}
-			rendered := renderToolPayload(name, message.Content)
+			payload := message.Content
+			agentID := ""
+			if strings.EqualFold(name, "delegate_subagent") {
+				agentID = resolveAgentIDFromArgs(callArgs, message.ToolCallID)
+				if fullJSON := resolveFullSubAgentResult(message, message.ToolCallID); fullJSON != "" {
+					payload = fullJSON
+				}
+			}
+			rendered := renderToolPayload(name, payload)
 			summary := rendered.Summary
 			lines := rendered.DetailLines
 			status := rendered.Status
 			compactBody := rendered.CompactLine
+			toolCalls := resolveSubAgentToolCallsFromMeta(message)
+			taskPrompt := ""
+			if strings.EqualFold(name, "delegate_subagent") {
+				_, taskPrompt = resolveDelegateSubAgentArgs(callArgs, message.ToolCallID)
+			}
 			items = append(items, chatEntry{
-				Kind:        "tool",
-				Title:       toolEntryTitle(name),
-				Body:        joinSummary(summary, lines),
-				Status:      status,
-				CompactBody: compactBody,
-				DetailLines: lines,
+				Kind:           "tool",
+				Title:          toolEntryTitle(name),
+				Body:           joinSummary(summary, lines),
+				Status:         status,
+				AgentID:        agentID,
+				CompactBody:    compactBody,
+				DetailLines:    lines,
+				SubAgentTools:  toolCalls,
+				TaskPrompt:     taskPrompt,
+				TotalToolCalls: len(toolCalls),
 			})
 		}
 	}
 	return items
+}
+
+// resolveAgentIDFromArgs extracts the agent name from cached delegate_subagent arguments.
+func resolveAgentIDFromArgs(callArgs map[string]string, toolCallID string) string {
+	args, ok := callArgs[toolCallID]
+	if !ok {
+		return ""
+	}
+	agent, _ := summarizeDelegateSubAgent(args)
+	if agent == "" {
+		agent = "subagent"
+	}
+	return agent
+}
+
+// resolveDelegateSubAgentArgs extracts the agent name and task prompt from
+// cached delegate_subagent arguments.
+func resolveDelegateSubAgentArgs(callArgs map[string]string, toolCallID string) (agent, task string) {
+	raw, ok := callArgs[toolCallID]
+	if !ok {
+		return "", ""
+	}
+	return summarizeDelegateSubAgent(raw)
+}
+
+// resolveFullSubAgentResult checks if the message Meta contains the full
+// delegate_subagent JSON result (stored before LLM trimming) and returns it.
+func resolveFullSubAgentResult(message llm.Message, toolCallID string) string {
+	if message.Meta == nil {
+		return ""
+	}
+	raw, ok := message.Meta["delegate_subagent_result"]
+	if !ok {
+		return ""
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
+// resolveSubAgentToolCallsFromMeta reads the subagent_tool_calls metadata
+// stored by the agent executor and returns SubAgentToolCall entries for UI
+// restoration on session reload.
+func resolveSubAgentToolCallsFromMeta(message llm.Message) []SubAgentToolCall {
+	if message.Meta == nil {
+		return nil
+	}
+	raw, ok := message.Meta["subagent_tool_calls"]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []SubAgentToolCall:
+		return v
+	case []any:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil
+		}
+		var calls []SubAgentToolCall
+		if err := json.Unmarshal(data, &calls); err != nil {
+			return nil
+		}
+		return calls
+	default:
+		return nil
+	}
+}
+
+func resolveUserMessageMeta(message llm.Message) string {
+	createdAt, ok := parseMessageCreatedAt(message.CreatedAt)
+	if !ok {
+		return ""
+	}
+	model := "-"
+	if message.Meta != nil {
+		if raw, exists := message.Meta[userMessageModelMetaKey]; exists {
+			if value, ok := raw.(string); ok && strings.TrimSpace(value) != "" {
+				model = strings.TrimSpace(value)
+			}
+		}
+	}
+	return formatUserMeta(model, createdAt)
+}
+
+func parseMessageCreatedAt(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func chatBubbleWidth(item chatEntry, width int) int {
@@ -2656,33 +2762,58 @@ func summarizeTool(name, payload string) (string, []string, string) {
 	case "write_file":
 		var result struct {
 			Path         string `json:"path"`
-			BytesWritten int    `json:"bytes_written"`
+			BytesWritten int               `json:"bytes_written"`
+			DiffPreview  diffPreviewLocal  `json:"diff_preview"`
 		}
 		if json.Unmarshal([]byte(payload), &result) == nil {
-			return "创建 " + filepath.Base(result.Path), []string{
-				fmt.Sprintf("写入 %d 字节", result.BytesWritten),
+			if len(result.DiffPreview.Files) > 0 {
+				f := result.DiffPreview.Files[0]
+				lines := []string{fmt.Sprintf("+%d -%d", f.Added, f.Removed)}
+				lines = append(lines, diffExpandedDetailLines(result.DiffPreview)...)
+				return "Write " + filepath.Base(result.Path), lines, "done"
+			}
+			return "Write " + filepath.Base(result.Path), []string{
+				fmt.Sprintf("%d bytes", result.BytesWritten),
 			}, "done"
 		}
 	case "replace_in_file":
 		var result struct {
 			Path     string `json:"path"`
 			Replaced int    `json:"replaced"`
-			OldCount int    `json:"old_count"`
+			OldCount    int         `json:"old_count"`
+			DiffPreview diffPreviewLocal `json:"diff_preview"`
 		}
 		if json.Unmarshal([]byte(payload), &result) == nil {
+			lines := make([]string, 0, 4)
+			if len(result.DiffPreview.Files) > 0 {
+				f := result.DiffPreview.Files[0]
+				lines = append(lines, fmt.Sprintf("+%d -%d", f.Added, f.Removed))
+				lines = append(lines, diffExpandedDetailLines(result.DiffPreview)...)
+				return "改动 " + filepath.Base(result.Path), lines, "done"
+			}
 			return "改动 " + filepath.Base(result.Path), []string{
 				fmt.Sprintf("改动 %d 行", result.Replaced),
 			}, "done"
 		}
 	case "apply_patch":
 		var result struct {
-			Operations []struct {
+			Operations  []struct {
 				Type string `json:"type"`
 				Path string `json:"path"`
 			} `json:"operations"`
+			DiffPreview diffPreviewLocal `json:"diff_preview"`
 		}
 		if json.Unmarshal([]byte(payload), &result) == nil {
-			// 只显示前10个操作，后面用省略号表示
+			if len(result.DiffPreview.Files) > 0 {
+				lines := make([]string, 0, 6)
+				for _, f := range result.DiffPreview.Files {
+					lines = append(lines, fmt.Sprintf("%s %s  +%d -%d", f.ChangeType, compactDisplayPath(f.Path), f.Added, f.Removed))
+				}
+				lines = append(lines, diffExpandedDetailLines(result.DiffPreview)...)
+				if result.DiffPreview.Truncated {
+				}
+				return fmt.Sprintf("改动 %d 个文件, +%d -%d", result.DiffPreview.TotalFiles, result.DiffPreview.TotalAdded, result.DiffPreview.TotalRemoved), lines, "done"
+			}
 			operationLines := make([]string, 0, min(10, len(result.Operations)))
 			for i := 0; i < min(10, len(result.Operations)); i++ {
 				operationLines = append(operationLines, result.Operations[i].Type+" "+compactDisplayPath(result.Operations[i].Path))
@@ -3557,6 +3688,26 @@ func emptyDot(path string) string {
 		return "."
 	}
 	return path
+}
+
+func truncatePathMiddle(path string, limit int) string {
+	if runewidth.StringWidth(path) <= limit {
+		return path
+	}
+	dir := filepath.Dir(path)
+	name := filepath.Base(path)
+	nameW := runewidth.StringWidth(name)
+	if nameW+4 >= limit {
+		return compact(path, limit)
+	}
+	available := limit - nameW - 3
+	if available <= 0 {
+		return compact(path, limit)
+	}
+	if runewidth.StringWidth(dir) <= available {
+		return path
+	}
+	return compact(dir, available) + "/..." + name
 }
 
 func clamp(v, lo, hi int) int {
