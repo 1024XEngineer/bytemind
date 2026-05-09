@@ -931,12 +931,12 @@ func renderDiffDetailLine(line string, width int) string {
 		return toolDiffHunkHeaderStyle.Render(line[1:])
 	}
 
-	// Diff content lines: all start with space. Marker at position 9
-	// Format: " NNNNNNN X code" (1+7+1+1 = 10 chars prefix, marker at [9])
-	if len(line) < 11 {
+	// Diff content lines: 7-char line num, space, marker, space, code
+	// Format: "NNNNNNN X code" (7+1+1=9 chars prefix, marker at [8])
+	if len(line) < 10 {
 		return line
 	}
-	diffMarker := line[9]
+	diffMarker := line[8]
 	if diffMarker != '+' && diffMarker != '-' && diffMarker != ' ' {
 		return line
 	}

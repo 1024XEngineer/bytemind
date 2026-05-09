@@ -50,8 +50,8 @@ func TestSelfCheckDiffRendering(t *testing.T) {
 				fmt.Printf("    STATS: %s\n", dl[1:])
 			case len(dl) > 0 && dl[0] == 0x02:
 				fmt.Printf("    HUNK:  %s\n", dl[1:])
-			case len(dl) >= 10:
-				switch dl[9] {
+			case len(dl) >= 9:
+				switch dl[8] {
 				case '+':
 					fmt.Printf("    ADD:   %q\n", dl)
 				case '-':

@@ -24,21 +24,21 @@ func TestRenderDiffDetailLineAllPaths(t *testing.T) {
 		t.Errorf("hunk header should contain @@, got %q", result)
 	}
 
-	// Diff content: added line
-	result = renderDiffDetailLine("       1 + package main", 80)
-	if result == "       1 + package main" {
+	// Diff content: added line (7-char line num, space, marker, space, code)
+	result = renderDiffDetailLine("      1 + package main", 80)
+	if result == "      1 + package main" {
 		t.Errorf("added line should be styled, got plain text %q", result)
 	}
 
 	// Diff content: removed line
-	result = renderDiffDetailLine("       2 - func old()", 80)
-	if result == "       2 - func old()" {
+	result = renderDiffDetailLine("      2 - func old()", 80)
+	if result == "      2 - func old()" {
 		t.Errorf("removed line should be styled, got plain text %q", result)
 	}
 
 	// Diff content: context line
-	result = renderDiffDetailLine("       3   unchanged", 80)
-	if result == "       3   unchanged" {
+	result = renderDiffDetailLine("      3   unchanged", 80)
+	if result == "      3   unchanged" {
 		t.Errorf("context line should be styled, got plain text %q", result)
 	}
 
@@ -54,16 +54,16 @@ func TestRenderDiffDetailLineAllPaths(t *testing.T) {
 		t.Errorf("empty line should be empty, got %q", result)
 	}
 
-	// Short line (< 11 chars) passes through
-	result = renderDiffDetailLine("   short", 80)
-	if result != "   short" {
+	// Short line (< 10 chars) passes through
+	result = renderDiffDetailLine("  short", 80)
+	if result != "  short" {
 		t.Errorf("short line should pass through, got %q", result)
 	}
 
 	// Padding to width
-	result = renderDiffDetailLine("       1 + pkg", 80)
+	result = renderDiffDetailLine("      1 + pkg", 80)
 	if len(result) < 80 {
-		t.Errorf("line should be padded to >= width, got len=%d", len(result))
+		t.Errorf("line should be padded to >= width, got len=%d, content=%q", len(result), result)
 	}
 }
 
@@ -165,20 +165,20 @@ func TestRenderToolPayloadDiffPaths(t *testing.T) {
 }
 
 func TestRenderDiffDetailLineEdgeCases(t *testing.T) {
-	// Line exactly at minimum length
-	result := renderDiffDetailLine("       1   x", 80)
+	// Line exactly at minimum length (10 chars)
+	result := renderDiffDetailLine("      1   x", 80)
 	if len(result) < 80 {
 		t.Errorf("min length diff line should be padded, got len=%d", len(result))
 	}
 
-	// Line with marker at wrong position (not at 9)
-	result2 := renderDiffDetailLine("1234567890abc", 80)
-	if result2 != "1234567890abc" {
+	// Line with marker at wrong position (not at 8)
+	result2 := renderDiffDetailLine("12345678abc", 80)
+	if result2 != "12345678abc" {
 		t.Errorf("line without valid marker should pass through")
 	}
 
 	// Very long line gets padded
-	long := "       1 + " + strings.Repeat("x", 200)
+	long := "      1 + " + strings.Repeat("x", 200)
 	result3 := renderDiffDetailLine(long, 80)
 	if len(result3) < 80 {
 		t.Errorf("long line should not be shortened below width")
