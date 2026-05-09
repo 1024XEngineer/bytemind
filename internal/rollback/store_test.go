@@ -445,6 +445,236 @@ func TestRollbackErrorsAndHelperBranches(t *testing.T) {
 	}
 }
 
+func TestStoreAdditionalErrorBranches(t *testing.T) {
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	ctx := context.Background()
+	workspace := t.TempDir()
+	store, err := NewStore(filepath.Join(t.TempDir(), "rollback"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var nilStore *Store
+	if err := nilStore.Commit(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := nilStore.Abort(ctx, nil, "ignored"); err != nil {
+		t.Fatal(err)
+	}
+	if err := nilStore.AbortAndRestore(ctx, nil, "ignored"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.applyBeforeState(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Commit(ctx, &Operation{
+		OperationID:   "update-missing",
+		Workspace:     workspace,
+		AffectedFiles: []FileChange{{Path: "missing.txt", OpType: OpTypeUpdate}},
+	}); err == nil || !strings.Contains(err.Error(), "absent after update") {
+		t.Fatalf("expected update missing commit error, got %v", err)
+	}
+
+	deletePath := filepath.Join(workspace, "delete-still-exists.txt")
+	mustWriteRollbackTestFile(t, deletePath, "still here\n")
+	if err := store.Commit(ctx, &Operation{
+		OperationID: "delete-present",
+		Workspace:   workspace,
+		AffectedFiles: []FileChange{{
+			Path:    "delete-still-exists.txt",
+			AbsPath: deletePath,
+			OpType:  OpTypeDelete,
+		}},
+	}); err == nil || !strings.Contains(err.Error(), "still exists after delete") {
+		t.Fatalf("expected delete present commit error, got %v", err)
+	}
+
+	oldPath := filepath.Join(workspace, "old-still-exists.txt")
+	newPath := filepath.Join(workspace, "new-after-move.txt")
+	mustWriteRollbackTestFile(t, oldPath, "old\n")
+	mustWriteRollbackTestFile(t, newPath, "new\n")
+	if err := store.Commit(ctx, &Operation{
+		OperationID: "move-old-present",
+		Workspace:   workspace,
+		AffectedFiles: []FileChange{{
+			Path:       "old-still-exists.txt",
+			AbsPath:    oldPath,
+			NewPath:    "new-after-move.txt",
+			NewAbsPath: newPath,
+			OpType:     OpTypeMove,
+		}},
+	}); err == nil || !strings.Contains(err.Error(), "still exists after move") {
+		t.Fatalf("expected move old present commit error, got %v", err)
+	}
+
+	if err := os.Remove(oldPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(newPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(ctx, &Operation{
+		OperationID: "move-new-missing",
+		Workspace:   workspace,
+		AffectedFiles: []FileChange{{
+			Path:       "old-still-exists.txt",
+			AbsPath:    oldPath,
+			NewPath:    "new-after-move.txt",
+			NewAbsPath: newPath,
+			OpType:     OpTypeMove,
+		}},
+	}); err == nil || !strings.Contains(err.Error(), "absent after move") {
+		t.Fatalf("expected move new missing commit error, got %v", err)
+	}
+
+	if err := store.applyBeforeState(&Operation{
+		Workspace:     workspace,
+		AffectedFiles: []FileChange{{Path: "bad.txt", OpType: OpType("bad")}},
+	}); err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("expected unsupported restore error, got %v", err)
+	}
+	if err := store.restoreSnapshot(filepath.Join(workspace, "missing-snapshot.txt"), FileChange{Path: "missing-snapshot.txt"}); err == nil || !strings.Contains(err.Error(), "snapshot missing") {
+		t.Fatalf("expected missing snapshot error, got %v", err)
+	}
+	removePath := filepath.Join(workspace, "remove-before-absent.txt")
+	mustWriteRollbackTestFile(t, removePath, "remove me\n")
+	if err := store.restoreSnapshot(removePath, FileChange{Path: "remove-before-absent.txt", FileAbsentBefore: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(removePath); !os.IsNotExist(err) {
+		t.Fatalf("expected before-absent restore to remove file, got %v", err)
+	}
+}
+
+func TestConflictAndPathHelperBranches(t *testing.T) {
+	t.Setenv("BYTEMIND_HOME", t.TempDir())
+	ctx := context.Background()
+	workspace := t.TempDir()
+	store, err := NewStore(filepath.Join(t.TempDir(), "rollback"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deletePath := filepath.Join(workspace, "deleted.txt")
+	mustWriteRollbackTestFile(t, deletePath, "changed after delete\n")
+	deleteOp := &Operation{
+		OperationID: "delete-conflict",
+		Workspace:   workspace,
+		Status:      StatusCommitted,
+		AffectedFiles: []FileChange{{
+			Path:    "deleted.txt",
+			AbsPath: deletePath,
+			OpType:  OpTypeDelete,
+		}},
+	}
+	if err := store.saveOperation(deleteOp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Rollback(ctx, workspace, deleteOp.OperationID); err == nil || !strings.Contains(err.Error(), "changed after delete") {
+		t.Fatalf("expected delete conflict, got %v", err)
+	}
+
+	oldPath := filepath.Join(workspace, "move-old.txt")
+	newPath := filepath.Join(workspace, "move-new.txt")
+	mustWriteRollbackTestFile(t, oldPath, "old changed\n")
+	mustWriteRollbackTestFile(t, newPath, "after move\n")
+	moveOp := &Operation{
+		OperationID: "move-old-conflict",
+		Workspace:   workspace,
+		Status:      StatusCommitted,
+		AffectedFiles: []FileChange{{
+			Path:       "move-old.txt",
+			AbsPath:    oldPath,
+			NewPath:    "move-new.txt",
+			NewAbsPath: newPath,
+			OpType:     OpTypeMove,
+			AfterHash:  hashBytes([]byte("after move\n")),
+		}},
+	}
+	if err := store.saveOperation(moveOp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Rollback(ctx, workspace, moveOp.OperationID); err == nil || !strings.Contains(err.Error(), "changed after move") {
+		t.Fatalf("expected move old path conflict, got %v", err)
+	}
+
+	if err := os.Remove(oldPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(newPath); err != nil {
+		t.Fatal(err)
+	}
+	moveMissing := *moveOp
+	moveMissing.OperationID = "move-new-missing-conflict"
+	if err := store.saveOperation(&moveMissing); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Rollback(ctx, workspace, moveMissing.OperationID); err == nil || !strings.Contains(err.Error(), "is missing") {
+		t.Fatalf("expected move new path missing conflict, got %v", err)
+	}
+
+	externalRoot := t.TempDir()
+	externalPath := filepath.Join(externalRoot, "allowed.txt")
+	op := Operation{
+		Workspace: workspace,
+		AffectedFiles: []FileChange{{
+			Path:    filepath.ToSlash(externalPath),
+			AbsPath: externalPath,
+			OpType:  OpTypeUpdate,
+		}},
+	}
+	if err := validateOperationPaths(op, workspace, " ", externalRoot); err != nil {
+		t.Fatalf("expected external writable root to be allowed, got %v", err)
+	}
+	if _, err := normalizeTargetPath(workspace, "", " "); err == nil || !strings.Contains(err.Error(), "required") {
+		t.Fatalf("expected empty target path error, got %v", err)
+	}
+}
+
+func TestSnapshotAndCurrentStateErrorBranches(t *testing.T) {
+	workspace := t.TempDir()
+	largePath := filepath.Join(workspace, "large.txt")
+	largeData := make([]byte, maxSnapshotBytes+1)
+	if err := os.WriteFile(largePath, largeData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSnapshotCandidate(largePath); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected large snapshot error, got %v", err)
+	}
+
+	dirPath := filepath.Join(workspace, "dir")
+	if err := os.MkdirAll(dirPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readCurrentState(dirPath); err == nil || !strings.Contains(err.Error(), "directory") {
+		t.Fatalf("expected current state directory error, got %v", err)
+	}
+
+	blockFile := filepath.Join(workspace, "block")
+	if err := os.WriteFile(blockFile, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(blockFile); err == nil {
+		t.Fatal("expected NewStore to fail when root is a file")
+	}
+
+	blobDir := filepath.Join(workspace, "blobs")
+	if err := os.MkdirAll(blobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	badEntries := filepath.Join(workspace, "entries-file")
+	if err := os.WriteFile(badEntries, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	badStore := &Store{entriesDir: badEntries, blobsDir: blobDir}
+	target := filepath.Join(workspace, "file.txt")
+	mustWriteRollbackTestFile(t, target, "before\n")
+	if _, err := badStore.Begin(context.Background(), BeginOptions{Workspace: workspace}, []FileTarget{{Path: "file.txt", AbsPath: target}}); err == nil {
+		t.Fatal("expected begin to fail when operation entry cannot be saved")
+	}
+}
+
 func beginUpdateRollbackTestOperation(t *testing.T, store *Store, workspace, relPath, absPath string) *Operation {
 	t.Helper()
 	op, err := store.Begin(context.Background(), BeginOptions{
