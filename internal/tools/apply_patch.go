@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/1024XEngineer/bytemind/internal/llm"
+	rollbackpkg "github.com/1024XEngineer/bytemind/internal/rollback"
 )
 
 type ApplyPatchTool struct{}
@@ -32,6 +33,13 @@ type patchHunk struct {
 	OldRange  patchRange
 	NewRange  patchRange
 	Lines     []patchLine
+}
+
+type plannedPatchOperation struct {
+	Type    string
+	OldPath string
+	NewPath string
+	Content string
 }
 
 var unifiedHunkHeaderPattern = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$`)
@@ -56,7 +64,7 @@ func (ApplyPatchTool) Definition() llm.ToolDefinition {
 	}
 }
 
-func (ApplyPatchTool) Run(_ context.Context, raw json.RawMessage, execCtx *ExecutionContext) (string, error) {
+func (ApplyPatchTool) Run(ctx context.Context, raw json.RawMessage, execCtx *ExecutionContext) (string, error) {
 	var args struct {
 		Patch string `json:"patch"`
 	}
@@ -78,10 +86,31 @@ func (ApplyPatchTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execu
 	i := 1
 	operations := make([]map[string]any, 0, 4)
 	diffFiles := make([]DiffFile, 0, 4)
+	planned := make([]plannedPatchOperation, 0, 4)
+	targets := make([]rollbackpkg.FileTarget, 0, 4)
+	touchedPaths := map[string]string{}
 	for i < len(lines) {
 		line := lines[i]
 		if line == "*** End Patch" {
-			return toJSON(buildPatchResult(operations, diffFiles))
+			tracker, err := beginRollbackOperation(ctx, execCtx, "apply_patch", targets)
+			if err != nil {
+				return "", err
+			}
+			if err := applyPlannedPatchOperations(planned); err != nil {
+				if tracker != nil {
+					tracker.abort(ctx, err.Error())
+				}
+				return "", err
+			}
+			operationID, err := tracker.commit(ctx)
+			if err != nil {
+				return "", err
+			}
+			result := buildPatchResult(operations, diffFiles)
+			if operationID != "" {
+				result["rollback_operation_id"] = operationID
+			}
+			return toJSON(result)
 		}
 
 		switch {
@@ -100,14 +129,26 @@ func (ApplyPatchTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execu
 			if err != nil {
 				return "", err
 			}
-			if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
+			if _, err := os.Stat(resolved); err == nil {
+				return "", fmt.Errorf("add file target already exists: %s", path)
+			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return "", err
+			}
+			if err := registerPatchTarget(touchedPaths, resolved, path); err != nil {
 				return "", err
 			}
 			content := joinLines(contentLines, true, patchLineEnding)
-			if err := os.WriteFile(resolved, []byte(content), 0o644); err != nil {
-				return "", err
-			}
 			relPath := filepath.ToSlash(mustRel(execCtx.Workspace, resolved))
+			planned = append(planned, plannedPatchOperation{
+				Type:    "add",
+				NewPath: resolved,
+				Content: content,
+			})
+			targets = append(targets, rollbackpkg.FileTarget{
+				Path:    relPath,
+				AbsPath: resolved,
+				OpType:  rollbackpkg.OpTypeAdd,
+			})
 			operations = append(operations, map[string]any{"type": "add", "path": relPath})
 			diffFiles = append(diffFiles, DiffFile{
 				Path:       relPath,
@@ -122,10 +163,19 @@ func (ApplyPatchTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execu
 				return "", err
 			}
 			removed := lineCount(resolved)
-			if err := os.Remove(resolved); err != nil {
+			relPath := filepath.ToSlash(mustRel(execCtx.Workspace, resolved))
+			if err := registerPatchTarget(touchedPaths, resolved, path); err != nil {
 				return "", err
 			}
-			relPath := filepath.ToSlash(mustRel(execCtx.Workspace, resolved))
+			planned = append(planned, plannedPatchOperation{
+				Type:    "delete",
+				OldPath: resolved,
+			})
+			targets = append(targets, rollbackpkg.FileTarget{
+				Path:    relPath,
+				AbsPath: resolved,
+				OpType:  rollbackpkg.OpTypeDelete,
+			})
 			operations = append(operations, map[string]any{"type": "delete", "path": relPath})
 			diffFiles = append(diffFiles, DiffFile{
 				Path:       relPath,
@@ -148,6 +198,21 @@ func (ApplyPatchTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execu
 				}
 				i++
 			}
+			if newPath != oldPath {
+				if _, err := os.Stat(newPath); err == nil {
+					return "", fmt.Errorf("move target already exists: %s", filepath.ToSlash(mustRel(execCtx.Workspace, newPath)))
+				} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+					return "", err
+				}
+			}
+			if err := registerPatchTarget(touchedPaths, oldPath, path); err != nil {
+				return "", err
+			}
+			if newPath != oldPath {
+				if err := registerPatchTarget(touchedPaths, newPath, filepath.ToSlash(mustRel(execCtx.Workspace, newPath))); err != nil {
+					return "", err
+				}
+			}
 			chunkLines := make([]string, 0, 64)
 			for i < len(lines) && !strings.HasPrefix(lines[i], "*** ") {
 				chunkLines = append(chunkLines, lines[i])
@@ -161,19 +226,28 @@ func (ApplyPatchTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execu
 			if err != nil {
 				return "", err
 			}
-			if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
-				return "", err
-			}
-			if err := os.WriteFile(newPath, []byte(updated), 0o644); err != nil {
-				return "", err
-			}
-			if newPath != oldPath {
-				if err := os.Remove(oldPath); err != nil {
-					return "", err
-				}
-			}
 			relOld := filepath.ToSlash(mustRel(execCtx.Workspace, oldPath))
 			relNew := filepath.ToSlash(mustRel(execCtx.Workspace, newPath))
+			opType := rollbackpkg.OpTypeUpdate
+			if newPath != oldPath {
+				opType = rollbackpkg.OpTypeMove
+			}
+			planned = append(planned, plannedPatchOperation{
+				Type:    "update",
+				OldPath: oldPath,
+				NewPath: newPath,
+				Content: updated,
+			})
+			target := rollbackpkg.FileTarget{
+				Path:    relOld,
+				AbsPath: oldPath,
+				OpType:  opType,
+			}
+			if newPath != oldPath {
+				target.NewPath = relNew
+				target.NewAbsPath = newPath
+			}
+			targets = append(targets, target)
 			operations = append(operations, map[string]any{
 				"type":     "update",
 				"path":     relOld,
@@ -199,6 +273,48 @@ func (ApplyPatchTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execu
 	}
 
 	return "", errors.New("patch missing *** End Patch")
+}
+
+func registerPatchTarget(seen map[string]string, absPath, label string) error {
+	key := filepath.Clean(absPath)
+	if previous, ok := seen[key]; ok {
+		return fmt.Errorf("patch touches %s more than once (already used by %s)", label, previous)
+	}
+	seen[key] = label
+	return nil
+}
+
+func applyPlannedPatchOperations(operations []plannedPatchOperation) error {
+	for _, op := range operations {
+		switch op.Type {
+		case "add":
+			if err := os.MkdirAll(filepath.Dir(op.NewPath), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(op.NewPath, []byte(op.Content), 0o644); err != nil {
+				return err
+			}
+		case "delete":
+			if err := os.Remove(op.OldPath); err != nil {
+				return err
+			}
+		case "update":
+			if err := os.MkdirAll(filepath.Dir(op.NewPath), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(op.NewPath, []byte(op.Content), 0o644); err != nil {
+				return err
+			}
+			if op.NewPath != op.OldPath {
+				if err := os.Remove(op.OldPath); err != nil {
+					return err
+				}
+			}
+		default:
+			return fmt.Errorf("unsupported planned patch operation: %s", op.Type)
+		}
+	}
+	return nil
 }
 
 func applyStructuredPatch(original string, chunkLines []string) (string, error) {

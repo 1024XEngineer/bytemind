@@ -3982,7 +3982,7 @@ func TestFilteredCommandsShowsRootSelectorGroups(t *testing.T) {
 		usages = append(usages, item.Usage)
 	}
 
-	for _, want := range []string{"/help", "/session", "/skills-select", "/model", "/new", "/compact", "/commit <message>", "/undo-commit", "/quit"} {
+	for _, want := range []string{"/help", "/session", "/skills-select", "/model", "/new", "/compact", "/commit <message>", "/undo-commit", "/rollback [last|<operation-id>]", "/quit"} {
 		if !containsString(usages, want) {
 			t.Fatalf("expected root selector to contain %q, got %v", want, usages)
 		}

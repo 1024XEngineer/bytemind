@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/1024XEngineer/bytemind/internal/llm"
+	rollbackpkg "github.com/1024XEngineer/bytemind/internal/rollback"
 )
 
 type WriteFileTool struct{}
@@ -40,7 +41,7 @@ func (WriteFileTool) Definition() llm.ToolDefinition {
 	}
 }
 
-func (WriteFileTool) Run(_ context.Context, raw json.RawMessage, execCtx *ExecutionContext) (string, error) {
+func (WriteFileTool) Run(ctx context.Context, raw json.RawMessage, execCtx *ExecutionContext) (string, error) {
 	var args struct {
 		Path       string `json:"path"`
 		Content    string `json:"content"`
@@ -73,7 +74,27 @@ func (WriteFileTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execut
 		original = string(data)
 	}
 
+	opType := rollbackpkg.OpTypeAdd
+	if exists {
+		opType = rollbackpkg.OpTypeUpdate
+	}
+	tracker, err := beginRollbackOperation(ctx, execCtx, "write_file", []rollbackpkg.FileTarget{{
+		Path:    relPath,
+		AbsPath: path,
+		OpType:  opType,
+	}})
+	if err != nil {
+		return "", err
+	}
+
 	if err := os.WriteFile(path, []byte(args.Content), 0o644); err != nil {
+		if tracker != nil {
+			tracker.abort(ctx, err.Error())
+		}
+		return "", err
+	}
+	operationID, err := tracker.commit(ctx)
+	if err != nil {
 		return "", err
 	}
 
@@ -81,6 +102,9 @@ func (WriteFileTool) Run(_ context.Context, raw json.RawMessage, execCtx *Execut
 		"ok":            true,
 		"path":          relPath,
 		"bytes_written": len(args.Content),
+	}
+	if operationID != "" {
+		result["rollback_operation_id"] = operationID
 	}
 
 	if dp := buildWriteFileDiff(original, args.Content, exists, relPath); dp != nil {

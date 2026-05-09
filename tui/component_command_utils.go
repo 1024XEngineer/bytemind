@@ -30,6 +30,7 @@ func (m model) helpText() string {
 		"- `/compact`: summarize long history into a compact continuation context.",
 		"- `/commit <message>`: stage all changes and create a local Git commit.",
 		"- `/undo-commit`: undo the last local commit created by `/commit` in this session.",
+		"- `/rollback [last|<operation-id>]`: list or undo ByteMind file edits recorded by tool snapshots.",
 		"- `/btw <message>`: interject while a run is in progress.",
 		"- `/quit`: exit the TUI.",
 		"- TUI does not expose `/resume`; use `/session` then `Enter` on the selected row.",
