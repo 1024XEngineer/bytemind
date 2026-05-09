@@ -127,10 +127,54 @@ Always prefer `api_key_env` over a literal `api_key` in config files. This keeps
 { "provider": { "api_key_env": "MY_API_KEY_VAR" } }
 ```
 
+Set the variable **before** starting ByteMind:
+
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
+
+```powershell
+# Temporary (current window only):
+$env:MY_API_KEY_VAR = "sk-..."
+
+# Permanent (survives reboots):
+[Environment]::SetEnvironmentVariable("MY_API_KEY_VAR", "sk-...", "User")
+# Restart terminal after this command.
+```
+
+</Tab>
+
+<Tab title="Linux">
+
 ```bash
+# Temporary (current window only):
 export MY_API_KEY_VAR="sk-..."
+
+# Permanent:
+echo 'export MY_API_KEY_VAR="sk-..."' >> ~/.bashrc
+```
+
+</Tab>
+
+<Tab title="macOS">
+
+```bash
+# Temporary (current window only):
+export MY_API_KEY_VAR="sk-..."
+
+# Permanent:
+echo 'export MY_API_KEY_VAR="sk-..."' >> ~/.zshrc
+```
+
+</Tab>
+</Tabs>
+
+```bash
 bytemind
 ```
+
+:::warning `api_key` overrides `api_key_env`
+If both `api_key` and `api_key_env` are set, `api_key` (plain text) takes priority. Remove `api_key` from your config to use the environment variable.
+:::
 
 ## Custom Auth Headers
 

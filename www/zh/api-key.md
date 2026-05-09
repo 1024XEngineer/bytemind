@@ -130,6 +130,45 @@ DeepSeek 使用 OpenAI 兼容格式，所以填 `openai-compatible`。
 
 DeepSeek 官方文档给出的 OpenAI 格式 Base URL 是 `https://api.deepseek.com`。ByteMind 会在后面拼接默认接口路径 `/chat/completions`，所以这里不要再加 `/chat/completions`。
 
+**可以用 `api_key_env` 代替 `api_key` 吗？**
+
+可以，而且更安全。把 `"api_key"` 替换为 `"api_key_env": "DEEPSEEK_API_KEY"`，然后设置环境变量：
+
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
+
+```powershell
+# 临时（仅当前窗口有效）：
+$env:DEEPSEEK_API_KEY = "sk-..."
+
+# 永久（重启电脑后依然有效）：
+[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-...", "User")
+# 执行后需重启终端窗口。
+```
+
+</Tab>
+
+<Tab title="Linux">
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."
+```
+
+</Tab>
+
+<Tab title="macOS">
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."
+```
+
+</Tab>
+</Tabs>
+
+:::warning 不要同时设置 `api_key` 和 `api_key_env`
+如果两个都存在，`api_key` 优先，`api_key_env` 会被忽略。二选一即可。
+:::
+
 **模型 ID 可以随便写吗？**
 
 不可以。模型 ID 必须和服务商文档里的名字完全一致。DeepSeek 当前建议从 `deepseek-v4-flash` 开始；如果你需要更高能力，再按官方文档改成 `deepseek-v4-pro`。

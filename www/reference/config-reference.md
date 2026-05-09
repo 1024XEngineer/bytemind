@@ -13,8 +13,8 @@ Single model provider configuration. For configuring multiple providers and swit
 | `type`              | string | `openai-compatible`, `anthropic`, or `gemini` | `openai-compatible`       |
 | `base_url`          | string | API endpoint URL                            | `https://api.openai.com/v1` |
 | `model`             | string | Model ID to use                             | `gpt-5.4-mini`              |
-| `api_key`           | string | API key (plain text - prefer `api_key_env`) | -                           |
-| `api_key_env`       | string | Env var name to read the key from           | `BYTEMIND_API_KEY`          |
+| `api_key`           | string | API key in plain text — convenient but stores secrets in file | -                           |
+| `api_key_env`       | string | Env var name to read the key from. **When both `api_key` and `api_key_env` are set, `api_key` takes priority.** | `BYTEMIND_API_KEY`          |
 | `anthropic_version` | string | Anthropic API version header                | `2023-06-01`                |
 | `auth_header`       | string | Custom auth header name                     | `Authorization`             |
 | `auth_scheme`       | string | Auth scheme prefix (e.g. `Bearer`)          | `Bearer`                    |
@@ -126,6 +126,48 @@ Then restart ByteMind or use `/model` to see the new provider and its models in 
 :::tip Migrating from legacy `provider`
 If your config only has the legacy `provider` field, ByteMind auto-converts it into `provider_runtime` on startup. Switching models with `/model` will persist the selection back to `provider_runtime`. You can also manually restructure your config to the multi-provider format above.
 :::
+
+## Setting API Key via Environment Variables
+
+Using `api_key_env` is the recommended approach — it keeps secrets out of your config file. However, `export` only sets the variable for the current terminal session and is lost when you close the window.
+
+### Permanent setup
+
+**Windows (PowerShell)** — write to user-level registry, survives reboots:
+```powershell
+[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-...", "User")
+```
+Restart your terminal after running this command.
+
+**Linux** — add to your shell profile:
+```bash
+echo 'export DEEPSEEK_API_KEY="sk-..."' >> ~/.bashrc
+```
+
+**macOS** — add to your shell profile (zsh is the default):
+```bash
+echo 'export DEEPSEEK_API_KEY="sk-..."' >> ~/.zshrc
+```
+
+### Temporary setup (current terminal only)
+
+```bash
+# Linux / macOS
+export DEEPSEEK_API_KEY="sk-..."
+
+# Windows PowerShell
+$env:DEEPSEEK_API_KEY = "sk-..."
+```
+
+### Priority when both `api_key` and `api_key_env` are set
+
+`api_key` (plain text in config) always takes priority over `api_key_env`. The resolution order is:
+
+1. `api_key` — if non-empty, use it directly
+2. `api_key_env` — if set, read from that environment variable
+3. `BYTEMIND_API_KEY` — final fallback environment variable
+
+If you have `api_key` in your config and also set `api_key_env`, the environment variable is ignored. Remove `api_key` from the config to use the environment variable instead.
 
 ## `approval_policy`
 

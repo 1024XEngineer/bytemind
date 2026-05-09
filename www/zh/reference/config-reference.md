@@ -13,8 +13,8 @@
 | `type`              | string | `openai-compatible`、`anthropic` 或 `gemini` | `openai-compatible`      |
 | `base_url`          | string | API 端点 URL                             | `https://api.openai.com/v1` |
 | `model`             | string | 使用的模型 ID                            | `gpt-5.4-mini`              |
-| `api_key`           | string | API 密钥（明文，建议改用 `api_key_env`） | —                           |
-| `api_key_env`       | string | 从该环境变量读取 API 密钥                | `BYTEMIND_API_KEY`          |
+| `api_key`           | string | API 密钥明文 — 方便但会把密钥写入文件 | —                           |
+| `api_key_env`       | string | 从该环境变量读取 API 密钥。**当 `api_key` 和 `api_key_env` 同时存在时，`api_key` 优先。** | `BYTEMIND_API_KEY`          |
 | `anthropic_version` | string | Anthropic API 版本头                     | `2023-06-01`                |
 | `auth_header`       | string | 自定义鉴权头名称                         | `Authorization`             |
 | `auth_scheme`       | string | 鉴权前缀（如 `Bearer`）                  | `Bearer`                    |
@@ -126,6 +126,48 @@
 :::tip 从旧版 `provider` 迁移
 如果配置文件中只有旧版的 `provider` 字段，ByteMind 启动时会自动将其转换为 `provider_runtime`。使用 `/model` 切换模型后，选择结果会持久化到 `provider_runtime`。你也可以手动将配置改为上面的多 Provider 格式。
 :::
+
+## 通过环境变量设置 API Key
+
+推荐使用 `api_key_env` — 避免密钥写入配置文件。但 `export` 只在当前终端窗口临时生效，关闭窗口后丢失。
+
+### 永久设置
+
+**Windows (PowerShell)** — 写入用户级注册表，重启电脑后依然有效：
+```powershell
+[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-...", "User")
+```
+执行后需重启终端窗口。
+
+**Linux** — 写入 shell 配置文件：
+```bash
+echo 'export DEEPSEEK_API_KEY="sk-..."' >> ~/.bashrc
+```
+
+**macOS** — 写入 zsh 配置文件（macOS 默认 shell）：
+```bash
+echo 'export DEEPSEEK_API_KEY="sk-..."' >> ~/.zshrc
+```
+
+### 临时设置（仅当前终端有效）
+
+```bash
+# Linux / macOS
+export DEEPSEEK_API_KEY="sk-..."
+
+# Windows PowerShell
+$env:DEEPSEEK_API_KEY = "sk-..."
+```
+
+### `api_key` 与 `api_key_env` 同时存在时的优先级
+
+`api_key`（明文）始终优先于 `api_key_env`。解析顺序为：
+
+1. `api_key` — 非空则直接使用
+2. `api_key_env` — 从指定的环境变量读取
+3. `BYTEMIND_API_KEY` — 最终兜底环境变量
+
+如果 config 中同时写了 `api_key` 和 `api_key_env`，环境变量会被忽略。想用环境变量需先删掉 `api_key` 字段。
 
 ## `approval_policy`
 
