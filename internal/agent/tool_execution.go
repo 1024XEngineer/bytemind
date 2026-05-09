@@ -136,12 +136,20 @@ func (e *defaultEngine) executeToolCall(
 		return e.handleRejectedToolCall(ctx, sess, call, out, decision, sandboxAudit)
 	}
 
+	// Allocate invocationID before emitting EventToolCallStarted so TUI
+	// can route concurrent same-type subagent events to the correct entry.
+	delegateInvocationID := ""
+	if strings.TrimSpace(call.Function.Name) == "delegate_subagent" {
+		delegateInvocationID = newSubAgentInvocationID()
+	}
+
 	runner.emit(Event{
 		Type:          EventToolCallStarted,
 		SessionID:     sessionID,
 		ToolName:      call.Function.Name,
 		ToolCallID:    call.ID,
 		ToolArguments: call.Function.Arguments,
+		InvocationID:  delegateInvocationID,
 	})
 	sandboxLeaseID := fmt.Sprintf("session-%s", sess.ID)
 	sandboxRunID := fmt.Sprintf("trace-%s", traceID)
@@ -188,8 +196,7 @@ func (e *defaultEngine) executeToolCall(
 			AllowedTools:      allowedTools,
 			DeniedTools:       deniedTools,
 			DelegateSubAgent: func(ctx context.Context, req tools.DelegateSubAgentRequest, execCtx *tools.ExecutionContext) (tools.DelegateSubAgentResult, error) {
-				invocationID := newSubAgentInvocationID()
-				return runner.delegateSubAgent(ctx, req, execCtx, SubAgentObserver(runner.observer, req.Agent, invocationID), invocationID)
+				return runner.delegateSubAgent(ctx, req, execCtx, SubAgentObserver(runner.observer, req.Agent, delegateInvocationID), delegateInvocationID)
 			},
 		})
 	}

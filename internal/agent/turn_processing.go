@@ -289,10 +289,12 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 		}
 
 		results, err := e.executeToolCallsParallel(ctx, p.Session, p.RunMode, group, p.Out, p.AllowedTools, p.DeniedTools, p.Approval, p.SandboxAudit)
-		if err != nil {
-			return "", false, err
-		}
+		// Append completed sibling results even when a fatal error occurred,
+		// so partial progress is not lost from the session.
 		for _, result := range results {
+			if result.ToolMessage.Role == "" {
+				continue
+			}
 			p.Session.Messages = append(p.Session.Messages, result.ToolMessage)
 			envelope, ok := latestToolResultEnvelope(p.Session)
 			if ok && p.TaskReport != nil {
@@ -303,6 +305,9 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 			if ok && p.TaskReport != nil && envelope.Status == statusDenied {
 				p.TaskReport.RecordDenied(result.ToolName)
 			}
+		}
+		if err != nil {
+			return "", false, err
 		}
 	}
 

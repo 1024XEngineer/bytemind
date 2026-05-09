@@ -2434,10 +2434,12 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 			}
 			payload := message.Content
 			agentID := ""
+			invocationID := ""
 			if strings.EqualFold(name, "delegate_subagent") {
 				agentID = resolveAgentIDFromArgs(callArgs, message.ToolCallID)
 				if fullJSON := resolveFullSubAgentResult(message, message.ToolCallID); fullJSON != "" {
 					payload = fullJSON
+					invocationID = extractInvocationIDFromResult(payload)
 				}
 			}
 			rendered := renderToolPayload(name, payload)
@@ -2455,6 +2457,7 @@ func rebuildSessionTimeline(sess *session.Session) []chatEntry {
 				Title:          toolEntryTitle(name),
 				Body:           joinSummary(summary, lines),
 				Status:         status,
+					InvocationID:   invocationID,
 				AgentID:        agentID,
 				CompactBody:    compactBody,
 				DetailLines:    lines,
