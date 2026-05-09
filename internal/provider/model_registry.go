@@ -28,31 +28,29 @@ func NewModelRegistry(runtimeCfg config.ProviderRuntimeConfig, discovered []Mode
 		merged = append(merged, normalized)
 	}
 	for providerID, providerCfg := range runtimeCfg.Providers {
-		modelID := strings.TrimSpace(providerCfg.Model)
-		if modelID == "" {
-			continue
+		for _, modelID := range configuredModelIDs(providerCfg) {
+			info := ModelInfo{
+				ProviderID: ProviderID(strings.ToLower(strings.TrimSpace(providerID))),
+				ModelID:    ModelID(modelID),
+				Metadata: map[string]string{
+					"family":            strings.TrimSpace(providerCfg.Family),
+					"context_window":    "",
+					"max_output_tokens": "",
+					"supports_tools":    "true",
+					"source":            "config",
+				},
+			}
+			info = normalizeModelInfo(info)
+			key := modelRegistryKey(info.ProviderID, info.ModelID)
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged = append(merged, info)
 		}
-		info := ModelInfo{
-			ProviderID: ProviderID(strings.ToLower(strings.TrimSpace(providerID))),
-			ModelID:    ModelID(modelID),
-			Metadata: map[string]string{
-				"family":          strings.TrimSpace(providerCfg.Family),
-				"context_window":  "",
-				"max_output_tokens": "",
-				"supports_tools":  "true",
-				"source":          "config",
-			},
-		}
-		info = normalizeModelInfo(info)
-		key := modelRegistryKey(info.ProviderID, info.ModelID)
-		if key == "" {
-			continue
-		}
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		merged = append(merged, info)
 	}
 	sort.Slice(merged, func(i, j int) bool {
 		if merged[i].ProviderID == merged[j].ProviderID {
@@ -65,6 +63,28 @@ func NewModelRegistry(runtimeCfg config.ProviderRuntimeConfig, discovered []Mode
 		index[modelRegistryKey(model.ProviderID, model.ModelID)] = model
 	}
 	return ModelRegistry{models: merged, index: index}
+}
+
+func configuredModelIDs(providerCfg config.ProviderConfig) []string {
+	seen := make(map[string]struct{}, len(providerCfg.Models)+1)
+	models := make([]string, 0, len(providerCfg.Models)+1)
+	for _, modelID := range providerCfg.Models {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" {
+			continue
+		}
+		if _, ok := seen[modelID]; ok {
+			continue
+		}
+		seen[modelID] = struct{}{}
+		models = append(models, modelID)
+	}
+	if modelID := strings.TrimSpace(providerCfg.Model); modelID != "" {
+		if _, ok := seen[modelID]; !ok {
+			models = append(models, modelID)
+		}
+	}
+	return models
 }
 
 func (r ModelRegistry) Models() []ModelInfo {

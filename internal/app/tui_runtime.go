@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/1024XEngineer/bytemind/internal/assets"
@@ -160,8 +161,11 @@ func resolveTUIStartupPolicy(interactive bool) (tui.StartupGuide, bool) {
 
 func checkTUIProviderAvailability(cfg config.Config) provider.Availability {
 	providerCfg := cfg.Provider
-	if model := providerCfg.Model; model == "" {
-		providerCfg.Model = cfg.ProviderRuntime.DefaultModel
+	if _, selectedCfg, ok := config.SelectedProviderConfig(cfg.ProviderRuntime); ok {
+		providerCfg = selectedCfg
+	}
+	if model := providerCfg.Model; strings.TrimSpace(model) == "" {
+		providerCfg.Model = config.SelectedModelID(cfg.ProviderRuntime)
 	}
 	return provider.CheckAvailability(context.Background(), providerCfg)
 }

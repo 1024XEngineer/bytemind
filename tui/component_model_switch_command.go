@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	modelCommandUsage     = "Usage: /model picker"
-	addModelUsage         = "Usage: /add model"
-	deleteModelUsage      = "Usage: /delete model"
-	modelPickerModeSwitch = "switch"
-	modelPickerModeDelete = "delete"
+	modelCommandUsage       = "Usage: /model"
+	addModelUsage           = "Usage: /add model"
+	deleteModelUsage        = "Usage: /delete model"
+	modelConfigEditedInJSON = "provider/model config is edited in config.json; use /model to switch configured targets"
+	modelPickerModeSwitch   = "switch"
+	modelPickerModeDelete   = "delete"
 )
 
 type runnerRuntimeUpdater interface {
@@ -27,11 +28,20 @@ func (m *model) runModelCommand(input string, fields []string) error {
 	if m == nil || m.runner == nil {
 		return fmt.Errorf("runner is unavailable")
 	}
-	if len(fields) != 2 {
-		return fmt.Errorf(modelCommandUsage)
-	}
-	if strings.EqualFold(strings.TrimSpace(fields[1]), "picker") {
+	if len(fields) == 1 {
 		return m.openModelPicker()
+	}
+	if len(fields) == 2 && strings.EqualFold(strings.TrimSpace(fields[1]), "picker") {
+		return m.openModelPicker()
+	}
+	if len(fields) == 2 && strings.EqualFold(strings.TrimSpace(fields[1]), "list") {
+		return m.openModelPicker()
+	}
+	if len(fields) == 2 && strings.EqualFold(strings.TrimSpace(fields[1]), "status") {
+		return m.openModelPicker()
+	}
+	if len(fields) != 1 {
+		return fmt.Errorf(modelCommandUsage)
 	}
 	return fmt.Errorf(modelCommandUsage)
 }
@@ -40,7 +50,7 @@ func (m *model) runAddCommand(input string, fields []string) error {
 	if len(fields) != 2 || !strings.EqualFold(strings.TrimSpace(fields[1]), "model") {
 		return fmt.Errorf(addModelUsage)
 	}
-	return m.openAddModelGuide()
+	return fmt.Errorf(modelConfigEditedInJSON)
 }
 
 func (m *model) runDeleteCommand(input string, fields []string) error {
@@ -50,7 +60,7 @@ func (m *model) runDeleteCommand(input string, fields []string) error {
 	if len(fields) != 2 || !strings.EqualFold(strings.TrimSpace(fields[1]), "model") {
 		return fmt.Errorf(deleteModelUsage)
 	}
-	return m.openModelDeletePicker()
+	return fmt.Errorf(modelConfigEditedInJSON)
 }
 
 func (m *model) openAddModelGuide() error {
@@ -84,7 +94,7 @@ func (m *model) openModelPicker() error {
 }
 
 func (m *model) openModelDeletePicker() error {
-	return m.openModelPickerWithMode(modelPickerModeDelete)
+	return fmt.Errorf(modelConfigEditedInJSON)
 }
 
 func (m *model) openModelPickerWithMode(mode string) error {
@@ -93,20 +103,12 @@ func (m *model) openModelPickerWithMode(mode string) error {
 	}
 	mode = normalizeModelPickerMode(mode)
 
-	var refreshErr error
 	targets := m.sortedConfiguredModelCommandTargets()
-	if mode == modelPickerModeSwitch {
-		refreshErr = m.refreshDiscoveredModels()
-		targets = m.sortedModelCommandTargets()
-	}
 	if len(targets) == 0 {
-		if refreshErr != nil {
-			return refreshErr
-		}
 		if mode == modelPickerModeDelete {
 			m.statusNote = "No configured models are available to delete."
 		} else {
-			m.statusNote = "No switchable models available. Use /add model to configure one."
+			m.statusNote = "No configured models are available."
 		}
 		return nil
 	}
@@ -128,10 +130,6 @@ func (m *model) openModelPickerWithMode(mode string) error {
 		}
 	}
 
-	if refreshErr != nil {
-		m.statusNote = "Opened model picker from configured targets."
-		return nil
-	}
 	if mode == modelPickerModeDelete {
 		m.statusNote = "Opened model delete picker."
 	} else {
@@ -158,15 +156,9 @@ func (m *model) switchModelCommandTarget(input, target string) error {
 		return nil
 	}
 
-	targets := m.modelCommandTargets()
+	targets := m.configuredModelCommandTargets()
 	if !hasModelCommandTarget(targets, providerID, modelID) {
-		if err := m.refreshDiscoveredModels(); err != nil {
-			return err
-		}
-		targets = m.modelCommandTargets()
-		if !hasModelCommandTarget(targets, providerID, modelID) {
-			return fmt.Errorf("unknown model target %q; open /model picker to refresh the picker first", providerID+"/"+modelID)
-		}
+		return fmt.Errorf("unknown configured model target %q; edit config.json and reopen /model", providerID+"/"+modelID)
 	}
 
 	runtimeCfg := m.cfg.ProviderRuntime
@@ -209,23 +201,17 @@ func (m *model) switchModelCommandTarget(input, target string) error {
 }
 
 func (m *model) activateSelectedModelTarget() error {
-	targets := m.sortedModelCommandTargets()
-	if len(targets) == 0 {
-		return nil
-	}
-	selected := targets[clamp(m.commandCursor, 0, len(targets)-1)]
-	target := modelTargetLabel(selected)
-	return m.switchModelCommandTarget("/model picker "+target, target)
-}
-
-func (m *model) deleteSelectedModelTarget() error {
 	targets := m.sortedConfiguredModelCommandTargets()
 	if len(targets) == 0 {
 		return nil
 	}
 	selected := targets[clamp(m.commandCursor, 0, len(targets)-1)]
 	target := modelTargetLabel(selected)
-	return m.deleteModelCommandTarget("/delete model", target)
+	return m.switchModelCommandTarget("/model "+target, target)
+}
+
+func (m *model) deleteSelectedModelTarget() error {
+	return fmt.Errorf(modelConfigEditedInJSON)
 }
 
 func (m *model) refreshDiscoveredModels() error {
@@ -327,65 +313,14 @@ func (m model) modelPickerTargets() []provider.ModelInfo {
 	if normalizeModelPickerMode(m.modelPickerMode) == modelPickerModeDelete {
 		return m.sortedConfiguredModelCommandTargets()
 	}
-	return m.sortedModelCommandTargets()
+	return m.sortedConfiguredModelCommandTargets()
 }
 
 func (m *model) deleteModelCommandTarget(input, target string) error {
 	if m == nil || m.runner == nil {
 		return fmt.Errorf("runner is unavailable")
 	}
-	providerID, modelID, err := parseModelCommandTarget(target)
-	if err != nil {
-		return err
-	}
-
-	targets := m.configuredModelCommandTargets()
-	if !hasModelCommandTarget(targets, providerID, modelID) {
-		return fmt.Errorf("unknown configured model target %q", providerID+"/"+modelID)
-	}
-	if len(targets) <= 1 {
-		return fmt.Errorf("cannot delete the last configured model; use /add model to configure another target first")
-	}
-
-	runtimeCfg := m.cfg.ProviderRuntime
-	if len(runtimeCfg.Providers) == 0 {
-		runtimeCfg = config.LegacyProviderRuntimeConfig(m.cfg.Provider)
-	}
-	runtimeCfg, providerCfg, err := config.DeleteProviderRuntimeProvider(runtimeCfg, providerID)
-	if err != nil {
-		return err
-	}
-	client, err := provider.NewClientFromRuntime(runtimeCfg, nil)
-	if err != nil {
-		return err
-	}
-	runtimeUpdater, ok := any(m.runner).(runnerRuntimeUpdater)
-	if !ok {
-		return fmt.Errorf("runtime model deletion is unavailable in this build")
-	}
-	runtimeUpdater.UpdateProviderRuntime(runtimeCfg, providerCfg, client)
-
-	m.cfg.ProviderRuntime = runtimeCfg
-	m.cfg.Provider = providerCfg
-	m.removeDiscoveredModelsForProvider(providerID)
-	m.refreshTokenBudget()
-	m.syncTokenUsageComponent()
-
-	response := "Deleted model " + providerID + "/" + modelID + "."
-	response += "\nActive model is now " + activeModelLabel(m.cfg) + "."
-	status := "Model deleted."
-	if path, saveErr := m.persistModelCommandSelection(runtimeCfg); saveErr != nil {
-		status = "Model deleted, but config save failed."
-		response += "\nConfig save failed: " + compact(saveErr.Error(), 120)
-	} else if strings.TrimSpace(path) != "" {
-		m.startupGuide.ConfigPath = path
-		response += "\nSaved to " + compact(path, 72)
-		status = "Model deleted and saved."
-	}
-
-	m.appendCommandExchange(input, response)
-	m.statusNote = status
-	return nil
+	return fmt.Errorf(modelConfigEditedInJSON)
 }
 
 func (m *model) removeDiscoveredModelsForProvider(providerID string) {
@@ -418,10 +353,7 @@ func (m *model) closeModelPicker() {
 func formatModelSelectionStatus(cfg config.Config, targets []provider.ModelInfo) string {
 	lines := []string{
 		"current: " + activeModelLabel(cfg),
-		"add: /add model",
-		"delete: /delete model",
-		"picker: /model picker",
-		"status: /models",
+		"switch: /model",
 	}
 	activeProvider, activeModel := activeProviderAndModel(cfg)
 	if activeProvider != "" && activeModel != "" && hasModelCommandTarget(targets, activeProvider, activeModel) {

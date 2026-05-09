@@ -78,6 +78,7 @@ func NewDomainClientWithID(providerID ProviderID, cfg config.ProviderConfig) (Cl
 }
 
 func NewRouterClient(cfg config.ProviderRuntimeConfig, health HealthChecker) (llm.Client, error) {
+	cfg = config.SyncProviderRuntimeSelectionFields(cfg)
 	reg, err := NewRegistry(cfg)
 	if err != nil {
 		return nil, err
@@ -86,7 +87,7 @@ func NewRouterClient(cfg config.ProviderRuntimeConfig, health HealthChecker) (ll
 		health = NewHealthChecker(HealthConfigFromRuntime(cfg.Health), nil)
 	}
 	return NewRoutedClientWithPolicy(NewRouter(reg, health, RouterConfig{
-		DefaultProvider: ProviderID(cfg.DefaultProvider),
-		DefaultModel:    ModelID(cfg.DefaultModel),
+		DefaultProvider: ProviderID(config.SelectedProviderID(cfg)),
+		DefaultModel:    ModelID(config.SelectedModelID(cfg)),
 	}), health, cfg.AllowFallback), nil
 }

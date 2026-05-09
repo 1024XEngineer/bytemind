@@ -94,6 +94,41 @@ func TestModelRegistryMergesNormalizesAndCopiesModels(t *testing.T) {
 	}
 }
 
+func TestModelRegistryUsesConfiguredModelLists(t *testing.T) {
+	registry := NewModelRegistry(config.ProviderRuntimeConfig{
+		Providers: map[string]config.ProviderConfig{
+			"deepseek": {
+				Type:   "openai-compatible",
+				Family: "deepseek",
+				Model:  "deepseek-v4-flash",
+				Models: []string{" deepseek-v4-flash ", "deepseek-v4-pro", "deepseek-v4-pro"},
+			},
+			"openai": {
+				Type:  "openai-compatible",
+				Model: "gpt-5.4-mini",
+			},
+		},
+	}, nil)
+
+	models := registry.Models()
+	got := make([]string, 0, len(models))
+	for _, model := range models {
+		got = append(got, modelRegistryKey(model.ProviderID, model.ModelID))
+	}
+	want := []string{"deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro", "openai/gpt-5.4-mini"}
+	if len(got) != len(want) {
+		t.Fatalf("expected configured model list %#v, got %#v", want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected configured model list %#v, got %#v", want, got)
+		}
+	}
+	if info, ok := registry.Lookup("deepseek", "deepseek-v4-pro"); !ok || info.Metadata["family"] != "deepseek" || info.Metadata["source"] != "config" {
+		t.Fatalf("expected deepseek configured model metadata, got info=%#v ok=%v", info, ok)
+	}
+}
+
 func TestModelRegistryKeyRejectsEmptyParts(t *testing.T) {
 	if got := modelRegistryKey("", "model"); got != "" {
 		t.Fatalf("expected empty provider key to be rejected, got %q", got)

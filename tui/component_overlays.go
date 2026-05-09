@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/1024XEngineer/bytemind/internal/config"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -58,12 +59,12 @@ func (m model) renderModelsModal() string {
 		if normalizeModelPickerMode(m.modelPickerMode) == modelPickerModeDelete {
 			lines = append(lines, "No configured models available to delete.")
 		} else {
-			lines = append(lines, "No switchable models available.")
+			lines = append(lines, "No configured models are available.")
 		}
 	} else {
 		activeProvider, activeModel := activeProviderAndModel(m.cfg)
-		defaultProvider := strings.TrimSpace(m.cfg.ProviderRuntime.DefaultProvider)
-		defaultModel := strings.TrimSpace(m.cfg.ProviderRuntime.DefaultModel)
+		defaultProvider := config.SelectedProviderID(m.cfg.ProviderRuntime)
+		defaultModel := config.SelectedModelID(m.cfg.ProviderRuntime)
 		for i, target := range targets {
 			prefix := "  "
 			style := lipgloss.NewStyle()

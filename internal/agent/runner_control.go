@@ -34,6 +34,7 @@ func (r *Runner) UpdateProviderRuntime(runtimeCfg config.ProviderRuntimeConfig, 
 	if r == nil {
 		return
 	}
+	runtimeCfg = config.SyncProviderRuntimeSelectionFields(runtimeCfg)
 	r.config.ProviderRuntime = runtimeCfg
 	r.config.Provider = providerCfg
 	if client != nil {
