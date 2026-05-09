@@ -100,4 +100,7 @@ func TestRunModelsCommandRejectsInvalidState(t *testing.T) {
 	if err := m.runModelsCommand("/models status", []string{"/models", "status"}); err != nil {
 		t.Fatalf("expected /models status compatibility alias, got %v", err)
 	}
+	if err := m.runModelsCommand("/models delete", []string{"/models", "delete"}); err == nil || err.Error() != modelsCommandUsage {
+		t.Fatalf("expected invalid /models subcommand to fail with %q, got %v", modelsCommandUsage, err)
+	}
 }

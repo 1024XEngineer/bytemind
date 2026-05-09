@@ -173,36 +173,48 @@ func providerConfigDocument(providerCfg ProviderConfig) map[string]any {
 	return raw
 }
 
+func providerRuntimeProviderDocument(providerCfg ProviderConfig) map[string]any {
+	providerDoc := map[string]any{}
+	setNonEmptyProviderString(providerDoc, "type", providerCfg.Type)
+	setNonEmptyProviderString(providerDoc, "family", providerCfg.Family)
+	setNonEmptyProviderString(providerDoc, "base_url", providerCfg.BaseURL)
+	setNonEmptyProviderString(providerDoc, "api_path", providerCfg.APIPath)
+	setNonEmptyProviderString(providerDoc, "model", providerCfg.Model)
+	setNonEmptyProviderString(providerDoc, "api_key", providerCfg.APIKey)
+	setNonEmptyProviderString(providerDoc, "api_key_env", providerCfg.APIKeyEnv)
+	setNonEmptyProviderString(providerDoc, "auth_header", providerCfg.AuthHeader)
+	setNonEmptyProviderString(providerDoc, "auth_scheme", providerCfg.AuthScheme)
+	setNonEmptyProviderString(providerDoc, "anthropic_version", providerCfg.AnthropicVersion)
+	if providerCfg.AutoDetectType {
+		providerDoc["auto_detect_type"] = true
+	}
+	if len(providerCfg.ExtraHeaders) > 0 {
+		providerDoc["extra_headers"] = providerCfg.ExtraHeaders
+	}
+	if models := normalizeStringList(providerCfg.Models); len(models) > 0 {
+		providerDoc["models"] = models
+	}
+	return providerDoc
+}
+
 func providerRuntimeSelectionDocument(runtimeCfg ProviderRuntimeConfig, providerID, modelID string) map[string]any {
-	providerDoc := map[string]any{
-		"model": modelID,
+	providers := normalizedProviderRuntimeProviders(runtimeCfg)
+	providerDocs := make(map[string]any, len(providers))
+	for id, providerCfg := range providers {
+		providerDoc := providerRuntimeProviderDocument(providerCfg)
+		if id == providerID {
+			providerDoc["model"] = modelID
+		}
+		providerDocs[id] = providerDoc
 	}
-	if providerCfg, ok := normalizedProviderRuntimeProviders(runtimeCfg)[providerID]; ok {
-		setNonEmptyProviderString(providerDoc, "type", providerCfg.Type)
-		setNonEmptyProviderString(providerDoc, "family", providerCfg.Family)
-		setNonEmptyProviderString(providerDoc, "base_url", providerCfg.BaseURL)
-		setNonEmptyProviderString(providerDoc, "api_path", providerCfg.APIPath)
-		setNonEmptyProviderString(providerDoc, "api_key", providerCfg.APIKey)
-		setNonEmptyProviderString(providerDoc, "api_key_env", providerCfg.APIKeyEnv)
-		setNonEmptyProviderString(providerDoc, "auth_header", providerCfg.AuthHeader)
-		setNonEmptyProviderString(providerDoc, "auth_scheme", providerCfg.AuthScheme)
-		setNonEmptyProviderString(providerDoc, "anthropic_version", providerCfg.AnthropicVersion)
-		if providerCfg.AutoDetectType {
-			providerDoc["auto_detect_type"] = true
-		}
-		if len(providerCfg.ExtraHeaders) > 0 {
-			providerDoc["extra_headers"] = providerCfg.ExtraHeaders
-		}
-		if models := normalizeStringList(providerCfg.Models); len(models) > 0 {
-			providerDoc["models"] = models
-		}
+	if _, ok := providerDocs[providerID]; !ok {
+		providerDocs[providerID] = map[string]any{"model": modelID}
 	}
+
 	return map[string]any{
 		"provider_runtime": map[string]any{
 			"current_provider": providerID,
-			"providers": map[string]any{
-				providerID: providerDoc,
-			},
+			"providers":        providerDocs,
 		},
 	}
 }

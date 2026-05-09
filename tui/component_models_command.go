@@ -9,11 +9,22 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/provider"
 )
 
+const modelsCommandUsage = "Usage: /models"
+
 func (m *model) runModelsCommand(input string, fields []string) error {
 	if m == nil || m.runner == nil {
 		return fmt.Errorf("runner is unavailable")
 	}
-	return m.openModelPicker()
+	if len(fields) == 1 {
+		return m.openModelPicker()
+	}
+	if len(fields) == 2 {
+		switch strings.ToLower(strings.TrimSpace(fields[1])) {
+		case "picker", "list", "status":
+			return m.openModelPicker()
+		}
+	}
+	return fmt.Errorf(modelsCommandUsage)
 }
 
 func formatModelsStatus(cfg config.Config, models []provider.ModelInfo, warnings []provider.Warning) string {

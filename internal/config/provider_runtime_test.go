@@ -352,3 +352,52 @@ func TestConfigLoadPreservesExplicitProviderRuntimeFieldsWhenProvidersMissing(t 
 		t.Fatalf("expected legacy provider entry to be backfilled, got %#v", cfg.ProviderRuntime.Providers)
 	}
 }
+
+func TestSelectedProviderRuntimeHelpersNormalizeSelection(t *testing.T) {
+	runtime := ProviderRuntimeConfig{
+		CurrentProvider: " OpenAI ",
+		Providers: map[string]ProviderConfig{
+			" ":      {Type: "openai-compatible", Model: "ignored"},
+			"openai": {Type: "openai-compatible", Model: "gpt-5.4"},
+		},
+	}
+
+	if modelID := SelectedModelID(runtime); modelID != "gpt-5.4" {
+		t.Fatalf("expected selected provider model, got %q", modelID)
+	}
+	providerID, providerCfg, ok := SelectedProviderConfig(runtime)
+	if !ok {
+		t.Fatal("expected selected provider config to resolve")
+	}
+	if providerID != "openai" {
+		t.Fatalf("expected normalized provider id, got %q", providerID)
+	}
+	if providerCfg.Model != "gpt-5.4" {
+		t.Fatalf("expected selected provider config model, got %#v", providerCfg)
+	}
+
+	runtime = SyncProviderRuntimeSelectionFields(runtime)
+	if runtime.CurrentProvider != "openai" || runtime.DefaultProvider != "openai" || runtime.DefaultModel != "gpt-5.4" {
+		t.Fatalf("expected selection fields to sync, got %#v", runtime)
+	}
+}
+
+func TestSelectedProviderRuntimeHelpersUseFallbacks(t *testing.T) {
+	if providerID, _, ok := SelectedProviderConfig(ProviderRuntimeConfig{}); ok || providerID != "" {
+		t.Fatalf("expected empty runtime not to resolve a provider, got id=%q ok=%v", providerID, ok)
+	}
+
+	runtime := SyncProviderRuntimeSelectionFields(ProviderRuntimeConfig{
+		DefaultProvider: "openai",
+		DefaultModel:    "gpt-5.4-mini",
+		Providers: map[string]ProviderConfig{
+			"openai": {Type: "openai-compatible"},
+		},
+	})
+	if runtime.CurrentProvider != "openai" {
+		t.Fatalf("expected current provider to fall back to default provider, got %#v", runtime)
+	}
+	if runtime.DefaultModel != "gpt-5.4-mini" {
+		t.Fatalf("expected default model fallback to be preserved, got %#v", runtime)
+	}
+}
