@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/1024XEngineer/bytemind/internal/llm"
+	rollbackpkg "github.com/1024XEngineer/bytemind/internal/rollback"
 )
 
 type ReplaceInFileTool struct{}
@@ -45,7 +46,7 @@ func (ReplaceInFileTool) Definition() llm.ToolDefinition {
 	}
 }
 
-func (ReplaceInFileTool) Run(_ context.Context, raw json.RawMessage, execCtx *ExecutionContext) (string, error) {
+func (ReplaceInFileTool) Run(ctx context.Context, raw json.RawMessage, execCtx *ExecutionContext) (string, error) {
 	var args struct {
 		Path       string `json:"path"`
 		Old        string `json:"old"`
@@ -78,12 +79,27 @@ func (ReplaceInFileTool) Run(_ context.Context, raw json.RawMessage, execCtx *Ex
 	} else {
 		updated = strings.Replace(content, args.Old, args.New, 1)
 	}
+	relPath := filepath.ToSlash(mustRel(execCtx.Workspace, path))
+	tracker, err := beginRollbackOperation(ctx, execCtx, "replace_in_file", []rollbackpkg.FileTarget{{
+		Path:    relPath,
+		AbsPath: path,
+		OpType:  rollbackpkg.OpTypeUpdate,
+	}})
+	if err != nil {
+		return "", err
+	}
 	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+		if tracker != nil {
+			tracker.abort(ctx, err.Error())
+		}
+		return "", err
+	}
+	operationID, err := tracker.commit(ctx)
+	if err != nil {
 		return "", err
 	}
 
 	var result map[string]any
-	relPath := filepath.ToSlash(mustRel(execCtx.Workspace, path))
 	if diffPreview := buildReplaceDiff(content, args.Old, args.New, args.ReplaceAll, relPath); diffPreview != nil {
 		result = map[string]any{
 			"ok":           true,
@@ -99,6 +115,9 @@ func (ReplaceInFileTool) Run(_ context.Context, raw json.RawMessage, execCtx *Ex
 			"replaced":  replaced,
 			"old_count": count,
 		}
+	}
+	if operationID != "" {
+		result["rollback_operation_id"] = operationID
 	}
 	return toJSON(result)
 }

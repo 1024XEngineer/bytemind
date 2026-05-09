@@ -357,6 +357,7 @@ var commandItems = []commandItem{
 	{Name: "/compact", Usage: "/compact", Description: "Compress long session history into a continuation summary.", Kind: "command"},
 	{Name: "/commit", Usage: "/commit <message>", Description: "Stage all changes and create a local Git commit.", Kind: "command"},
 	{Name: "/undo-commit", Usage: "/undo-commit", Description: "Undo the last local commit created by /commit in this session.", Kind: "command"},
+	{Name: "/rollback", Usage: "/rollback [last|<operation-id>]", Description: "List or undo ByteMind file edits recorded by tool snapshots.", Kind: "command"},
 	{Name: "/btw", Usage: "/btw <message>", Description: "Interject while a run is in progress.", Kind: "command"},
 	{Name: "/quit", Usage: "/quit", Description: "Exit the current TUI window.", Kind: "command"},
 	{Name: "/skills", Usage: "/skills", Description: "List available skills and current active skill.", Kind: "command"},
@@ -3066,7 +3067,7 @@ func shouldExecuteFromPalette(item commandItem) bool {
 		return true
 	}
 	switch item.Name {
-	case "/help", "/session", "/agents", "/skills", "/skill clear", "/mcp list", "/mcp help", "/model", "/new", "/compact", "/undo-commit", "/quit":
+	case "/help", "/session", "/agents", "/skills", "/skill clear", "/mcp list", "/mcp help", "/model", "/new", "/compact", "/undo-commit", "/rollback", "/quit":
 		return true
 	default:
 		return false
