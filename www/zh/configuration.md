@@ -81,6 +81,94 @@ bytemind
 设置 `"auto_detect_type": true` 后，ByteMind 会根据 `base_url` 自动推断 Provider 类型，无需手动指定 `type` 字段。
 :::
 
+## 多 Provider 配置（模型切换）
+
+ByteMind 支持配置多个模型 Provider 并在运行时切换，无需重启。使用 `provider_runtime` 替代旧版 `provider` 字段：
+
+```json
+{
+  "provider_runtime": {
+    "current_provider": "deepseek",
+    "default_provider": "deepseek",
+    "default_model": "deepseek-v4-flash",
+    "allow_fallback": false,
+    "providers": {
+      "deepseek": {
+        "type": "openai-compatible",
+        "base_url": "https://api.deepseek.com",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model": "deepseek-v4-flash",
+        "models": ["deepseek-v4-flash", "deepseek-v4-pro"]
+      },
+      "openai": {
+        "type": "openai-compatible",
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "OPENAI_API_KEY",
+        "model": "gpt-5.4-mini",
+        "models": ["gpt-5.4-mini", "gpt-5.4"]
+      }
+    }
+  }
+}
+```
+
+### 关键点
+
+- **`providers.<id>.models`** 必须填写 — 这是 `/model` 切换时可选的模型列表。
+- **`providers.<id>.model`** 是该 Provider 当前使用的模型，切换后会自动更新。
+- **`api_key_env`** 优于 `api_key` — 避免密钥明文写入配置文件。
+
+### 切换模型
+
+| 命令 | 作用 |
+| ---- | ---- |
+| `/model` | 打开交互式选择器，浏览所有已配置的 Provider 和模型 |
+| `/model deepseek/deepseek-v4-pro` | 直接切换到 deepseek-v4-pro |
+| `/model openai/gpt-5.4` | 直接切换到 GPT-5.4 |
+| `/models` | 显示所有已发现的模型和当前使用的模型 |
+
+切换后配置文件会自动更新 — 无需手动编辑。
+
+### 添加新 Provider
+
+编辑 `config.json`，在 `provider_runtime.providers` 下新增条目：
+
+```json
+"providers": {
+  "deepseek": { ... },
+  "openai": { ... },
+  "anthropic": {
+    "type": "anthropic",
+    "base_url": "https://api.anthropic.com",
+    "api_key_env": "ANTHROPIC_API_KEY",
+    "model": "claude-sonnet-4-20250514",
+    "models": ["claude-sonnet-4-20250514", "claude-opus-4-20250514"]
+  }
+}
+```
+
+重启 ByteMind 或使用 `/model` 即可在切换器中看到新增的 Provider。
+
+### 为已有 Provider 添加新模型
+
+编辑对应 Provider 的 `models` 数组：
+
+```json
+"deepseek": {
+  "type": "openai-compatible",
+  "base_url": "https://api.deepseek.com",
+  "api_key_env": "DEEPSEEK_API_KEY",
+  "model": "deepseek-v4-flash",
+  "models": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-2"]
+}
+```
+
+保存后使用 `/model` 即可在切换器中看到新增的模型。
+
+:::tip 从旧版 `provider` 迁移
+如果配置文件中只有 `provider`（单 Provider），ByteMind 启动时会自动将其转换为 `provider_runtime`。使用 `/model` 切换后，选择结果会保存为 `provider_runtime` 格式。你也可以手动将配置改为上面的多 Provider 格式。
+:::
+
 ## 审批策略
 
 `approval_policy` 控制高风险工具（写文件、执行 Shell 命令等）何时请求确认：

@@ -36,6 +36,7 @@ const enSidebar = [
       { text: 'Fix a Bug', link: '/examples/fix-bug' },
       { text: 'Refactor Code', link: '/examples/refactor' },
       { text: 'Generate Documentation', link: '/examples/doc-generation' },
+      { text: 'User Stories', link: '/examples/user-stories' },
     ],
   },
   {
@@ -87,6 +88,7 @@ const zhSidebar = [
       { text: '修复 Bug', link: '/zh/examples/fix-bug' },
       { text: '代码重构', link: '/zh/examples/refactor' },
       { text: '文档生成', link: '/zh/examples/doc-generation' },
+      { text: '用户故事', link: '/zh/examples/user-stories' },
     ],
   },
   {

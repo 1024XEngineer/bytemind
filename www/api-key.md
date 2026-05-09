@@ -130,6 +130,44 @@ DeepSeek uses the OpenAI-compatible format, so use `openai-compatible`.
 
 DeepSeek's official OpenAI-format base URL is `https://api.deepseek.com`. ByteMind appends the default `/chat/completions` path, so do not add `/chat/completions` yourself.
 
+**Can I use `api_key_env` instead of `api_key`?**
+
+Yes, and it's safer. Replace `"api_key"` with `"api_key_env": "DEEPSEEK_API_KEY"`, then set the environment variable:
+
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
+
+```powershell
+# Temporary (current window only):
+$env:DEEPSEEK_API_KEY = "sk-..."
+
+# Permanent (survives reboots):
+[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-...", "User")
+```
+
+</Tab>
+
+<Tab title="Linux">
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."
+```
+
+</Tab>
+
+<Tab title="macOS">
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."
+```
+
+</Tab>
+</Tabs>
+
+:::warning Don't set both `api_key` and `api_key_env`
+If both are present, `api_key` takes priority and `api_key_env` is ignored. Use one or the other.
+:::
+
 **Can I use any model ID?**
 
 No. The model ID must exactly match the name in the provider's documentation. For DeepSeek, start with `deepseek-v4-flash`; if you need stronger capability, switch to `deepseek-v4-pro` according to the official docs.
