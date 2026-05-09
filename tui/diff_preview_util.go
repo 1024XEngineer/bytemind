@@ -37,12 +37,19 @@ const (
 	diffHunkHdr = "\x02" // @@ hunk header (cyan)
 )
 
-func lineNumStr(n int) string {
-	return fmt.Sprintf("%7d", n)
-}
-
 func diffDetailLine(prefix, text string) string {
 	return prefix + text
+}
+
+// formatDiffLine produces a single diff content line with fixed layout:
+//
+//	"NNNNNNN M content"
+//
+// N = 7-char right-aligned line number (space padded)
+// M = diff marker (' ', '+', or '-')
+// content = code text starting from position 10
+func formatDiffLine(n int, marker byte, content string) string {
+	return fmt.Sprintf("%7d %c %s", n, marker, content)
 }
 
 // diffExpandedDetailLines generates detail lines for the TUI card.
@@ -85,14 +92,14 @@ func diffExpandedDetailLines(dp diffPreviewLocal) []string {
 				content := l[1:]
 				switch prefix {
 				case ' ':
-					lines = append(lines, lineNumStr(oldLine)+"   "+content)
+					lines = append(lines, formatDiffLine(oldLine, ' ', content))
 					oldLine++
 					newLine++
 				case '-':
-					lines = append(lines, lineNumStr(oldLine)+" - "+content)
+					lines = append(lines, formatDiffLine(oldLine, '-', content))
 					oldLine++
 				case '+':
-					lines = append(lines, lineNumStr(newLine)+" + "+content)
+					lines = append(lines, formatDiffLine(newLine, '+', content))
 					newLine++
 				}
 			}
