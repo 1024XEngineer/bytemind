@@ -2,6 +2,53 @@
 
 ByteMind 支持任何兼容 OpenAI API 的服务，以及 Anthropic 和 Gemini 原生 API。
 
+## 多 Provider 配置（模型切换）
+
+一次性配置多个 Provider，运行时通过 `/model` 切换：
+
+```json
+{
+  "provider_runtime": {
+    "current_provider": "deepseek",
+    "default_provider": "deepseek",
+    "default_model": "deepseek-v4-flash",
+    "providers": {
+      "deepseek": {
+        "type": "openai-compatible",
+        "base_url": "https://api.deepseek.com",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model": "deepseek-v4-flash",
+        "models": ["deepseek-v4-flash", "deepseek-v4-pro"]
+      },
+      "openai": {
+        "type": "openai-compatible",
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "OPENAI_API_KEY",
+        "model": "gpt-5.4-mini",
+        "models": ["gpt-5.4-mini", "gpt-5.4"]
+      },
+      "anthropic": {
+        "type": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "model": "claude-sonnet-4-20250514",
+        "models": ["claude-sonnet-4-20250514", "claude-opus-4-20250514"]
+      }
+    }
+  }
+}
+```
+
+| 命令 | 作用 |
+| ---- | ---- |
+| `/model` | 打开交互式选择器，浏览所有已配置的模型 |
+| `/model openai/gpt-5.4` | 直接切换到 GPT-5.4 |
+| `/models` | 查看当前模型和所有已发现模型 |
+
+切换后配置文件会自动更新。完整字段参考见[配置参考](/zh/reference/config-reference#provider-runtime-多-provider)。
+
+## 单 Provider 示例（兼容旧版）
+
 ## OpenAI
 
 ```json

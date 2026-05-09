@@ -4,9 +4,9 @@ Full reference for all fields in `~/.bytemind/config.json` and project-level `.b
 
 For a working example see [`config.example.json`](https://github.com/1024XEngineer/bytemind/blob/main/config.example.json).
 
-## `provider`
+## `provider` (single-provider, legacy)
 
-Model provider configuration.
+Single model provider configuration. For configuring multiple providers and switching between them at runtime, prefer `provider_runtime` below.
 
 | Field               | Type   | Description                                 | Default                     |
 | ------------------- | ------ | ------------------------------------------- | --------------------------- |
@@ -19,6 +19,113 @@ Model provider configuration.
 | `auth_header`       | string | Custom auth header name                     | `Authorization`             |
 | `auth_scheme`       | string | Auth scheme prefix (e.g. `Bearer`)          | `Bearer`                    |
 | `auto_detect_type`  | bool   | Infer provider type from `base_url`         | `false`                     |
+| `family`            | string | Provider family label (for display)         | -                           |
+| `api_path`          | string | Custom API path override                    | -                           |
+| `models`            | array  | Available model IDs for this provider       | -                           |
+| `extra_headers`     | object | Additional HTTP headers                     | -                           |
+
+## `provider_runtime` (multi-provider)
+
+Configure multiple model providers and switch between them at runtime with `/model`. When `provider_runtime` is present, it takes precedence over the legacy `provider` field.
+
+### Top-level fields
+
+| Field              | Type    | Description                                           | Default                  |
+| ------------------ | ------- | ----------------------------------------------------- | ------------------------ |
+| `current_provider` | string  | The currently active provider ID (e.g. `"deepseek"`)  | (first provider in map)  |
+| `default_provider` | string  | Fallback provider ID                                  | same as `current_provider` |
+| `default_model`    | string  | Fallback model ID when a provider has no `model` set  | -                        |
+| `allow_fallback`   | bool    | Allow automatic failover to another provider          | `false`                  |
+| `providers`        | object  | Map of provider ID → provider config (see below)      | (required)               |
+| `health`           | object  | Health-check settings for provider failover           | see below                |
+
+### `providers.<id>` fields
+
+Each provider entry supports all fields from the legacy `provider` section above, plus:
+
+| Field      | Type   | Description                                                  |
+| ---------- | ------ | ------------------------------------------------------------ |
+| `type`     | string | `openai-compatible`, `anthropic`, or `gemini`               |
+| `base_url` | string | API endpoint URL                                             |
+| `model`    | string | Currently selected model for this provider (updated by `/model`) |
+| `models`   | array  | List of model IDs available for switching. **Required** for `/model` picker to show options. |
+| `api_key_env` | string | Env var name to read the key from                        |
+| `api_key`  | string | API key in plain text (prefer `api_key_env`)                 |
+
+### `health` fields
+
+| Field                      | Type | Default | Description                                |
+| -------------------------- | ---- | ------- | ------------------------------------------ |
+| `fail_threshold`           | int  | `3`     | Consecutive failures before marking unhealthy |
+| `recover_probe_sec`        | int  | `30`    | Seconds between recovery probes            |
+| `recover_success_threshold` | int  | `2`    | Consecutive successes to mark healthy      |
+| `window_size`              | int  | `60`    | Rolling window size in seconds for health checks |
+
+### How model switching works
+
+1. Define multiple providers under `provider_runtime.providers`, each with a `models` list.
+2. Start ByteMind — it uses `current_provider` and that provider's `model`.
+3. Type `/model` to open the interactive picker, or `/model <provider>/<model>` to switch directly.
+4. The config file is updated automatically: `current_provider` and the provider's `model` field are rewritten.
+
+### Multi-provider example
+
+```json
+{
+  "provider_runtime": {
+    "current_provider": "deepseek",
+    "default_provider": "deepseek",
+    "default_model": "deepseek-v4-flash",
+    "allow_fallback": false,
+    "providers": {
+      "deepseek": {
+        "type": "openai-compatible",
+        "base_url": "https://api.deepseek.com",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model": "deepseek-v4-flash",
+        "models": ["deepseek-v4-flash", "deepseek-v4-pro"]
+      },
+      "openai": {
+        "type": "openai-compatible",
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "OPENAI_API_KEY",
+        "model": "gpt-5.4-mini",
+        "models": ["gpt-5.4-mini", "gpt-5.4"]
+      }
+    },
+    "health": {
+      "fail_threshold": 3,
+      "recover_probe_sec": 30,
+      "recover_success_threshold": 2,
+      "window_size": 60
+    }
+  }
+}
+```
+
+### Adding a new provider
+
+Edit `config.json` and add a new entry under `provider_runtime.providers`:
+
+```json
+"providers": {
+  "deepseek": { ... },
+  "openai": { ... },
+  "my-new-provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.my-provider.com/v1",
+    "api_key_env": "MY_PROVIDER_API_KEY",
+    "model": "my-model",
+    "models": ["my-model", "my-other-model"]
+  }
+}
+```
+
+Then restart ByteMind or use `/model` to see the new provider and its models in the picker.
+
+:::tip Migrating from legacy `provider`
+If your config only has the legacy `provider` field, ByteMind auto-converts it into `provider_runtime` on startup. Switching models with `/model` will persist the selection back to `provider_runtime`. You can also manually restructure your config to the multi-provider format above.
+:::
 
 ## `approval_policy`
 
@@ -126,13 +233,37 @@ Controls context window management.
 
 ## Full Example
 
+### Multi-provider (recommended)
+
 ```json
 {
-  "provider": {
-    "type": "openai-compatible",
-    "base_url": "https://api.openai.com/v1",
-    "model": "gpt-4o",
-    "api_key_env": "OPENAI_API_KEY"
+  "provider_runtime": {
+    "current_provider": "deepseek",
+    "default_provider": "deepseek",
+    "default_model": "deepseek-v4-flash",
+    "allow_fallback": false,
+    "providers": {
+      "deepseek": {
+        "type": "openai-compatible",
+        "base_url": "https://api.deepseek.com",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model": "deepseek-v4-flash",
+        "models": ["deepseek-v4-flash", "deepseek-v4-pro"]
+      },
+      "openai": {
+        "type": "openai-compatible",
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "OPENAI_API_KEY",
+        "model": "gpt-5.4-mini",
+        "models": ["gpt-5.4-mini", "gpt-5.4"]
+      }
+    },
+    "health": {
+      "fail_threshold": 3,
+      "recover_probe_sec": 30,
+      "recover_success_threshold": 2,
+      "window_size": 60
+    }
   },
   "approval_policy": "on-request",
   "approval_mode": "interactive",
@@ -152,6 +283,29 @@ Controls context window management.
   "writable_roots": [],
   "token_quota": 300000,
   "update_check": { "enabled": true },
+  "context_budget": {
+    "warning_ratio": 0.85,
+    "critical_ratio": 0.95,
+    "max_reactive_retry": 1
+  }
+}
+```
+
+### Single provider (legacy)
+
+```json
+{
+  "provider": {
+    "type": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-4o",
+    "api_key_env": "OPENAI_API_KEY"
+  },
+  "approval_policy": "on-request",
+  "approval_mode": "interactive",
+  "max_iterations": 32,
+  "stream": true,
+  "sandbox_enabled": false,
   "context_budget": {
     "warning_ratio": 0.85,
     "critical_ratio": 0.95,

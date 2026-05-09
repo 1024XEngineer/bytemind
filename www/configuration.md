@@ -81,6 +81,94 @@ Any endpoint that speaks the OpenAI chat completions format works:
 Set `"auto_detect_type": true` to let ByteMind infer the provider type from `base_url` automatically.
 :::
 
+## Multi-Provider Setup (Model Switching)
+
+ByteMind supports configuring multiple model providers and switching between them at runtime without restarting. Use `provider_runtime` instead of the legacy `provider` field:
+
+```json
+{
+  "provider_runtime": {
+    "current_provider": "deepseek",
+    "default_provider": "deepseek",
+    "default_model": "deepseek-v4-flash",
+    "allow_fallback": false,
+    "providers": {
+      "deepseek": {
+        "type": "openai-compatible",
+        "base_url": "https://api.deepseek.com",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model": "deepseek-v4-flash",
+        "models": ["deepseek-v4-flash", "deepseek-v4-pro"]
+      },
+      "openai": {
+        "type": "openai-compatible",
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "OPENAI_API_KEY",
+        "model": "gpt-5.4-mini",
+        "models": ["gpt-5.4-mini", "gpt-5.4"]
+      }
+    }
+  }
+}
+```
+
+### Key points
+
+- **`providers.<id>.models`** is required — this is the list of models you can switch between with `/model`.
+- **`providers.<id>.model`** is the currently active model for that provider. It gets updated automatically when you switch.
+- **`api_key_env`** is preferred over `api_key` — keeps secrets out of your config file.
+
+### Switching models
+
+| Command | What it does |
+| ------- | ------------ |
+| `/model` | Open interactive picker to browse all configured providers and models |
+| `/model deepseek/deepseek-v4-pro` | Switch directly to deepseek-v4-pro |
+| `/model openai/gpt-5.4` | Switch directly to GPT-5.4 |
+| `/models` | Show all discovered models and current active model |
+
+The config file is updated automatically after switching — no need to edit it manually.
+
+### Adding a new provider
+
+Edit your `config.json` and add a new entry under `provider_runtime.providers`:
+
+```json
+"providers": {
+  "deepseek": { ... },
+  "openai": { ... },
+  "anthropic": {
+    "type": "anthropic",
+    "base_url": "https://api.anthropic.com",
+    "api_key_env": "ANTHROPIC_API_KEY",
+    "model": "claude-sonnet-4-20250514",
+    "models": ["claude-sonnet-4-20250514", "claude-opus-4-20250514"]
+  }
+}
+```
+
+Restart ByteMind or use `/model` to see the new provider in the picker.
+
+### Adding a new model to an existing provider
+
+Edit the `models` array for that provider:
+
+```json
+"deepseek": {
+  "type": "openai-compatible",
+  "base_url": "https://api.deepseek.com",
+  "api_key_env": "DEEPSEEK_API_KEY",
+  "model": "deepseek-v4-flash",
+  "models": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-2"]
+}
+```
+
+Save and use `/model` to see the new model in the picker.
+
+:::tip Migrating from the legacy `provider` field
+If your config has `provider` (single), ByteMind auto-converts it to `provider_runtime` on startup. After using `/model` to switch, the config is persisted in `provider_runtime` format. You can also manually restructure your config following the multi-provider example above.
+:::
+
 ## Approval Policy
 
 `approval_policy` controls when high-risk tools (file writes, shell commands) pause for confirmation:

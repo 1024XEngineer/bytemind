@@ -1,6 +1,9 @@
 {
   "provider_runtime": {
     "current_provider": "deepseek",
+    "default_provider": "deepseek",
+    "default_model": "deepseek-v4-flash",
+    "allow_fallback": false,
     "providers": {
       "deepseek": {
         "type": "openai-compatible",
@@ -22,6 +25,12 @@
           "gpt-5.4"
         ]
       }
+    },
+    "health": {
+      "fail_threshold": 3,
+      "recover_probe_sec": 30,
+      "recover_success_threshold": 2,
+      "window_size": 60
     }
   },
   "approval_policy": "on-request",
@@ -32,16 +41,5 @@
     "warning_ratio": 0.85,
     "critical_ratio": 0.95,
     "max_reactive_retry": 1
-  },
-  "token_usage": {
-    "storage_type": "file",
-    "storage_path": "./.bytemind/token_usage.json",
-    "backup_interval": "1m",
-    "max_sessions": 10000,
-    "alert_threshold": 1000000,
-    "enable_realtime": true,
-    "retention_days": 30,
-    "monitor_interval": "30s",
-    "database_driver": "sqlite3"
   }
 }
