@@ -52,6 +52,7 @@ type PromptActiveSkill struct {
 type PromptSubAgent struct {
 	Name        string
 	Description string
+	WhenToUse   string
 	Mode        string
 }
 
@@ -239,7 +240,9 @@ func renderSystemBlock(input PromptInput) string {
 		formatSkills(input.Skills),
 		"",
 		"[Available SubAgents]",
-		"- SubAgents are optional delegated workers available in this session.",
+		"- SubAgents are optional delegated workers. Use the delegate_subagent tool to invoke them.",
+		"- When the user mentions an agent via @mention, delegate their task to that agent with a detailed, context-rich prompt.",
+		"- When investigating multiple independent areas, delegate to several subagents in a single turn. Independent subagents run concurrently.",
 		formatSubAgents(input.SubAgents),
 		"",
 		"[Available Tools]",
@@ -329,11 +332,16 @@ func formatSubAgents(agents []PromptSubAgent) string {
 		}
 		description = trimPromptText(description, maxPromptSubAgentDescRune)
 		mode := strings.TrimSpace(agent.Mode)
+		var line string
 		if mode != "" {
-			lines = append(lines, fmt.Sprintf("- %s (%s): %s", name, mode, description))
+			line = fmt.Sprintf("- %s (%s): %s", name, mode, description)
 		} else {
-			lines = append(lines, fmt.Sprintf("- %s: %s", name, description))
+			line = fmt.Sprintf("- %s: %s", name, description)
 		}
+		if whenToUse := strings.TrimSpace(agent.WhenToUse); whenToUse != "" {
+			line += "\n  " + trimPromptText(whenToUse, maxPromptSubAgentDescRune)
+		}
+		lines = append(lines, line)
 	}
 	if len(lines) == 0 {
 		return "- none"

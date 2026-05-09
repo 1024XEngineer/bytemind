@@ -409,8 +409,8 @@ func TestResolvePastedLineReferenceWithFullFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve pasted line reference: %v", err)
 	}
-	if !strings.Contains(result, "```\n"+stored.Content+"\n```") {
-		t.Fatalf("expected full content expansion, got %q", result)
+		if !strings.Contains(result, stored.Content) {
+			t.Fatalf("expected plain content expansion, got %q", result)
 	}
 }
 
@@ -451,14 +451,85 @@ func TestBuildPromptInputDefaultsToLatestPastedReference(t *testing.T) {
 		t.Fatalf("build prompt input: %v", err)
 	}
 	text := input.UserMessage.Text()
-	if !strings.Contains(text, "```\nnew2\n```") {
-		t.Fatalf("expected latest pasted line expansion, got %q", text)
+		if !strings.Contains(text, "new2") {
+			t.Fatalf("expected latest pasted content, got %q", text)
 	}
 	if strings.Contains(text, "old2") {
 		t.Fatalf("expected latest pasted content, got %q", text)
 	}
 	if latest.ID == "" {
 		t.Fatalf("expected latest pasted content id")
+	}
+}
+
+func TestSubmitPromptExpandsPasteReferenceForDisplayedChatBodyAndClearsPasteState(t *testing.T) {
+	m := newImagePipelineModel(t)
+	_, stored, err := m.compressPastedText("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11")
+	if err != nil {
+		t.Fatalf("compress pasted text: %v", err)
+	}
+
+	raw := "inspect [Paste #" + stored.ID + " ~11 lines]"
+	got, _ := m.submitPrompt(raw)
+	updated := got.(model)
+
+	if len(updated.chatItems) == 0 {
+		t.Fatalf("expected user chat item to be appended")
+	}
+	body := updated.chatItems[len(updated.chatItems)-1].Body
+	if !strings.Contains(body, stored.Content) {
+		t.Fatalf("expected displayed chat body to expand pasted content, got %q", body)
+	}
+	if strings.Contains(body, "[Paste #"+stored.ID) {
+		t.Fatalf("expected displayed chat body not to keep paste marker, got %q", body)
+	}
+	if updated.pastedContents != nil {
+		t.Fatalf("expected pasted contents state to be cleared after submit")
+	}
+	if updated.pastedOrder != nil {
+		t.Fatalf("expected pasted order state to be cleared after submit")
+	}
+}
+
+func TestClipboardPasteCaptureAfterSubmittedPasteReinitializesState(t *testing.T) {
+	m := newImagePipelineModel(t)
+	_, stored, err := m.compressPastedText("old1\nold2\nold3\nold4\nold5\nold6\nold7\nold8\nold9\nold10\nold11")
+	if err != nil {
+		t.Fatalf("compress pasted text: %v", err)
+	}
+	got, _ := m.submitPrompt("inspect [Paste #" + stored.ID + " ~11 lines]")
+	updated := got.(model)
+	if updated.pastedContents != nil || updated.pastedOrder != nil {
+		t.Fatalf("expected submit to clear pasted state, got contents=%v order=%v", updated.pastedContents, updated.pastedOrder)
+	}
+
+	clipboardText := strings.Join([]string{
+		"abcd first pasted line",
+		"second pasted line",
+		"third pasted line",
+		"fourth pasted line",
+		"fifth pasted line",
+		"sixth pasted line",
+		"seventh pasted line",
+		"eighth pasted line",
+		"ninth pasted line",
+		"tenth pasted line",
+		"eleventh pasted line",
+		"twelfth pasted line",
+	}, "\n")
+	updated.clipboardRead = fakeClipboardTextReader{text: clipboardText}
+	updated.clipboardCaptureArmedUntil = time.Now().Add(time.Second)
+	updated.input.SetValue("abcd")
+
+	result := updated.handleInputMutation("abc", "abcd", "")
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(result) {
+		t.Fatalf("expected clipboard capture to compress into a paste marker, got %q", result)
+	}
+	if updated.pastedContents == nil || len(updated.pastedContents) != 1 {
+		t.Fatalf("expected pasted contents to be reinitialized with one entry, got %#v", updated.pastedContents)
+	}
+	if updated.pastedOrder == nil || len(updated.pastedOrder) != 1 {
+		t.Fatalf("expected pasted order to be reinitialized with one entry, got %#v", updated.pastedOrder)
 	}
 }
 
@@ -492,8 +563,8 @@ func TestBuildPromptInputAdjustsOutOfRangeLineReference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build prompt input: %v", err)
 	}
-	if !strings.Contains(input.UserMessage.Text(), "```\nl11\n```") {
-		t.Fatalf("expected out-of-range line to clamp to last line, got %q", input.UserMessage.Text())
+		if !strings.Contains(input.UserMessage.Text(), "l11") {
+			t.Fatalf("expected out-of-range line to clamp to last line, got %q", input.UserMessage.Text())
 	}
 }
 
@@ -1065,5 +1136,267 @@ func TestShouldMergeIntoLatestMarkerRequiresPasteEvidence(t *testing.T) {
 	m.lastCompressedPasteAt = time.Now().Add(-900 * time.Millisecond)
 	if m.shouldMergeIntoLatestMarker("rune") {
 		t.Fatalf("expected stale transaction window to skip merge")
+	}
+}
+
+func TestResetPasteBurstTracking(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.inputBurstBaseValue = "test-base"
+	m.pasteBurstCandidate = pasteBurstCandidateState{
+		active:    true,
+		baseInput: "test-base",
+		startedAt: time.Now(),
+	}
+	m.resetPasteBurstTracking()
+	if m.inputBurstBaseValue != "" {
+		t.Fatalf("expected inputBurstBaseValue to be cleared, got %q", m.inputBurstBaseValue)
+	}
+	if m.pasteBurstCandidate.active {
+		t.Fatalf("expected pasteBurstCandidate to be cleared after reset")
+	}
+}
+
+func TestResetPasteBurstTrackingNilModel(t *testing.T) {
+	var m *model
+	m.resetPasteBurstTracking()
+	// should not panic
+}
+
+func TestCaptureImplicitPasteCandidateNilModel(t *testing.T) {
+	var m *model
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}}
+	cmd := m.captureImplicitPasteCandidate(msg)
+	if cmd != nil {
+		t.Fatalf("expected nil command from nil model")
+	}
+}
+
+func TestCaptureImplicitPasteCandidateNonPromotableKey(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.input.SetValue("hello")
+	m.lastInputAt = time.Now().Add(-50 * time.Millisecond)
+
+	// Use Escape which implicitPasteCandidateFragment returns ok=false for
+	msg := tea.KeyMsg{Type: tea.KeyEscape}
+	cmd := m.captureImplicitPasteCandidate(msg)
+	if cmd != nil {
+		t.Fatalf("expected nil command for non-fragment key (Escape)")
+	}
+}
+
+func TestCaptureImplicitPasteCandidateWithPasteMsg(t *testing.T) {
+	m := newImagePipelineModel(t)
+	msg := tea.KeyMsg{Paste: true}
+	cmd := m.captureImplicitPasteCandidate(msg)
+	if cmd != nil {
+		t.Fatalf("expected nil command when msg.Paste is true")
+	}
+}
+
+func TestCaptureImplicitPasteSpecialKeyNilModel(t *testing.T) {
+	var m *model
+	msg := tea.KeyMsg{Type: tea.KeyEnter}
+	cmd := m.captureImplicitPasteSpecialKey(msg)
+	if cmd != nil {
+		t.Fatalf("expected nil command from nil model")
+	}
+}
+
+func TestCaptureImplicitPasteSpecialKeyEnterStartsSession(t *testing.T) {
+	m := newImagePipelineModel(t)
+	msg := tea.KeyMsg{Type: tea.KeyEnter}
+	cmd := m.captureImplicitPasteSpecialKey(msg)
+	if cmd == nil {
+		t.Fatalf("expected non-nil command for Enter key (starts implicit paste session)")
+	}
+	if !m.pasteSession.active {
+		t.Fatalf("expected paste session to be active after implicit special key capture")
+	}
+}
+
+func TestCaptureImplicitPasteSpecialKeyTabStartsSession(t *testing.T) {
+	m := newImagePipelineModel(t)
+	msg := tea.KeyMsg{Type: tea.KeyTab}
+	cmd := m.captureImplicitPasteSpecialKey(msg)
+	if cmd == nil {
+		t.Fatalf("expected non-nil command for Tab key (starts implicit paste session)")
+	}
+	if m.pasteSession.sourceKind != "implicit-tab" {
+		t.Fatalf("expected implicit-tab source kind, got %q", m.pasteSession.sourceKind)
+	}
+}
+
+func TestIsSplitPasteContinuationEmptyInput(t *testing.T) {
+	if isSplitPasteContinuation("   ", "paste-key", time.Now()) {
+		t.Fatalf("expected empty trimmed input to not be a split continuation")
+	}
+}
+
+func TestIsSplitPasteContinuationPathInput(t *testing.T) {
+	if isSplitPasteContinuation(`C:\Users\test\file`, "paste-key", time.Now()) {
+		t.Fatalf("expected path-like input to not be a split continuation")
+	}
+}
+
+func TestIsSplitPasteContinuationNonPasteSource(t *testing.T) {
+	if isSplitPasteContinuation("some long text that is not paste", "rune", time.Now()) {
+		t.Fatalf("expected non-paste source to not be a split continuation")
+	}
+}
+
+func TestIsSplitPasteContinuationContainsMarker(t *testing.T) {
+	if isSplitPasteContinuation("[Paste #1 ~11 lines]", "paste-key", time.Now()) {
+		t.Fatalf("expected input containing paste marker to not be a split continuation")
+	}
+}
+
+func TestIsSplitPasteContinuationWithinWindow(t *testing.T) {
+	if !isSplitPasteContinuation("some quick text", "paste-key", time.Now().Add(-500*time.Millisecond)) {
+		t.Fatalf("expected split continuation within paste continuation window")
+	}
+}
+
+func TestIsSplitPasteContinuationOutsideWindowButMultiLine(t *testing.T) {
+	if !isSplitPasteContinuation("line1\nline2\nline3", "paste-key", time.Now().Add(-3*time.Second)) {
+		t.Fatalf("expected multi-line paste to be a split continuation even outside window")
+	}
+}
+
+func TestIsSplitPasteContinuationOutsideWindowButLong(t *testing.T) {
+	longText := strings.Repeat("a", pasteQuickCharThreshold)
+	if !isSplitPasteContinuation(longText, "paste-key", time.Now().Add(-3*time.Second)) {
+		t.Fatalf("expected long paste to be a split continuation even outside window")
+	}
+}
+
+func TestIsSplitPasteContinuationZeroLastPasteAt(t *testing.T) {
+	if isSplitPasteContinuation("short", "paste-key", time.Time{}) {
+		t.Fatalf("expected short single line with zero lastPasteAt to not be a split continuation")
+	}
+}
+
+func TestLooksLikePastedFragmentWithWhitespace(t *testing.T) {
+	if !looksLikePastedFragment("text with spaces") {
+		t.Fatalf("expected text with spaces to look like a pasted fragment")
+	}
+	if !looksLikePastedFragment("text\twith\ttabs") {
+		t.Fatalf("expected text with tabs to look like a pasted fragment")
+	}
+}
+
+func TestLooksLikePastedFragmentPlain(t *testing.T) {
+	short := strings.Repeat("x", 63)
+	if looksLikePastedFragment(short) {
+		t.Fatalf("expected short text without whitespace under 64 chars to not look like a pasted fragment")
+	}
+	long := strings.Repeat("x", 64)
+	if !looksLikePastedFragment(long) {
+		t.Fatalf("expected text of 64 chars to look like a pasted fragment")
+	}
+}
+
+func TestShouldMergeIntoLatestMarkerNilModel(t *testing.T) {
+	var m *model
+	if m.shouldMergeIntoLatestMarker("rune") {
+		t.Fatalf("expected nil model to return false")
+	}
+}
+
+func TestImplicitPasteCandidateFragmentPasteMsg(t *testing.T) {
+	m := newImagePipelineModel(t)
+	msg := tea.KeyMsg{Paste: true}
+	frag, source, ok := m.implicitPasteCandidateFragment(msg)
+	if ok {
+		t.Fatalf("expected paste message to not be a candidate fragment, got frag=%q source=%q", frag, source)
+	}
+}
+
+func TestImplicitPasteCandidateFragmentEmptyRunes(t *testing.T) {
+	m := newImagePipelineModel(t)
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{}}
+	_, _, ok := m.implicitPasteCandidateFragment(msg)
+	if ok {
+		t.Fatalf("expected empty runes to not be a candidate fragment")
+	}
+}
+
+func TestImplicitPasteCandidateFragmentUnhandledKey(t *testing.T) {
+	m := newImagePipelineModel(t)
+	msg := tea.KeyMsg{Type: tea.KeyEscape}
+	_, _, ok := m.implicitPasteCandidateFragment(msg)
+	if ok {
+		t.Fatalf("expected unhandled key type to not be a candidate fragment")
+	}
+}
+
+func TestShouldPromoteImplicitPasteCandidateNilModel(t *testing.T) {
+	var m *model
+	msg := tea.KeyMsg{Type: tea.KeyEnter}
+	if m.shouldPromoteImplicitPasteCandidate(msg) {
+		t.Fatalf("expected nil model to return false for promote")
+	}
+}
+
+func TestShouldCaptureImplicitPasteSpecialKeyNilModel(t *testing.T) {
+	var m *model
+	msg := tea.KeyMsg{Type: tea.KeyEnter}
+	if m.shouldCaptureImplicitPasteSpecialKey(msg) {
+		t.Fatalf("expected nil model to return false")
+	}
+}
+
+func TestShouldCaptureImplicitPasteSpecialKeyPasteMsg(t *testing.T) {
+	m := newImagePipelineModel(t)
+	msg := tea.KeyMsg{Paste: true}
+	if m.shouldCaptureImplicitPasteSpecialKey(msg) {
+		t.Fatalf("expected paste message to not be captured as special key")
+	}
+}
+
+func TestShouldCaptureImplicitPasteSpecialKeyNonEnterTab(t *testing.T) {
+	m := newImagePipelineModel(t)
+	msg := tea.KeyMsg{Type: tea.KeyEscape}
+	if m.shouldCaptureImplicitPasteSpecialKey(msg) {
+		t.Fatalf("expected non-enter/tab key to not be captured")
+	}
+}
+
+func TestCountCompressedMarkersHandlesVariousInputs(t *testing.T) {
+	if got := countCompressedMarkers(""); got != 0 {
+		t.Fatalf("expected empty string count to be 0, got %d", got)
+	}
+	if got := countCompressedMarkers("[Paste #1 ~11 lines]"); got != 1 {
+		t.Fatalf("expected single marker count to be 1, got %d", got)
+	}
+	if got := countCompressedMarkers("[Pasted #3 ~20 lines]"); got != 1 {
+		t.Fatalf("expected Pasted marker count to be 1, got %d", got)
+	}
+}
+
+func TestDropLatestCompressedMarkerNoMarker(t *testing.T) {
+	result := dropLatestCompressedMarker("plain text with no markers")
+	if result != "plain text with no markers" {
+		t.Fatalf("expected plain text unchanged, got %q", result)
+	}
+}
+
+func TestDropLatestCompressedMarkerSingleMarker(t *testing.T) {
+	result := dropLatestCompressedMarker("[Paste #1 ~11 lines]")
+	if result != "" {
+		t.Fatalf("expected single marker to be dropped to empty, got %q", result)
+	}
+}
+
+func TestDropLatestCompressedMarkerMultipleMarkers(t *testing.T) {
+	result := dropLatestCompressedMarker("[Paste #1 ~11 lines] [Paste #2 ~15 lines]")
+	if result != "[Paste #1 ~11 lines]" {
+		t.Fatalf("expected only latest marker dropped, got %q", result)
+	}
+}
+
+func TestDropLatestCompressedMarkerWithTextBefore(t *testing.T) {
+	result := dropLatestCompressedMarker("before text [Paste #1 ~11 lines]")
+	if result != "before text" {
+		t.Fatalf("expected marker removed with surrounding text preserved, got %q", result)
 	}
 }

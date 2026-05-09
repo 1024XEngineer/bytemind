@@ -161,12 +161,12 @@ func (m model) handleMentionPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case isPageUpKey(msg):
 		if len(items) > 0 {
-			m.mentionCursor = max(0, m.mentionCursor-mentionPageSize)
+			m.mentionCursor = max(0, m.mentionCursor-m.mentionPageSize())
 		}
 		return m, nil
 	case isPageDownKey(msg):
 		if len(items) > 0 {
-			m.mentionCursor = min(len(items)-1, m.mentionCursor+mentionPageSize)
+			m.mentionCursor = min(len(items)-1, m.mentionCursor+m.mentionPageSize())
 		}
 		return m, nil
 	}
@@ -214,6 +214,16 @@ func (m model) handleMentionPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *model) applyMentionSelection(selected mention.Candidate) {
 	m.recordRecentMention(selected.Path)
+
+	// Agent mention: insert @agentName into input
+	if selected.Kind == "agent" {
+		nextValue := mention.InsertIntoInput(m.input.Value(), m.mentionToken, selected.BaseName)
+		m.setInputValue(nextValue)
+		m.statusNote = "Inserted agent mention: @" + selected.BaseName
+		m.closeMentionPalette()
+		m.syncInputOverlays()
+		return
+	}
 
 	if assetID, note, isImage := m.ingestMentionImageCandidate(selected.Path); isImage {
 		if strings.TrimSpace(string(assetID)) != "" {

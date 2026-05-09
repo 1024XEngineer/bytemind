@@ -96,15 +96,18 @@ func applyModelOverride(cfg *config.Config, model string) {
 		return
 	}
 	cfg.Provider.Model = model
+	cfg.ProviderRuntime.CurrentProvider = config.SelectedProviderID(cfg.ProviderRuntime)
 	cfg.ProviderRuntime.DefaultModel = model
 	if len(cfg.ProviderRuntime.Providers) == 0 {
 		return
 	}
-	defaultProvider := strings.ToLower(strings.TrimSpace(cfg.ProviderRuntime.DefaultProvider))
+	defaultProvider := config.SelectedProviderID(cfg.ProviderRuntime)
 	if defaultProvider != "" {
 		if providerCfg, ok := cfg.ProviderRuntime.Providers[defaultProvider]; ok {
 			providerCfg.Model = model
 			cfg.ProviderRuntime.Providers[defaultProvider] = providerCfg
+			cfg.ProviderRuntime.CurrentProvider = defaultProvider
+			cfg.ProviderRuntime.DefaultProvider = defaultProvider
 			return
 		}
 	}
@@ -112,6 +115,8 @@ func applyModelOverride(cfg *config.Config, model string) {
 		for id, providerCfg := range cfg.ProviderRuntime.Providers {
 			providerCfg.Model = model
 			cfg.ProviderRuntime.Providers[id] = providerCfg
+			cfg.ProviderRuntime.CurrentProvider = strings.ToLower(strings.TrimSpace(id))
+			cfg.ProviderRuntime.DefaultProvider = cfg.ProviderRuntime.CurrentProvider
 		}
 	}
 }

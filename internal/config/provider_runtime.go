@@ -15,25 +15,35 @@ type ProviderHealthRuntimeConfig struct {
 }
 
 type ProviderRuntimeConfig struct {
-	DefaultProvider string                      `json:"default_provider"`
-	DefaultModel    string                      `json:"default_model"`
+	CurrentProvider string                      `json:"current_provider,omitempty"`
+	DefaultProvider string                      `json:"default_provider,omitempty"`
+	DefaultModel    string                      `json:"default_model,omitempty"`
 	AllowFallback   bool                        `json:"allow_fallback"`
 	Providers       map[string]ProviderConfig   `json:"providers"`
 	Health          ProviderHealthRuntimeConfig `json:"health"`
 }
 
 func LegacyProviderRuntimeConfig(cfg ProviderConfig) ProviderRuntimeConfig {
-	providerID := strings.ToLower(strings.TrimSpace(cfg.Type))
-	switch providerID {
+	providerType := strings.ToLower(strings.TrimSpace(cfg.Type))
+	providerID := providerType
+	switch providerType {
 	case "", "openai", "openai-compatible":
-		providerID = "openai"
+		if strings.Contains(strings.ToLower(strings.TrimSpace(cfg.BaseURL)), "deepseek.com") {
+			providerID = "deepseek"
+			cfg.Type = "openai-compatible"
+		} else {
+			providerID = "openai"
+			cfg.Type = "openai"
+		}
 	case "anthropic":
 		providerID = "anthropic"
+		cfg.Type = "anthropic"
 	case "gemini":
 		providerID = "gemini"
+		cfg.Type = "gemini"
 	}
-	cfg.Type = providerID
 	return ProviderRuntimeConfig{
+		CurrentProvider: providerID,
 		DefaultProvider: providerID,
 		DefaultModel:    cfg.Model,
 		AllowFallback:   false,
@@ -61,10 +71,63 @@ func SyncProviderRuntimeWithProvider(runtimeCfg ProviderRuntimeConfig, providerC
 	}
 	providers[providerID] = providerEntry
 
+	runtimeCfg.CurrentProvider = providerID
 	runtimeCfg.DefaultProvider = providerID
 	runtimeCfg.DefaultModel = strings.TrimSpace(providerEntry.Model)
 	runtimeCfg.Providers = providers
 	return runtimeCfg
+}
+
+func SelectedProviderID(runtimeCfg ProviderRuntimeConfig) string {
+	if providerID := strings.ToLower(strings.TrimSpace(runtimeCfg.CurrentProvider)); providerID != "" {
+		return providerID
+	}
+	return strings.ToLower(strings.TrimSpace(runtimeCfg.DefaultProvider))
+}
+
+func SelectedModelID(runtimeCfg ProviderRuntimeConfig) string {
+	providerID := SelectedProviderID(runtimeCfg)
+	if providerID != "" {
+		if providerCfg, ok := normalizedProviderRuntimeProviders(runtimeCfg)[providerID]; ok {
+			if modelID := strings.TrimSpace(providerCfg.Model); modelID != "" {
+				return modelID
+			}
+		}
+	}
+	return strings.TrimSpace(runtimeCfg.DefaultModel)
+}
+
+func SelectedProviderConfig(runtimeCfg ProviderRuntimeConfig) (string, ProviderConfig, bool) {
+	providerID := SelectedProviderID(runtimeCfg)
+	if providerID == "" {
+		return "", ProviderConfig{}, false
+	}
+	providerCfg, ok := normalizedProviderRuntimeProviders(runtimeCfg)[providerID]
+	return providerID, providerCfg, ok
+}
+
+func SyncProviderRuntimeSelectionFields(runtimeCfg ProviderRuntimeConfig) ProviderRuntimeConfig {
+	providerID := SelectedProviderID(runtimeCfg)
+	if providerID != "" {
+		runtimeCfg.CurrentProvider = providerID
+		runtimeCfg.DefaultProvider = providerID
+	}
+	if modelID := SelectedModelID(runtimeCfg); modelID != "" {
+		runtimeCfg.DefaultModel = modelID
+	}
+	return runtimeCfg
+}
+
+func normalizedProviderRuntimeProviders(runtimeCfg ProviderRuntimeConfig) map[string]ProviderConfig {
+	providers := make(map[string]ProviderConfig, len(runtimeCfg.Providers))
+	for id, cfg := range runtimeCfg.Providers {
+		normalizedID := strings.ToLower(strings.TrimSpace(id))
+		if normalizedID == "" {
+			continue
+		}
+		providers[normalizedID] = cfg
+	}
+	return providers
 }
 
 func SelectProviderRuntimeModel(runtimeCfg ProviderRuntimeConfig, providerID, modelID string) (ProviderRuntimeConfig, ProviderConfig, error) {
@@ -92,6 +155,7 @@ func SelectProviderRuntimeModel(runtimeCfg ProviderRuntimeConfig, providerID, mo
 	providerCfg.Model = modelID
 	providers[providerID] = providerCfg
 
+	runtimeCfg.CurrentProvider = providerID
 	runtimeCfg.DefaultProvider = providerID
 	runtimeCfg.DefaultModel = modelID
 	runtimeCfg.Providers = providers
@@ -121,7 +185,7 @@ func DeleteProviderRuntimeProvider(runtimeCfg ProviderRuntimeConfig, providerID 
 
 	delete(providers, providerID)
 
-	selectedProvider := strings.ToLower(strings.TrimSpace(runtimeCfg.DefaultProvider))
+	selectedProvider := SelectedProviderID(runtimeCfg)
 	if selectedProvider == "" || selectedProvider == providerID {
 		selectedProvider = ""
 	}
@@ -136,6 +200,7 @@ func DeleteProviderRuntimeProvider(runtimeCfg ProviderRuntimeConfig, providerID 
 		selectedCfg = providers[selectedProvider]
 	}
 
+	runtimeCfg.CurrentProvider = selectedProvider
 	runtimeCfg.DefaultProvider = selectedProvider
 	runtimeCfg.DefaultModel = strings.TrimSpace(selectedCfg.Model)
 	runtimeCfg.Providers = providers

@@ -114,44 +114,47 @@ func (m model) renderMentionPalette() string {
 	items := m.mentionResults
 	if len(items) == 0 {
 		return commandPaletteStyle.Width(width).Render(
-			commandPaletteMetaStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render("No matching files in workspace."),
+			commandPaletteMetaStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render("No matching results."),
 		)
 	}
 
 	selected, _ := m.selectedMentionCandidate()
-	nameWidth := min(26, max(12, width/4))
-	descWidth := max(12, width-commandPaletteStyle.GetHorizontalFrameSize()-nameWidth-4)
-	rows := make([]string, 0, mentionPageSize+1)
+	rowWidth := max(1, width-commandPaletteStyle.GetHorizontalFrameSize())
+	pageSize := m.mentionPageSize()
+	rows := make([]string, 0, pageSize+1)
 	for _, item := range m.visibleMentionItemsPage() {
 		rowStyle := commandPaletteRowStyle
-		nameStyle := commandPaletteNameStyle
-		descStyle := commandPaletteDescStyle
+		textStyle := commandPaletteNameStyle
 		if item.Path == selected.Path {
 			rowStyle = commandPaletteSelectedRowStyle
-			nameStyle = commandPaletteSelectedNameStyle
-			descStyle = commandPaletteSelectedDescStyle
+			textStyle = commandPaletteSelectedNameStyle
 		}
 
-		nameText := item.BaseName
-		if tag := strings.TrimSpace(item.TypeTag); tag != "" {
-			nameText = "[" + tag + "] " + nameText
-		}
-		if m.hasRecentMention(item.Path) {
-			nameText = "* " + nameText
-		} else {
-			nameText = "  " + nameText
+		var displayText string
+		switch item.Kind {
+		case "agent":
+			displayText = "* " + item.BaseName
+			if desc := strings.TrimSpace(item.Description); desc != "" {
+				displayText += "  " + desc
+			}
+			if m.hasRecentMention(item.Path) {
+				displayText = "* " + displayText
+			}
+		default:
+			displayText = "+ " + item.Path
+			if m.hasRecentMention(item.Path) {
+				displayText = "* " + displayText
+			}
 		}
 
-		name := nameStyle.Width(nameWidth).Render(compact(nameText, max(12, nameWidth)))
-		desc := descStyle.Width(descWidth).Render(compact(item.Path, max(12, descWidth)))
-		rows = append(rows, rowStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render(
-			lipgloss.JoinHorizontal(lipgloss.Top, name, "  ", desc),
+		rows = append(rows, rowStyle.Width(rowWidth).Render(
+			textStyle.Render(truncatePathMiddle(displayText, rowWidth)),
 		))
 	}
-	for len(rows) < mentionPageSize {
-		rows = append(rows, commandPaletteRowStyle.Width(max(1, width-commandPaletteStyle.GetHorizontalFrameSize())).Render(""))
+	for len(rows) < pageSize {
+		rows = append(rows, commandPaletteRowStyle.Width(rowWidth).Render(""))
 	}
-	metaText := "* recent  Type @query to search  Up/Down move  Enter/Tab insert  Esc close"
+	metaText := "* recent  + file/dir  * agent  Type @query  Up/Down  Enter/Tab insert  Esc close"
 	if m.mentionIndex != nil {
 		stats := m.mentionIndex.Stats()
 		if stats.Truncated && stats.MaxFiles > 0 {

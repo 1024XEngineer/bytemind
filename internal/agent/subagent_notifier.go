@@ -19,14 +19,17 @@ type SubAgentNotifier interface {
 
 // SubAgentCompletionNotification carries the result of a completed async subagent task.
 type SubAgentCompletionNotification struct {
-	ParentSession *session.Session
-	TaskID        string
-	Agent         string
-	InvocationID  string
-	Status        string // "completed" or "failed"
-	Summary       string
-	ErrorCode     string
-	ErrorMessage  string
+	ParentSession   *session.Session
+	TaskID          string
+	Agent           string
+	InvocationID    string
+	Status          string // "completed" or "failed"
+	Summary         string
+	ErrorCode       string
+	ErrorMessage    string
+	WorktreePath    string
+	WorktreeBranch  string
+	WorktreeState   string
 }
 
 type defaultSubAgentNotifier struct {
@@ -81,6 +84,15 @@ func buildNotificationMessage(n SubAgentCompletionNotification) string {
 	if n.ErrorMessage != "" {
 		fmt.Fprintf(&b, "  <error_message>%s</error_message>\n", n.ErrorMessage)
 	}
+	if n.WorktreePath != "" {
+		fmt.Fprintf(&b, "  <worktree_path>%s</worktree_path>\n", n.WorktreePath)
+	}
+	if n.WorktreeBranch != "" {
+		fmt.Fprintf(&b, "  <worktree_branch>%s</worktree_branch>\n", n.WorktreeBranch)
+	}
+	if n.WorktreeState != "" {
+		fmt.Fprintf(&b, "  <worktree_state>%s</worktree_state>\n", n.WorktreeState)
+	}
 	b.WriteString("</subagent-notification>")
 	return b.String()
 }
@@ -94,6 +106,11 @@ func drainSubAgentNotifications(runner *Runner, sess *session.Session) {
 			continue
 		}
 		msg := buildNotificationMessage(notification)
-		sess.Messages = append(sess.Messages, llm.NewUserTextMessage(msg))
+		m := llm.NewUserTextMessage(msg)
+		if m.Meta == nil {
+			m.Meta = llm.MessageMeta{}
+		}
+		m.Meta["ephemeral"] = true
+		sess.Messages = append(sess.Messages, m)
 	}
 }

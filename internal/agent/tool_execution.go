@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	configpkg "github.com/1024XEngineer/bytemind/internal/config"
@@ -34,6 +36,38 @@ type sandboxAuditContext struct {
 	FallbackReason  string
 }
 
+// subagentToolCallsStore is a side-channel for passing structured tool call
+// records from the subagent executor to the tool execution layer, where they
+// are stored in message.Meta for TUI restoration on session reload.
+// Keyed by invocation ID; entries are consumed (deleted) after use.
+var subagentToolCallsStore = &sync.Map{}
+
+func storeSubAgentToolCalls(invocationID string, toolCalls []tools.SubAgentToolCallRecord) {
+	if len(toolCalls) == 0 {
+		return
+	}
+	subagentToolCallsStore.Store(invocationID, toolCalls)
+}
+
+func consumeSubAgentToolCalls(invocationID string) []tools.SubAgentToolCallRecord {
+	raw, ok := subagentToolCallsStore.LoadAndDelete(invocationID)
+	if !ok {
+		return nil
+	}
+	toolCalls, _ := raw.([]tools.SubAgentToolCallRecord)
+	return toolCalls
+}
+
+// toolCallResult carries the outcome of a single tool execution back to the
+// caller. The ToolMessage must be appended to sess.Messages by the caller;
+// observer events, audit records, and stdout feedback are already emitted.
+type toolCallResult struct {
+	Index       int
+	ToolCallID  string
+	ToolName    string
+	ToolMessage llm.Message
+}
+
 func (e *defaultEngine) executeToolCall(
 	ctx context.Context,
 	sess *session.Session,
@@ -44,21 +78,21 @@ func (e *defaultEngine) executeToolCall(
 	deniedTools map[string]struct{},
 	approval tools.ApprovalHandler,
 	sandboxAudit sandboxAuditContext,
-) error {
+) (toolCallResult, error) {
 	if e == nil || e.runner == nil {
-		return fmt.Errorf("agent engine is unavailable")
+		return toolCallResult{}, fmt.Errorf("agent engine is unavailable")
 	}
 	runner := e.runner
 
 	if runner.executor == nil {
-		return fmt.Errorf("tool executor is unavailable")
+		return toolCallResult{}, fmt.Errorf("tool executor is unavailable")
 	}
 	if runner.policyGateway == nil {
-		return fmt.Errorf("policy gateway is unavailable")
+		return toolCallResult{}, fmt.Errorf("policy gateway is unavailable")
 	}
 	executeDirectly := shouldExecuteToolDirectly(call.Function.Name)
 	if !executeDirectly && runner.runtime == nil {
-		return fmt.Errorf("runtime gateway is unavailable")
+		return toolCallResult{}, fmt.Errorf("runtime gateway is unavailable")
 	}
 
 	traceID := buildToolTraceID(call)
@@ -81,7 +115,7 @@ func (e *defaultEngine) executeToolCall(
 		SandboxWorkerNetwork: sandboxAudit.WorkerNetwork,
 	})
 	if err != nil {
-		return err
+		return toolCallResult{}, err
 	}
 	permissionMetadata := toolAuditMetadata(call.Function.Name, map[string]string{
 		"reason": decision.Reason,
@@ -102,12 +136,20 @@ func (e *defaultEngine) executeToolCall(
 		return e.handleRejectedToolCall(ctx, sess, call, out, decision, sandboxAudit)
 	}
 
+	// Allocate invocationID before emitting EventToolCallStarted so TUI
+	// can route concurrent same-type subagent events to the correct entry.
+	delegateInvocationID := ""
+	if strings.TrimSpace(call.Function.Name) == "delegate_subagent" {
+		delegateInvocationID = newSubAgentInvocationID()
+	}
+
 	runner.emit(Event{
 		Type:          EventToolCallStarted,
 		SessionID:     sessionID,
 		ToolName:      call.Function.Name,
 		ToolCallID:    call.ID,
 		ToolArguments: call.Function.Arguments,
+		InvocationID:  delegateInvocationID,
 	})
 	sandboxLeaseID := fmt.Sprintf("session-%s", sess.ID)
 	sandboxRunID := fmt.Sprintf("trace-%s", traceID)
@@ -154,7 +196,7 @@ func (e *defaultEngine) executeToolCall(
 			AllowedTools:      allowedTools,
 			DeniedTools:       deniedTools,
 			DelegateSubAgent: func(ctx context.Context, req tools.DelegateSubAgentRequest, execCtx *tools.ExecutionContext) (tools.DelegateSubAgentResult, error) {
-				return runner.delegateSubAgent(ctx, req, execCtx, SubAgentObserver(runner.observer, req.Agent))
+				return runner.delegateSubAgent(ctx, req, execCtx, SubAgentObserver(runner.observer, req.Agent, delegateInvocationID), delegateInvocationID)
 			},
 		})
 	}
@@ -212,7 +254,10 @@ func (e *defaultEngine) executeToolCall(
 		}
 	}
 
-	if execErr != nil {
+	if execErr != nil && len(strings.TrimSpace(result)) == 0 {
+		// Only override ToolResult when there is no content from the tool itself.
+		// Subagent errors are returned as OK:true with error in summary content,
+		// so the parent agent can reason about the failure.
 		status, reasonCode := classifyToolExecutionError(execErr)
 		payload := map[string]any{
 			"ok":          false,
@@ -276,17 +321,39 @@ func (e *defaultEngine) executeToolCall(
 		Metadata:  metadata,
 	})
 
-	toolMessage := llm.NewToolResultMessage(call.ID, result)
-	if err := llm.ValidateMessage(toolMessage); err != nil {
-		return err
-	}
-	sess.Messages = append(sess.Messages, toolMessage)
-	if runner.store != nil {
-		if err := runner.store.Save(sess); err != nil {
-			return err
+	// Decouple UI and LLM payloads: TUI sees the full JSON (for rendering),
+	// parent agent LLM context receives only the Content field (natural language).
+	// Store full JSON in Meta so TUI can restore it when reloading from session.
+	llmPayload := extractSubAgentContentForLLM(call.Function.Name, result)
+	toolMessage := llm.NewToolResultMessage(call.ID, llmPayload)
+	if strings.TrimSpace(call.Function.Name) == "delegate_subagent" {
+		if toolMessage.Meta == nil {
+			toolMessage.Meta = llm.MessageMeta{}
+		}
+		if result != llmPayload {
+			toolMessage.Meta["delegate_subagent_result"] = result
+		}
+		// Retrieve structured tool call records from the side-channel populated
+		// by the subagent executor, and store in Meta for TUI restoration.
+		var invocationID string
+		var parsed struct {
+			InvocationID string `json:"invocation_id"`
+		}
+		if json.Unmarshal([]byte(result), &parsed) == nil {
+			invocationID = strings.TrimSpace(parsed.InvocationID)
+		}
+		if toolCalls := consumeSubAgentToolCalls(invocationID); len(toolCalls) > 0 {
+			toolMessage.Meta["subagent_tool_calls"] = toolCalls
 		}
 	}
-	return nil
+	if err := llm.ValidateMessage(toolMessage); err != nil {
+		return toolCallResult{}, err
+	}
+	return toolCallResult{
+		ToolCallID:  call.ID,
+		ToolName:    call.Function.Name,
+		ToolMessage: toolMessage,
+	}, nil
 }
 
 func (e *defaultEngine) toolSafetyClass(name string) tools.SafetyClass {
@@ -327,9 +394,9 @@ func (e *defaultEngine) handleRejectedToolCall(
 	out io.Writer,
 	decision ToolDecision,
 	sandboxAudit sandboxAuditContext,
-) error {
+) (toolCallResult, error) {
 	if e == nil || e.runner == nil {
-		return fmt.Errorf("agent engine is unavailable")
+		return toolCallResult{}, fmt.Errorf("agent engine is unavailable")
 	}
 	runner := e.runner
 	sandboxAudit = normalizeSandboxAuditContext(sandboxAudit)
@@ -392,15 +459,13 @@ func (e *defaultEngine) handleRejectedToolCall(
 
 	toolMessage := llm.NewToolResultMessage(call.ID, result)
 	if err := llm.ValidateMessage(toolMessage); err != nil {
-		return err
+		return toolCallResult{}, err
 	}
-	sess.Messages = append(sess.Messages, toolMessage)
-	if runner.store != nil {
-		if err := runner.store.Save(sess); err != nil {
-			return err
-		}
-	}
-	return nil
+	return toolCallResult{
+		ToolCallID:  call.ID,
+		ToolName:    call.Function.Name,
+		ToolMessage: toolMessage,
+	}, nil
 }
 
 func (r *Runner) executeToolCall(
@@ -413,7 +478,7 @@ func (r *Runner) executeToolCall(
 	deniedTools map[string]struct{},
 	approval tools.ApprovalHandler,
 	sandboxAudit sandboxAuditContext,
-) error {
+) (toolCallResult, error) {
 	engine := &defaultEngine{runner: r}
 	return engine.executeToolCall(ctx, sess, runMode, call, out, allowedTools, deniedTools, approval, sandboxAudit)
 }
@@ -430,7 +495,7 @@ func (r *Runner) handleRejectedToolCall(
 	out io.Writer,
 	decision ToolDecision,
 	sandboxAudit sandboxAuditContext,
-) error {
+) (toolCallResult, error) {
 	engine := &defaultEngine{runner: r}
 	return engine.handleRejectedToolCall(ctx, sess, call, out, decision, sandboxAudit)
 }
@@ -658,4 +723,107 @@ func appendSandboxAuditContext(metadata map[string]string, context sandboxAuditC
 	if context.FallbackReason != "" {
 		metadata["sandbox_fallback_reason"] = context.FallbackReason
 	}
+}
+
+// extractSubAgentContentForLLM returns a slimmed-down payload for the parent agent's
+// LLM context. For delegate_subagent results, only the Content field (natural language)
+// is forwarded; the full JSON is reserved for the TUI renderer. All other tools pass
+// through unchanged.
+func extractSubAgentContentForLLM(toolName, result string) string {
+	if strings.TrimSpace(toolName) != "delegate_subagent" {
+		return result
+	}
+	var parsed struct {
+		Content string `json:"content,omitempty"`
+		Summary string `json:"summary,omitempty"`
+		OK      bool   `json:"ok"`
+	}
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		return result
+	}
+	if !parsed.OK {
+		return result
+	}
+	content := strings.TrimSpace(parsed.Content)
+	if content == "" {
+		content = strings.TrimSpace(parsed.Summary)
+	}
+	if content == "" {
+		return result
+	}
+	return content
+}
+
+// extractSubAgentToolCalls builds a JSON-serializable list of tool calls from a
+// subagent's message history. Used to populate message.Meta so the TUI can
+// restore SubAgentTools when reloading a session.
+func extractSubAgentToolCalls(messages []llm.Message) []tools.SubAgentToolCallRecord {
+	// Pass 1: build result map from ToolResult parts.
+	results := map[string]string{}
+	for _, msg := range messages {
+		if msg.Role != llm.RoleUser {
+			continue
+		}
+		for _, part := range msg.Parts {
+			if part.ToolResult != nil {
+				results[part.ToolResult.ToolUseID] = part.ToolResult.Content
+			}
+		}
+	}
+
+	// Pass 2: collect ToolUse parts in order, match with results.
+	var records []tools.SubAgentToolCallRecord
+	for _, msg := range messages {
+		if msg.Role != llm.RoleAssistant {
+			continue
+		}
+		for _, part := range msg.Parts {
+			if part.ToolUse == nil {
+				continue
+			}
+			status := "done"
+			if _, ok := results[part.ToolUse.ID]; !ok {
+				status = "running"
+			}
+			name := strings.TrimSpace(part.ToolUse.Name)
+			args := strings.TrimSpace(part.ToolUse.Arguments)
+
+			compactBody := name
+			switch strings.ToLower(name) {
+			case "read_file":
+				var a struct {
+					Path string `json:"path"`
+				}
+				if json.Unmarshal([]byte(args), &a) == nil && strings.TrimSpace(a.Path) != "" {
+					compactBody = filepath.ToSlash(strings.TrimSpace(a.Path))
+				}
+			case "search_text", "web_search":
+				var a struct {
+					Query string `json:"query"`
+				}
+				if json.Unmarshal([]byte(args), &a) == nil && strings.TrimSpace(a.Query) != "" {
+					compactBody = `"` + strings.TrimSpace(a.Query) + `"`
+				}
+			case "list_files":
+				var a struct {
+					Path string `json:"path"`
+				}
+				if json.Unmarshal([]byte(args), &a) == nil {
+					p := strings.TrimSpace(a.Path)
+					if p == "" {
+						p = "."
+					}
+					compactBody = filepath.ToSlash(p)
+				}
+			}
+
+			records = append(records, tools.SubAgentToolCallRecord{
+				ToolName:    name,
+				ToolCallID:  part.ToolUse.ID,
+				CompactBody: compactBody,
+				Status:      status,
+			})
+		}
+	}
+	return records
 }

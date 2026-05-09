@@ -24,6 +24,11 @@ func (s *Store) Save(session *Session) error {
 	}
 	session.Title = strings.TrimSpace(session.Title)
 	normalizeSessionConversation(session)
+	// Filter out ephemeral messages (e.g. subagent notifications) before persisting.
+	if filtered := filterEphemeralMessages(session.Conversation.Timeline); len(filtered) != len(session.Conversation.Timeline) {
+		session.Conversation.Timeline = filtered
+		session.Messages = filtered
+	}
 	for i, message := range session.Conversation.Timeline {
 		if err := llm.ValidateMessage(message); err != nil {
 			return fmt.Errorf("timeline[%d] validation failed: %w", i, err)
@@ -35,4 +40,15 @@ func (s *Store) Save(session *Session) error {
 		session.Plan.UpdatedAt = session.UpdatedAt
 	}
 	return s.save(session)
+}
+
+func filterEphemeralMessages(messages []llm.Message) []llm.Message {
+	filtered := messages[:0]
+	for _, msg := range messages {
+		if msg.Meta != nil && msg.Meta["ephemeral"] == true {
+			continue
+		}
+		filtered = append(filtered, msg)
+	}
+	return filtered
 }

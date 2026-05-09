@@ -19,9 +19,7 @@ import (
 const (
 	defaultSubAgentMaxIterations = 8
 
-	subAgentResultPolicyCompressed = `Return your final answer as a single JSON object (no markdown fences). Schema:
-{"summary":"<one-paragraph overview>"}
-Do not include full tool logs.`
+	subAgentResultPolicyCompressed = `Return your final answer directly as natural language. Do not include full tool logs.`
 )
 
 // SubAgentExecutor runs a subagent task to completion and returns a structured result.
@@ -29,6 +27,14 @@ Do not include full tool logs.`
 // engine loop execution, and result extraction.
 type SubAgentExecutor interface {
 	Execute(ctx context.Context, input SubAgentExecutionInput) (tools.DelegateSubAgentResult, error)
+}
+
+// SubAgentConfigOverrides allows the delegate layer to override config fields
+// inherited from the parent runner when creating a child runner. Zero/nil fields
+// mean "inherit from parent".
+type SubAgentConfigOverrides struct {
+	Workspace     string
+	WritableRoots []string
 }
 
 // SubAgentExecutionInput carries all resolved parameters needed to execute a subagent task.
@@ -39,7 +45,9 @@ type SubAgentExecutionInput struct {
 	Agent        string
 	RunMode      planpkg.AgentMode
 	ExecCtx      *tools.ExecutionContext
-	Observer     Observer // optional: receives streaming events from the child runner
+	Observer     Observer               // optional: receives streaming events from the child runner
+	Store        SessionStore            // optional: used to persist child session transcript
+	Overrides    *SubAgentConfigOverrides // optional: overrides for child runner config
 }
 
 type defaultSubAgentExecutor struct {
@@ -67,22 +75,37 @@ func (e *defaultSubAgentExecutor) Execute(
 		parentSessionID = strings.TrimSpace(input.ExecCtx.Session.ID)
 	}
 
-	childRunner := e.newSubAgentChildRunner(workspace, input.Preflight.Definition.MaxTurns, input.Observer)
+	childRunner := e.newSubAgentChildRunner(workspace, input.Preflight.Definition.MaxTurns, input.Observer, input.Overrides)
 	if childRunner == nil || childRunner.client == nil {
-		return subAgentFailureResult(
+		return subAgentErrorAsContent(
 			input.InvocationID,
 			input.Agent,
-			subAgentErrorCodeRuntimeUnavailable,
 			"llm client is unavailable for subagent execution",
-			true,
+			nil,
 		), nil
 	}
-	childSession := newSubAgentSession(workspace, parentSessionID, input.InvocationID, input.RunMode)
+
+	// Resume path: load existing child session instead of creating a new one.
+	var childSession *session.Session
+	if resumeID := strings.TrimSpace(input.Request.ResumeSessionID); resumeID != "" && input.Store != nil {
+		flattenedID := session.FlattenSubAgentSessionID(resumeID)
+		loaded, loadErr := input.Store.Load(flattenedID)
+		if loadErr != nil {
+			return subAgentErrorAsContent(input.InvocationID, input.Agent,
+				fmt.Sprintf("failed to load subagent session %s: %v", resumeID, loadErr), nil), nil
+		}
+		childSession = loaded
+		childSession.ID = resumeID
+		// Append the new task as a continuation user message.
+		childSession.Messages = append(childSession.Messages, llm.NewUserTextMessage(buildSubAgentTaskInput(input.Request)))
+	} else {
+		childSession = newSubAgentSession(workspace, parentSessionID, input.InvocationID, input.RunMode)
+	}
 	defer childRunner.clearSessionSkillBridges(childSession)
 
 	if err := childRunner.syncExtensionTools(ctx, false); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return subAgentFailureResult(input.InvocationID, input.Agent, subAgentErrorCodeExecutionFailed, err.Error(), true), nil
+			return subAgentErrorAsContent(input.InvocationID, input.Agent, err.Error(), nil), nil
 		}
 	}
 
@@ -93,19 +116,55 @@ func (e *defaultSubAgentExecutor) Execute(
 		SubAgent:    buildSubAgentPromptInput(input.Request, input.Preflight),
 	}, string(input.RunMode))
 	if err != nil {
-		return subAgentFailureResult(input.InvocationID, input.Agent, subAgentErrorCodeExecutionFailed, err.Error(), true), nil
+		return subAgentErrorAsContent(input.InvocationID, input.Agent, err.Error(), nil), nil
 	}
 	applySubAgentPreflightSetup(&setup, input.Preflight)
 
 	answer, runErr := (&defaultEngine{runner: childRunner}).runPromptTurns(ctx, childSession, setup, nil)
 	if runErr != nil {
-		return subAgentFailureResult(input.InvocationID, input.Agent, subAgentErrorCodeExecutionFailed, runErr.Error(), true), nil
+		// Error as content: return OK:true with error in summary so the parent
+		// agent can reason about the failure and decide next steps.
+		partial := extractPartialResult(childSession.Messages)
+		errorMsg := runErr.Error()
+		if partial != "" {
+			errorMsg = partial + "\n\nSubAgent error: " + errorMsg
+		} else {
+			errorMsg = "SubAgent error: " + errorMsg
+		}
+		result := subAgentErrorAsContent(
+			input.InvocationID, input.Agent, errorMsg,
+			messagesToTranscript(childSession.Messages),
+		)
+		result.Task = strings.TrimSpace(input.Request.Task)
+		// Store structured tool call records for TUI restoration via side-channel.
+		storeSubAgentToolCalls(input.InvocationID, extractSubAgentToolCalls(childSession.Messages))
+		if input.Store != nil && childSession != nil {
+			persistedID := session.FlattenSubAgentSessionID(childSession.ID)
+			clone := cloneSessionForPersist(childSession, persistedID, workspace)
+			_ = input.Store.Save(clone)
+			result.TranscriptSessionID = persistedID
+		}
+		return result, nil
 	}
 
-	return buildSubAgentResultFromAnswer(answer, input.InvocationID, input.Agent), nil
+	result := buildSubAgentResultFromAnswer(answer, input.InvocationID, input.Agent, childSession.Messages)
+	result.Task = strings.TrimSpace(input.Request.Task)
+
+	// Store structured tool call records for TUI restoration via side-channel.
+	storeSubAgentToolCalls(input.InvocationID, extractSubAgentToolCalls(childSession.Messages))
+
+	// Persist child session transcript (best-effort).
+	if input.Store != nil && childSession != nil {
+		persistedID := session.FlattenSubAgentSessionID(childSession.ID)
+		clone := cloneSessionForPersist(childSession, persistedID, workspace)
+		_ = input.Store.Save(clone)
+		result.TranscriptSessionID = persistedID
+	}
+
+	return result, nil
 }
 
-func (e *defaultSubAgentExecutor) newSubAgentChildRunner(workspace string, maxTurns int, streamObserver Observer) *Runner {
+func (e *defaultSubAgentExecutor) newSubAgentChildRunner(workspace string, maxTurns int, streamObserver Observer, overrides *SubAgentConfigOverrides) *Runner {
 	r := e.runner
 	cfg := r.config
 	cfg.MaxIterations = resolveSubAgentMaxIterations(cfg.MaxIterations, maxTurns)
@@ -113,6 +172,15 @@ func (e *defaultSubAgentExecutor) newSubAgentChildRunner(workspace string, maxTu
 	cfg.WritableRoots = append([]string(nil), cfg.WritableRoots...)
 	cfg.ExecAllowlist = append([]config.ExecAllowRule(nil), cfg.ExecAllowlist...)
 	cfg.NetworkAllowlist = append([]config.NetworkAllowRule(nil), cfg.NetworkAllowlist...)
+
+	if overrides != nil {
+		if overrides.Workspace != "" {
+			workspace = overrides.Workspace
+		}
+		if overrides.WritableRoots != nil {
+			cfg.WritableRoots = overrides.WritableRoots
+		}
+	}
 
 	childObserver := Observer(&noOpObserver{})
 	if streamObserver != nil {
@@ -130,7 +198,6 @@ func (e *defaultSubAgentExecutor) newSubAgentChildRunner(workspace string, maxTu
 		Runtime:         r.runtime,
 		Extensions:      r.extensions,
 		SubAgentManager: r.subAgentManager,
-		TokenManager:    r.tokenManager,
 		AuditStore:      r.auditStore,
 		PromptStore:     r.promptStore,
 		Observer:        childObserver,
@@ -161,6 +228,15 @@ func buildSubAgentTaskInput(request tools.DelegateSubAgentRequest) string {
 }
 
 func buildSubAgentPromptInput(request tools.DelegateSubAgentRequest, preflight subagentspkg.PreflightResult) *SubAgentPromptInput {
+	definitionBody := strings.TrimSpace(preflight.Definition.Instruction)
+	guardrails := buildToolSafetyGuardrails(preflight.EffectiveTools)
+	if guardrails != "" {
+		if definitionBody != "" {
+			definitionBody = guardrails + "\n\n" + definitionBody
+		} else {
+			definitionBody = guardrails
+		}
+	}
 	return &SubAgentPromptInput{
 		Name:           strings.TrimSpace(preflight.Definition.Name),
 		Task:           strings.TrimSpace(request.Task),
@@ -169,8 +245,33 @@ func buildSubAgentPromptInput(request tools.DelegateSubAgentRequest, preflight s
 		AllowedTools:   append([]string(nil), preflight.EffectiveTools...),
 		Isolation:      strings.TrimSpace(preflight.Isolation),
 		ResultPolicy:   subAgentResultPolicyCompressed,
-		DefinitionBody: strings.TrimSpace(preflight.Definition.Instruction),
+		DefinitionBody: definitionBody,
 	}
+}
+
+// writeToolNames is the set of tool names that indicate the agent can modify files.
+var writeToolNames = map[string]bool{
+	"write_file":      true,
+	"replace_in_file": true,
+	"apply_patch":     true,
+	"run_shell":       true,
+}
+
+// buildToolSafetyGuardrails returns behavioral guardrail text based on the
+// effective toolset. Write-capable agents receive edit guidelines; read-only
+// agents receive a strict prohibition on file modifications.
+func buildToolSafetyGuardrails(effectiveTools []string) string {
+	hasWrite := false
+	for _, name := range effectiveTools {
+		if writeToolNames[strings.TrimSpace(name)] {
+			hasWrite = true
+			break
+		}
+	}
+	if hasWrite {
+		return "=== WRITE MODE - FILE MODIFICATIONS ALLOWED ===\nYou have access to file modification tools. Follow these rules:\n- Only modify files directly related to the assigned task.\n- Do NOT delete files unless explicitly instructed.\n- Prefer targeted edits over full-file rewrites.\n- Report every file you modified in the modified_files field of your result."
+	}
+	return "=== READ-ONLY MODE - NO FILE MODIFICATIONS ===\nYou are STRICTLY PROHIBITED from:\n- Creating or modifying any files\n- Running shell commands that change system state\n- Deleting any files\nYour role is EXCLUSIVELY to read, search, and analyze existing code."
 }
 
 func applySubAgentPreflightSetup(setup *runPromptSetup, preflight subagentspkg.PreflightResult) {
@@ -205,7 +306,7 @@ func sortedToolSetNames(set map[string]struct{}) []string {
 	return names
 }
 
-func buildSubAgentResultFromAnswer(answer, invocationID, agent string) tools.DelegateSubAgentResult {
+func buildSubAgentResultFromAnswer(answer, invocationID, agent string, messages []llm.Message) tools.DelegateSubAgentResult {
 	trimmed := strings.TrimSpace(answer)
 	if trimmed == "" {
 		trimmed = "SubAgent task completed."
@@ -217,29 +318,71 @@ func buildSubAgentResultFromAnswer(answer, invocationID, agent string) tools.Del
 		Agent:        strings.TrimSpace(agent),
 	}
 
+	// Try to extract structured JSON if the LLM returned one (backward compat).
 	jsonStr := extractJSONFromAnswer(trimmed)
-	if jsonStr == "" {
-		base.Summary = trimmed
-		return base
+	if jsonStr != "" {
+		var parsed tools.DelegateSubAgentResult
+		if err := json.Unmarshal([]byte(jsonStr), &parsed); err == nil && strings.TrimSpace(parsed.Summary) != "" {
+			base.Summary = strings.TrimSpace(parsed.Summary)
+			base.Content = base.Summary
+			base.Transcript = messagesToTranscript(messages)
+			return base
+		}
 	}
 
-	var parsed tools.DelegateSubAgentResult
-	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
-		base.Summary = trimmed
-		return base
+	// Natural language path: extract last assistant text blocks (Claude Code style).
+	content := extractLastAssistantText(messages)
+	if content == "" {
+		content = trimmed
 	}
-
-	hasStructuredData := strings.TrimSpace(parsed.Summary) != ""
-	if !hasStructuredData {
-		base.Summary = trimmed
-		return base
-	}
-
-	base.Summary = strings.TrimSpace(parsed.Summary)
-	if base.Summary == "" {
-		base.Summary = trimmed
-	}
+	base.Summary = content
+	base.Content = content
+	base.Transcript = messagesToTranscript(messages)
 	return base
+}
+
+// extractLastAssistantText extracts text from the last assistant message,
+// similar to Claude Code's finalizeAgentTool. Only text blocks are included;
+// tool_use blocks are discarded.
+func extractLastAssistantText(messages []llm.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if msg.Role != llm.RoleAssistant {
+			continue
+		}
+		var parts []string
+		for _, part := range msg.Parts {
+			if part.Text != nil {
+				text := strings.TrimSpace(part.Text.Value)
+				if text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, "\n")
+		}
+	}
+	return ""
+}
+
+// extractPartialResult extracts any assistant text output from the child session
+// before a failure occurred, so the parent agent can see what was accomplished.
+func extractPartialResult(messages []llm.Message) string {
+	var parts []string
+	for _, msg := range messages {
+		if msg.Role == llm.RoleAssistant {
+			for _, part := range msg.Parts {
+				if part.Text != nil {
+					text := strings.TrimSpace(part.Text.Value)
+					if text != "" {
+						parts = append(parts, text)
+					}
+				}
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 func extractJSONFromAnswer(answer string) string {
@@ -294,16 +437,91 @@ func resolveSubAgentMaxIterations(parentMaxIterations int, requestedMaxTurns int
 	return effectiveParent
 }
 
-func subAgentFailureResult(invocationID, agent, code, message string, retryable bool) tools.DelegateSubAgentResult {
+// subAgentErrorAsContent returns a result with OK:true and the error message as
+// summary content, so the parent agent can reason about the failure and decide
+// next steps (retry, partial recovery, or manual intervention).
+func subAgentErrorAsContent(invocationID, agent, message string, transcript []tools.TranscriptMessage) tools.DelegateSubAgentResult {
+	content := truncateSubAgentSummary("SubAgent error: " + strings.TrimSpace(message))
 	return tools.DelegateSubAgentResult{
-		OK:           false,
-		Status:       subAgentResultStatusFailed,
+		OK:           true,
+		Status:       subAgentResultStatusCompleted,
 		InvocationID: strings.TrimSpace(invocationID),
 		Agent:        strings.TrimSpace(agent),
-		Error: &tools.DelegateSubAgentError{
-			Code:      strings.TrimSpace(code),
-			Message:   strings.TrimSpace(message),
-			Retryable: retryable,
-		},
+		Summary:      content,
+		Content:      content,
+		Transcript:   transcript,
 	}
+}
+
+func messagesToTranscript(messages []llm.Message) []tools.TranscriptMessage {
+	result := make([]tools.TranscriptMessage, 0, len(messages))
+	for _, msg := range messages {
+		var content string
+		switch msg.Role {
+		case llm.RoleUser:
+			// User messages may contain tool results (raw JSON) or the original task.
+			// Only include messages that have meaningful text parts.
+			hasText := false
+			for _, part := range msg.Parts {
+				if part.Text != nil && strings.TrimSpace(part.Text.Value) != "" {
+					hasText = true
+					break
+				}
+			}
+			if !hasText {
+				continue // skip tool result messages
+			}
+			var parts []string
+			for _, part := range msg.Parts {
+				if part.Text != nil {
+					if t := strings.TrimSpace(part.Text.Value); t != "" {
+						parts = append(parts, t)
+					}
+				}
+			}
+			content = strings.Join(parts, "\n")
+		case llm.RoleAssistant:
+			var parts []string
+			for _, part := range msg.Parts {
+				switch {
+				case part.Text != nil:
+					if t := strings.TrimSpace(part.Text.Value); t != "" {
+						parts = append(parts, t)
+					}
+				case part.ToolUse != nil:
+					name := part.ToolUse.Name
+					args := strings.TrimSpace(part.ToolUse.Arguments)
+					if len(args) > 80 {
+						args = args[:77] + "..."
+					}
+					parts = append(parts, name+"("+args+")")
+				}
+			}
+			content = strings.Join(parts, "\n")
+		default:
+			continue
+		}
+		if content == "" {
+			continue
+		}
+		result = append(result, tools.TranscriptMessage{
+			Role:    string(msg.Role),
+			Content: content,
+		})
+	}
+	return result
+}
+
+func cloneSessionForPersist(src *session.Session, flattenedID, workspace string) *session.Session {
+	data, err := json.Marshal(src)
+	if err != nil {
+		return src
+	}
+	var clone session.Session
+	if err := json.Unmarshal(data, &clone); err != nil {
+		return src
+	}
+	clone.ID = flattenedID
+	clone.Workspace = workspace
+	return &clone
 }

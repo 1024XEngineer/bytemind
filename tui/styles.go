@@ -399,6 +399,29 @@ var (
 	toolDetailStyle = lipgloss.NewStyle().
 			Foreground(semanticColors.TextMuted)
 
+	toolDiffAddStyle = lipgloss.NewStyle().
+			Background(lipgloss.Color("#1A5C2A")).
+			Foreground(lipgloss.Color("#FFFFFF"))
+
+	toolDiffRemoveStyle = lipgloss.NewStyle().
+			Background(lipgloss.Color("#5C1A1A")).
+			Foreground(lipgloss.Color("#FFFFFF"))
+
+	toolDiffContextStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextBase)
+
+	toolDiffLineNumStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextMuted)
+
+	toolDiffPathStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FFFF"))
+
+	toolDiffStatsStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextMuted)
+
+	toolDiffHunkHeaderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#00CCCC"))
+
 	toolExpandHintStyle = lipgloss.NewStyle().
 				Foreground(semanticColors.TextMuted)
 
@@ -441,13 +464,15 @@ var (
 				Foreground(colorThinkingDone)
 
 	approvalBannerStyle = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("#D89B39")).
-				Background(lipgloss.Color("#0A0D12")).
-				Padding(1, 1)
+				BorderTop(true).
+				BorderForeground(semanticColors.Accent).
+				Background(lipgloss.Color("#0D1117")).
+				Padding(1, 2).
+				MarginTop(1).
+				MarginBottom(0)
 
 	approvalTitleStyle = lipgloss.NewStyle().
-				Foreground(semanticColors.Warning).
+				Foreground(semanticColors.Accent).
 				Bold(true)
 
 	approvalReasonStyle = lipgloss.NewStyle().
@@ -455,20 +480,33 @@ var (
 
 	approvalCommandStyle = lipgloss.NewStyle().
 				Foreground(semanticColors.TextBase).
-				Background(lipgloss.Color("#000000"))
+				Background(lipgloss.Color("#0D1117"))
 
 	approvalHintStyle = lipgloss.NewStyle().
-				Foreground(semanticColors.TextMuted)
+				Foreground(semanticColors.TextMuted).
+				Faint(true)
 
 	approvalOptionStyle = lipgloss.NewStyle().
 				Foreground(semanticColors.TextBase)
 
 	approvalOptionSelectedStyle = lipgloss.NewStyle().
-					Foreground(semanticColors.Accent).
+					Foreground(semanticColors.TextStrong).
+					Background(lipgloss.Color("#1A2332")).
 					Bold(true)
 
 	approvalOptionDescriptionStyle = lipgloss.NewStyle().
-					Foreground(semanticColors.TextMuted)
+					Foreground(semanticColors.TextMuted).
+					Faint(true)
+
+	approvalArrowStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.Accent).
+				Bold(true)
+
+	approvalNumberStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextMuted)
+
+	approvalFeedbackStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextMuted)
 
 	approvalOptionIdleStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#9BA7BC")).

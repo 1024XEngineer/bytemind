@@ -6,16 +6,106 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
+	"sync"
 
 	contextpkg "github.com/1024XEngineer/bytemind/internal/context"
 	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 	"github.com/1024XEngineer/bytemind/internal/session"
-	"github.com/1024XEngineer/bytemind/internal/tokenusage"
 	"github.com/1024XEngineer/bytemind/internal/tools"
 )
+
+const maxParallelToolCalls = 4
+
+// toolsParallelizable defines the set of tool names whose calls may be executed
+// concurrently within a single turn. Only delegate_subagent and local read-only
+// builtins are included in v1.
+var toolsParallelizable = map[string]bool{
+	"delegate_subagent": true,
+	"list_files":        true,
+	"read_file":         true,
+	"search_text":       true,
+}
+
+type indexedToolCall struct {
+	Index    int
+	ToolCall llm.ToolCall
+}
+
+// partitionForParallelExecution divides a turn's tool calls into groups. Calls
+// within a group execute concurrently; groups execute sequentially. The decision
+// is driven by the toolsParallelizable whitelist: unknown tools and tools with
+// side effects are kept in their own sequential group. Each group is capped at
+// maxParallelToolCalls.
+func partitionForParallelExecution(toolCalls []llm.ToolCall) [][]indexedToolCall {
+	groups := make([][]indexedToolCall, 0)
+	current := make([]indexedToolCall, 0)
+
+	for i, call := range toolCalls {
+		ic := indexedToolCall{Index: i, ToolCall: call}
+		if toolsParallelizable[call.Function.Name] {
+			current = append(current, ic)
+			if len(current) >= maxParallelToolCalls {
+				groups = append(groups, current)
+				current = nil
+			}
+		} else {
+			if len(current) > 0 {
+				groups = append(groups, current)
+				current = nil
+			}
+			groups = append(groups, []indexedToolCall{ic})
+		}
+	}
+	if len(current) > 0 {
+		groups = append(groups, current)
+	}
+	return groups
+}
+
+// executeToolCallsParallel runs a group of tool calls concurrently. Observer
+// events (including EventToolCallCompleted) are emitted from goroutines via
+// the channel-based observer, which is safe for concurrent sends. Results are
+// collected and returned in original order. The first framework-level error
+// is returned after all goroutines complete.
+func (e *defaultEngine) executeToolCallsParallel(
+	ctx context.Context,
+	sess *session.Session,
+	runMode planpkg.AgentMode,
+	calls []indexedToolCall,
+	out io.Writer,
+	allowedTools, deniedTools map[string]struct{},
+	approval tools.ApprovalHandler,
+	sandboxAudit sandboxAuditContext,
+) ([]toolCallResult, error) {
+	n := len(calls)
+	results := make([]toolCallResult, n)
+	var firstFatal error
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	wg.Add(n)
+
+	for i, call := range calls {
+		go func(idx int, c indexedToolCall) {
+			defer wg.Done()
+			result, err := e.executeToolCall(ctx, sess, runMode, c.ToolCall,
+				out, allowedTools, deniedTools, approval, sandboxAudit)
+			result.Index = c.Index
+			results[idx] = result
+			if err != nil {
+				mu.Lock()
+				if firstFatal == nil {
+					firstFatal = err
+				}
+				mu.Unlock()
+			}
+		}(i, call)
+	}
+
+	wg.Wait()
+	return results, firstFatal
+}
 
 type turnProcessParams struct {
 	Session          *session.Session
@@ -56,20 +146,14 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 	request.Model = runner.modelID()
 
 	streamedText := false
-	turnStart := time.Now()
 	reply, err := e.completeTurn(ctx, request, p.Out, &streamedText)
-	turnLatency := time.Since(turnStart)
 	if err != nil {
-		estimatedUsage := tokenusage.ResolveTurnUsage(request, nil)
-		runner.recordTokenUsage(ctx, p.Session, request, estimatedUsage, turnLatency, false)
 		return "", false, err
 	}
 	reply.Normalize()
 	_, cleanedReply, _ := parseAssistantTurnIntent(reply)
 	reply = cleanedReply
-	turnUsage := tokenusage.ResolveTurnUsage(request, &reply)
-	runner.recordTokenUsage(ctx, p.Session, request, turnUsage, turnLatency, true)
-	runner.emitUsageEvent(p.Session, &turnUsage)
+	runner.emitUsageEvent(p.Session, reply.Usage)
 
 	if len(reply.ToolCalls) == 0 {
 		// No tool calls — finalize the turn. Safety nets only for specific claim patterns.
@@ -147,30 +231,81 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 	if streamedText && p.Out != nil {
 		_, _ = io.WriteString(p.Out, "\n")
 	}
-	for _, call := range reply.ToolCalls {
-		*p.ExecutedTools = append(*p.ExecutedTools, call.Function.Name)
-		if p.TaskReport != nil {
-			p.TaskReport.RecordExecuted(call.Function.Name)
+	groups := partitionForParallelExecution(reply.ToolCalls)
+	for _, group := range groups {
+		if len(group) == 1 {
+			call := group[0]
+			*p.ExecutedTools = append(*p.ExecutedTools, call.ToolCall.Function.Name)
+			if p.TaskReport != nil {
+				p.TaskReport.RecordExecuted(call.ToolCall.Function.Name)
+			}
+			emitTurnEvent(ctx, TurnEvent{
+				Type: TurnEventToolUse,
+				Payload: map[string]any{
+					"tool_name":      call.ToolCall.Function.Name,
+					"tool_arguments": call.ToolCall.Function.Arguments,
+					"tool_call_id":   call.ToolCall.ID,
+				},
+			})
+			result, err := e.executeToolCall(ctx, p.Session, p.RunMode, call.ToolCall, p.Out, p.AllowedTools, p.DeniedTools, p.Approval, p.SandboxAudit)
+			if err != nil {
+				return "", false, err
+			}
+			p.Session.Messages = append(p.Session.Messages, result.ToolMessage)
+			envelope, ok := latestToolResultEnvelope(p.Session)
+			if ok && p.TaskReport != nil {
+				if note := systemSandboxFallbackReportEntry(call.ToolCall.Function.Name, envelope); note != "" {
+					p.TaskReport.RecordSystemSandboxFallback(note)
+				}
+			}
+			if ok && p.TaskReport != nil && envelope.Status == statusDenied {
+				p.TaskReport.RecordDenied(call.ToolCall.Function.Name)
+			}
+			continue
 		}
-		emitTurnEvent(ctx, TurnEvent{
-			Type: TurnEventToolUse,
-			Payload: map[string]any{
-				"tool_name":      call.Function.Name,
-				"tool_arguments": call.Function.Arguments,
-				"tool_call_id":   call.ID,
-			},
-		})
-		if err := e.executeToolCall(ctx, p.Session, p.RunMode, call, p.Out, p.AllowedTools, p.DeniedTools, p.Approval, p.SandboxAudit); err != nil {
-			return "", false, err
+
+		// Emit turn events and record tool names before launching parallel goroutines.
+		for _, c := range group {
+			*p.ExecutedTools = append(*p.ExecutedTools, c.ToolCall.Function.Name)
+			if p.TaskReport != nil {
+				p.TaskReport.RecordExecuted(c.ToolCall.Function.Name)
+			}
+			emitTurnEvent(ctx, TurnEvent{
+				Type: TurnEventToolUse,
+				Payload: map[string]any{
+					"tool_name":      c.ToolCall.Function.Name,
+					"tool_arguments": c.ToolCall.Function.Arguments,
+					"tool_call_id":   c.ToolCall.ID,
+				},
+			})
 		}
-		envelope, ok := latestToolResultEnvelope(p.Session)
-		if ok && p.TaskReport != nil {
-			if note := systemSandboxFallbackReportEntry(call.Function.Name, envelope); note != "" {
-				p.TaskReport.RecordSystemSandboxFallback(note)
+
+		results, err := e.executeToolCallsParallel(ctx, p.Session, p.RunMode, group, p.Out, p.AllowedTools, p.DeniedTools, p.Approval, p.SandboxAudit)
+		// Append completed sibling results even when a fatal error occurred,
+		// so partial progress is not lost from the session.
+		for _, result := range results {
+			if result.ToolMessage.Role == "" {
+				continue
+			}
+			p.Session.Messages = append(p.Session.Messages, result.ToolMessage)
+			envelope, ok := latestToolResultEnvelope(p.Session)
+			if ok && p.TaskReport != nil {
+				if note := systemSandboxFallbackReportEntry(result.ToolName, envelope); note != "" {
+					p.TaskReport.RecordSystemSandboxFallback(note)
+				}
+			}
+			if ok && p.TaskReport != nil && envelope.Status == statusDenied {
+				p.TaskReport.RecordDenied(result.ToolName)
 			}
 		}
-		if ok && p.TaskReport != nil && envelope.Status == statusDenied {
-			p.TaskReport.RecordDenied(call.Function.Name)
+		if err != nil {
+			return "", false, err
+		}
+	}
+
+	if runner.store != nil {
+		if err := runner.store.Save(p.Session); err != nil {
+			return "", false, err
 		}
 	}
 	return "", false, nil

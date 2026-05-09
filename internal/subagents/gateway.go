@@ -134,13 +134,6 @@ func (g *Gateway) Preflight(request PreflightRequest) (PreflightResult, error) {
 		requestedOutput = strings.TrimSpace(definition.Output)
 	}
 	requestedOutput = strings.ToLower(strings.TrimSpace(requestedOutput))
-	if requestedOutput != "" && !isAllowedOutput(requestedOutput) {
-		return PreflightResult{}, newGatewayError(
-			ErrorCodeSubAgentInvalidRequest,
-			fmt.Sprintf("invalid output %q", requestedOutput),
-			false,
-		)
-	}
 
 	visibleSet := normalizeNameSet(request.ParentVisible)
 	if len(visibleSet) == 0 {
@@ -275,15 +268,6 @@ func setToSortedSlice(set map[string]struct{}) []string {
 func isAllowedIsolation(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case isolationNone, isolationWorktree:
-		return true
-	default:
-		return false
-	}
-}
-
-func isAllowedOutput(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case outputSummary:
 		return true
 	default:
 		return false

@@ -11,6 +11,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/provider"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	"github.com/1024XEngineer/bytemind/internal/skills"
+	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
 )
 
 type EventType string
@@ -39,6 +40,7 @@ type Event struct {
 	Plan          planpkg.State
 	Usage         llm.Usage
 	AgentID       string // non-empty when emitted by a subagent
+	InvocationID  string // non-empty when emitted by a subagent, globally unique per invocation
 }
 
 type ApprovalRequest struct {
@@ -99,6 +101,7 @@ type Runner interface {
 	ActivateSkill(sess *session.Session, name string, args map[string]string) (skills.Skill, error)
 	ClearActiveSkill(sess *session.Session) error
 	ClearSkill(name string) (skills.ClearResult, error)
+	SubAgentManager() *subagentspkg.Manager
 	ListModels(ctx context.Context) ([]provider.ModelInfo, []provider.Warning, error)
 }
 

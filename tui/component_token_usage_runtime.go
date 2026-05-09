@@ -43,6 +43,23 @@ func (m *model) applyUsage(usage llm.Usage) {
 	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 }
 
+func (m *model) applyEstimatedDeltaUsage(delta string) {
+	if m == nil || m.tokenHasOfficialUsage {
+		return
+	}
+	estimated := estimateDeltaTokens(m.tokenEstimator, delta)
+	if estimated <= 0 {
+		return
+	}
+	m.refreshTokenBudget()
+	m.tempEstimatedOutput += estimated
+	m.tokenUsedTotal += estimated
+	m.tokenOutput += estimated
+	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
+	m.tokenUsage.SetUnavailable(false)
+	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
+}
+
 func (m *model) SetUsage(used, total int) tea.Cmd {
 	m.tokenHasOfficialUsage = true
 	m.tokenUsage.SetUnavailable(false)
@@ -58,7 +75,7 @@ func (m *model) syncTokenUsageComponent() {
 		return
 	}
 	_ = m.tokenUsage.SetUsage(m.tokenUsedTotal, m.tokenBudget)
-	m.tokenUsage.SetUnavailable(!m.tokenHasOfficialUsage)
+	m.tokenUsage.SetUnavailable(!m.tokenHasOfficialUsage && m.tokenUsedTotal <= 0)
 	m.tokenUsage.SetBreakdown(m.tokenInput, m.tokenOutput, m.tokenContext)
 }
 
@@ -160,8 +177,8 @@ func (m *model) refreshTokenBudget() {
 	}
 	budget := max(1, m.cfg.TokenQuota)
 	runtimeCfg := m.cfg.ProviderRuntime
-	providerID := strings.TrimSpace(runtimeCfg.DefaultProvider)
-	modelID := strings.TrimSpace(runtimeCfg.DefaultModel)
+	providerID := config.SelectedProviderID(runtimeCfg)
+	modelID := config.SelectedModelID(runtimeCfg)
 	if modelID == "" {
 		modelID = strings.TrimSpace(m.cfg.Provider.Model)
 	}

@@ -78,6 +78,13 @@ func (a *tuiRunnerAdapter) UpdateProvider(providerCfg config.ProviderConfig, cli
 	a.runner.UpdateProvider(providerCfg, client)
 }
 
+func (a *tuiRunnerAdapter) UpdateProviderRuntime(runtimeCfg config.ProviderRuntimeConfig, providerCfg config.ProviderConfig, client llm.Client) {
+	if a == nil || a.runner == nil {
+		return
+	}
+	a.runner.UpdateProviderRuntime(runtimeCfg, providerCfg, client)
+}
+
 func (a *tuiRunnerAdapter) UpdateApprovalMode(mode string) {
 	if a == nil || a.runner == nil {
 		return
@@ -125,6 +132,13 @@ func (a *tuiRunnerAdapter) CompactSession(ctx context.Context, sess *session.Ses
 		return "", false, errors.New("runner is unavailable")
 	}
 	return a.runner.CompactSession(ctx, sess)
+}
+
+func (a *tuiRunnerAdapter) SubAgentManager() *subagentspkg.Manager {
+	if a == nil || a.runner == nil {
+		return nil
+	}
+	return a.runner.SubAgentManager()
 }
 
 func (a *tuiRunnerAdapter) ListModels(ctx context.Context) ([]provider.ModelInfo, []provider.Warning, error) {
@@ -188,6 +202,7 @@ func mapAgentEvent(event agent.Event) tui.Event {
 		Plan:          event.Plan,
 		Usage:         event.Usage,
 		AgentID:       event.AgentID,
+		InvocationID:  event.InvocationID,
 	}
 }
 

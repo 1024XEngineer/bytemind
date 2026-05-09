@@ -2,6 +2,53 @@
 
 ByteMind supports any model provider that exposes an OpenAI-compatible API, plus Anthropic and Gemini native APIs.
 
+## Multi-Provider Setup (Model Switching)
+
+Configure multiple providers at once and switch between them at runtime with `/model`:
+
+```json
+{
+  "provider_runtime": {
+    "current_provider": "deepseek",
+    "default_provider": "deepseek",
+    "default_model": "deepseek-v4-flash",
+    "providers": {
+      "deepseek": {
+        "type": "openai-compatible",
+        "base_url": "https://api.deepseek.com",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model": "deepseek-v4-flash",
+        "models": ["deepseek-v4-flash", "deepseek-v4-pro"]
+      },
+      "openai": {
+        "type": "openai-compatible",
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "OPENAI_API_KEY",
+        "model": "gpt-5.4-mini",
+        "models": ["gpt-5.4-mini", "gpt-5.4"]
+      },
+      "anthropic": {
+        "type": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "model": "claude-sonnet-4-20250514",
+        "models": ["claude-sonnet-4-20250514", "claude-opus-4-20250514"]
+      }
+    }
+  }
+}
+```
+
+| Command | Action |
+| ------- | ------ |
+| `/model` | Interactive picker with all configured models |
+| `/model openai/gpt-5.4` | Switch to GPT-5.4 |
+| `/models` | Show current active model and all discovered models |
+
+The config file is updated automatically after switching. See [Config Reference](/reference/config-reference#provider-runtime-multi-provider) for every field.
+
+## Single Provider Examples (Legacy)
+
 ## OpenAI
 
 ```json
@@ -48,8 +95,8 @@ ByteMind supports any model provider that exposes an OpenAI-compatible API, plus
 {
   "provider": {
     "type": "openai-compatible",
-    "base_url": "https://api.deepseek.com/v1",
-    "model": "deepseek-coder",
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-v4-flash",
     "api_key_env": "DEEPSEEK_API_KEY"
   }
 }
@@ -80,10 +127,54 @@ Always prefer `api_key_env` over a literal `api_key` in config files. This keeps
 { "provider": { "api_key_env": "MY_API_KEY_VAR" } }
 ```
 
+Set the variable **before** starting ByteMind:
+
+<Tabs default-tab="PowerShell">
+<Tab title="PowerShell">
+
+```powershell
+# Temporary (current window only):
+$env:MY_API_KEY_VAR = "sk-..."
+
+# Permanent (survives reboots):
+[Environment]::SetEnvironmentVariable("MY_API_KEY_VAR", "sk-...", "User")
+# Restart terminal after this command.
+```
+
+</Tab>
+
+<Tab title="Linux">
+
 ```bash
+# Temporary (current window only):
 export MY_API_KEY_VAR="sk-..."
+
+# Permanent:
+echo 'export MY_API_KEY_VAR="sk-..."' >> ~/.bashrc
+```
+
+</Tab>
+
+<Tab title="macOS">
+
+```bash
+# Temporary (current window only):
+export MY_API_KEY_VAR="sk-..."
+
+# Permanent:
+echo 'export MY_API_KEY_VAR="sk-..."' >> ~/.zshrc
+```
+
+</Tab>
+</Tabs>
+
+```bash
 bytemind
 ```
+
+:::warning `api_key` overrides `api_key_env`
+If both `api_key` and `api_key_env` are set, `api_key` (plain text) takes priority. Remove `api_key` from your config to use the environment variable.
+:::
 
 ## Custom Auth Headers
 

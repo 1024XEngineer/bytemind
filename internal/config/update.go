@@ -6,11 +6,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
 
 var configDocumentMu sync.Mutex
+
+type configDocumentEdit struct {
+	start       int
+	end         int
+	replacement []byte
+}
 
 func UpsertProviderAPIKey(configPath, apiKey string) (string, error) {
 	apiKey = strings.TrimSpace(apiKey)
@@ -46,22 +53,38 @@ func UpsertProviderRuntimeSelection(configPath string, runtimeCfg ProviderRuntim
 		return "", err
 	}
 
-	selectedProvider := strings.ToLower(strings.TrimSpace(runtimeCfg.DefaultProvider))
+	selectedProvider := SelectedProviderID(runtimeCfg)
 	selectedModel := strings.TrimSpace(runtimeCfg.DefaultModel)
-	runtimeCfg, providerCfg, err := SelectProviderRuntimeModel(runtimeCfg, selectedProvider, selectedModel)
+	if selectedModel == "" {
+		selectedModel = SelectedModelID(runtimeCfg)
+	}
+	runtimeCfg, _, err = SelectProviderRuntimeModel(runtimeCfg, selectedProvider, selectedModel)
 	if err != nil {
 		return "", err
 	}
 
-	raw, err := loadConfigDocument(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		if err := writeConfigDocument(path, providerRuntimeSelectionDocument(runtimeCfg, selectedProvider, selectedModel)); err != nil {
+			return "", err
+		}
+		return path, nil
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		if err := writeConfigDocument(path, providerRuntimeSelectionDocument(runtimeCfg, selectedProvider, selectedModel)); err != nil {
+			return "", err
+		}
+		return path, nil
+	}
+
+	updated, err := patchProviderRuntimeSelectionDocument(data, selectedProvider, selectedModel)
 	if err != nil {
 		return "", err
 	}
-	raw["provider"] = providerConfigDocument(providerCfg)
-	raw["provider_runtime"] = runtimeCfg
-	ensureDefaultConfigDocumentFields(raw)
-
-	if err := writeConfigDocument(path, raw); err != nil {
+	if err := writeRawConfigDocument(path, updated); err != nil {
 		return "", err
 	}
 	return path, nil
@@ -150,6 +173,389 @@ func providerConfigDocument(providerCfg ProviderConfig) map[string]any {
 	return raw
 }
 
+func providerRuntimeProviderDocument(providerCfg ProviderConfig) map[string]any {
+	providerDoc := map[string]any{}
+	setNonEmptyProviderString(providerDoc, "type", providerCfg.Type)
+	setNonEmptyProviderString(providerDoc, "family", providerCfg.Family)
+	setNonEmptyProviderString(providerDoc, "base_url", providerCfg.BaseURL)
+	setNonEmptyProviderString(providerDoc, "api_path", providerCfg.APIPath)
+	setNonEmptyProviderString(providerDoc, "model", providerCfg.Model)
+	setNonEmptyProviderString(providerDoc, "api_key", providerCfg.APIKey)
+	setNonEmptyProviderString(providerDoc, "api_key_env", providerCfg.APIKeyEnv)
+	setNonEmptyProviderString(providerDoc, "auth_header", providerCfg.AuthHeader)
+	setNonEmptyProviderString(providerDoc, "auth_scheme", providerCfg.AuthScheme)
+	setNonEmptyProviderString(providerDoc, "anthropic_version", providerCfg.AnthropicVersion)
+	if providerCfg.AutoDetectType {
+		providerDoc["auto_detect_type"] = true
+	}
+	if len(providerCfg.ExtraHeaders) > 0 {
+		providerDoc["extra_headers"] = providerCfg.ExtraHeaders
+	}
+	if models := normalizeStringList(providerCfg.Models); len(models) > 0 {
+		providerDoc["models"] = models
+	}
+	return providerDoc
+}
+
+func providerRuntimeSelectionDocument(runtimeCfg ProviderRuntimeConfig, providerID, modelID string) map[string]any {
+	providers := normalizedProviderRuntimeProviders(runtimeCfg)
+	providerDocs := make(map[string]any, len(providers))
+	for id, providerCfg := range providers {
+		providerDoc := providerRuntimeProviderDocument(providerCfg)
+		if id == providerID {
+			providerDoc["model"] = modelID
+		}
+		providerDocs[id] = providerDoc
+	}
+	if _, ok := providerDocs[providerID]; !ok {
+		providerDocs[providerID] = map[string]any{"model": modelID}
+	}
+
+	return map[string]any{
+		"provider_runtime": map[string]any{
+			"current_provider": providerID,
+			"providers":        providerDocs,
+		},
+	}
+}
+
+func setNonEmptyProviderString(raw map[string]any, field, value string) {
+	if value = strings.TrimSpace(value); value != "" {
+		raw[field] = value
+	}
+}
+
+func patchProviderRuntimeSelectionDocument(data []byte, providerID, modelID string) ([]byte, error) {
+	providerID = strings.ToLower(strings.TrimSpace(providerID))
+	modelID = strings.TrimSpace(modelID)
+	if providerID == "" {
+		return nil, errors.New("provider id is required")
+	}
+	if modelID == "" {
+		return nil, errors.New("model id is required")
+	}
+
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil, err
+	}
+	runtimeRaw, ok := root["provider_runtime"]
+	if !ok {
+		return nil, errors.New("provider_runtime is missing")
+	}
+	var runtimeDoc struct {
+		Providers map[string]json.RawMessage `json:"providers"`
+	}
+	if err := json.Unmarshal(runtimeRaw, &runtimeDoc); err != nil {
+		return nil, err
+	}
+	if _, ok := runtimeDoc.Providers[providerID]; !ok {
+		return nil, fmt.Errorf("provider %q is not configured in provider_runtime", providerID)
+	}
+
+	rootStart, err := findJSONObjectStart(data)
+	if err != nil {
+		return nil, err
+	}
+	runtimeStart, _, ok, err := findJSONObjectField(data, rootStart, "provider_runtime")
+	if err != nil {
+		return nil, err
+	}
+	if !ok || runtimeStart >= len(data) || data[runtimeStart] != '{' {
+		return nil, errors.New("provider_runtime must be an object")
+	}
+	providersStart, _, ok, err := findJSONObjectField(data, runtimeStart, "providers")
+	if err != nil {
+		return nil, err
+	}
+	if !ok || providersStart >= len(data) || data[providersStart] != '{' {
+		return nil, errors.New("provider_runtime.providers must be an object")
+	}
+	providerStart, _, ok, err := findJSONObjectField(data, providersStart, providerID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || providerStart >= len(data) || data[providerStart] != '{' {
+		return nil, fmt.Errorf("provider %q must be an object", providerID)
+	}
+
+	edits := make([]configDocumentEdit, 0, 2)
+	currentStart, currentEnd, ok, err := findJSONObjectField(data, runtimeStart, "current_provider")
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		edits = append(edits, configDocumentEdit{start: currentStart, end: currentEnd, replacement: jsonStringLiteral(providerID)})
+	} else {
+		edit, err := insertJSONStringFieldEdit(data, runtimeStart, "current_provider", providerID)
+		if err != nil {
+			return nil, err
+		}
+		edits = append(edits, edit)
+	}
+
+	modelStart, modelEnd, ok, err := findJSONObjectField(data, providerStart, "model")
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		edits = append(edits, configDocumentEdit{start: modelStart, end: modelEnd, replacement: jsonStringLiteral(modelID)})
+	} else {
+		edit, err := insertJSONStringFieldEdit(data, providerStart, "model", modelID)
+		if err != nil {
+			return nil, err
+		}
+		edits = append(edits, edit)
+	}
+
+	return applyConfigDocumentEdits(data, edits), nil
+}
+
+func applyConfigDocumentEdits(data []byte, edits []configDocumentEdit) []byte {
+	out := append([]byte(nil), data...)
+	sort.Slice(edits, func(i, j int) bool {
+		return edits[i].start > edits[j].start
+	})
+	for _, edit := range edits {
+		out = append(out[:edit.start], append(edit.replacement, out[edit.end:]...)...)
+	}
+	return out
+}
+
+func insertJSONStringFieldEdit(data []byte, objectStart int, key, value string) (configDocumentEdit, error) {
+	if objectStart < 0 || objectStart >= len(data) || data[objectStart] != '{' {
+		return configDocumentEdit{}, errors.New("json object start is invalid")
+	}
+
+	keyLiteral := jsonStringLiteral(key)
+	valueLiteral := jsonStringLiteral(value)
+	field := make([]byte, 0, len(keyLiteral)+len(valueLiteral)+4)
+	field = append(field, keyLiteral...)
+	field = append(field, []byte(": ")...)
+	field = append(field, valueLiteral...)
+
+	next := skipJSONWhitespace(data, objectStart+1)
+	if next >= len(data) {
+		return configDocumentEdit{}, errors.New("unterminated json object")
+	}
+	if data[next] == '}' {
+		return configDocumentEdit{start: objectStart + 1, end: objectStart + 1, replacement: field}, nil
+	}
+	if hasLineBreakBetween(data, objectStart+1, next) {
+		replacement := make([]byte, 0, len(field)+32)
+		replacement = append(replacement, objectLineEnding(data, objectStart+1)...)
+		replacement = append(replacement, lineIndentBefore(data, next)...)
+		replacement = append(replacement, field...)
+		replacement = append(replacement, ',')
+		return configDocumentEdit{start: objectStart + 1, end: objectStart + 1, replacement: replacement}, nil
+	}
+
+	replacement := make([]byte, 0, len(field)+2)
+	replacement = append(replacement, field...)
+	replacement = append(replacement, []byte(", ")...)
+	return configDocumentEdit{start: objectStart + 1, end: objectStart + 1, replacement: replacement}, nil
+}
+
+func findJSONObjectStart(data []byte) (int, error) {
+	start := skipJSONWhitespace(data, 0)
+	if start >= len(data) || data[start] != '{' {
+		return 0, errors.New("config document must be a json object")
+	}
+	return start, nil
+}
+
+func findJSONObjectField(data []byte, objectStart int, field string) (int, int, bool, error) {
+	i := skipJSONWhitespace(data, objectStart)
+	if i >= len(data) || data[i] != '{' {
+		return 0, 0, false, errors.New("json object start is invalid")
+	}
+	i++
+	for {
+		i = skipJSONWhitespace(data, i)
+		if i >= len(data) {
+			return 0, 0, false, errors.New("unterminated json object")
+		}
+		if data[i] == '}' {
+			return 0, 0, false, nil
+		}
+		if data[i] != '"' {
+			return 0, 0, false, errors.New("json object key must be a string")
+		}
+		keyStart := i
+		keyEnd, err := scanJSONStringEnd(data, keyStart)
+		if err != nil {
+			return 0, 0, false, err
+		}
+		var key string
+		if err := json.Unmarshal(data[keyStart:keyEnd], &key); err != nil {
+			return 0, 0, false, err
+		}
+		i = skipJSONWhitespace(data, keyEnd)
+		if i >= len(data) || data[i] != ':' {
+			return 0, 0, false, errors.New("json object key must be followed by colon")
+		}
+		valueStart := skipJSONWhitespace(data, i+1)
+		valueEnd, err := scanJSONValueEnd(data, valueStart)
+		if err != nil {
+			return 0, 0, false, err
+		}
+		if key == field {
+			return valueStart, valueEnd, true, nil
+		}
+		i = skipJSONWhitespace(data, valueEnd)
+		if i >= len(data) {
+			return 0, 0, false, errors.New("unterminated json object")
+		}
+		switch data[i] {
+		case ',':
+			i++
+		case '}':
+			return 0, 0, false, nil
+		default:
+			return 0, 0, false, errors.New("json object fields must be separated by comma")
+		}
+	}
+}
+
+func scanJSONValueEnd(data []byte, start int) (int, error) {
+	if start >= len(data) {
+		return 0, errors.New("missing json value")
+	}
+	switch data[start] {
+	case '"':
+		return scanJSONStringEnd(data, start)
+	case '{', '[':
+		return scanJSONCompositeEnd(data, start)
+	default:
+		end := start
+		for end < len(data) && !isJSONValueTerminator(data[end]) {
+			end++
+		}
+		if end == start {
+			return 0, errors.New("missing json value")
+		}
+		var value any
+		if err := json.Unmarshal(data[start:end], &value); err != nil {
+			return 0, err
+		}
+		return end, nil
+	}
+}
+
+func scanJSONCompositeEnd(data []byte, start int) (int, error) {
+	stack := []byte{matchingJSONClose(data[start])}
+	for i := start + 1; i < len(data); i++ {
+		switch data[i] {
+		case '"':
+			end, err := scanJSONStringEnd(data, i)
+			if err != nil {
+				return 0, err
+			}
+			i = end - 1
+		case '{':
+			stack = append(stack, '}')
+		case '[':
+			stack = append(stack, ']')
+		case '}', ']':
+			if len(stack) == 0 || data[i] != stack[len(stack)-1] {
+				return 0, errors.New("mismatched json brackets")
+			}
+			stack = stack[:len(stack)-1]
+			if len(stack) == 0 {
+				return i + 1, nil
+			}
+		}
+	}
+	return 0, errors.New("unterminated json value")
+}
+
+func matchingJSONClose(open byte) byte {
+	if open == '[' {
+		return ']'
+	}
+	return '}'
+}
+
+func scanJSONStringEnd(data []byte, start int) (int, error) {
+	if start >= len(data) || data[start] != '"' {
+		return 0, errors.New("json string must start with quote")
+	}
+	for i := start + 1; i < len(data); i++ {
+		switch data[i] {
+		case '\\':
+			i++
+			if i >= len(data) {
+				return 0, errors.New("unterminated json string escape")
+			}
+		case '"':
+			return i + 1, nil
+		}
+	}
+	return 0, errors.New("unterminated json string")
+}
+
+func jsonStringLiteral(value string) []byte {
+	encoded, _ := json.Marshal(value)
+	return encoded
+}
+
+func skipJSONWhitespace(data []byte, start int) int {
+	for start < len(data) {
+		switch data[start] {
+		case ' ', '\n', '\r', '\t':
+			start++
+		default:
+			return start
+		}
+	}
+	return start
+}
+
+func isJSONValueTerminator(c byte) bool {
+	switch c {
+	case ' ', '\n', '\r', '\t', ',', '}', ']':
+		return true
+	default:
+		return false
+	}
+}
+
+func hasLineBreakBetween(data []byte, start, end int) bool {
+	for i := start; i < end && i < len(data); i++ {
+		if data[i] == '\n' || data[i] == '\r' {
+			return true
+		}
+	}
+	return false
+}
+
+func objectLineEnding(data []byte, start int) []byte {
+	for i := start; i < len(data); i++ {
+		switch data[i] {
+		case '\r':
+			if i+1 < len(data) && data[i+1] == '\n' {
+				return []byte("\r\n")
+			}
+			return []byte("\r")
+		case '\n':
+			return []byte("\n")
+		case ' ', '\t':
+			continue
+		default:
+			return []byte("\n")
+		}
+	}
+	return []byte("\n")
+}
+
+func lineIndentBefore(data []byte, index int) []byte {
+	lineStart := index
+	for lineStart > 0 && data[lineStart-1] != '\n' && data[lineStart-1] != '\r' {
+		lineStart--
+	}
+	return append([]byte(nil), data[lineStart:index]...)
+}
+
 func ensureDefaultConfigDocumentFields(raw map[string]any) {
 	if _, ok := raw["approval_policy"]; !ok {
 		raw["approval_policy"] = "on-request"
@@ -229,7 +635,10 @@ func writeConfigDocument(path string, raw any) error {
 		return err
 	}
 	encoded = append(encoded, '\n')
+	return writeRawConfigDocument(path, encoded)
+}
 
+func writeRawConfigDocument(path string, encoded []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err

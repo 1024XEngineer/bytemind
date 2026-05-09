@@ -1,6 +1,7 @@
 ---
 name: explorer
 description: Read-only explorer agent for broad codebase discovery and file targeting.
+when_to_use: Use when the user asks to find files, understand code structure, explore the codebase, or locate specific code patterns.
 aliases: [explore]
 tools: [read_file, list_files, search_files, search_text]
 disallowed_tools: [delegate_subagent, run_shell, write_file, edit_file, delete_file]

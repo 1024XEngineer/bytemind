@@ -52,14 +52,14 @@ func NewManager(workspace string) *Manager {
 			Message: "user subagent scope disabled: resolved home dir is empty",
 		})
 	} else {
-		userDir = filepath.Join(home, "subagents")
+		userDir = filepath.Join(home, ".bytemind", "agents")
 	}
 
 	manager := NewManagerWithDirs(
 		workspace,
 		filepath.Join(workspace, "internal", "subagents"),
 		userDir,
-		filepath.Join(workspace, ".bytemind", "subagents"),
+		filepath.Join(workspace, ".bytemind", "agents"),
 	)
 	manager.bootstrapDiagnostics = bootstrapDiagnostics
 	return manager
@@ -93,6 +93,7 @@ func (m *Manager) Reload() Catalog {
 		{scope: ScopeBuiltin, dir: m.builtinDir},
 		{scope: ScopeUser, dir: m.userDir},
 		{scope: ScopeProject, dir: m.projectDir},
+		{scope: ScopeProject, dir: filepath.Join(m.workspace, ".agents", "agents")},
 	}
 
 	loaded := map[string]Agent{}
@@ -371,6 +372,7 @@ func loadAgentFromFile(scope Scope, path string) (Agent, bool, []Diagnostic) {
 		Output:          strings.TrimSpace(frontmatter["output"]),
 		Isolation:       strings.TrimSpace(frontmatter["isolation"]),
 		Aliases:         aliases,
+		WhenToUse:       strings.TrimSpace(frontmatter["when_to_use"]),
 		DiscoveredAt:    time.Now().UTC(),
 	}
 	return agent, true, diags
@@ -513,6 +515,7 @@ func hardcodedBuiltinAgents() []Agent {
 			Tools:       []string{"list_files", "read_file", "search_text"},
 			MaxTurns:    6,
 			Instruction: "You are a focused repository explorer. Search and read only what is needed.\nReturn a concise summary, key findings, and file references. Do not edit files,\nrun shell commands, or make implementation changes.",
+			WhenToUse:   "Use when the user asks to find files, understand code structure, explore the codebase, or locate specific code patterns.",
 			Aliases:     []string{"explorer", "/explorer"},
 		},
 		{
@@ -522,7 +525,20 @@ func hardcodedBuiltinAgents() []Agent {
 			Tools:       []string{"list_files", "read_file", "search_text"},
 			MaxTurns:    8,
 			Instruction: "You are a code reviewer. Prioritize concrete bugs and behavioral regressions.\nReturn findings first, ordered by severity, with tight file references. Mention\ntest gaps and residual risks. Do not rewrite code.",
+			WhenToUse:   "Use when the user asks to review code, check for bugs, assess code quality, or identify missing tests.",
 			Aliases:     []string{"review", "/review"},
+		},
+		{
+			Name:            "general",
+			Description:     "General-purpose coding agent for complex multi-step tasks including file modifications. Use when the task requires both reading and writing code across multiple files.",
+			Scope:           ScopeBuiltin,
+			Tools:           []string{"list_files", "read_file", "search_text", "replace_in_file", "write_file"},
+			DisallowedTools: []string{"delegate_subagent"},
+			MaxTurns:        12,
+			Isolation:       "none",
+			Instruction:     "You are a focused coding agent. Prefer editing existing files over creating new ones.\nOnly modify files directly related to the assigned task.\nReturn a concise summary of every file you modified.\n\n## Output format\nReturn your final answer as a single JSON object (no markdown fences):\n{\"summary\":\"<one-paragraph overview of changes>\",\"findings\":[{\"title\":\"<short heading>\",\"body\":\"<detail>\"}],\"references\":[{\"path\":\"<file>\",\"line\":<int>,\"note\":\"<why relevant>\"}],\"modified_files\":[\"<path>\"]}\nIf you have no findings or references, use empty arrays [].",
+			WhenToUse:       "Use for complex multi-file edits, refactoring, implementing features, or any task requiring both reading and modifying code.",
+			Aliases:         []string{"general", "/general"},
 		},
 	}
 }

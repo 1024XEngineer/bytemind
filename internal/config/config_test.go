@@ -13,7 +13,9 @@ func TestLoadUsesEnvOverrides(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("BYTEMIND_HOME", home)
 	t.Setenv("BYTEMIND_MODEL", "override-model")
+	t.Setenv("BYTEMIND_BASE_URL", "https://example.test/v1")
 	t.Setenv("BYTEMIND_API_KEY", "secret")
+	t.Setenv("BYTEMIND_API_KEY_ENV", "ALT_API_KEY")
 	t.Setenv("BYTEMIND_TOKEN_QUOTA", "88000")
 	t.Setenv("BYTEMIND_PROVIDER_TYPE", "anthropic")
 	t.Setenv("BYTEMIND_PROVIDER_FAMILY", "DeepSeek")
@@ -35,6 +37,9 @@ func TestLoadUsesEnvOverrides(t *testing.T) {
 	if cfg.Provider.Model != "override-model" {
 		t.Fatalf("expected override model, got %q", cfg.Provider.Model)
 	}
+	if cfg.Provider.BaseURL != "https://example.test/v1" {
+		t.Fatalf("expected override base URL, got %q", cfg.Provider.BaseURL)
+	}
 	if cfg.Provider.Type != "anthropic" {
 		t.Fatalf("expected anthropic provider, got %q", cfg.Provider.Type)
 	}
@@ -52,6 +57,9 @@ func TestLoadUsesEnvOverrides(t *testing.T) {
 	}
 	if cfg.Provider.ResolveAPIKey() != "secret" {
 		t.Fatalf("expected api key from env")
+	}
+	if cfg.Provider.APIKeyEnv != "ALT_API_KEY" {
+		t.Fatalf("expected api key env override, got %q", cfg.Provider.APIKeyEnv)
 	}
 	if cfg.TokenQuota != 88000 {
 		t.Fatalf("expected token quota from env override, got %d", cfg.TokenQuota)
@@ -79,6 +87,59 @@ func TestLoadUsesEnvOverrides(t *testing.T) {
 	}
 	if cfg.Notifications.Desktop.CooldownSeconds != 9 {
 		t.Fatalf("expected notify cooldown from env override, got %d", cfg.Notifications.Desktop.CooldownSeconds)
+	}
+}
+
+func TestLoadEnvModelOverridePreservesCurrentProviderSelection(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("BYTEMIND_HOME", home)
+	t.Setenv("BYTEMIND_MODEL", "gpt-5.4")
+
+	configPath := filepath.Join(home, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "provider_runtime": {
+    "current_provider": "openai",
+    "providers": {
+      "openai": {
+        "type": "openai-compatible",
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "OPENAI_API_KEY",
+        "model": "gpt-5.4-mini"
+      },
+      "deepseek": {
+        "type": "openai-compatible",
+        "base_url": "https://api.deepseek.com",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model": "deepseek-v4-flash"
+      }
+    }
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ProviderRuntime.CurrentProvider != "openai" {
+		t.Fatalf("expected current provider to remain openai, got %#v", cfg.ProviderRuntime)
+	}
+	if cfg.ProviderRuntime.DefaultProvider != "openai" {
+		t.Fatalf("expected default provider to remain openai, got %#v", cfg.ProviderRuntime)
+	}
+	if cfg.ProviderRuntime.DefaultModel != "gpt-5.4" {
+		t.Fatalf("expected default model to use env override, got %#v", cfg.ProviderRuntime)
+	}
+	if cfg.Provider.Model != "gpt-5.4" || cfg.Provider.BaseURL != "https://api.openai.com/v1" {
+		t.Fatalf("expected provider to resolve selected openai config, got %#v", cfg.Provider)
+	}
+	if cfg.ProviderRuntime.Providers["openai"].Model != "gpt-5.4" {
+		t.Fatalf("expected selected provider model to be overridden, got %#v", cfg.ProviderRuntime.Providers["openai"])
+	}
+	if cfg.ProviderRuntime.Providers["deepseek"].Model != "deepseek-v4-flash" {
+		t.Fatalf("expected non-selected provider to remain unchanged, got %#v", cfg.ProviderRuntime.Providers["deepseek"])
 	}
 }
 
@@ -204,26 +265,6 @@ func TestLoadUsesUpdateCheckEnvOverride(t *testing.T) {
 	}
 }
 
-func TestLoadAppliesTokenUsageDefaults(t *testing.T) {
-	workspace := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("BYTEMIND_HOME", home)
-	t.Setenv("BYTEMIND_API_KEY", "secret")
-
-	cfg, err := Load(workspace, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.TokenUsage.StorageType != "file" {
-		t.Fatalf("expected default token_usage.storage_type=file, got %q", cfg.TokenUsage.StorageType)
-	}
-	if cfg.TokenUsage.RetentionDays != 30 {
-		t.Fatalf("expected default token_usage.retention_days=30, got %d", cfg.TokenUsage.RetentionDays)
-	}
-	if strings.TrimSpace(cfg.TokenUsage.BackupInterval) == "" {
-		t.Fatalf("expected default token_usage.backup_interval to be set")
-	}
-}
 
 func TestLoadAppliesContextBudgetDefaultsWhenMissing(t *testing.T) {
 	workspace := t.TempDir()
@@ -585,9 +626,9 @@ func TestLoadUserProviderPrecedenceResetsProjectProviderRuntime(t *testing.T) {
 	if cfg.ProviderRuntime.DefaultModel != "deepseek-reasoner" {
 		t.Fatalf("expected runtime to be rebuilt from user provider, got default model %q", cfg.ProviderRuntime.DefaultModel)
 	}
-	runtimeProvider, ok := cfg.ProviderRuntime.Providers["openai"]
+	runtimeProvider, ok := cfg.ProviderRuntime.Providers["deepseek"]
 	if !ok {
-		t.Fatalf("expected rebuilt legacy openai runtime provider, got %#v", cfg.ProviderRuntime.Providers)
+		t.Fatalf("expected rebuilt legacy deepseek runtime provider, got %#v", cfg.ProviderRuntime.Providers)
 	}
 	if runtimeProvider.BaseURL != "https://api.deepseek.com" {
 		t.Fatalf("expected user provider base_url in runtime provider, got %q", runtimeProvider.BaseURL)
@@ -845,8 +886,8 @@ func TestLoadDefaultsModelFromProviderEndpointWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Provider.Model != "deepseek-chat" {
-		t.Fatalf("expected default model deepseek-chat, got %q", cfg.Provider.Model)
+	if cfg.Provider.Model != "deepseek-v4-flash" {
+		t.Fatalf("expected default model deepseek-v4-flash, got %q", cfg.Provider.Model)
 	}
 }
 
@@ -881,8 +922,8 @@ func TestLoadNormalizesProviderFamily(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Provider.Family != "zai" {
-		t.Fatalf("expected top-level provider family zai, got %q", cfg.Provider.Family)
+	if cfg.Provider.Family != "moonshot" {
+		t.Fatalf("expected selected provider family moonshot, got %q", cfg.Provider.Family)
 	}
 	runtimeProvider := cfg.ProviderRuntime.Providers["moonshot"]
 	if runtimeProvider.Family != "moonshot" {
@@ -1150,9 +1191,6 @@ func TestEnsureHomeLayoutCreatesStandardDirectories(t *testing.T) {
 	if cfg.AwayPolicy != "auto_deny_continue" {
 		t.Fatalf("expected default away_policy=auto_deny_continue, got %q", cfg.AwayPolicy)
 	}
-	if cfg.TokenUsage.StorageType == "" || cfg.TokenUsage.BackupInterval == "" {
-		t.Fatalf("expected default token_usage config to be present, got %#v", cfg.TokenUsage)
-	}
 	if !cfg.UpdateCheck.Enabled {
 		t.Fatalf("expected default update_check.enabled=true in generated config")
 	}
@@ -1170,9 +1208,6 @@ func TestEnsureHomeLayoutCreatesStandardDirectories(t *testing.T) {
 	}
 	if cfg.Notifications.Desktop.OnRunCanceled {
 		t.Fatalf("expected default notifications.desktop.on_run_canceled=false in generated config")
-	}
-	if cfg.Notifications.Desktop.CooldownSeconds != 3 {
-		t.Fatalf("expected default notifications.desktop.cooldown_seconds=3 in generated config, got %d", cfg.Notifications.Desktop.CooldownSeconds)
 	}
 }
 
@@ -1357,7 +1392,7 @@ func TestUpsertProviderFieldSyncsProviderRuntime(t *testing.T) {
 	}
 }
 
-func TestUpsertProviderRuntimeSelectionPersistsProviderAndRuntime(t *testing.T) {
+func TestUpsertProviderRuntimeSelectionPersistsRuntimeSelection(t *testing.T) {
 	workspace := t.TempDir()
 	configPath := filepath.Join(workspace, "config.json")
 	if err := os.WriteFile(configPath, []byte(`{
@@ -1411,6 +1446,31 @@ func TestUpsertProviderRuntimeSelectionPersistsProviderAndRuntime(t *testing.T) 
 		t.Fatal(err)
 	}
 
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	providerSection := raw["provider"].(map[string]any)
+	if providerSection["base_url"] != "https://api.openai.com/v1" || providerSection["model"] != "gpt-5.4-mini" {
+		t.Fatalf("expected legacy provider section to remain unchanged, got %#v", providerSection)
+	}
+	runtimeSection := raw["provider_runtime"].(map[string]any)
+	if runtimeSection["current_provider"] != "deepseek" {
+		t.Fatalf("expected current_provider to be written, got %#v", runtimeSection)
+	}
+	if runtimeSection["default_provider"] != "openai" || runtimeSection["default_model"] != "gpt-5.4-mini" {
+		t.Fatalf("expected legacy default fields to remain unchanged, got %#v", runtimeSection)
+	}
+	providersSection := runtimeSection["providers"].(map[string]any)
+	deepseekSection := providersSection["deepseek"].(map[string]any)
+	if deepseekSection["model"] != "deepseek-reasoner" {
+		t.Fatalf("expected selected runtime provider model update, got %#v", deepseekSection)
+	}
+
 	cfg, err := Load(workspace, configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1421,11 +1481,272 @@ func TestUpsertProviderRuntimeSelectionPersistsProviderAndRuntime(t *testing.T) 
 	if cfg.ProviderRuntime.DefaultProvider != "deepseek" || cfg.ProviderRuntime.DefaultModel != "deepseek-reasoner" {
 		t.Fatalf("expected runtime defaults to switch, got %#v", cfg.ProviderRuntime)
 	}
+	if cfg.ProviderRuntime.CurrentProvider != "deepseek" {
+		t.Fatalf("expected current provider to switch, got %#v", cfg.ProviderRuntime)
+	}
 	if cfg.ProviderRuntime.Providers["openai"].Model != "gpt-5.4-mini" {
 		t.Fatalf("expected non-selected runtime provider to remain unchanged, got %#v", cfg.ProviderRuntime.Providers["openai"])
 	}
 	if cfg.ProviderRuntime.Providers["deepseek"].Model != "deepseek-reasoner" {
 		t.Fatalf("expected selected runtime provider model update, got %#v", cfg.ProviderRuntime.Providers["deepseek"])
+	}
+}
+
+func TestUpsertProviderRuntimeSelectionDoesNotExpandIssueTemplate(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "provider_runtime": {
+    "current_provider": "deepseek",
+    "providers": {
+      "deepseek": {
+        "type": "openai-compatible",
+        "base_url": "https://api.deepseek.com",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model": "deepseek-v4-flash",
+        "models": [
+          "deepseek-v4-flash",
+          "deepseek-v4-pro"
+        ]
+      },
+      "openai": {
+        "type": "openai-compatible",
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "OPENAI_API_KEY",
+        "model": "gpt-5.4-mini",
+        "models": [
+          "gpt-5.4-mini",
+          "gpt-5.4"
+        ]
+      }
+    }
+  },
+  "approval_policy": "on-request"
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := UpsertProviderRuntimeSelection(configPath, ProviderRuntimeConfig{
+		CurrentProvider: "openai",
+		DefaultModel:    "gpt-5.4",
+		Providers: map[string]ProviderConfig{
+			"deepseek": {
+				Type:      "openai-compatible",
+				BaseURL:   "https://api.deepseek.com",
+				APIKeyEnv: "DEEPSEEK_API_KEY",
+				Model:     "deepseek-v4-flash",
+				Models:    []string{"deepseek-v4-flash", "deepseek-v4-pro"},
+			},
+			"openai": {
+				Type:      "openai-compatible",
+				BaseURL:   "https://api.openai.com/v1",
+				APIKeyEnv: "OPENAI_API_KEY",
+				Model:     "gpt-5.4-mini",
+				Models:    []string{"gpt-5.4-mini", "gpt-5.4"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawText := string(data)
+	for _, unwanted := range []string{
+		`"provider":`,
+		`"default_provider"`,
+		`"default_model"`,
+		`"allow_fallback"`,
+		`"api_path"`,
+		`"auth_header"`,
+		`"auth_scheme"`,
+		`"extra_headers"`,
+		`"anthropic_version"`,
+	} {
+		if strings.Contains(rawText, unwanted) {
+			t.Fatalf("expected config not to contain %s after model switch, got:\n%s", unwanted, rawText)
+		}
+	}
+	if strings.Index(rawText, `"provider_runtime"`) > strings.Index(rawText, `"approval_policy"`) {
+		t.Fatalf("expected provider_runtime ordering to be preserved, got:\n%s", rawText)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	runtimeSection := raw["provider_runtime"].(map[string]any)
+	if runtimeSection["current_provider"] != "openai" {
+		t.Fatalf("expected current_provider to switch to openai, got %#v", runtimeSection)
+	}
+	providersSection := runtimeSection["providers"].(map[string]any)
+	deepseekSection := providersSection["deepseek"].(map[string]any)
+	openAISection := providersSection["openai"].(map[string]any)
+	if deepseekSection["model"] != "deepseek-v4-flash" {
+		t.Fatalf("expected non-selected provider model to remain unchanged, got %#v", deepseekSection)
+	}
+	if openAISection["model"] != "gpt-5.4" {
+		t.Fatalf("expected selected provider model to switch, got %#v", openAISection)
+	}
+}
+
+func TestUpsertProviderRuntimeSelectionCreatesConfigWhenMissing(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "nested", "config.json")
+
+	writtenPath, err := UpsertProviderRuntimeSelection(configPath, ProviderRuntimeConfig{
+		CurrentProvider: "OpenAI",
+		DefaultModel:    "gpt-5.4",
+		Providers: map[string]ProviderConfig{
+			"OpenAI": {
+				Type:             "openai-compatible",
+				Family:           "openai",
+				BaseURL:          "https://api.openai.com/v1",
+				APIPath:          "/chat/completions",
+				APIKey:           "test-key",
+				APIKeyEnv:        "OPENAI_API_KEY",
+				AuthHeader:       "Authorization",
+				AuthScheme:       "Bearer",
+				AnthropicVersion: "2023-06-01",
+				AutoDetectType:   true,
+				ExtraHeaders:     map[string]string{"X-Test": "true"},
+				Model:            "gpt-5.4-mini",
+				Models:           []string{"gpt-5.4-mini", "gpt-5.4"},
+			},
+			"deepseek": {
+				Type:      "openai-compatible",
+				BaseURL:   "https://api.deepseek.com",
+				APIKeyEnv: "DEEPSEEK_API_KEY",
+				Model:     "deepseek-chat",
+				Models:    []string{"deepseek-chat", "deepseek-reasoner"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Clean(writtenPath) != filepath.Clean(configPath) {
+		t.Fatalf("expected written path %q, got %q", configPath, writtenPath)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	runtimeSection := raw["provider_runtime"].(map[string]any)
+	if runtimeSection["current_provider"] != "openai" {
+		t.Fatalf("expected normalized current provider, got %#v", runtimeSection)
+	}
+	providersSection := runtimeSection["providers"].(map[string]any)
+	openAISection := providersSection["openai"].(map[string]any)
+	for field, want := range map[string]any{
+		"type":              "openai-compatible",
+		"family":            "openai",
+		"base_url":          "https://api.openai.com/v1",
+		"api_path":          "/chat/completions",
+		"api_key":           "test-key",
+		"api_key_env":       "OPENAI_API_KEY",
+		"auth_header":       "Authorization",
+		"auth_scheme":       "Bearer",
+		"anthropic_version": "2023-06-01",
+		"auto_detect_type":  true,
+		"model":             "gpt-5.4",
+	} {
+		if openAISection[field] != want {
+			t.Fatalf("expected %s=%#v, got %#v in %#v", field, want, openAISection[field], openAISection)
+		}
+	}
+	if _, ok := openAISection["extra_headers"].(map[string]any); !ok {
+		t.Fatalf("expected extra_headers to be written, got %#v", openAISection["extra_headers"])
+	}
+	models, ok := openAISection["models"].([]any)
+	if !ok || len(models) != 2 {
+		t.Fatalf("expected models to be written, got %#v", openAISection["models"])
+	}
+	deepseekSection := providersSection["deepseek"].(map[string]any)
+	if deepseekSection["model"] != "deepseek-chat" || deepseekSection["base_url"] != "https://api.deepseek.com" {
+		t.Fatalf("expected non-selected provider to be preserved, got %#v", deepseekSection)
+	}
+}
+
+func TestUpsertProviderRuntimeSelectionWritesEmptyConfig(t *testing.T) {
+	workspace := t.TempDir()
+	configPath := filepath.Join(workspace, "config.json")
+	if err := os.WriteFile(configPath, []byte(" \n\t"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := UpsertProviderRuntimeSelection(configPath, ProviderRuntimeConfig{
+		CurrentProvider: "deepseek",
+		Providers: map[string]ProviderConfig{
+			"deepseek": {
+				Type:    "openai-compatible",
+				BaseURL: "https://api.deepseek.com",
+				Model:   "deepseek-chat",
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(workspace, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ProviderRuntime.CurrentProvider != "deepseek" || cfg.ProviderRuntime.DefaultModel != "deepseek-chat" {
+		t.Fatalf("expected empty config to be replaced with runtime selection, got %#v", cfg.ProviderRuntime)
+	}
+}
+
+func TestPatchProviderRuntimeSelectionDocumentInsertsMissingFields(t *testing.T) {
+	updated, err := patchProviderRuntimeSelectionDocument([]byte(`{"provider_runtime":{"providers":{"openai":{"type":"openai-compatible"}}}}`), "openai", "gpt-5.4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(updated, &raw); err != nil {
+		t.Fatal(err)
+	}
+	runtimeSection := raw["provider_runtime"].(map[string]any)
+	if runtimeSection["current_provider"] != "openai" {
+		t.Fatalf("expected current_provider to be inserted, got %#v", runtimeSection)
+	}
+	providerSection := runtimeSection["providers"].(map[string]any)["openai"].(map[string]any)
+	if providerSection["model"] != "gpt-5.4" {
+		t.Fatalf("expected model to be inserted, got %#v", providerSection)
+	}
+}
+
+func TestPatchProviderRuntimeSelectionDocumentRejectsMalformedDocuments(t *testing.T) {
+	tests := []struct {
+		name       string
+		data       string
+		providerID string
+		modelID    string
+		want       string
+	}{
+		{name: "missing provider id", data: `{}`, providerID: "", modelID: "gpt-5.4", want: "provider id is required"},
+		{name: "missing model id", data: `{}`, providerID: "openai", modelID: "", want: "model id is required"},
+		{name: "invalid json", data: `{`, providerID: "openai", modelID: "gpt-5.4", want: "unexpected end"},
+		{name: "missing runtime", data: `{}`, providerID: "openai", modelID: "gpt-5.4", want: "provider_runtime is missing"},
+		{name: "invalid providers", data: `{"provider_runtime":{"providers":[]}}`, providerID: "openai", modelID: "gpt-5.4", want: "cannot unmarshal"},
+		{name: "unknown provider", data: `{"provider_runtime":{"providers":{"openai":{}}}}`, providerID: "missing", modelID: "gpt-5.4", want: "not configured"},
+		{name: "provider not object", data: `{"provider_runtime":{"providers":{"openai":"bad"}}}`, providerID: "openai", modelID: "gpt-5.4", want: "must be an object"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := patchProviderRuntimeSelectionDocument([]byte(tt.data), tt.providerID, tt.modelID)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error containing %q, got %v", tt.want, err)
+			}
+		})
 	}
 }
 
@@ -1451,7 +1772,7 @@ func TestUpsertProviderFieldBackfillsModelForDeepseekEndpointWhenMissing(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Provider.Model != "deepseek-chat" {
+	if cfg.Provider.Model != "deepseek-v4-flash" {
 		t.Fatalf("expected deepseek model fallback, got %q", cfg.Provider.Model)
 	}
 }

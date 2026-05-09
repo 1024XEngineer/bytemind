@@ -44,7 +44,7 @@ func (m *model) syncTokenUsageBounds() {
 	badgeW := lipgloss.Width(badge)
 	badgeH := lipgloss.Height(badge)
 	x := panelStyle.GetHorizontalFrameSize()/2 + max(0, width-badgeW-1)
-	y := panelStyle.GetVerticalFrameSize() / 2
+	y := 0
 	m.tokenUsage.SetBounds(x, y, badgeW, badgeH)
 }
 

@@ -47,18 +47,15 @@ scan files
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
-	if result.OK {
-		t.Fatalf("expected failure result, got %#v", result)
+	if !result.OK {
+		t.Fatalf("expected OK:true for error-as-content, got %#v", result)
 	}
-	if result.Status != subAgentResultStatusFailed {
-		t.Fatalf("expected status %q, got %q", subAgentResultStatusFailed, result.Status)
-	}
-	if result.Error == nil || result.Error.Code != subAgentErrorCodeRuntimeUnavailable {
-		t.Fatalf("expected runtime unavailable code, got %#v", result.Error)
+	if !strings.Contains(result.Summary, "llm client is unavailable") {
+		t.Fatalf("expected error message in summary, got %q", result.Summary)
 	}
 	if strings.TrimSpace(result.InvocationID) == "" {
 		t.Fatalf("expected invocation id, got %#v", result)
@@ -90,7 +87,7 @@ func TestDelegateSubAgentExecutesWithTemporaryChildSession(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -152,7 +149,7 @@ func TestDelegateSubAgentChildSessionUsesNarrowedTools(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -219,7 +216,7 @@ func TestDelegateSubAgentChildSessionDoesNotPersistTemporarySession(t *testing.T
 	}, &tools.ExecutionContext{
 		Mode:    planpkg.ModeBuild,
 		Session: parent,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -234,11 +231,17 @@ func TestDelegateSubAgentChildSessionDoesNotPersistTemporarySession(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(summaries) != 1 {
-		t.Fatalf("expected exactly one persisted session (parent only), got %d", len(summaries))
+	if len(summaries) != 2 {
+		t.Fatalf("expected two persisted sessions (parent + child), got %d", len(summaries))
 	}
-	if summaries[0].ID != parent.ID {
-		t.Fatalf("expected persisted session id %q, got %q", parent.ID, summaries[0].ID)
+	foundParent := false
+	for _, s := range summaries {
+		if s.ID == parent.ID {
+			foundParent = true
+		}
+	}
+	if !foundParent {
+		t.Fatalf("expected parent session %q in persisted list", parent.ID)
 	}
 }
 
@@ -254,7 +257,7 @@ func TestDelegateSubAgentReturnsStructuredPreflightFailure(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -290,7 +293,7 @@ func TestDelegateSubAgentLaunchesBackgroundTaskWhenLifecycleToolsAvailable(t *te
 		RunInBackground: true,
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -345,7 +348,7 @@ func TestDelegateSubAgentRejectsBackgroundWhenLifecycleToolsUnavailable(t *testi
 		RunInBackground: true,
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -373,7 +376,7 @@ func TestDelegateSubAgentRejectsBackgroundWriteToolSubAgent(t *testing.T) {
 		RunInBackground: true,
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -400,7 +403,7 @@ func TestDelegateSubAgentReturnsRuntimeUnavailableWhenGatewayMissing(t *testing.
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -436,7 +439,7 @@ func TestDelegateSubAgentMapsKilledRuntimeResultWithoutErrorCode(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -472,7 +475,7 @@ func TestDelegateSubAgentMapsFailedRuntimeResultWithoutErrorCode(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -516,7 +519,7 @@ func TestDelegateSubAgentWrapsExecutionInRuntimeTask(t *testing.T) {
 	}, &tools.ExecutionContext{
 		Mode:    planpkg.ModeBuild,
 		Session: sess,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -612,7 +615,7 @@ func TestDelegateSubAgentAcceptsStructuredRuntimeOutput(t *testing.T) {
 		Output: "summary",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -665,18 +668,15 @@ func TestDelegateSubAgentRejectsSummaryOutputWithoutSummary(t *testing.T) {
 		Output: "summary",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
-	if result.OK {
-		t.Fatalf("expected failed result, got %#v", result)
+	if !result.OK {
+		t.Fatalf("expected success with raw fallback, got %#v", result)
 	}
-	if result.Error == nil || result.Error.Code != subAgentErrorCodeInvalidResult {
-		t.Fatalf("expected invalid result code, got %#v", result.Error)
-	}
-	if !strings.Contains(result.Error.Message, "requested output \"summary\"") {
-		t.Fatalf("expected summary contract error, got %#v", result.Error)
+	if result.Summary == "" {
+		t.Fatal("expected non-empty summary from raw output fallback")
 	}
 }
 
@@ -705,7 +705,7 @@ func TestDelegateSubAgentUsesCanonicalAgentNameWhenRequestUsesAlias(t *testing.T
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -742,7 +742,7 @@ func TestDelegateSubAgentAppliesDefinitionDefaultTimeoutToRuntimeTask(t *testing
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -772,7 +772,7 @@ func TestDelegateSubAgentRejectsInvalidRequestedTimeoutFromPreflight(t *testing.
 		Timeout: "soon",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -806,7 +806,7 @@ func TestDelegateSubAgentRejectsInvalidStructuredRuntimeOutput(t *testing.T) {
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -819,8 +819,8 @@ func TestDelegateSubAgentRejectsInvalidStructuredRuntimeOutput(t *testing.T) {
 	if result.TaskID != "runtime-subagent-task" {
 		t.Fatalf("expected runtime task id, got %q", result.TaskID)
 	}
-	if result.Error == nil || result.Error.Code != subAgentErrorCodeInvalidResult {
-		t.Fatalf("expected invalid result code, got %#v", result.Error)
+	if result.Error == nil || result.Error.Code != subAgentErrorCodeExecutionFailed {
+		t.Fatalf("expected execution_failed code for ok:false without error, got %#v", result.Error)
 	}
 }
 
@@ -849,7 +849,7 @@ func TestDelegateSubAgentNormalizesMissingArraysInStructuredRuntimeOutput(t *tes
 		Task:  "Locate prompt assembly order",
 	}, &tools.ExecutionContext{
 		Mode: planpkg.ModeBuild,
-	}, nil)
+	}, nil, "")
 	if err != nil {
 		t.Fatalf("expected structured tool result without Go error, got %v", err)
 	}
@@ -968,37 +968,51 @@ func TestNormalizeDelegateSubAgentResultDerivesStatusFromOK(t *testing.T) {
 	}
 }
 
-func TestNormalizeDelegateSubAgentResultRejectsUnsupportedStatus(t *testing.T) {
-	_, err := normalizeDelegateSubAgentResult(
+func TestNormalizeDelegateSubAgentResultAcceptsAnyStatus(t *testing.T) {
+	result, err := normalizeDelegateSubAgentResult(
 		[]byte(`{"ok":true,"status":"unknown","summary":"done"}`),
 		"inv-1",
 		"explorer",
 		"task-1",
 	)
-	if err == nil || !strings.Contains(err.Error(), "unsupported status") {
-		t.Fatalf("expected unsupported status error, got %v", err)
+	if err != nil {
+		t.Fatalf("expected normalization success, got %v", err)
+	}
+	if result.Status != "unknown" {
+		t.Fatalf("expected status %q, got %q", "unknown", result.Status)
 	}
 }
 
-func TestNormalizeDelegateSubAgentResultRejectsMismatchedOKStatus(t *testing.T) {
-	_, err := normalizeDelegateSubAgentResult(
-		[]byte(`{"ok":true,"status":"failed","summary":"done"}`),
+func TestNormalizeDelegateSubAgentResultReconcilesOKStatusMismatch(t *testing.T) {
+	// OK=true with status=failed → reconcile to OK=false, status=failed
+	result, err := normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":true,"status":"failed","error":{"code":"x","message":"y"}}`),
 		"inv-1",
 		"explorer",
 		"task-1",
 	)
-	if err == nil || !strings.Contains(err.Error(), "must not use failed status") {
-		t.Fatalf("expected ok/status mismatch error, got %v", err)
+	if err != nil {
+		t.Fatalf("expected normalization success, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected OK=false after reconciliation")
+	}
+	if result.Status != subAgentResultStatusFailed {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusFailed, result.Status)
 	}
 
-	_, err = normalizeDelegateSubAgentResult(
-		[]byte(`{"ok":false,"status":"completed","error":{"code":"subagent_task_failed","message":"boom","retryable":true}}`),
+	// OK=false with status=completed → accepted as-is
+	result, err = normalizeDelegateSubAgentResult(
+		[]byte(`{"ok":false,"status":"completed","error":{"code":"subagent_task_failed","message":"boom"}}`),
 		"inv-1",
 		"explorer",
 		"task-1",
 	)
-	if err == nil || !strings.Contains(err.Error(), "must use status") {
-		t.Fatalf("expected failed/status mismatch error, got %v", err)
+	if err != nil {
+		t.Fatalf("expected normalization success, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected OK=false")
 	}
 }
 
@@ -1059,16 +1073,19 @@ func TestNormalizeDelegateSubAgentResultTrimsSummary(t *testing.T) {
 	}
 }
 
-func TestNormalizeDelegateSubAgentResultRejectsAsyncStatusWithoutTaskID(t *testing.T) {
+func TestNormalizeDelegateSubAgentResultAcceptsAsyncStatusWithoutTaskID(t *testing.T) {
 	for _, status := range []string{subAgentResultStatusQueued, subAgentResultStatusRunning, subAgentResultStatusAccepted} {
-		_, err := normalizeDelegateSubAgentResult(
+		result, err := normalizeDelegateSubAgentResult(
 			[]byte(`{"ok":true,"status":"`+status+`","summary":"async"}`),
 			"inv-1",
 			"explorer",
 			"",
 		)
-		if err == nil || !strings.Contains(err.Error(), "requires non-empty task_id") {
-			t.Fatalf("expected task_id requirement for status %q, got %v", status, err)
+		if err != nil {
+			t.Fatalf("expected status %q accepted without task_id, got %v", status, err)
+		}
+		if result.Status != status {
+			t.Fatalf("expected status %q, got %q", status, result.Status)
 		}
 	}
 }
@@ -1123,23 +1140,6 @@ func TestEffectiveToolsetHashStableCanonicalization(t *testing.T) {
 	const want = "f2475c3f80104af2a4f1cf5eaaaabeb5a898b71747a09614703e99cee88b1f82"
 	if got != want {
 		t.Fatalf("unexpected toolset hash: got %q want %q", got, want)
-	}
-}
-
-func TestIsAllowedSubAgentStatus(t *testing.T) {
-	for _, status := range []string{
-		subAgentResultStatusCompleted,
-		subAgentResultStatusFailed,
-		subAgentResultStatusQueued,
-		subAgentResultStatusRunning,
-		subAgentResultStatusAccepted,
-	} {
-		if !isAllowedSubAgentStatus(status) {
-			t.Fatalf("expected status %q to be allowed", status)
-		}
-	}
-	if isAllowedSubAgentStatus("unknown") {
-		t.Fatal("expected unknown status to be rejected")
 	}
 }
 
@@ -1413,41 +1413,59 @@ func TestMapSubAgentTerminalResultDefaultStatus(t *testing.T) {
 	}
 }
 
-func TestNormalizeDelegateSubAgentResultOKWithError(t *testing.T) {
-	_, err := normalizeDelegateSubAgentResult(
+func TestNormalizeDelegateSubAgentResultOKWithErrorReconciles(t *testing.T) {
+	result, err := normalizeDelegateSubAgentResult(
 		[]byte(`{"ok":true,"error":{"code":"x","message":"y"}}`),
 		"inv-1", "explorer", "task-1",
 	)
-	if err == nil || !strings.Contains(err.Error(), "must not include error") {
-		t.Fatalf("expected ok+error rejection, got %v", err)
+	if err != nil {
+		t.Fatalf("expected normalization success, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected OK=false after reconciliation")
+	}
+	if result.Error == nil || result.Error.Code != "x" {
+		t.Fatalf("expected error code x, got %#v", result.Error)
 	}
 }
 
-func TestNormalizeDelegateSubAgentResultFailedEmptyErrorCode(t *testing.T) {
-	_, err := normalizeDelegateSubAgentResult(
+func TestNormalizeDelegateSubAgentResultFailedEmptyErrorCodeFillsDefaults(t *testing.T) {
+	result, err := normalizeDelegateSubAgentResult(
 		[]byte(`{"ok":false,"error":{"code":"","message":"boom"}}`),
 		"inv-1", "explorer", "task-1",
 	)
-	if err == nil || !strings.Contains(err.Error(), "non-empty error code") {
-		t.Fatalf("expected empty code rejection, got %v", err)
+	if err != nil {
+		t.Fatalf("expected normalization success, got %v", err)
+	}
+	if result.Error == nil || result.Error.Code != subAgentErrorCodeExecutionFailed {
+		t.Fatalf("expected default error code, got %#v", result.Error)
 	}
 
-	_, err = normalizeDelegateSubAgentResult(
+	result, err = normalizeDelegateSubAgentResult(
 		[]byte(`{"ok":false,"error":{"code":"x","message":"  "}}`),
 		"inv-1", "explorer", "task-1",
 	)
-	if err == nil || !strings.Contains(err.Error(), "non-empty error") {
-		t.Fatalf("expected empty message rejection, got %v", err)
+	if err != nil {
+		t.Fatalf("expected normalization success, got %v", err)
+	}
+	if result.Error == nil || result.Error.Message != "subagent execution failed" {
+		t.Fatalf("expected default error message, got %#v", result.Error)
 	}
 }
 
-func TestNormalizeDelegateSubAgentResultFailedNonFailedStatus(t *testing.T) {
-	_, err := normalizeDelegateSubAgentResult(
+func TestNormalizeDelegateSubAgentResultFailedNonFailedStatusAccepted(t *testing.T) {
+	result, err := normalizeDelegateSubAgentResult(
 		[]byte(`{"ok":false,"status":"completed","error":{"code":"x","message":"y"}}`),
 		"inv-1", "explorer", "task-1",
 	)
-	if err == nil || !strings.Contains(err.Error(), "must use status") {
-		t.Fatalf("expected failed+completed rejection, got %v", err)
+	if err != nil {
+		t.Fatalf("expected normalization success, got %v", err)
+	}
+	if result.OK {
+		t.Fatal("expected OK=false")
+	}
+	if result.Status != "completed" {
+		t.Fatalf("expected status %q, got %q", "completed", result.Status)
 	}
 }
 
@@ -1539,7 +1557,7 @@ func TestDelegateSubAgentRunSyncError(t *testing.T) {
 	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
 		Agent: "explorer",
 		Task:  "test task",
-	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -1551,6 +1569,49 @@ func TestDelegateSubAgentRunSyncError(t *testing.T) {
 	}
 	if result.Error == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestDelegateSubAgentRunSyncDeadlineExceededWithSettledCompletedResult(t *testing.T) {
+	workspace := t.TempDir()
+	writeExplorerSubAgentDefinition(t, workspace)
+	gateway := &flexibleRuntimeGateway{
+		syncResult: RuntimeTaskExecution{
+			TaskID: "task-1",
+			Result: runtimepkg.TaskResult{
+				TaskID: "task-1",
+				Status: corepkg.TaskCompleted,
+				Output: []byte(`{"ok":true,"status":"completed","summary":"scan complete","content":"scan complete"}`),
+			},
+		},
+		syncErr: context.DeadlineExceeded,
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Registry:  tools.DefaultRegistry(),
+		Runtime:   gateway,
+	})
+	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
+		Agent: "explorer",
+		Task:  "test task",
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil, "")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("expected success result, got %#v", result)
+	}
+	if result.Error != nil {
+		t.Fatalf("expected nil error, got %#v", result.Error)
+	}
+	if result.Status != subAgentResultStatusCompleted {
+		t.Fatalf("expected status %q, got %q", subAgentResultStatusCompleted, result.Status)
+	}
+	if result.Summary != "scan complete" {
+		t.Fatalf("expected summary to be preserved, got %q", result.Summary)
+	}
+	if result.TaskID != "task-1" {
+		t.Fatalf("expected task id from execution, got %q", result.TaskID)
 	}
 }
 
@@ -1575,15 +1636,15 @@ func TestDelegateSubAgentRunSyncEmptyOutput(t *testing.T) {
 	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
 		Agent: "explorer",
 		Task:  "test task",
-	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.OK {
-		t.Fatal("expected failure for empty output")
+	if !result.OK {
+		t.Fatal("expected success with fallback summary for empty output")
 	}
-	if result.Error == nil || result.Error.Code != subAgentErrorCodeNotImplemented {
-		t.Fatalf("expected not_implemented code, got %v", result.Error)
+	if result.Summary != "SubAgent task completed." {
+		t.Fatalf("expected fallback summary, got %q", result.Summary)
 	}
 }
 
@@ -1608,15 +1669,15 @@ func TestDelegateSubAgentRunSyncInvalidJSONOutput(t *testing.T) {
 	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
 		Agent: "explorer",
 		Task:  "test task",
-	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.OK {
-		t.Fatal("expected failure for invalid JSON")
+	if !result.OK {
+		t.Fatal("expected success with raw text fallback for invalid JSON")
 	}
-	if result.Error == nil || result.Error.Code != subAgentErrorCodeInvalidResult {
-		t.Fatalf("expected invalid_result code, got %v", result.Error)
+	if result.Summary != "{invalid json" {
+		t.Fatalf("expected raw text as summary, got %q", result.Summary)
 	}
 }
 
@@ -1635,7 +1696,7 @@ func TestDelegateSubAgentRunAsyncError(t *testing.T) {
 		Agent:           "explorer",
 		Task:            "test task",
 		RunInBackground: true,
-	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -1662,7 +1723,7 @@ func TestDelegateSubAgentRunAsyncEmptyTaskID(t *testing.T) {
 		Agent:           "explorer",
 		Task:            "test task",
 		RunInBackground: true,
-	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -1691,7 +1752,7 @@ func TestDelegateSubAgentRunSyncExecutionError(t *testing.T) {
 	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
 		Agent: "explorer",
 		Task:  "test task",
-	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -1766,12 +1827,15 @@ func TestDelegateSubAgentExecuteCallbackError(t *testing.T) {
 	result, err := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
 		Agent: "explorer",
 		Task:  "test",
-	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil)
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild}, nil, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.OK {
-		t.Fatal("expected failure for execute error")
+	if !result.OK {
+		t.Fatal("expected OK:true for error-as-content (execute callback error)")
+	}
+	if !strings.Contains(result.Summary, "SubAgent error") && !strings.Contains(result.Summary, "error") {
+		t.Fatalf("expected error information in summary, got %q", result.Summary)
 	}
 }
 
@@ -1798,7 +1862,7 @@ func TestDelegateSubAgentOnTaskStateChangedFailedStatus(t *testing.T) {
 	result, _ := runner.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
 		Agent: "explorer",
 		Task:  "test",
-	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild, Session: sess}, nil)
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild, Session: sess}, nil, "")
 	if result.OK {
 		t.Fatal("expected failure for failed task")
 	}
@@ -1841,7 +1905,7 @@ func TestDelegateSubAgentOnTaskStateChangedCompletedWithSummary(t *testing.T) {
 		Agent:  "explorer",
 		Task:   "test",
 		Output: "summary",
-	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild, Session: sess}, nil)
+	}, &tools.ExecutionContext{Mode: planpkg.ModeBuild, Session: sess}, nil, "")
 	if !result.OK {
 		t.Fatalf("expected success, got %#v", result)
 	}
@@ -1888,7 +1952,7 @@ func TestDelegateSubAgentNilRunner(t *testing.T) {
 	result, err := r.delegateSubAgent(context.Background(), tools.DelegateSubAgentRequest{
 		Agent: "explorer",
 		Task:  "test",
-	}, nil, nil)
+	}, nil, nil, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

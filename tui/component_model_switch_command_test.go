@@ -52,8 +52,8 @@ func TestRunModelCommandOpensPickerAndRefreshesTargets(t *testing.T) {
 	if m.statusNote != "Opened model picker." {
 		t.Fatalf("unexpected status note %q", m.statusNote)
 	}
-	if len(m.discoveredModels) != 2 {
-		t.Fatalf("expected discovered models to refresh, got %#v", m.discoveredModels)
+	if len(m.discoveredModels) != 0 {
+		t.Fatalf("expected /model to use configured targets without remote refresh, got %#v", m.discoveredModels)
 	}
 	targets := m.sortedModelCommandTargets()
 	if len(targets) != 2 {
@@ -100,34 +100,19 @@ func TestRunModelCommandAllowsPickerWhenOnlyOneTargetExists(t *testing.T) {
 	}
 }
 
-func TestRunAddCommandOpensStartupGuide(t *testing.T) {
-	workspace := t.TempDir()
-	m := &model{
-		workspace: workspace,
-		input:     textarea.New(),
-	}
+func TestRunAddCommandDoesNotManageProviderConfig(t *testing.T) {
+	m := &model{input: textarea.New()}
 
-	if err := m.runAddCommand("/add model", []string{"/add", "model"}); err != nil {
-		t.Fatalf("expected /add model to open startup guide, got %v", err)
+	err := m.runAddCommand("/add model", []string{"/add", "model"})
+	if err == nil || !strings.Contains(err.Error(), "config.json") {
+		t.Fatalf("expected /add model to point users at config.json, got %v", err)
 	}
-	if !m.startupGuide.Active {
-		t.Fatal("expected startup guide to be active")
-	}
-	if m.startupGuide.Title != "Add model" {
-		t.Fatalf("unexpected startup guide title %q", m.startupGuide.Title)
-	}
-	if m.startupGuide.CurrentField != startupFieldType {
-		t.Fatalf("expected startup guide to start at provider type, got %q", m.startupGuide.CurrentField)
-	}
-	if strings.TrimSpace(m.startupGuide.ConfigPath) == "" {
-		t.Fatal("expected writable config path to be resolved")
-	}
-	if m.statusNote != "Opened add model guide." {
-		t.Fatalf("unexpected status note %q", m.statusNote)
+	if m.startupGuide.Active {
+		t.Fatal("expected /add model not to open the startup guide")
 	}
 }
 
-func TestRunDeleteCommandOpensDeletePicker(t *testing.T) {
+func TestRunDeleteCommandDoesNotManageProviderConfig(t *testing.T) {
 	m := &model{
 		runner: &subAgentCommandRunnerStub{},
 		cfg: config.Config{
@@ -142,18 +127,14 @@ func TestRunDeleteCommandOpensDeletePicker(t *testing.T) {
 		},
 	}
 
-	if err := m.runDeleteCommand("/delete model", []string{"/delete", "model"}); err != nil {
-		t.Fatalf("expected /delete model to open picker, got %v", err)
+	err := m.runDeleteCommand("/delete model", []string{"/delete", "model"})
+	if err == nil || !strings.Contains(err.Error(), "config.json") {
+		t.Fatalf("expected /delete model to point users at config.json, got %v", err)
 	}
 	if !m.modelsOpen {
-		t.Fatal("expected delete picker to open")
+		return
 	}
-	if normalizeModelPickerMode(m.modelPickerMode) != modelPickerModeDelete {
-		t.Fatalf("expected delete picker mode, got %q", m.modelPickerMode)
-	}
-	if m.statusNote != "Opened model delete picker." {
-		t.Fatalf("unexpected status note %q", m.statusNote)
-	}
+	t.Fatal("expected /delete model not to open the model picker")
 }
 
 func TestOpenModelPickerWithModeFallsBackToConfiguredTargetsOnRefreshError(t *testing.T) {
@@ -178,21 +159,19 @@ func TestOpenModelPickerWithModeFallsBackToConfiguredTargetsOnRefreshError(t *te
 	if !m.modelsOpen {
 		t.Fatal("expected picker to open from configured fallback")
 	}
-	if m.statusNote != "Opened model picker from configured targets." {
+	if m.statusNote != "Opened model picker." {
 		t.Fatalf("unexpected status note %q", m.statusNote)
 	}
 }
 
-func TestOpenModelPickerWithModeReportsEmptyDeleteTargets(t *testing.T) {
+func TestOpenModelDeletePickerDoesNotManageProviderConfig(t *testing.T) {
 	m := &model{runner: &subAgentCommandRunnerStub{}}
-	if err := m.openModelDeletePicker(); err != nil {
-		t.Fatalf("expected empty delete picker to be handled, got %v", err)
+	err := m.openModelDeletePicker()
+	if err == nil || !strings.Contains(err.Error(), "config.json") {
+		t.Fatalf("expected delete picker to point users at config.json, got %v", err)
 	}
 	if m.modelsOpen {
-		t.Fatal("expected picker to stay closed when nothing can be deleted")
-	}
-	if m.statusNote != "No configured models are available to delete." {
-		t.Fatalf("unexpected status note %q", m.statusNote)
+		t.Fatal("expected delete picker not to open")
 	}
 }
 
@@ -213,7 +192,7 @@ func TestSwitchModelCommandTargetRejectsUnknownTargetAfterRefresh(t *testing.T) 
 	}
 
 	err := m.switchModelCommandTarget("/model picker deepseek/deepseek-chat", "deepseek/deepseek-chat")
-	if err == nil || !strings.Contains(err.Error(), "unknown model target") {
+	if err == nil || !strings.Contains(err.Error(), "unknown configured model target") {
 		t.Fatalf("expected unknown target error, got %v", err)
 	}
 }
@@ -242,6 +221,7 @@ func TestActivateSelectedModelTargetSwitchesRuntimePersistsConfigAndRefreshesBud
         "type": "openai-compatible",
         "base_url": "https://api.deepseek.com",
         "model": "deepseek-chat",
+        "models": ["deepseek-chat", "deepseek-reasoner"],
         "api_key": "deepseek-key"
       }
     }
@@ -277,12 +257,17 @@ func TestActivateSelectedModelTargetSwitchesRuntimePersistsConfigAndRefreshesBud
 						Type:    "openai-compatible",
 						BaseURL: "https://api.deepseek.com",
 						Model:   "deepseek-chat",
+						Models:  []string{"deepseek-chat", "deepseek-reasoner"},
 						APIKey:  "deepseek-key",
 					},
 				},
 			},
 		},
 		startupGuide: StartupGuide{ConfigPath: configPath},
+		discoveredModels: []provider.ModelInfo{
+			{ProviderID: "openai", ModelID: "gpt-5.4-mini", Metadata: map[string]string{"context_window": "128000"}},
+			{ProviderID: "deepseek", ModelID: "deepseek-reasoner", Metadata: map[string]string{"context_window": "64000"}},
+		},
 	}
 
 	if err := m.openModelPicker(); err != nil {
@@ -338,130 +323,7 @@ func TestActivateSelectedModelTargetSwitchesRuntimePersistsConfigAndRefreshesBud
 	}
 }
 
-func TestDeleteSelectedModelTargetRemovesConfiguredProviderAndPersistsConfig(t *testing.T) {
-	workspace := t.TempDir()
-	configPath := filepath.Join(workspace, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{
-  "provider": {
-    "type": "openai-compatible",
-    "base_url": "https://api.openai.com/v1",
-    "model": "gpt-5.4-mini",
-    "api_key": "openai-key"
-  },
-  "provider_runtime": {
-    "default_provider": "openai",
-    "default_model": "gpt-5.4-mini",
-    "providers": {
-      "openai": {
-        "type": "openai-compatible",
-        "base_url": "https://api.openai.com/v1",
-        "model": "gpt-5.4-mini",
-        "api_key": "openai-key"
-      },
-      "deepseek": {
-        "type": "openai-compatible",
-        "base_url": "https://api.deepseek.com",
-        "model": "deepseek-chat",
-        "api_key": "deepseek-key"
-      }
-    }
-  }
-}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	runner := &subAgentCommandRunnerStub{
-		models: []provider.ModelInfo{
-			{ProviderID: "openai", ModelID: "gpt-5.4-mini", Metadata: map[string]string{"context_window": "128000"}},
-			{ProviderID: "deepseek", ModelID: "deepseek-chat", Metadata: map[string]string{"context_window": "64000"}},
-			{ProviderID: "deepseek", ModelID: "deepseek-reasoner", Metadata: map[string]string{"context_window": "64000"}},
-		},
-	}
-	m := &model{
-		runner:     runner,
-		tokenUsage: newTokenUsageComponent(),
-		workspace:  workspace,
-		cfg: config.Config{
-			TokenQuota: 1000,
-			Provider: config.ProviderConfig{
-				Type:    "openai-compatible",
-				BaseURL: "https://api.openai.com/v1",
-				Model:   "gpt-5.4-mini",
-				APIKey:  "openai-key",
-			},
-			ProviderRuntime: config.ProviderRuntimeConfig{
-				DefaultProvider: "openai",
-				DefaultModel:    "gpt-5.4-mini",
-				Providers: map[string]config.ProviderConfig{
-					"openai": {Type: "openai-compatible", BaseURL: "https://api.openai.com/v1", Model: "gpt-5.4-mini", APIKey: "openai-key"},
-					"deepseek": {
-						Type:    "openai-compatible",
-						BaseURL: "https://api.deepseek.com",
-						Model:   "deepseek-chat",
-						APIKey:  "deepseek-key",
-					},
-				},
-			},
-		},
-		startupGuide: StartupGuide{ConfigPath: configPath},
-		discoveredModels: []provider.ModelInfo{
-			{ProviderID: "openai", ModelID: "gpt-5.4-mini", Metadata: map[string]string{"context_window": "128000"}},
-			{ProviderID: "deepseek", ModelID: "deepseek-chat", Metadata: map[string]string{"context_window": "64000"}},
-			{ProviderID: "deepseek", ModelID: "deepseek-reasoner", Metadata: map[string]string{"context_window": "64000"}},
-		},
-	}
-
-	if err := m.openModelDeletePicker(); err != nil {
-		t.Fatalf("expected delete picker to open, got %v", err)
-	}
-	targets := m.sortedConfiguredModelCommandTargets()
-	selected := -1
-	for i, target := range targets {
-		if modelTargetLabel(target) == "deepseek/deepseek-chat" {
-			selected = i
-			break
-		}
-	}
-	if selected < 0 {
-		t.Fatalf("expected configured targets to include deepseek/deepseek-chat, got %#v", targets)
-	}
-	m.commandCursor = selected
-
-	if err := m.deleteSelectedModelTarget(); err != nil {
-		t.Fatalf("expected picker deletion to succeed, got %v", err)
-	}
-	if _, ok := m.cfg.ProviderRuntime.Providers["deepseek"]; ok {
-		t.Fatalf("expected deepseek provider to be removed, got %#v", m.cfg.ProviderRuntime.Providers)
-	}
-	if m.cfg.ProviderRuntime.DefaultProvider != "openai" || m.cfg.ProviderRuntime.DefaultModel != "gpt-5.4-mini" {
-		t.Fatalf("expected openai to remain active default, got %#v", m.cfg.ProviderRuntime)
-	}
-	if runner.runtimeCfg.DefaultProvider != "openai" || len(runner.runtimeCfg.Providers) != 1 {
-		t.Fatalf("expected runner runtime update after delete, got %#v", runner.runtimeCfg)
-	}
-	if len(m.discoveredModels) != 1 || modelTargetLabel(m.discoveredModels[0]) != "openai/gpt-5.4-mini" {
-		t.Fatalf("expected discovered models for deleted provider to be pruned, got %#v", m.discoveredModels)
-	}
-	if m.statusNote != "Model deleted and saved." {
-		t.Fatalf("unexpected status note %q", m.statusNote)
-	}
-	if !strings.Contains(m.chatItems[1].Body, "Deleted model deepseek/deepseek-chat.") {
-		t.Fatalf("expected delete response in chat, got %#v", m.chatItems)
-	}
-
-	cfg, err := config.Load(workspace, configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := cfg.ProviderRuntime.Providers["deepseek"]; ok {
-		t.Fatalf("expected persisted runtime provider removal, got %#v", cfg.ProviderRuntime.Providers)
-	}
-	if cfg.Provider.Model != "gpt-5.4-mini" || cfg.Provider.BaseURL != "https://api.openai.com/v1" {
-		t.Fatalf("expected persisted provider section to remain on openai, got %#v", cfg.Provider)
-	}
-}
-
-func TestDeleteSelectedModelTargetRejectsDeletingLastConfiguredTarget(t *testing.T) {
+func TestDeleteSelectedModelTargetDoesNotManageProviderConfig(t *testing.T) {
 	m := &model{
 		runner: &subAgentCommandRunnerStub{},
 		cfg: config.Config{
@@ -475,12 +337,12 @@ func TestDeleteSelectedModelTargetRejectsDeletingLastConfiguredTarget(t *testing
 		},
 	}
 
-	if err := m.openModelDeletePicker(); err != nil {
-		t.Fatalf("expected delete picker to open, got %v", err)
-	}
 	err := m.deleteSelectedModelTarget()
-	if err == nil || !strings.Contains(err.Error(), "cannot delete the last configured model") {
-		t.Fatalf("expected last-target delete to fail, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "config.json") {
+		t.Fatalf("expected delete target to point users at config.json, got %v", err)
+	}
+	if _, ok := m.cfg.ProviderRuntime.Providers["openai"]; !ok {
+		t.Fatalf("expected configured providers to remain unchanged, got %#v", m.cfg.ProviderRuntime.Providers)
 	}
 }
 
@@ -488,8 +350,6 @@ func TestRunModelCommandRejectsLegacyForms(t *testing.T) {
 	m := &model{runner: &subAgentCommandRunnerStub{}}
 
 	for _, fields := range [][]string{
-		{"/model"},
-		{"/model", "list"},
 		{"/model", "set", "openai/gpt-5.4"},
 		{"/model", "openai/gpt-5.4"},
 	} {
@@ -522,7 +382,7 @@ func TestRunModelCommandRejectsUnknownTarget(t *testing.T) {
 	}
 
 	err := m.switchModelCommandTarget("/model openai/missing", "openai/missing")
-	if err == nil || !strings.Contains(err.Error(), "unknown model target") {
+	if err == nil || !strings.Contains(err.Error(), "unknown configured model target") {
 		t.Fatalf("expected unknown target error, got %v", err)
 	}
 }

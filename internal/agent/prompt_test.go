@@ -82,7 +82,7 @@ func TestSystemPromptRendersMainModeSystemAndInstruction(t *testing.T) {
 	assertContains(t, prompt, "Skills are reusable task profiles available in this session")
 	assertContains(t, prompt, "- review: Review code changes for regressions.")
 	assertContains(t, prompt, "[Available SubAgents]")
-	assertContains(t, prompt, "SubAgents are optional delegated workers available in this session.")
+	assertContains(t, prompt, "SubAgents are optional delegated workers. Use the delegate_subagent tool to invoke them.")
 	assertContains(t, prompt, "- explorer (build): Scan repository context quickly.")
 	assertContains(t, prompt, "[Available Tools]")
 	assertContains(t, prompt, "- list_files")
