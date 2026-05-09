@@ -123,7 +123,7 @@ func (e *Executor) runTool(ctx context.Context, resolved ResolvedTool, raw json.
 			Execution: execCtx,
 		})
 	}
-	runCtx, cancel := context.WithTimeout(ctx, executionTimeout(raw, resolved.Spec))
+	runCtx, cancel := withToolTimeout(ctx, raw, resolved)
 	defer cancel()
 	output, runErr := resolved.Tool.Run(runCtx, raw, execCtx)
 	if runErr != nil {
@@ -334,7 +334,7 @@ func promptDestructiveApproval(toolName string, execCtx *ExecutionContext) error
 	return nil
 }
 
-func executionTimeout(raw json.RawMessage, spec ToolSpec) time.Duration {
+func executionTimeout(raw json.RawMessage, spec ToolSpec, toolName string) time.Duration {
 	timeoutSeconds := spec.DefaultTimeoutS
 	if requested, ok := requestedTimeoutSeconds(raw); ok {
 		timeoutSeconds = requested
@@ -349,6 +349,18 @@ func executionTimeout(raw json.RawMessage, spec ToolSpec) time.Duration {
 		timeoutSeconds = 30
 	}
 	return time.Duration(timeoutSeconds) * time.Second
+}
+
+// withToolTimeout creates a context with a timeout suitable for the given tool.
+// Returns (ctx, cancel). When the tool manages its own lifecycle (e.g.
+// delegate_subagent), no timeout is applied and cancel is a no-op.
+func withToolTimeout(parent context.Context, raw json.RawMessage, resolved ResolvedTool) (context.Context, context.CancelFunc) {
+	toolName := strings.TrimSpace(resolved.Definition.Function.Name)
+	if toolName == "delegate_subagent" {
+		return parent, func() {}
+	}
+	timeout := executionTimeout(raw, resolved.Spec, toolName)
+	return context.WithTimeout(parent, timeout)
 }
 
 func requestedTimeoutSeconds(raw json.RawMessage) (int, bool) {

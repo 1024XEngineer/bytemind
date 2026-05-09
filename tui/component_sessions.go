@@ -188,6 +188,9 @@ func (m *model) resumeSession(prefix string) error {
 	m.mode = toAgentMode(next.Mode)
 	m.chatItems = rebuildSessionTimeline(next)
 	m.streamingIndex = -1
+	m.runIndicatorState = runIndicatorReady
+	m.lastRunDuration = 0
+	m.phase = "idle"
 	m.statusNote = "Resumed session " + shortID(next.ID)
 	m.chatAutoFollow = true
 	m.restoreTokenUsageFromSession(next)

@@ -46,7 +46,7 @@ func (w inProcessWorker) Run(ctx context.Context, req workerRunRequest) (string,
 	if normalizer == nil {
 		normalizer = maxCharsOutputNormalizer{}
 	}
-	runCtx, cancel := context.WithTimeout(ctx, executionTimeout(req.RawArgs, resolved.Spec))
+	runCtx, cancel := withToolTimeout(ctx, req.RawArgs, resolved)
 	defer cancel()
 
 	output, err := resolved.Tool.Run(runCtx, req.RawArgs, req.Execution)

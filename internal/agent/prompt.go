@@ -242,6 +242,7 @@ func renderSystemBlock(input PromptInput) string {
 		"[Available SubAgents]",
 		"- SubAgents are optional delegated workers. Use the delegate_subagent tool to invoke them.",
 		"- When the user mentions an agent via @mention, delegate their task to that agent with a detailed, context-rich prompt.",
+		"- When investigating multiple independent areas, delegate to several subagents in a single turn. Independent subagents run concurrently.",
 		formatSubAgents(input.SubAgents),
 		"",
 		"[Available Tools]",

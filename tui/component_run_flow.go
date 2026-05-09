@@ -252,13 +252,14 @@ func (m *model) handleAgentEvent(event Event) {
 			DetailLines: detailLines,
 			ToolCallID:  event.ToolCallID,
 		}
-		// For delegate_subagent, parse agent name and set AgentID for routing.
+		// For delegate_subagent, parse agent name and record InvocationID for routing.
 		if strings.EqualFold(event.ToolName, "delegate_subagent") {
 			agent, task := summarizeDelegateSubAgent(event.ToolArguments)
 			if agent == "" {
 				agent = "subagent"
 			}
 			newEntry.AgentID = agent
+			newEntry.InvocationID = event.InvocationID
 			if task != "" {
 				newEntry.CompactBody = task
 				newEntry.TaskPrompt = task
@@ -330,13 +331,22 @@ func (m *model) handleAgentEvent(event Event) {
 	}
 }
 
+// resolveSubAgentEntry resolves a running delegate_subagent chat entry for the
+// given event. Precedence: InvocationID (precise) > AgentID (type match) > last running entry (fallback).
+func (m *model) resolveSubAgentEntry(event Event) *chatEntry {
+	if entry := m.findActiveSubAgentEntryByInvocation(event.InvocationID); entry != nil {
+		return entry
+	}
+	if entry := m.findActiveSubAgentEntryByID(event.AgentID); entry != nil {
+		return entry
+	}
+	return m.findActiveSubAgentEntry()
+}
+
 func (m *model) handleSubAgentEvent(event Event) {
 	switch event.Type {
 	case EventToolCallStarted:
-		entry := m.findActiveSubAgentEntryByID(event.AgentID)
-		if entry == nil {
-			entry = m.findActiveSubAgentEntry()
-		}
+		entry := m.resolveSubAgentEntry(event)
 		if entry == nil {
 			return
 		}
@@ -349,10 +359,7 @@ func (m *model) handleSubAgentEvent(event Event) {
 			DetailLines: detailLines,
 		})
 	case EventToolCallCompleted:
-		entry := m.findActiveSubAgentEntryByID(event.AgentID)
-		if entry == nil {
-			entry = m.findActiveSubAgentEntry()
-		}
+		entry := m.resolveSubAgentEntry(event)
 		if entry == nil {
 			return
 		}
@@ -374,6 +381,23 @@ func (m *model) handleSubAgentEvent(event Event) {
 			}
 		}
 	}
+}
+
+// findActiveSubAgentEntryByInvocation finds a running delegate_subagent entry by
+// globally unique InvocationID. Returns nil when InvocationID is empty or no match.
+func (m *model) findActiveSubAgentEntryByInvocation(invocationID string) *chatEntry {
+	invocationID = strings.TrimSpace(invocationID)
+	if invocationID == "" {
+		return nil
+	}
+	for i := len(m.chatItems) - 1; i >= 0; i-- {
+		if m.chatItems[i].Kind == "tool" &&
+			m.chatItems[i].InvocationID == invocationID &&
+			m.chatItems[i].Status == "running" {
+			return &m.chatItems[i]
+		}
+	}
+	return nil
 }
 
 // findActiveSubAgentEntryByID finds a running delegate_subagent entry by AgentID.

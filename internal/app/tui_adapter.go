@@ -202,6 +202,7 @@ func mapAgentEvent(event agent.Event) tui.Event {
 		Plan:          event.Plan,
 		Usage:         event.Usage,
 		AgentID:       event.AgentID,
+		InvocationID:  event.InvocationID,
 	}
 }
 

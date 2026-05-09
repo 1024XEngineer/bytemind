@@ -40,6 +40,7 @@ type Event struct {
 	Plan          planpkg.State
 	Usage         llm.Usage
 	AgentID       string // non-empty when emitted by a subagent
+	InvocationID  string // non-empty when emitted by a subagent, globally unique per invocation
 }
 
 type ApprovalRequest struct {
