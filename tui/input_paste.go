@@ -902,7 +902,7 @@ func (m *model) resolvePromptPastedInput(raw string) (string, error) {
 }
 
 func (m *model) ensurePastedContentState() {
-	if m == nil || m.pastedStateLoaded {
+	if m == nil {
 		return
 	}
 	if m.pastedContents == nil {
@@ -913,6 +913,9 @@ func (m *model) ensurePastedContentState() {
 	}
 	if m.nextPasteID <= 0 {
 		m.nextPasteID = 1
+	}
+	if m.pastedStateLoaded {
+		return
 	}
 	m.pastedStateLoaded = true
 

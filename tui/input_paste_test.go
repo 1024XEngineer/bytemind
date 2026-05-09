@@ -491,6 +491,48 @@ func TestSubmitPromptExpandsPasteReferenceForDisplayedChatBodyAndClearsPasteStat
 	}
 }
 
+func TestClipboardPasteCaptureAfterSubmittedPasteReinitializesState(t *testing.T) {
+	m := newImagePipelineModel(t)
+	_, stored, err := m.compressPastedText("old1\nold2\nold3\nold4\nold5\nold6\nold7\nold8\nold9\nold10\nold11")
+	if err != nil {
+		t.Fatalf("compress pasted text: %v", err)
+	}
+	got, _ := m.submitPrompt("inspect [Paste #" + stored.ID + " ~11 lines]")
+	updated := got.(model)
+	if updated.pastedContents != nil || updated.pastedOrder != nil {
+		t.Fatalf("expected submit to clear pasted state, got contents=%v order=%v", updated.pastedContents, updated.pastedOrder)
+	}
+
+	clipboardText := strings.Join([]string{
+		"abcd first pasted line",
+		"second pasted line",
+		"third pasted line",
+		"fourth pasted line",
+		"fifth pasted line",
+		"sixth pasted line",
+		"seventh pasted line",
+		"eighth pasted line",
+		"ninth pasted line",
+		"tenth pasted line",
+		"eleventh pasted line",
+		"twelfth pasted line",
+	}, "\n")
+	updated.clipboardRead = fakeClipboardTextReader{text: clipboardText}
+	updated.clipboardCaptureArmedUntil = time.Now().Add(time.Second)
+	updated.input.SetValue("abcd")
+
+	result := updated.handleInputMutation("abc", "abcd", "")
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(result) {
+		t.Fatalf("expected clipboard capture to compress into a paste marker, got %q", result)
+	}
+	if updated.pastedContents == nil || len(updated.pastedContents) != 1 {
+		t.Fatalf("expected pasted contents to be reinitialized with one entry, got %#v", updated.pastedContents)
+	}
+	if updated.pastedOrder == nil || len(updated.pastedOrder) != 1 {
+		t.Fatalf("expected pasted order to be reinitialized with one entry, got %#v", updated.pastedOrder)
+	}
+}
+
 func TestStorePastedContentKeepsRecentLimit(t *testing.T) {
 	m := newImagePipelineModel(t)
 	for i := 0; i < maxStoredPastedContents+2; i++ {
