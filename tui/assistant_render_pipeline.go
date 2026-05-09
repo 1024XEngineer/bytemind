@@ -36,7 +36,7 @@ var (
 
 	glamourRenderers sync.Map // map[string]*glamour.TermRenderer
 	// renderAssistantMarkdownFn is a test seam so unit tests can force fallback paths.
-	renderAssistantMarkdownFn = renderAssistantBodyWithMarkdownAndTags
+	renderAssistantMarkdownFn = renderAssistantBodyWithStructuredMarkdown
 )
 
 func renderAssistantBody(text string, width int) string {
@@ -50,6 +50,14 @@ func renderAssistantBody(text string, width int) string {
 	}
 
 	return renderAssistantBodyLegacy(text, width)
+}
+
+func renderAssistantBodyWithStructuredMarkdown(text string, width int) (string, error) {
+	result := renderStructuredMarkdown(markdownSurfaceAssistant, text, width)
+	if strings.TrimSpace(result.Display) == "" {
+		return "", fmt.Errorf("empty markdown render")
+	}
+	return result.Display, nil
 }
 
 func renderAssistantBodyWithMarkdownAndTags(text string, width int) (string, error) {

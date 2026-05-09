@@ -42,13 +42,6 @@ const (
 	markdownCodeBottomLeft = "\u2570"
 	markdownCodeSideGlyph  = "\u2502 "
 
-	// Table border glyphs
-	markdownTableCornerTopLeft     = "\u250c" // \u250c
-	markdownTableCornerTopRight    = "\u2510" // \u2510
-	markdownTableCross             = "\u253c" // \u253c
-	markdownTableCornerBottomLeft  = "\u2514" // \u2514
-	markdownTableCornerBottomRight = "\u2518" // \u2518
-
 	// Enhanced icon set for richer visual representation
 	markdownBulletAltGlyph     = "\u25e6 " // White bullet
 	markdownBulletSquareGlyph  = "\u25a0 " // Square bullet
@@ -1128,203 +1121,301 @@ func renderMarkdownTable(surface markdownSurface, table markdownTableBlock, widt
 		return nil
 	}
 
-	headerTexts := make([][]markdownSpan, colCount)
-	for i := 0; i < colCount; i++ {
-		headerTexts[i] = cellSpansAt(table.Header, i)
+	aligns := make([]extensionast.Alignment, colCount)
+	for i := range aligns {
+		if i < len(table.Align) {
+			aligns[i] = table.Align[i]
+		}
+		if aligns[i] == extensionast.AlignNone {
+			aligns[i] = extensionast.AlignLeft
+		}
 	}
 
-	gridWidths, ok := markdownTableWidths(headerTexts, table.Rows, width)
+	colWidths, hardBreak, ok := computeColumnWidths(table, colCount, width)
 	if !ok {
-		return renderStackedMarkdownTable(surface, headerTexts, table.Rows, width)
+		return renderStackedMarkdownTable(table, aligns, width)
 	}
 
-	return renderGridMarkdownTable(surface, headerTexts, table.Rows, gridWidths)
-}
-
-func markdownTableWidths(header []([]markdownSpan), rows [][]markdownTableCell, width int) ([]int, bool) {
-	if len(header) == 0 {
-		return nil, false
+	wrapFn := wrapANSI
+	if hardBreak {
+		wrapFn = wrapANSIHard
 	}
-	widths := make([]int, len(header))
-	total := 0
-	for col := range header {
-		w := max(6, runewidth.StringWidth(plainTextFromSpans(header[col])))
-		for _, row := range rows {
-			cellWidth := runewidth.StringWidth(plainTextFromSpans(cellSpansAt(row, col)))
-			if cellWidth > w {
-				w = cellWidth
-			}
+
+	wrapSpans := func(spans []markdownSpan, colWidth int, style lipgloss.Style) wrappedCell {
+		ansi := cellSpansToANSI(spans, style)
+		dLines := wrapFn(ansi, colWidth)
+		if len(dLines) == 0 {
+			dLines = []string{""}
 		}
-		w = min(w, 28)
-		widths[col] = w
-		total += w
-	}
-
-	total += max(0, len(widths)-1) * 3
-	if total <= width {
-		return widths, true
-	}
-
-	available := width - max(0, len(widths)-1)*3
-	if available <= len(widths)*6 {
-		return nil, false
-	}
-	for total > width {
-		changed := false
-		for i := range widths {
-			if widths[i] > 6 && total > width {
-				widths[i]--
-				total--
-				changed = true
-			}
+		cLines := make([]string, len(dLines))
+		for i, dl := range dLines {
+			cLines[i] = stripANSI(dl)
 		}
-		if !changed {
-			return nil, false
+		return wrappedCell{dLines, cLines}
+	}
+
+	headerRow := wrappedRow{}
+	for col := 0; col < colCount; col++ {
+		wc := wrapSpans(cellSpansAt(table.Header, col), colWidths[col], markdownTableHeaderStyle)
+		headerRow.cells = append(headerRow.cells, wc)
+		if len(wc.displayLines) > headerRow.maxLines {
+			headerRow.maxLines = len(wc.displayLines)
 		}
 	}
-	return widths, true
-}
+	if headerRow.maxLines > tableMaxRowLines {
+		return renderStackedMarkdownTable(table, aligns, width)
+	}
 
-func renderGridMarkdownTable(surface markdownSurface, header [][]markdownSpan, rows [][]markdownTableCell, widths []int) []markdownRenderLine {
-	lines := make([]markdownRenderLine, 0, len(rows)*3+4)
-
-	// Enhanced table border styles
-	lines = append(lines, renderEnhancedTableBorderLine(widths, markdownTableCornerTopLeft, "┬", markdownTableCornerTopRight, "+", "+", "+"))
-
-	// Render header with enhanced style
-	lines = append(lines, renderTableGridRow(header, widths, markdownTableHeaderStyle)...)
-
-	// Enhanced table separator
-	lines = append(lines, renderEnhancedTableBorderLine(widths, "├", markdownTableCross, "┤", "+", "+", "+"))
-
-	// Render table rows with alternating styles
-	for rowIndex, row := range rows {
-		cells := make([][]markdownSpan, len(widths))
-		for i := range widths {
-			cells[i] = cellSpansAt(row, i)
-		}
-
-		// Use alternating row styles for better readability
+	dataRows := make([]wrappedRow, len(table.Rows))
+	for rowIdx, row := range table.Rows {
+		wr := wrappedRow{}
 		rowStyle := markdownBodyStyle
-		if rowIndex%2 == 1 {
+		if rowIdx%2 == 1 {
 			rowStyle = markdownTableAltRowStyle
 		}
-
-		lines = append(lines, renderTableGridRow(cells, widths, rowStyle)...)
+		for col := 0; col < colCount; col++ {
+			wc := wrapSpans(cellSpansAt(row, col), colWidths[col], rowStyle)
+			wr.cells = append(wr.cells, wc)
+			if len(wc.displayLines) > wr.maxLines {
+				wr.maxLines = len(wc.displayLines)
+			}
+		}
+		if wr.maxLines > tableMaxRowLines {
+			return renderStackedMarkdownTable(table, aligns, width)
+		}
+		dataRows[rowIdx] = wr
 	}
 
-	// Enhanced table bottom border
-	lines = append(lines, renderEnhancedTableBorderLine(widths, markdownTableCornerBottomLeft, "┴", markdownTableCornerBottomRight, "+", "+", "+"))
+	tableWidth := 1 + colCount*3
+	for _, w := range colWidths {
+		tableWidth += w
+	}
+	if tableWidth > width-tableSafetyMargin {
+		return renderStackedMarkdownTable(table, aligns, width)
+	}
+
+	return renderGridMarkdownTable(headerRow, dataRows, colWidths, aligns)
+}
+
+func computeColumnWidths(table markdownTableBlock, colCount int, termWidth int) ([]int, bool, bool) {
+	minWidths := make([]int, colCount)
+	idealWidths := make([]int, colCount)
+
+	for col := 0; col < colCount; col++ {
+		minW := tableMinColWidth
+		idealW := tableMinColWidth
+
+		headerText := plainTextFromSpans(cellSpansAt(table.Header, col))
+		idealW = max(idealW, runewidth.StringWidth(headerText))
+		for _, word := range strings.Fields(headerText) {
+			minW = max(minW, runewidth.StringWidth(word))
+		}
+
+		for _, row := range table.Rows {
+			cellText := plainTextFromSpans(cellSpansAt(row, col))
+			idealW = max(idealW, runewidth.StringWidth(cellText))
+			for _, word := range strings.Fields(cellText) {
+				minW = max(minW, runewidth.StringWidth(word))
+			}
+		}
+
+		minWidths[col] = minW
+		idealWidths[col] = idealW
+	}
+
+	borderOverhead := 1 + colCount*3
+	available := max(termWidth-borderOverhead-tableSafetyMargin, colCount*tableMinColWidth)
+
+	totalIdeal := 0
+	totalMin := 0
+	for i := 0; i < colCount; i++ {
+		totalIdeal += idealWidths[i]
+		totalMin += minWidths[i]
+	}
+
+	widths := make([]int, colCount)
+	hardBreak := false
+
+	switch {
+	case totalIdeal <= available:
+		copy(widths, idealWidths)
+	case totalMin <= available:
+		overflow := totalIdeal - totalMin
+		remaining := available - totalMin
+		for i := 0; i < colCount; i++ {
+			if overflow > 0 {
+				extra := (idealWidths[i] - minWidths[i]) * remaining / overflow
+				widths[i] = minWidths[i] + extra
+			} else {
+				widths[i] = minWidths[i]
+			}
+		}
+		distributed := 0
+		for _, w := range widths {
+			distributed += w
+		}
+		for i := 0; i < colCount && distributed < available; i++ {
+			widths[i]++
+			distributed++
+		}
+	default:
+		hardBreak = true
+		for i := 0; i < colCount; i++ {
+			widths[i] = max(1, minWidths[i]*available/totalMin)
+		}
+		distributed := 0
+		for _, w := range widths {
+			distributed += w
+		}
+		for i := 0; i < colCount && distributed < available; i++ {
+			widths[i]++
+			distributed++
+		}
+	}
+
+	return widths, hardBreak, true
+}
+
+func renderGridMarkdownTable(header wrappedRow, dataRows []wrappedRow, widths []int, aligns []extensionast.Alignment) []markdownRenderLine {
+	lines := make([]markdownRenderLine, 0)
+
+	lines = append(lines, renderTableBorderLine(widths, "┌", "┬", "┐", "+", "+", "+"))
+
+	centerAligns := make([]extensionast.Alignment, len(aligns))
+	for i := range centerAligns {
+		centerAligns[i] = extensionast.AlignCenter
+	}
+	lines = append(lines, renderTableGridRow(header, widths, centerAligns)...)
+
+	lines = append(lines, renderTableBorderLine(widths, "├", "┼", "┤", "+", "+", "+"))
+
+	for _, row := range dataRows {
+		lines = append(lines, renderTableGridRow(row, widths, aligns)...)
+	}
+
+	lines = append(lines, renderTableBorderLine(widths, "└", "┴", "┘", "+", "+", "+"))
 	return lines
 }
 
-func renderTableGridRow(cells [][]markdownSpan, widths []int, defaultStyle lipgloss.Style) []markdownRenderLine {
-	renderedCells := make([][]markdownRenderLine, len(widths))
-	maxHeight := 1
-	for col := range widths {
-		renderedCells[col] = renderWrappedSpans(cells[col], widths[col], markdownLinePrefix{}, markdownLinePrefix{}, defaultStyle)
-		if len(renderedCells[col]) == 0 {
-			renderedCells[col] = []markdownRenderLine{{}}
-		}
-		if len(renderedCells[col]) > maxHeight {
-			maxHeight = len(renderedCells[col])
-		}
-	}
+type wrappedCell struct {
+	displayLines []string
+	copyLines    []string
+}
 
-	out := make([]markdownRenderLine, 0, maxHeight)
+type wrappedRow struct {
+	cells    []wrappedCell
+	maxLines int
+}
+
+func renderTableGridRow(row wrappedRow, widths []int, aligns []extensionast.Alignment) []markdownRenderLine {
+	out := make([]markdownRenderLine, 0, row.maxLines)
 	leftDisplay := markdownTableBorderStyle.Render("│ ")
-	separatorDisplay := markdownTableBorderStyle.Render(" │ ")
+	sepDisplay := markdownTableBorderStyle.Render(" │ ")
 	rightDisplay := markdownTableBorderStyle.Render(" │")
 	leftCopy := "| "
-	separatorCopy := " | "
+	sepCopy := " | "
 	rightCopy := " |"
-	for row := 0; row < maxHeight; row++ {
-		displayParts := make([]string, 0, len(widths))
-		copyParts := make([]string, 0, len(widths))
-		for col, cellWidth := range widths {
-			line := markdownRenderLine{}
-			if row < len(renderedCells[col]) {
-				line = renderedCells[col][row]
+
+	for lineIdx := 0; lineIdx < row.maxLines; lineIdx++ {
+		displayParts := make([]string, len(widths))
+		copyParts := make([]string, len(widths))
+		for col := range widths {
+			cell := row.cells[col]
+			offset := (row.maxLines - len(cell.displayLines)) / 2
+			if lineIdx >= offset && lineIdx-offset < len(cell.displayLines) {
+				dl := cell.displayLines[lineIdx-offset]
+				cl := cell.copyLines[lineIdx-offset]
+				displayParts[col] = padAligned(dl, widths[col], aligns[col])
+				copyParts[col] = padAligned(cl, widths[col], aligns[col])
+			} else {
+				displayParts[col] = strings.Repeat(" ", widths[col])
+				copyParts[col] = strings.Repeat(" ", widths[col])
 			}
-			displayParts = append(displayParts, padStyledLineRight(line.Display, line.Copy, cellWidth))
-			copyParts = append(copyParts, padPlainRight(line.Copy, cellWidth))
 		}
 		out = append(out, markdownRenderLine{
-			Display: leftDisplay + strings.Join(displayParts, separatorDisplay) + rightDisplay,
-			Copy:    leftCopy + strings.Join(copyParts, separatorCopy) + rightCopy,
+			Display: leftDisplay + strings.Join(displayParts, sepDisplay) + rightDisplay,
+			Copy:    leftCopy + strings.Join(copyParts, sepCopy) + rightCopy,
 		})
 	}
 	return out
 }
 
-func renderEnhancedTableBorderLine(widths []int, left, middle, right, leftCopy, middleCopy, rightCopy string) markdownRenderLine {
-	displayParts := make([]string, 0, len(widths))
-	copyParts := make([]string, 0, len(widths))
-
-	for i, width := range widths {
-		if i == 0 {
-			displayParts = append(displayParts, strings.Repeat("─", width))
-			copyParts = append(copyParts, strings.Repeat("-", width))
-		} else {
-			displayParts = append(displayParts, strings.Repeat("─", width))
-			copyParts = append(copyParts, strings.Repeat("-", width))
-		}
+func renderTableBorderLine(widths []int, left, mid, right, leftCopy, midCopy, rightCopy string) markdownRenderLine {
+	displayParts := make([]string, len(widths))
+	copyParts := make([]string, len(widths))
+	for i, w := range widths {
+		displayParts[i] = strings.Repeat("─", w+2)
+		copyParts[i] = strings.Repeat("-", w+2)
 	}
-
 	return markdownRenderLine{
-		Display: markdownTableBorderStyle.Render(left + strings.Join(displayParts, markdownTableBorderStyle.Render(middle)) + right),
-		Copy:    leftCopy + strings.Join(copyParts, middleCopy) + rightCopy,
+		Display: markdownTableBorderStyle.Render(left + strings.Join(displayParts, markdownTableBorderStyle.Render(mid)) + right),
+		Copy:    leftCopy + strings.Join(copyParts, midCopy) + rightCopy,
 	}
 }
 
-func renderTableBorderLine(widths []int, left, middle, right, leftCopy, middleCopy, rightCopy string) markdownRenderLine {
-	displayParts := make([]string, 0, len(widths))
-	copyParts := make([]string, 0, len(widths))
-	for i, width := range widths {
-		if i == 0 {
-			displayParts = append(displayParts, strings.Repeat("─", width))
-			copyParts = append(copyParts, strings.Repeat("-", width))
-		} else {
-			displayParts = append(displayParts, strings.Repeat("─", width))
-			copyParts = append(copyParts, strings.Repeat("-", width))
-		}
+func renderStackedMarkdownTable(table markdownTableBlock, aligns []extensionast.Alignment, width int) []markdownRenderLine {
+	lines := make([]markdownRenderLine, 0)
+	sepWidth := min(width-1, 40)
+	if sepWidth < 10 {
+		sepWidth = width - 1
 	}
-	return markdownRenderLine{
-		Display: markdownTableBorderStyle.Render(left) + strings.Join(displayParts, markdownTableBorderStyle.Render(middle)) + markdownTableBorderStyle.Render(right),
-		Copy:    leftCopy + strings.Join(copyParts, middleCopy) + rightCopy,
-	}
-}
 
-func renderStackedMarkdownTable(surface markdownSurface, header [][]markdownSpan, rows [][]markdownTableCell, width int) []markdownRenderLine {
-	lines := make([]markdownRenderLine, 0, len(rows)*3)
-	for rowIndex, row := range rows {
-		if rowIndex > 0 {
-			lines = append(lines, markdownRenderLine{})
+	for rowIdx, row := range table.Rows {
+		if rowIdx > 0 {
+			sep := strings.Repeat("─", sepWidth)
+			lines = append(lines, markdownRenderLine{
+				Display: markdownTableBorderStyleLight.Render(sep),
+				Copy:    sep,
+			})
 		}
-		for col := range header {
-			label := strings.TrimSpace(plainTextFromSpans(header[col]))
+		for col := range table.Header {
+			label := strings.TrimSpace(plainTextFromSpans(cellSpansAt(table.Header, col)))
 			if label == "" {
 				label = fmt.Sprintf("Column %d", col+1)
 			}
-			prefixText := label + ": "
-			prefix := markdownLinePrefix{
-				Display: markdownTableHeaderStyle.Render(prefixText),
-				Copy:    prefixText,
-				Width:   runewidth.StringWidth(prefixText),
+			labelFull := label + ":"
+			labelDisplay := "\x1b[1m" + labelFull + "\x1b[22m"
+			labelWidth := runewidth.StringWidth(labelFull + " ")
+
+			valueSpans := cellSpansAt(row, col)
+			valueANSI := cellSpansToANSI(valueSpans, markdownBodyStyle)
+			valueANSI = strings.TrimSpace(strings.ReplaceAll(valueANSI, "\n", " "))
+
+			if valueANSI == "" {
+				lines = append(lines, markdownRenderLine{
+					Display: labelDisplay,
+					Copy:    labelFull,
+				})
+				continue
 			}
-			rest := markdownLinePrefix{
-				Display: strings.Repeat(" ", prefix.Width),
-				Copy:    strings.Repeat(" ", prefix.Width),
-				Width:   prefix.Width,
-			}
-			valueLines := renderWrappedSpans(cellSpansAt(row, col), width, prefix, rest, markdownBodyStyle)
+
+			firstWidth := max(1, width-labelWidth-3)
+			contWidth := max(1, width-3)
+
+			valueLines := wrapANSI(valueANSI, firstWidth)
 			if len(valueLines) == 0 {
-				valueLines = []markdownRenderLine{{
-					Display: prefix.Display,
-					Copy:    prefix.Copy,
-				}}
+				lines = append(lines, markdownRenderLine{
+					Display: labelDisplay,
+					Copy:    labelFull,
+				})
+				continue
 			}
-			lines = append(lines, valueLines...)
+
+			lines = append(lines, markdownRenderLine{
+				Display: labelDisplay + " " + valueLines[0],
+				Copy:    labelFull + " " + stripANSI(valueLines[0]),
+			})
+
+			if len(valueLines) > 1 {
+				remaining := strings.Join(valueLines[1:], " ")
+				contLines := wrapANSI(remaining, contWidth)
+				for _, cl := range contLines {
+					lines = append(lines, markdownRenderLine{
+						Display: "  " + cl,
+						Copy:    "  " + stripANSI(cl),
+					})
+				}
+			}
 		}
 	}
 	return lines
@@ -1706,13 +1797,16 @@ func wrapANSILines(s string, width int, hardBreak bool) []string {
 				cur.Reset()
 				if after != "" {
 					cur.WriteString(after)
-					curW = runewidth.StringWidth(stripANSI(after))
 				}
+				cur.WriteRune(r)
+				curW = runewidth.StringWidth(stripANSI(after + string(r)))
 				lastSpacePos = -1
 			} else {
 				flushRemaining()
-				cur.WriteRune(r)
-				curW = w
+				if r != ' ' {
+					cur.WriteRune(r)
+					curW = w
+				}
 				lastSpacePos = -1
 			}
 		} else {
