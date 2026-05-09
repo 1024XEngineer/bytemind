@@ -1,65 +1,123 @@
+<p align="right">
+  <b>English</b> | <a href="./README.zh-CN.md">简体中文</a>
+</p>
+
 <p align="center">
-  <img alt="ByteMind Banner" src="https://capsule-render.vercel.app/api?type=waving&height=190&color=0:0ea5e9,100:2563eb&text=ByteMind&fontColor=ffffff&fontSize=52&animation=fadeIn" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&height=240&color=0:020617,35:0ea5e9,70:2563eb,100:4f46e5&text=ByteMind&fontAlignY=38&desc=Terminal-native%20AI%20Coding%20Agent&descAlignY=58&fontColor=ffffff&fontSize=58&animation=fadeIn" alt="ByteMind Banner" />
+</p>
+
+<p align="center">
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&pause=1200&center=true&vCenter=true&width=900&lines=Inspect+repositories+with+AI;Plan+before+you+build;Run+tools+under+human+control;Skills.+MCP.+SubAgents.;Built+for+real+engineering+workflows" alt="Typing SVG" />
 </p>
 
 <h1 align="center">ByteMind</h1>
 
 <p align="center">
-  <a href="https://github.com/1024XEngineer/bytemind/stargazers"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/1024XEngineer/bytemind?style=for-the-badge&logo=github&color=f59e0b" /></a>
-  <a href="https://github.com/1024XEngineer/bytemind/network/members"><img alt="GitHub Forks" src="https://img.shields.io/github/forks/1024XEngineer/bytemind?style=for-the-badge&logo=github&color=06b6d4" /></a>
-  <a href="https://github.com/1024XEngineer/bytemind/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge" /></a>
-  <img alt="Go Version" src="https://img.shields.io/badge/Go-1.24+-00ADD8?style=for-the-badge&logo=go&logoColor=white" />
-  <a href="https://github.com/1024XEngineer/bytemind/commits/main"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/1024XEngineer/bytemind/main?style=for-the-badge&color=8b5cf6" /></a>
+  <strong>A terminal-native AI coding agent for real repositories.</strong>
 </p>
 
 <p align="center">
-  一个用 Go 实现的 AI Coding CLI，目标是提供更接近 OpenCode / ClaudeCode 的工作流能力。
+  Let AI inspect code, search files, run commands, edit files, plan tasks, and operate under configurable human approval.
 </p>
 
 <p align="center">
-  <a href="#core-features">核心能力</a> •
-  <a href="#quick-start">快速开始</a> •
-  <a href="#configuration">配置文件</a> •
-  <a href="#project-structure">目录结构</a>
+  <a href="https://github.com/1024XEngineer/bytemind/stargazers"><img src="https://img.shields.io/github/stars/1024XEngineer/bytemind?style=for-the-badge&logo=github&color=f59e0b" alt="Stars" /></a>
+  <a href="https://github.com/1024XEngineer/bytemind/network/members"><img src="https://img.shields.io/github/forks/1024XEngineer/bytemind?style=for-the-badge&logo=github&color=06b6d4" alt="Forks" /></a>
+  <a href="https://github.com/1024XEngineer/bytemind/releases"><img src="https://img.shields.io/github/v/release/1024XEngineer/bytemind?style=for-the-badge&color=8b5cf6" alt="Release" /></a>
+  <a href="https://github.com/1024XEngineer/bytemind/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge" alt="License" /></a>
 </p>
 
-> [!NOTE]
-> 当前版本已具备多轮会话、流式输出、工具调用循环、Shell 执行审批、执行预算控制与重复调用检测等核心能力。
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go" />
+  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-1f2937?style=flat-square" alt="Platform" />
+  <img src="https://img.shields.io/badge/Provider-OpenAI--Compatible%20%7C%20Anthropic-334155?style=flat-square" alt="Provider" />
+  <img src="https://img.shields.io/badge/Mode-Build%20%7C%20Plan-0f766e?style=flat-square" alt="Mode" />
+  <img src="https://img.shields.io/badge/Runtime-Skills%20%7C%20MCP%20%7C%20SubAgents-6d28d9?style=flat-square" alt="Runtime" />
+</p>
 
-> [!TIP]
-> 长任务建议提高 `-max-iterations`，到达预算后会返回阶段性总结，不会直接失败退出。
+<p align="center">
+  <a href="https://1024xengineer.github.io/bytemind/zh/"><b>Documentation</b></a>
+  ·
+  <a href="#why-bytemind"><b>Why ByteMind</b></a>
+  ·
+  <a href="#use-cases"><b>Use Cases</b></a>
+  ·
+  <a href="#quick-start"><b>Quick Start</b></a>
+  ·
+  <a href="#feature-matrix"><b>Feature Matrix</b></a>
+  ·
+  <a href="#architecture"><b>Architecture</b></a>
+  ·
+  <a href="#skills-mcp-and-subagents"><b>Skills / MCP / SubAgents</b></a>
+</p>
 
-<a id="core-features"></a>
+---
 
-## 🎯 核心能力
+## Why ByteMind
 
-| 模块 | 说明 | 状态 |
-| --- | --- | --- |
-| 会话系统 | 多轮会话 + 会话持久化 | ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
-| 对话交互 | 纯 CLI 聊天 + 流式终端输出 | ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
-| Provider 适配 | OpenAI-compatible / Anthropic 双适配层 | ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
-| 工具执行 | 文件读写搜索、补丁替换、命令执行审批 | ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
-| 运行稳定性 | `max_iterations` 预算控制 + 重复调用检测 | ![status](https://img.shields.io/badge/status-ready-22c55e?style=flat-square) |
+ByteMind is built for developers who want AI to work **inside the repository**, not outside it.
 
-<a id="quick-start"></a>
+Instead of stopping at suggestions, ByteMind can participate in the actual engineering loop:
 
-## 🚀 快速开始
+```text
+Prompt → Plan → Tool Call → Observation → Code Change → Verification → Result
+```
 
-### 0) 一键安装（无需 Go）
+<p align="center">
+  <img src="https://img.shields.io/badge/Terminal--native-Work%20where%20developers%20already%20operate-0ea5e9?style=for-the-badge" alt="Terminal-native" />
+  <img src="https://img.shields.io/badge/Human--in--the--loop-Control%20high-risk%20execution-f59e0b?style=for-the-badge" alt="Human-in-the-loop" />
+  <img src="https://img.shields.io/badge/Extensible-Encode%20workflows%20as%20runtime%20capabilities-8b5cf6?style=for-the-badge" alt="Extensible" />
+</p>
 
-macOS / Linux：
+<table>
+  <tr>
+    <td width="33%" align="center">
+      <h3>🧠 Plan</h3>
+      <p>Use <b>Plan mode</b> for higher-risk tasks. Review the approach before making changes.</p>
+    </td>
+    <td width="33%" align="center">
+      <h3>🛠 Execute</h3>
+      <p>Inspect files, search code, apply patches, run commands, and fetch external context when needed.</p>
+    </td>
+    <td width="33%" align="center">
+      <h3>🧭 Control</h3>
+      <p>Keep sensitive actions behind approval policies and runtime boundaries.</p>
+    </td>
+  </tr>
+</table>
+
+---
+
+## Use Cases
+
+| Scenario | What ByteMind can do |
+| --- | --- |
+| Understand a new repository | Inspect structure, find entrypoints, and map key modules and call paths |
+| Debug failing tests | Read failures, locate related code, patch the issue, and verify again |
+| Review or refine changes | Check correctness, regression risk, and missing test coverage |
+| Generate technical plans and RFCs | Turn repository context into an actionable implementation proposal |
+| Automate repeated engineering tasks | Encode common workflows through Skills, MCP, or SubAgents |
+| Collaborate under approval | Read and write files, run commands, and advance tasks while preserving approval boundaries |
+
+---
+
+## Quick Start
+
+### Install
+
+**macOS / Linux**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash
 ```
 
-Windows PowerShell：
+**Windows PowerShell**
 
 ```powershell
 iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
-安装指定版本（将 `vX.Y.Z` 替换为要安装的发布标签）：
+**Install a specific version**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | BYTEMIND_VERSION=vX.Y.Z bash
@@ -69,45 +127,166 @@ curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts
 $env:BYTEMIND_VERSION='vX.Y.Z'; iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
 ```
 
-更多安装方式见：[docs/installation.md](docs/installation.md)
+### Configure
 
-### 1) 准备配置
-
-先复制示例配置，再把 `api_key` 等字段改成你自己的值：
-
-```powershell
-New-Item -ItemType Directory -Force .bytemind | Out-Null
-Copy-Item config.example.json .bytemind/config.json
+```bash
+mkdir -p .bytemind
+cp config.example.json .bytemind/config.json
 ```
 
-> 兼容说明：工作区 `config.json` 也会被识别；这里推荐 `.bytemind/config.json` 方便与源码分离。
+### Run
 
-### 2) 运行 ByteMind
-
-聊天模式：
-
-```powershell
-go run ./cmd/bytemind chat
+```bash
+bytemind chat
 ```
 
-单次任务：
-
-```powershell
-go run ./cmd/bytemind run -prompt "分析当前项目并生成改进建议"
+```bash
+bytemind run -prompt "Analyze this repository and summarize the architecture"
 ```
 
-提高执行预算：
-
-```powershell
-go run ./cmd/bytemind chat -max-iterations 64
-go run ./cmd/bytemind run -prompt "refactor this module" -max-iterations 64
+```bash
+bytemind run -prompt "Refactor this module and update tests" -max-iterations 64
 ```
 
-<a id="configuration"></a>
+---
 
-## ⚙️ 配置文件
+## Terminal Preview
 
-默认配置（OpenAI-compatible）：
+<p align="center">
+  <img src="./docs/assets/bytemind-terminal-preview.webp" alt="ByteMind terminal preview" width="960" />
+</p>
+
+---
+
+<a id="feature-matrix"></a>
+
+## Feature Matrix
+
+| Category | Capability | Notes |
+| --- | --- | --- |
+| **Terminal UX** | Terminal-first interaction | Built for repository-centric workflows |
+| **Streaming** | Real-time output | Useful for long-running tasks |
+| **Agent Loop** | Multi-step tool use + observations | More than a one-shot reply |
+| **Build / Plan** | Separate planning and execution modes | Better for high-risk changes |
+| **Files** | Read, search, write, replace, patch | Core repository operations |
+| **Shell** | Run commands under approval | Keep execution visible and controlled |
+| **Web** | Search and fetch external content | Useful when external context is needed |
+| **Sessions** | Persist and resume tasks | Suitable for long-running work |
+| **Skills** | Reusable workflows | Bug investigation, review, RFC, onboarding |
+| **MCP** | External tool / context integration | Extend the runtime beyond local tools |
+| **SubAgents** | Focused delegated work | Reduce noise in the main context |
+| **Safety** | Approval, allowlists, writable roots | Human-in-the-loop execution |
+| **Providers** | OpenAI-compatible / Anthropic | Configurable runtime support |
+
+---
+
+## Built-in Tools
+
+| Tool | Purpose |
+| --- | --- |
+| `list_files` | Inspect repository structure and candidate file scopes |
+| `read_file` | Read source code, docs, config, and test content |
+| `search_text` | Locate symbols, error messages, or call sites by keyword |
+| `write_file` | Create or fully rewrite files |
+| `replace_in_file` | Make small text replacements in existing files |
+| `apply_patch` | Apply incremental file changes through patches |
+| `run_shell` | Run commands inside the approval boundary and read results |
+| `web_search` | Search external sources when local context is insufficient |
+| `web_fetch` | Fetch a specific page as supplemental context |
+
+---
+
+## Core Experience
+
+<table>
+  <tr>
+    <td width="50%">
+      <h3>✅ What ByteMind is good at</h3>
+      <ul>
+        <li>Understanding unfamiliar repositories</li>
+        <li>Debugging code and failing tests</li>
+        <li>Planning and applying small refactors</li>
+        <li>Reviewing correctness and regression risk</li>
+        <li>Writing RFC-style implementation plans</li>
+        <li>Automating repetitive coding workflows</li>
+      </ul>
+    </td>
+    <td width="50%">
+      <h3>⚙️ What makes it practical</h3>
+      <ul>
+        <li>Approval before sensitive actions</li>
+        <li>Execution budget via <code>max_iterations</code></li>
+        <li>Session persistence</li>
+        <li>Provider-agnostic runtime</li>
+        <li>Extensible skills and external tools</li>
+        <li>SubAgent-based context isolation</li>
+      </ul>
+    </td>
+  </tr>
+</table>
+
+---
+
+## How It Works
+
+```mermaid
+graph TD
+    A["User Prompt"] --> B["Build Runtime Context"]
+    B --> C["LLM decides: answer or tool call"]
+    C --> D{"Tool Call?"}
+    D -- "No" --> E["Final Answer"]
+    D -- "Yes" --> F["Approval / Policy Check"]
+    F --> G["Execute Tool"]
+    G --> H["Observation appended to session"]
+    H --> I{"Done?"}
+    I -- "No" --> C
+    I -- "Yes" --> E
+```
+
+---
+
+<a id="architecture"></a>
+
+## Architecture
+
+```mermaid
+graph TD
+    User["User"] --> CLI["cmd/bytemind"]
+    CLI --> App["App Bootstrap"]
+    App --> Runner["Runner"]
+
+    Runner --> Engine["Agent Engine"]
+    Engine --> Provider["Provider Runtime"]
+    Provider --> Model["LLM Provider"]
+
+    Engine --> Tools["Tool Registry"]
+    Tools --> FileTools["File Tools"]
+    Tools --> PatchTools["Patch Tools"]
+    Tools --> Shell["Shell Tool"]
+    Tools --> Web["Web Search / Fetch"]
+    Tools --> TaskTools["Task Output / Stop"]
+    Tools --> Delegate["Delegate SubAgent"]
+
+    Runner --> Session["Session Store"]
+    Runner --> Config["Config"]
+    Runner --> Skills["Skills Manager"]
+    Runner --> SubAgents["SubAgent Gateway"]
+    Runner --> Safety["Approval / Sandbox / Allowlist"]
+```
+
+---
+
+## Configuration
+
+ByteMind normally merges three configuration layers: built-in defaults, user-level `~/.bytemind/config.json` (or `BYTEMIND_HOME/config.json`), and project-level `<workspace>/.bytemind/config.json`.
+
+The example below is a **project-level config** and only affects the current workspace. Provider credentials reused across repositories usually belong in user-level config or environment variables. Passing `-config` uses that explicit config file.
+
+```text
+.bytemind/config.json
+```
+
+### OpenAI-compatible example
 
 ```json
 {
@@ -115,26 +294,16 @@ go run ./cmd/bytemind run -prompt "refactor this module" -max-iterations 64
     "type": "openai-compatible",
     "base_url": "https://api.openai.com/v1",
     "model": "gpt-5.4-mini",
-    "api_key": "your-api-key-here"
+    "api_key_env": "BYTEMIND_API_KEY"
   },
   "approval_policy": "on-request",
-  "notifications": {
-    "desktop": {
-      "enabled": true,
-      "on_approval_required": true,
-      "on_run_completed": true,
-      "on_run_failed": true,
-      "on_run_canceled": false,
-      "cooldown_seconds": 3
-    }
-  },
+  "approval_mode": "interactive",
   "max_iterations": 32,
   "stream": true
 }
 ```
 
-<details>
-<summary>Anthropic 配置示例</summary>
+### Anthropic example
 
 ```json
 {
@@ -142,67 +311,114 @@ go run ./cmd/bytemind run -prompt "refactor this module" -max-iterations 64
     "type": "anthropic",
     "base_url": "https://api.anthropic.com",
     "model": "claude-sonnet-4-20250514",
-    "api_key": "your-api-key-here",
+    "api_key_env": "ANTHROPIC_API_KEY",
     "anthropic_version": "2023-06-01"
-  }
+  },
+  "approval_policy": "on-request",
+  "approval_mode": "interactive"
+}
+```
+
+<details>
+  <summary><b>Runtime boundary example</b></summary>
+
+```json
+{
+  "approval_policy": "on-request",
+  "approval_mode": "interactive",
+  "writable_roots": [],
+  "exec_allowlist": [],
+  "network_allowlist": [],
+  "system_sandbox_mode": "off"
 }
 ```
 
 </details>
 
-<a id="project-structure"></a>
+---
 
-## 🧱 目录结构
+<a id="skills-mcp-and-subagents"></a>
+
+## Skills, MCP and SubAgents
+
+### Skills
+
+The CLI currently exposes reusable workflow helpers through the registered slash commands below.
 
 ```text
-cmd/bytemind            CLI 入口
-internal/agent          对话循环、系统提示词模板、流式输出
-internal/config         配置加载与环境变量覆盖
-internal/llm            通用消息与工具类型
-internal/provider       多 provider 适配层
-internal/session        会话持久化
-internal/tools          文件工具、patch 工具、shell 工具
+/help                 Show available commands
+/session              Show the current session
+/sessions [limit]     List recent sessions
+/agents [name]        List available subagents or show one definition
+/explorer             Show the builtin explorer subagent definition
+/review               Show the builtin review subagent definition
+/resume <id>          Resume a recent session by id or prefix
+/new                  Start a new session in the current workspace
+/quit                 Exit the CLI
 ```
 
-## 🧭 交互命令
+### MCP
 
-- `/help`
-- `/session`
-- `/sessions`
-- `/quit`
+Use MCP to connect ByteMind to external tools and context beyond local repository operations.
 
-## 🧰 已实现工具
+### SubAgents
 
-- `list_files`
-- `read_file`
-- `search_text`
-- `write_file`
-- `replace_in_file`
-- `apply_patch`
-- `run_shell`
+SubAgents provide isolated execution contexts for focused work:
 
-## 📝 系统提示词维护
+- broad repository discovery
+- file targeting
+- read-only exploration
+- bug scope reduction
+- review / analysis subtasks
 
-系统提示词模板在：
+<p align="center">
+  <img src="https://img.shields.io/badge/Skills-Reusable%20workflows-0284c7?style=for-the-badge" alt="Skills" />
+  <img src="https://img.shields.io/badge/MCP-External%20tooling-7c3aed?style=for-the-badge" alt="MCP" />
+  <img src="https://img.shields.io/badge/SubAgents-Focused%20delegation-16a34a?style=for-the-badge" alt="SubAgents" />
+</p>
 
-- `internal/agent/prompts/system.md`
+---
 
-运行时由 `internal/agent/prompt.go` 通过 `go:embed` 内嵌 Markdown，并替换 `{{WORKSPACE}}`、`{{APPROVAL_POLICY}}` 占位符。
+## Safety Model
 
-## 🌍 Environment Variables
+| Action | Typical behavior |
+| --- | --- |
+| Read files | Usually allowed automatically |
+| Search files | Usually allowed automatically |
+| Write files | Requires approval |
+| Run shell commands | Requires approval or allowlist |
+| High-risk actions | Shown before execution |
 
-See [docs/environment-variables.md](docs/environment-variables.md) for runtime TUI env vars:
+> ByteMind is designed around a simple principle:<br>
+> **AI can execute, but humans should keep the final control boundary.**
 
-- `BYTEMIND_ENABLE_MOUSE`
-- `BYTEMIND_WINDOWS_INPUT_TTY`
-- `BYTEMIND_MOUSE_Y_OFFSET`
-- `BYTEMIND_DESKTOP_NOTIFY`
-- `BYTEMIND_NOTIFY_APPROVAL`
-- `BYTEMIND_NOTIFY_RUN_COMPLETED`
-- `BYTEMIND_NOTIFY_RUN_FAILED`
-- `BYTEMIND_NOTIFY_RUN_CANCELED`
-- `BYTEMIND_NOTIFY_COOLDOWN_SECONDS`
+---
 
-## 📄 License
+## Project Structure
+
+```text
+cmd/bytemind            CLI entrypoint
+internal/app            Application bootstrap
+internal/agent          Agent loop, prompts, streaming, subagent execution
+internal/config         Config loading, defaults, environment overrides
+internal/llm            Common message and tool types
+internal/provider       Provider adapters and provider runtime
+internal/session        Session persistence
+internal/tools          File / patch / shell / web tools
+internal/skills         Skills discovery and loading
+internal/subagents      SubAgent manager and preflight gateway
+internal/sandbox        Runtime boundary and sandbox-related logic
+```
+
+---
+
+## Links
+
+- Documentation: <https://1024xengineer.github.io/bytemind/zh/>
+- GitHub: <https://github.com/1024XEngineer/bytemind>
+
+---
+
+## License
 
 This project is licensed under the [MIT License](LICENSE).
