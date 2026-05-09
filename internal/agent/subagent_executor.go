@@ -198,7 +198,6 @@ func (e *defaultSubAgentExecutor) newSubAgentChildRunner(workspace string, maxTu
 		Runtime:         r.runtime,
 		Extensions:      r.extensions,
 		SubAgentManager: r.subAgentManager,
-		TokenManager:    r.tokenManager,
 		AuditStore:      r.auditStore,
 		PromptStore:     r.promptStore,
 		Observer:        childObserver,

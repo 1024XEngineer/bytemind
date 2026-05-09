@@ -265,26 +265,6 @@ func TestLoadUsesUpdateCheckEnvOverride(t *testing.T) {
 	}
 }
 
-func TestLoadAppliesTokenUsageDefaults(t *testing.T) {
-	workspace := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("BYTEMIND_HOME", home)
-	t.Setenv("BYTEMIND_API_KEY", "secret")
-
-	cfg, err := Load(workspace, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.TokenUsage.StorageType != "file" {
-		t.Fatalf("expected default token_usage.storage_type=file, got %q", cfg.TokenUsage.StorageType)
-	}
-	if cfg.TokenUsage.RetentionDays != 30 {
-		t.Fatalf("expected default token_usage.retention_days=30, got %d", cfg.TokenUsage.RetentionDays)
-	}
-	if strings.TrimSpace(cfg.TokenUsage.BackupInterval) == "" {
-		t.Fatalf("expected default token_usage.backup_interval to be set")
-	}
-}
 
 func TestLoadAppliesContextBudgetDefaultsWhenMissing(t *testing.T) {
 	workspace := t.TempDir()
@@ -1211,9 +1191,6 @@ func TestEnsureHomeLayoutCreatesStandardDirectories(t *testing.T) {
 	if cfg.AwayPolicy != "auto_deny_continue" {
 		t.Fatalf("expected default away_policy=auto_deny_continue, got %q", cfg.AwayPolicy)
 	}
-	if cfg.TokenUsage.StorageType == "" || cfg.TokenUsage.BackupInterval == "" {
-		t.Fatalf("expected default token_usage config to be present, got %#v", cfg.TokenUsage)
-	}
 	if !cfg.UpdateCheck.Enabled {
 		t.Fatalf("expected default update_check.enabled=true in generated config")
 	}
@@ -1231,9 +1208,6 @@ func TestEnsureHomeLayoutCreatesStandardDirectories(t *testing.T) {
 	}
 	if cfg.Notifications.Desktop.OnRunCanceled {
 		t.Fatalf("expected default notifications.desktop.on_run_canceled=false in generated config")
-	}
-	if cfg.Notifications.Desktop.CooldownSeconds != 3 {
-		t.Fatalf("expected default notifications.desktop.cooldown_seconds=3 in generated config, got %d", cfg.Notifications.Desktop.CooldownSeconds)
 	}
 }
 

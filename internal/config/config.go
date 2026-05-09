@@ -52,7 +52,6 @@ type Config struct {
 	Stream            bool                  `json:"stream"`
 	UpdateCheck       UpdateCheckConfig     `json:"update_check"`
 	TokenQuota        int                   `json:"token_quota"`
-	TokenUsage        TokenUsageConfig      `json:"token_usage"`
 	ContextBudget     ContextBudgetConfig   `json:"context_budget"`
 	MCP               MCPConfig             `json:"-"`
 }
@@ -77,17 +76,7 @@ type ProviderConfig struct {
 	AnthropicVersion string            `json:"anthropic_version"`
 }
 
-type TokenUsageConfig struct {
-	StorageType     string `json:"storage_type"`
-	StoragePath     string `json:"storage_path"`
-	BackupInterval  string `json:"backup_interval"`
-	MaxSessions     int    `json:"max_sessions"`
-	AlertThreshold  int64  `json:"alert_threshold"`
-	EnableRealtime  bool   `json:"enable_realtime"`
-	RetentionDays   int    `json:"retention_days"`
-	MonitorInterval string `json:"monitor_interval"`
-	DatabaseDriver  string `json:"database_driver"`
-}
+
 
 type ContextBudgetConfig struct {
 	WarningRatio     float64 `json:"warning_ratio"`
@@ -219,17 +208,6 @@ func Default(workspace string) Config {
 			Enabled: true,
 		},
 		TokenQuota: DefaultTokenQuota,
-		TokenUsage: TokenUsageConfig{
-			StorageType:     "file",
-			StoragePath:     ".bytemind/token_usage.json",
-			BackupInterval:  "1m",
-			MaxSessions:     10000,
-			AlertThreshold:  1000000,
-			EnableRealtime:  true,
-			RetentionDays:   30,
-			MonitorInterval: "30s",
-			DatabaseDriver:  "sqlite3",
-		},
 		ContextBudget: ContextBudgetConfig{
 			WarningRatio:     DefaultContextBudgetWarningRatio,
 			CriticalRatio:    DefaultContextBudgetCriticalRatio,
@@ -428,17 +406,6 @@ func ensureDefaultConfigFile(home string) error {
 			Enabled: true,
 		},
 		TokenQuota: DefaultTokenQuota,
-		TokenUsage: TokenUsageConfig{
-			StorageType:     "file",
-			StoragePath:     ".bytemind/token_usage.json",
-			BackupInterval:  "1m",
-			MaxSessions:     10000,
-			AlertThreshold:  1000000,
-			EnableRealtime:  true,
-			RetentionDays:   30,
-			MonitorInterval: "30s",
-			DatabaseDriver:  "sqlite3",
-		},
 		ContextBudget: ContextBudgetConfig{
 			WarningRatio:     DefaultContextBudgetWarningRatio,
 			CriticalRatio:    DefaultContextBudgetCriticalRatio,
@@ -982,30 +949,6 @@ func normalize(cfg *Config) error {
 	}
 	if cfg.Notifications.Desktop.CooldownSeconds < 0 {
 		return errors.New("notifications.desktop.cooldown_seconds must be >= 0")
-	}
-	if strings.TrimSpace(cfg.TokenUsage.StorageType) == "" {
-		cfg.TokenUsage.StorageType = "file"
-	}
-	if strings.TrimSpace(cfg.TokenUsage.StoragePath) == "" {
-		cfg.TokenUsage.StoragePath = ".bytemind/token_usage.json"
-	}
-	if strings.TrimSpace(cfg.TokenUsage.BackupInterval) == "" {
-		cfg.TokenUsage.BackupInterval = "1m"
-	}
-	if strings.TrimSpace(cfg.TokenUsage.MonitorInterval) == "" {
-		cfg.TokenUsage.MonitorInterval = "30s"
-	}
-	if strings.TrimSpace(cfg.TokenUsage.DatabaseDriver) == "" {
-		cfg.TokenUsage.DatabaseDriver = "sqlite3"
-	}
-	if cfg.TokenUsage.MaxSessions < 1 {
-		cfg.TokenUsage.MaxSessions = 10000
-	}
-	if cfg.TokenUsage.RetentionDays < 1 {
-		cfg.TokenUsage.RetentionDays = 30
-	}
-	if cfg.TokenUsage.AlertThreshold < 1 {
-		cfg.TokenUsage.AlertThreshold = 1000000
 	}
 	if cfg.ContextBudget.WarningRatio <= 0 {
 		return errors.New("context_budget.warning_ratio must be > 0")

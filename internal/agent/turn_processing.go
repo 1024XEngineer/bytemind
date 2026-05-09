@@ -7,14 +7,12 @@ import (
 	"io"
 	"strings"
 	"sync"
-	"time"
 
 	contextpkg "github.com/1024XEngineer/bytemind/internal/context"
 	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 	"github.com/1024XEngineer/bytemind/internal/session"
-	"github.com/1024XEngineer/bytemind/internal/tokenusage"
 	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
@@ -148,20 +146,14 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 	request.Model = runner.modelID()
 
 	streamedText := false
-	turnStart := time.Now()
 	reply, err := e.completeTurn(ctx, request, p.Out, &streamedText)
-	turnLatency := time.Since(turnStart)
 	if err != nil {
-		estimatedUsage := tokenusage.ResolveTurnUsage(request, nil)
-		runner.recordTokenUsage(ctx, p.Session, request, estimatedUsage, turnLatency, false)
 		return "", false, err
 	}
 	reply.Normalize()
 	_, cleanedReply, _ := parseAssistantTurnIntent(reply)
 	reply = cleanedReply
-	turnUsage := tokenusage.ResolveTurnUsage(request, &reply)
-	runner.recordTokenUsage(ctx, p.Session, request, turnUsage, turnLatency, true)
-	runner.emitUsageEvent(p.Session, &turnUsage)
+	runner.emitUsageEvent(p.Session, reply.Usage)
 
 	if len(reply.ToolCalls) == 0 {
 		// No tool calls — finalize the turn. Safety nets only for specific claim patterns.

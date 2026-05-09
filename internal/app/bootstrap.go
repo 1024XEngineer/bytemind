@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/1024XEngineer/bytemind/internal/agent"
 	"github.com/1024XEngineer/bytemind/internal/config"
@@ -17,7 +16,6 @@ import (
 	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
 	"github.com/1024XEngineer/bytemind/internal/session"
 	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
-	"github.com/1024XEngineer/bytemind/internal/tokenusage"
 	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
@@ -129,11 +127,6 @@ func Bootstrap(req BootstrapRequest) (Runtime, error) {
 	if err != nil {
 		promptStore = storagepkg.NopPromptHistoryStore{}
 	}
-	tokenManager, err := newTokenUsageManagerFromConfig(cfg.TokenUsage)
-	if err != nil {
-		return Runtime{}, err
-	}
-
 	taskEventStore := runtimepkg.TaskEventStore(runtimepkg.NopTaskEventStore{})
 	taskStore, taskStoreErr := storagepkg.NewDefaultTaskStoreWithOptions(nil, storagepkg.TaskStoreOptions{
 		SyncOnAppend: false,
@@ -167,7 +160,6 @@ func Bootstrap(req BootstrapRequest) (Runtime, error) {
 		Extensions:   extensions,
 		AuditStore:   auditStore,
 		PromptStore:  promptStore,
-		TokenManager: tokenManager,
 		Stdin:        req.Stdin,
 		Stdout:       req.Stdout,
 	})
@@ -180,30 +172,4 @@ func Bootstrap(req BootstrapRequest) (Runtime, error) {
 		TaskManager: taskManager,
 		Extensions:  extensions,
 	}, nil
-}
-
-func newTokenUsageManagerFromConfig(cfg config.TokenUsageConfig) (*tokenusage.TokenUsageManager, error) {
-	backupInterval, err := time.ParseDuration(strings.TrimSpace(cfg.BackupInterval))
-	if err != nil || backupInterval <= 0 {
-		backupInterval = time.Minute
-	}
-	monitorInterval, err := time.ParseDuration(strings.TrimSpace(cfg.MonitorInterval))
-	if err != nil || monitorInterval <= 0 {
-		monitorInterval = 30 * time.Second
-	}
-	storagePath := strings.TrimSpace(cfg.StoragePath)
-	if storagePath != "" && !filepath.IsAbs(storagePath) {
-		storagePath = filepath.Clean(storagePath)
-	}
-	return tokenusage.NewTokenUsageManager(&tokenusage.Config{
-		StorageType:     strings.TrimSpace(cfg.StorageType),
-		StoragePath:     storagePath,
-		BackupInterval:  backupInterval,
-		MaxSessions:     cfg.MaxSessions,
-		AlertThreshold:  cfg.AlertThreshold,
-		EnableRealtime:  cfg.EnableRealtime,
-		RetentionDays:   cfg.RetentionDays,
-		MonitorInterval: monitorInterval,
-		DatabaseDriver:  strings.TrimSpace(cfg.DatabaseDriver),
-	})
 }

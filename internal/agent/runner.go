@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/bytemind/internal/config"
+	corepkg "github.com/1024XEngineer/bytemind/internal/core"
 	extensionspkg "github.com/1024XEngineer/bytemind/internal/extensions"
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	"github.com/1024XEngineer/bytemind/internal/provider"
@@ -17,7 +18,6 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/skills"
 	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
 	subagentspkg "github.com/1024XEngineer/bytemind/internal/subagents"
-	"github.com/1024XEngineer/bytemind/internal/tokenusage"
 	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
@@ -54,7 +54,6 @@ type Options struct {
 	Extensions      extensionspkg.Manager
 	SkillManager    *skills.Manager
 	SubAgentManager *subagentspkg.Manager
-	TokenManager    *tokenusage.TokenUsageManager
 	AuditStore      storagepkg.AuditStore
 	PromptStore     storagepkg.PromptHistoryWriter
 	Observer        Observer
@@ -99,7 +98,6 @@ type Runner struct {
 	subAgentExecutor SubAgentExecutor
 	subAgentNotifier SubAgentNotifier
 	worktreeManager  *runtimepkg.WorktreeManager
-	tokenManager     *tokenusage.TokenUsageManager
 	auditStore       storagepkg.AuditStore
 	promptStore      storagepkg.PromptHistoryWriter
 	observer         Observer
@@ -199,7 +197,6 @@ func NewRunner(opts Options) *Runner {
 		extensions:      extensions,
 		skillManager:    manager,
 		subAgentManager: subAgentManager,
-		tokenManager:    opts.TokenManager,
 		auditStore:      auditStore,
 		promptStore:     promptStore,
 		observer:        opts.Observer,
@@ -324,6 +321,22 @@ func (c routeAwareClient) CreateMessage(ctx context.Context, request llm.ChatReq
 
 func (c routeAwareClient) StreamMessage(ctx context.Context, request llm.ChatRequest, onDelta func(string)) (llm.Message, error) {
 	return c.base.StreamMessage(mergeAllowFallbackRouteContext(ctx), request, onDelta)
+}
+
+func (r *Runner) Close() error { return nil }
+
+func (r *Runner) emitUsageEvent(sess *session.Session, usage *llm.Usage) {
+	if sess == nil || usage == nil {
+		return
+	}
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.ContextTokens == 0 && usage.TotalTokens == 0 {
+		return
+	}
+	r.emit(Event{
+		Type:      EventUsageUpdated,
+		SessionID: corepkg.SessionID(sess.ID),
+		Usage:     *usage,
+	})
 }
 
 func mergeAllowFallbackRouteContext(ctx context.Context) context.Context {
