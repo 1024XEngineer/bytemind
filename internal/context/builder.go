@@ -2,9 +2,9 @@ package context
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/1024XEngineer/bytemind/internal/llm"
-	"github.com/1024XEngineer/bytemind/internal/tokenusage"
 )
 
 // BuildRequest defines the minimal inputs needed to assemble one model turn.
@@ -26,7 +26,29 @@ func BuildMessages(req BuildRequest) ([]llm.Message, error) {
 	return messages, nil
 }
 
-// EstimateRequestTokens approximates tokens for a complete request message set.
+// EstimateRequestTokens approximates tokens for a complete request message set
+// using a conservative ~4 chars/token heuristic.
 func EstimateRequestTokens(messages []llm.Message) int {
-	return int(tokenusage.ApproximateRequestTokens(messages))
+	var total int64
+	for _, msg := range messages {
+		msg.Normalize()
+		total += approximateTokens(msg.Text())
+		for _, call := range msg.ToolCalls {
+			total += approximateTokens(call.Function.Name)
+			total += approximateTokens(call.Function.Arguments)
+		}
+	}
+	return int(total)
+}
+
+func approximateTokens(text string) int64 {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return 0
+	}
+	n := len([]rune(trimmed))
+	if n < 1 {
+		n = 1
+	}
+	return int64((n + 3) / 4)
 }

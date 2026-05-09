@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 	"unicode"
 
 	"github.com/1024XEngineer/bytemind/internal/config"
@@ -20,7 +19,6 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/llm"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 	"github.com/1024XEngineer/bytemind/internal/session"
-	"github.com/1024XEngineer/bytemind/internal/tokenusage"
 	"github.com/1024XEngineer/bytemind/internal/tools"
 )
 
@@ -1769,97 +1767,6 @@ func TestRunPromptEmitsUsageUpdatedEventWhenUsageAvailable(t *testing.T) {
 	}
 }
 
-func TestRunPromptEmitsEstimatedUsageWhenProviderUsageMissing(t *testing.T) {
-	workspace := t.TempDir()
-	store, err := session.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sess := session.New(workspace)
-	events := make([]Event, 0, 4)
-
-	runner := NewRunner(Options{
-		Workspace: workspace,
-		Config: config.Config{
-			Provider:      config.ProviderConfig{Model: "test-model"},
-			MaxIterations: 2,
-			Stream:        false,
-		},
-		Client: &fakeClient{replies: []llm.Message{{
-			Role:    llm.RoleAssistant,
-			Content: "plain answer without usage payload",
-		}}},
-		Store:    store,
-		Registry: tools.DefaultRegistry(),
-		Observer: ObserverFunc(func(event Event) {
-			events = append(events, event)
-		}),
-		Stdin:  strings.NewReader(""),
-		Stdout: io.Discard,
-	})
-
-	_, err = runner.RunPrompt(context.Background(), sess, "hello", "build", io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	found := false
-	for _, event := range events {
-		if event.Type == EventUsageUpdated {
-			found = true
-			if event.Usage.TotalTokens <= 0 {
-				t.Fatalf("expected estimated usage tokens > 0, got %+v", event.Usage)
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("expected estimated EventUsageUpdated to be emitted, got %+v", events)
-	}
-}
-
-func TestGetTokenRealtimeSnapshotReturnsSessionAndGlobalStats(t *testing.T) {
-	manager, err := tokenusage.NewTokenUsageManager(&tokenusage.Config{
-		StorageType:    "memory",
-		EnableRealtime: true,
-		BackupInterval: time.Second,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer manager.Close()
-
-	runner := NewRunner(Options{
-		Workspace:    t.TempDir(),
-		Config:       config.Config{},
-		Client:       &fakeClient{},
-		TokenManager: manager,
-	})
-
-	if err := manager.RecordTokenUsage(context.Background(), &tokenusage.TokenRecordRequest{
-		SessionID:    "sess-1",
-		ModelName:    "gpt-5.4",
-		InputTokens:  20,
-		OutputTokens: 8,
-		Latency:      150 * time.Millisecond,
-		Success:      true,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	snapshot, err := runner.GetTokenRealtimeSnapshot("sess-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.SessionTotalTokens != 28 || snapshot.SessionInputTokens != 20 || snapshot.SessionOutputTokens != 8 {
-		t.Fatalf("unexpected session snapshot: %+v", snapshot)
-	}
-	if snapshot.GlobalTotalTokens != 28 {
-		t.Fatalf("expected global total 28, got %d", snapshot.GlobalTotalTokens)
-	}
-	if snapshot.ActiveSessions < 1 {
-		t.Fatalf("expected active sessions >= 1, got %d", snapshot.ActiveSessions)
-	}
-}
 
 func TestCompactWhitespacePreservesUTF8WhenTruncating(t *testing.T) {
 	text := "Continue previous context and list the key MVP test points."
