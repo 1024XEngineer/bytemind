@@ -390,6 +390,17 @@ func TestRenderBytemindRunCardCollapsedLiveInspectSummaryAcrossTools(t *testing.
 	}
 }
 
+func TestRenderLiveInspectGroupDetailPrefixHasSpace(t *testing.T) {
+	group := []chatEntry{
+		{Kind: "tool", Title: toolEntryTitle("search_text"), Status: "running", CompactBody: `"finalizeAssistantTurnForTool"`},
+	}
+
+	view := stripANSI(renderLiveInspectGroup(group, 100, true, model{}))
+	if !strings.Contains(view, `└ "finalizeAssistantTurnForTool"`) {
+		t.Fatalf("expected live inspect detail prefix to include a space after tree marker, got %q", view)
+	}
+}
+
 func TestRenderBytemindRunCardCollapsedDoneInspectGroupKeepsSingleLine(t *testing.T) {
 	entries := []chatEntry{
 		{Kind: "tool", Title: toolEntryTitle("search_text"), Status: "done", CompactBody: `17 matches for "toolDetailsExpanded"`},
