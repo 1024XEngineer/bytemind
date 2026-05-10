@@ -167,16 +167,18 @@ func TestTUIRunnerAdapterNilGuardMethods(t *testing.T) {
 
 func TestMapAgentEventAndType(t *testing.T) {
 	source := agent.Event{
-		Type:          agent.EventToolCallCompleted,
-		SessionID:     "sess-1",
-		UserInput:     "/review check changes",
-		Content:       "done",
-		ToolName:      "delegate_subagent",
-		ToolArguments: `{"agent":"review"}`,
-		ToolResult:    `{"ok":true}`,
-		Error:         "none",
-		Plan:          planpkg.State{},
-		Usage:         llm.Usage{InputTokens: 12, OutputTokens: 34},
+		Type:               agent.EventToolCallCompleted,
+		SessionID:          "sess-1",
+		UserInput:          "/review check changes",
+		Content:            "done",
+		ToolName:           "delegate_subagent",
+		ToolArguments:      `{"agent":"review"}`,
+		ToolResult:         `{"ok":true}`,
+		Error:              "none",
+		Plan:               planpkg.State{},
+		Usage:              llm.Usage{InputTokens: 12, OutputTokens: 34},
+		ReasoningCharCount: 200,
+		ReasoningActive:    true,
 	}
 
 	mapped := mapAgentEvent(source)
@@ -189,9 +191,15 @@ func TestMapAgentEventAndType(t *testing.T) {
 	if mapped.Usage.InputTokens != 12 || mapped.Usage.OutputTokens != 34 {
 		t.Fatalf("expected mapped usage to be preserved, got %#v", mapped.Usage)
 	}
+	if mapped.ReasoningCharCount != 200 || !mapped.ReasoningActive {
+		t.Fatalf("expected reasoning progress fields to be mapped, got charCount=%d active=%v", mapped.ReasoningCharCount, mapped.ReasoningActive)
+	}
 
 	if got := mapAgentEventType(agent.EventRunStarted); got != tui.EventRunStarted {
 		t.Fatalf("expected run-started mapping, got %q", got)
+	}
+	if got := mapAgentEventType(agent.EventThinkingProgress); got != tui.EventThinkingProgress {
+		t.Fatalf("expected thinking-progress mapping, got %q", got)
 	}
 	const unknown = agent.EventType("custom")
 	if got := mapAgentEventType(unknown); got != tui.EventType(unknown) {

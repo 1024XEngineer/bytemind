@@ -304,16 +304,14 @@ func (m *model) applyReasoningProgress(_ int, active bool) {
 	if m.streamingIndex < 0 || m.streamingIndex >= len(m.chatItems) {
 		return
 	}
-	item := &m.chatItems[m.streamingIndex]
-	if item.Kind != "assistant" || (item.Status != "pending" && item.Status != "thinking") {
-		return
-	}
-	item.Title = thinkingLabel
-	item.Status = "thinking"
-	if active {
-		item.Body = "receiving hidden reasoning..."
-	} else {
-		item.Body = m.thinkingText()
+	if item := &m.chatItems[m.streamingIndex]; item.Kind == "assistant" && (item.Status == "pending" || item.Status == "thinking") {
+		item.Title = thinkingLabel
+		item.Status = "thinking"
+		if active {
+			item.Body = "receiving hidden reasoning..."
+		} else {
+			item.Body = m.thinkingText()
+		}
 	}
 }
 

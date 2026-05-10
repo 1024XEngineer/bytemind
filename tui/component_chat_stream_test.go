@@ -1033,6 +1033,35 @@ func TestHandleAgentEventToolCallStartedClearsReasoningProgress(t *testing.T) {
 	}
 }
 
+func TestUpdateThinkingCardPreservesReasoningNote(t *testing.T) {
+	m := model{
+		busy:                    true,
+		streamingIndex:          0,
+		reasoningProgressActive: true,
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: thinkingLabel, Body: "old body", Status: "thinking"},
+		},
+	}
+	m.updateThinkingCard()
+
+	if m.chatItems[0].Body != "receiving hidden reasoning..." {
+		t.Fatalf("expected reasoning note to be preserved, got %q", m.chatItems[0].Body)
+	}
+}
+
+func TestApplyReasoningProgressSkipsWhenItemIsNotThinkingAssistant(t *testing.T) {
+	m := model{
+		streamingIndex: 0,
+		chatItems: []chatEntry{
+			{Kind: "tool", Title: "TOOL | list_files", Body: "done", Status: "done"},
+		},
+	}
+	m.applyReasoningProgress(100, true)
+	if m.chatItems[0].Body != "done" {
+		t.Fatalf("expected tool item to be untouched, got %q", m.chatItems[0].Body)
+	}
+}
+
 // --- Rate limit error scenarios (from screenshot) ---
 
 func TestRunFailedWithToolResultErrorContent(t *testing.T) {
