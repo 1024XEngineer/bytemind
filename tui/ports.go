@@ -25,7 +25,6 @@ const (
 	EventPlanUpdated       EventType = "plan_updated"
 	EventUsageUpdated      EventType = "usage_updated"
 	EventRunFinished       EventType = "run_finished"
-	EventThinkingProgress  EventType = "thinking_progress"
 )
 
 type Event struct {
@@ -42,10 +41,6 @@ type Event struct {
 	Usage         llm.Usage
 	AgentID       string // non-empty when emitted by a subagent
 	InvocationID  string // non-empty when emitted by a subagent, globally unique per invocation
-
-	// EventThinkingProgress fields — reasoning progress without exposing content.
-	ReasoningCharCount int
-	ReasoningActive    bool
 }
 
 type ApprovalRequest struct {

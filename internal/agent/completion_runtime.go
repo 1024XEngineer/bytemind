@@ -21,14 +21,6 @@ func (e *defaultEngine) completeTurn(ctx context.Context, request llm.ChatReques
 		return runner.client.CreateMessage(ctx, request)
 	}
 
-	request.OnStreamProgress = func(charCount int, active bool) {
-		runner.emit(Event{
-			Type:               EventThinkingProgress,
-			ReasoningCharCount: charCount,
-			ReasoningActive:    active,
-		})
-	}
-
 	reply, err := runner.client.StreamMessage(ctx, request, func(delta string) {
 		if delta != "" {
 			emitTurnEvent(ctx, TurnEvent{

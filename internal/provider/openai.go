@@ -196,9 +196,6 @@ func (c *OpenAICompatible) StreamMessage(ctx context.Context, req llm.ChatReques
 			}
 			if delta.Reasoning != "" {
 				appendOpenAIReasoningContent(&assembled, delta.Reasoning)
-				if req.OnStreamProgress != nil {
-					req.OnStreamProgress(len(openAIReasoningContent(assembled)), true)
-				}
 			}
 			if delta.Content != "" {
 				assembled.Content += delta.Content
@@ -264,12 +261,6 @@ func (c *OpenAICompatible) StreamMessage(ctx context.Context, req llm.ChatReques
 	}
 
 	assembled.Normalize()
-	if req.OnStreamProgress != nil {
-		reasoningChars := len(openAIReasoningContent(assembled))
-		if reasoningChars > 0 {
-			req.OnStreamProgress(reasoningChars, false)
-		}
-	}
 	return assembled, nil
 }
 

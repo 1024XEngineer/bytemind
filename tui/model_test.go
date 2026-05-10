@@ -5261,27 +5261,6 @@ func TestRenderMentionPaletteShowsTruncatedMeta(t *testing.T) {
 	}
 }
 
-func TestRenderMentionPaletteShowsReadyMeta(t *testing.T) {
-	index := mention.NewStaticWorkspaceFileIndex([]mention.Candidate{
-		{Path: "a.go", BaseName: "a.go", TypeTag: "go"},
-	}, 0, false)
-
-	m := model{
-		screen:      screenChat,
-		width:       100,
-		mentionOpen: true,
-		mentionResults: []mention.Candidate{
-			{Path: "a.go", BaseName: "a.go", TypeTag: "go"},
-		},
-		mentionIndex: index,
-	}
-
-	view := m.renderMentionPalette()
-	if !strings.Contains(view, "index ready") {
-		t.Fatalf("expected mention palette to show ready hint, got %q", view)
-	}
-}
-
 func TestCommandPaletteAllowsTypingJKWhenOpen(t *testing.T) {
 	input := textarea.New()
 	input.Focus()

@@ -341,13 +341,6 @@ type ChatRequest struct {
 	Tools       []ToolDefinition
 	Assets      map[AssetID]ImageAsset
 	Temperature float64
-
-	// OnStreamProgress is called during streaming when the provider receives
-	// non-content progress updates (e.g. reasoning_content chunks from
-	// DeepSeek-style models). charCount is the cumulative number of
-	// characters received so far; active is true while reasoning is still
-	// streaming.
-	OnStreamProgress func(charCount int, active bool)
 }
 
 type Client interface {
