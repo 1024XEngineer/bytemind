@@ -943,6 +943,96 @@ func TestHandleAgentEventPlanUpdatedCopiesPlan(t *testing.T) {
 	}
 }
 
+func TestHandleAgentEventThinkingProgressCreatesThinkingCard(t *testing.T) {
+	m := model{
+		phase:  "thinking",
+		spinner: spinner.New(),
+	}
+	m.handleAgentEvent(Event{
+		Type:               EventThinkingProgress,
+		ReasoningCharCount: 150,
+		ReasoningActive:    true,
+	})
+
+	if !m.reasoningProgressActive {
+		t.Fatal("expected reasoningProgressActive to be true after progress event")
+	}
+	if m.phase != "thinking" {
+		t.Fatalf("expected thinking phase, got %q", m.phase)
+	}
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected 1 chat item (thinking card), got %d", len(m.chatItems))
+	}
+	item := m.chatItems[0]
+	if item.Kind != "assistant" {
+		t.Fatalf("expected assistant kind, got %q", item.Kind)
+	}
+	if item.Status != "thinking" {
+		t.Fatalf("expected thinking status, got %q", item.Status)
+	}
+	if !strings.Contains(item.Body, "receiving hidden reasoning") {
+		t.Fatalf("expected reasoning progress note in body, got %q", item.Body)
+	}
+	// Reasoning content must NOT appear in the body.
+	if strings.Contains(item.Body, "step") {
+		t.Fatalf("body must not contain reasoning content, got %q", item.Body)
+	}
+}
+
+func TestHandleAgentEventThinkingProgressInactiveRemovesNote(t *testing.T) {
+	m := model{
+		phase:                  "thinking",
+		reasoningProgressActive: true,
+		spinner:                 spinner.New(),
+	}
+	m.handleAgentEvent(Event{
+		Type:               EventThinkingProgress,
+		ReasoningCharCount: 300,
+		ReasoningActive:    false,
+	})
+
+	if m.reasoningProgressActive {
+		t.Fatal("expected reasoningProgressActive to be false after inactive event")
+	}
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected thinking card, got %d items", len(m.chatItems))
+	}
+	if strings.Contains(m.chatItems[0].Body, "receiving hidden reasoning") {
+		t.Fatalf("expected reasoning note removed, got %q", m.chatItems[0].Body)
+	}
+}
+
+func TestHandleAgentEventAssistantDeltaClearsReasoningProgress(t *testing.T) {
+	m := model{
+		phase:                  "thinking",
+		reasoningProgressActive: true,
+	}
+	m.handleAgentEvent(Event{Type: EventAssistantDelta, Content: "Here is the answer."})
+
+	if m.reasoningProgressActive {
+		t.Fatal("expected reasoningProgressActive to be cleared by assistant delta")
+	}
+	if m.phase != "responding" {
+		t.Fatalf("expected responding phase, got %q", m.phase)
+	}
+}
+
+func TestHandleAgentEventToolCallStartedClearsReasoningProgress(t *testing.T) {
+	m := model{
+		phase:                  "thinking",
+		reasoningProgressActive: true,
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: thinkingLabel, Body: "thinking...", Status: "thinking"},
+		},
+		streamingIndex: 0,
+	}
+	m.handleAgentEvent(Event{Type: EventToolCallStarted, ToolName: "list_files"})
+
+	if m.reasoningProgressActive {
+		t.Fatal("expected reasoningProgressActive to be cleared by tool call start")
+	}
+}
+
 // --- Rate limit error scenarios (from screenshot) ---
 
 func TestRunFailedWithToolResultErrorContent(t *testing.T) {

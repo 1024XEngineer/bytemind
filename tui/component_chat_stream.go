@@ -271,6 +271,8 @@ func (m *model) updateThinkingCard() {
 	item.Status = "thinking"
 	if strings.TrimSpace(item.Body) == "" {
 		item.Body = m.thinkingText()
+	} else if m.reasoningProgressActive {
+		item.Body = "receiving hidden reasoning..."
 	}
 }
 
@@ -294,6 +296,25 @@ func (m *model) ensureThinkingCard() {
 		Status: "pending",
 	})
 	m.streamingIndex = len(m.chatItems) - 1
+}
+
+func (m *model) applyReasoningProgress(_ int, active bool) {
+	m.reasoningProgressActive = active
+	m.ensureThinkingCard()
+	if m.streamingIndex < 0 || m.streamingIndex >= len(m.chatItems) {
+		return
+	}
+	item := &m.chatItems[m.streamingIndex]
+	if item.Kind != "assistant" || (item.Status != "pending" && item.Status != "thinking") {
+		return
+	}
+	item.Title = thinkingLabel
+	item.Status = "thinking"
+	if active {
+		item.Body = "receiving hidden reasoning..."
+	} else {
+		item.Body = m.thinkingText()
+	}
 }
 
 func (m *model) failLatestAssistant(errText string) {
