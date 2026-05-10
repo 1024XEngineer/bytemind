@@ -35,6 +35,7 @@ func (m *model) beginRunWithInput(promptInput RunPromptInput, mode, note string)
 	}
 	m.statusNote = note
 	m.phase = "thinking"
+	m.reasoningProgressActive = false
 	m.llmConnected = true
 	m.busy = true
 	m.runStartedAt = time.Now()
@@ -210,7 +211,13 @@ func (m *model) handleAgentEvent(event Event) {
 	case EventRunStarted:
 		m.tempEstimatedOutput = 0
 		m.lastTokenReceivedAt = time.Now()
+	case EventThinkingProgress:
+		m.phase = "thinking"
+		m.llmConnected = true
+		m.lastTokenReceivedAt = time.Now()
+		m.applyReasoningProgress(event.ReasoningCharCount, event.ReasoningActive)
 	case EventAssistantDelta:
+		m.reasoningProgressActive = false
 		m.phase = "responding"
 		m.statusNote = "LLM is responding..."
 		m.llmConnected = true
@@ -222,6 +229,7 @@ func (m *model) handleAgentEvent(event Event) {
 		m.lastTokenReceivedAt = time.Now()
 		m.finishAssistantMessage(event.Content)
 	case EventToolCallStarted:
+		m.reasoningProgressActive = false
 		m.phase = "tool"
 		m.llmConnected = true
 		m.lastTokenReceivedAt = time.Now()

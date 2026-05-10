@@ -2,6 +2,7 @@ package mention
 
 import (
 	"bufio"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -20,6 +21,9 @@ const (
 	mentionTrieRecallMultiplier = 8
 	mentionTrieMinRecall        = 64
 	mentionIgnoreMaxLineBytes   = 4 * 1024 * 1024
+	mentionIndexSeedMaxFiles    = 200
+	mentionIndexSeedMaxVisits   = 1000
+	mentionIndexSeedMaxDepth    = 2
 )
 
 var (
@@ -50,6 +54,8 @@ type IndexStats struct {
 	MaxFiles  int
 	Truncated bool
 	Ready     bool
+	Building  bool
+	Partial   bool
 }
 
 type mentionIgnoreMatcher struct {
@@ -76,6 +82,11 @@ type WorkspaceFileIndex struct {
 	trie      *mentionTrie
 	truncated bool
 	maxFiles  int
+	partial   bool
+}
+
+var startMentionIndexAsyncRebuild = func(idx *WorkspaceFileIndex, root string, maxFiles int) {
+	go idx.rebuildStarted(root, maxFiles)
 }
 
 func NewWorkspaceFileIndex(workspace string) *WorkspaceFileIndex {
@@ -129,7 +140,7 @@ func (idx *WorkspaceFileIndex) SearchWithRecency(query string, limit int, recenc
 		limit = defaultSearchLimit
 	}
 
-	idx.ensureInitialBuild()
+	idx.ensureSeeded()
 	idx.ensureFreshAsync()
 	files, trie := idx.snapshotSearchData()
 	if len(files) == 0 {
@@ -187,7 +198,7 @@ func (idx *WorkspaceFileIndex) Prewarm() {
 	if idx == nil {
 		return
 	}
-	idx.ensureInitialBuild()
+	idx.rebuildBlocking()
 }
 
 func (idx *WorkspaceFileIndex) Stats() IndexStats {
@@ -201,6 +212,8 @@ func (idx *WorkspaceFileIndex) Stats() IndexStats {
 		MaxFiles:  idx.maxFiles,
 		Truncated: idx.truncated,
 		Ready:     idx.ready,
+		Building:  idx.building,
+		Partial:   idx.partial,
 	}
 }
 
@@ -215,35 +228,43 @@ func (idx *WorkspaceFileIndex) snapshotSearchData() ([]Candidate, *mentionTrie) 
 	return out, idx.trie
 }
 
-func (idx *WorkspaceFileIndex) ensureInitialBuild() {
+func (idx *WorkspaceFileIndex) ensureSeeded() {
 	if idx == nil {
 		return
 	}
 	idx.mu.RLock()
-	ready := idx.ready
+	hasData := idx.ready || len(idx.files) > 0
 	idx.mu.RUnlock()
-	if ready {
+	if hasData {
 		return
 	}
-	idx.rebuildBlocking()
+
+	root := idx.root
+	maxFiles := idx.maxFiles
+	matcher := loadMentionIgnoreMatcher(root)
+	files, truncated := buildMentionSeed(root, maxFiles, matcher)
+
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	if idx.ready || len(idx.files) > 0 {
+		return
+	}
+	idx.files = files
+	idx.trie = newMentionTrie(files)
+	idx.truncated = truncated
+	idx.partial = len(files) > 0
 }
 
 func (idx *WorkspaceFileIndex) ensureFreshAsync() {
 	if idx == nil {
 		return
 	}
-	idx.mu.RLock()
-	stale := idx.shouldRebuildLocked()
-	ready := idx.ready
-	building := idx.building
-	idx.mu.RUnlock()
+	idx.mu.Lock()
+	root, maxFiles, ok := idx.startRebuildLocked()
+	idx.mu.Unlock()
 
-	if !ready {
-		idx.rebuildBlocking()
-		return
-	}
-	if stale && !building {
-		go idx.rebuildBlocking()
+	if ok {
+		startMentionIndexAsyncRebuild(idx, root, maxFiles)
 	}
 }
 
@@ -252,15 +273,24 @@ func (idx *WorkspaceFileIndex) rebuildBlocking() {
 		return
 	}
 	idx.mu.Lock()
-	if idx.building || !idx.shouldRebuildLocked() {
-		idx.mu.Unlock()
+	root, maxFiles, ok := idx.startRebuildLocked()
+	idx.mu.Unlock()
+	if !ok {
 		return
 	}
-	idx.building = true
-	root := idx.root
-	maxFiles := idx.maxFiles
-	idx.mu.Unlock()
 
+	idx.rebuildStarted(root, maxFiles)
+}
+
+func (idx *WorkspaceFileIndex) startRebuildLocked() (root string, maxFiles int, ok bool) {
+	if idx == nil || idx.building || !idx.shouldRebuildLocked() {
+		return "", 0, false
+	}
+	idx.building = true
+	return idx.root, idx.maxFiles, true
+}
+
+func (idx *WorkspaceFileIndex) rebuildStarted(root string, maxFiles int) {
 	matcher := loadMentionIgnoreMatcher(root)
 	files, truncated := buildMentionIndex(root, maxFiles, matcher)
 
@@ -269,6 +299,7 @@ func (idx *WorkspaceFileIndex) rebuildBlocking() {
 	idx.trie = newMentionTrie(files)
 	idx.truncated = truncated
 	idx.ready = true
+	idx.partial = false
 	idx.lastBuild = time.Now()
 	idx.building = false
 	idx.mu.Unlock()
@@ -378,6 +409,140 @@ func buildMentionIndex(root string, maxFiles int, matcher mentionIgnoreMatcher) 
 		return files[i].Path < files[j].Path
 	})
 	return files, truncated
+}
+
+func buildMentionSeed(root string, maxFiles int, matcher mentionIgnoreMatcher) ([]Candidate, bool) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return nil, false
+	}
+	if maxFiles <= 0 {
+		maxFiles = mentionIndexDefaultMaxFiles
+	}
+	limit := minInt(maxFiles, mentionIndexSeedMaxFiles)
+	if limit <= 0 {
+		return nil, false
+	}
+
+	maxVisits := minInt(mentionMaxVisitsFromEnv(), mentionIndexSeedMaxVisits)
+	maxDirs := mentionMaxDirsFromEnv()
+	maxDuration := mentionMaxDurationFromEnv()
+	started := time.Now()
+
+	type pendingDir struct {
+		abs   string
+		rel   string
+		depth int
+	}
+
+	files := make([]Candidate, 0, minInt(limit, 64))
+	queue := []pendingDir{{abs: root}}
+	truncated := false
+	visits := 0
+	dirs := 0
+
+	for len(queue) > 0 && len(files) < limit {
+		current := queue[0]
+		queue = queue[1:]
+
+		remainingVisits := maxVisits - visits
+		if remainingVisits <= 0 {
+			truncated = true
+			break
+		}
+
+		entries, hitReadLimit := readMentionSeedDir(current.abs, remainingVisits)
+		if hitReadLimit {
+			truncated = true
+		}
+
+		for _, entry := range entries {
+			if maxDuration > 0 && time.Since(started) > maxDuration {
+				truncated = true
+				break
+			}
+			visits++
+			if visits > maxVisits {
+				truncated = true
+				break
+			}
+
+			name := entry.Name()
+			rel := name
+			if current.rel != "" {
+				rel = filepath.ToSlash(filepath.Join(current.rel, name))
+			}
+
+			if entry.IsDir() {
+				dirs++
+				if dirs > maxDirs {
+					truncated = true
+					break
+				}
+				if shouldSkipMentionDir(name) || matcher.SkipDir(name, rel) {
+					continue
+				}
+				files = append(files, Candidate{
+					Path:     rel + "/",
+					BaseName: name,
+					Kind:     "dir",
+				})
+				if len(files) >= limit {
+					truncated = true
+					break
+				}
+				if current.depth+1 < mentionIndexSeedMaxDepth {
+					queue = append(queue, pendingDir{
+						abs:   filepath.Join(current.abs, name),
+						rel:   rel,
+						depth: current.depth + 1,
+					})
+				}
+				continue
+			}
+			if entry.Type()&fs.ModeSymlink != 0 {
+				continue
+			}
+			if shouldSkipMentionFile(name) || matcher.SkipFile(name, rel) {
+				continue
+			}
+			files = append(files, Candidate{
+				Path:     rel,
+				BaseName: filepath.Base(rel),
+				TypeTag:  mentionTypeTag(rel),
+			})
+			if len(files) >= limit {
+				truncated = true
+				break
+			}
+		}
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Path < files[j].Path
+	})
+	return files, truncated
+}
+
+func readMentionSeedDir(dir string, limit int) ([]fs.DirEntry, bool) {
+	if limit <= 0 {
+		return nil, true
+	}
+	f, err := os.Open(dir)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+
+	entries, err := f.ReadDir(limit)
+	hitLimit := err == nil && len(entries) == limit
+	if err != nil && err != io.EOF {
+		return nil, false
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
+	return entries, hitLimit
 }
 
 func mentionCandidateIndices(files []Candidate, trie *mentionTrie, query string, limit int) ([]int, map[int]struct{}) {
