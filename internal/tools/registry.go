@@ -118,6 +118,7 @@ func DefaultRegistry(agentInfos ...[]AgentInfo) *Registry {
 	r.mustRegisterBuiltin(WriteFileTool{})
 	r.mustRegisterBuiltin(ReplaceInFileTool{})
 	r.mustRegisterBuiltin(ApplyPatchTool{})
+	r.mustRegisterBuiltin(UpdatePlanTool{})
 	r.mustRegisterBuiltin(RunShellTool{})
 	r.mustRegisterBuiltin(NewDelegateSubAgentTool(agents))
 	r.mustRegisterBuiltin(TaskOutputTool{})

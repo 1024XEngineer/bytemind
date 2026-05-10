@@ -18,6 +18,7 @@ var nonBridgedBuiltinTools = map[string]struct{}{
 	"write_file":      {},
 	"replace_in_file": {},
 	"apply_patch":     {},
+	"update_plan":     {},
 	"run_shell":       {},
 }
 
