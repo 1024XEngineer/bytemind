@@ -415,6 +415,7 @@ type model struct {
 	runIndicatorState          runIndicatorState
 	streamingIndex             int
 	suppressedAssistantDelta   string
+	reasoningProgressActive    bool
 	statusNote                 string
 	phase                      string
 	llmConnected               bool

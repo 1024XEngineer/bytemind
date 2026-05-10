@@ -157,8 +157,17 @@ func (m model) renderMentionPalette() string {
 	metaText := "* recent  + file/dir  * agent  Type @query  Up/Down  Enter/Tab insert  Esc close"
 	if m.mentionIndex != nil {
 		stats := m.mentionIndex.Stats()
-		if stats.Truncated && stats.MaxFiles > 0 {
+		switch {
+		case stats.Partial && stats.Building:
+			metaText = "* recent  indexing... showing partial results  Enter/Tab insert  Esc close"
+		case stats.Partial:
+			metaText = "* recent  showing partial results  Enter/Tab insert  Esc close"
+		case stats.Building:
+			metaText = "* recent  refreshing index...  Enter/Tab insert  Esc close"
+		case stats.Truncated && stats.MaxFiles > 0:
 			metaText = fmt.Sprintf("* recent  indexed first %d files  Enter/Tab insert  Esc close", stats.MaxFiles)
+		case stats.Ready:
+			metaText = "* recent  index ready  Type @query  Up/Down  Enter/Tab insert  Esc close"
 		}
 	}
 	rows = append(rows, commandPaletteMetaStyle.Render(metaText))
