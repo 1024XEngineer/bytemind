@@ -190,19 +190,21 @@ func (a *tuiRunnerAdapter) DispatchSubAgent(
 
 func mapAgentEvent(event agent.Event) tui.Event {
 	return tui.Event{
-		Type:          mapAgentEventType(event.Type),
-		SessionID:     string(event.SessionID),
-		UserInput:     event.UserInput,
-		Content:       event.Content,
-		ToolName:      event.ToolName,
-		ToolCallID:    event.ToolCallID,
-		ToolArguments: event.ToolArguments,
-		ToolResult:    event.ToolResult,
-		Error:         event.Error,
-		Plan:          event.Plan,
-		Usage:         event.Usage,
-		AgentID:       event.AgentID,
-		InvocationID:  event.InvocationID,
+		Type:               mapAgentEventType(event.Type),
+		SessionID:          string(event.SessionID),
+		UserInput:          event.UserInput,
+		Content:            event.Content,
+		ToolName:           event.ToolName,
+		ToolCallID:         event.ToolCallID,
+		ToolArguments:      event.ToolArguments,
+		ToolResult:         event.ToolResult,
+		Error:              event.Error,
+		Plan:               event.Plan,
+		Usage:              event.Usage,
+		AgentID:            event.AgentID,
+		InvocationID:       event.InvocationID,
+		ReasoningCharCount: event.ReasoningCharCount,
+		ReasoningActive:    event.ReasoningActive,
 	}
 }
 
@@ -224,6 +226,8 @@ func mapAgentEventType(value agent.EventType) tui.EventType {
 		return tui.EventUsageUpdated
 	case agent.EventRunFinished:
 		return tui.EventRunFinished
+	case agent.EventThinkingProgress:
+		return tui.EventThinkingProgress
 	default:
 		return tui.EventType(value)
 	}
