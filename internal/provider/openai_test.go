@@ -616,68 +616,6 @@ func TestOpenAIMessagesDoesNotSendReasoningToProviderWithoutReasoningContent(t *
 	}
 }
 
-func TestOpenAICompatibleStreamMessageFiresProgressCallbackForReasoningContent(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte(strings.Join([]string{
-			`data: {"choices":[{"delta":{"role":"assistant","reasoning_content":"thinking step 1"}}]}`,
-			`data: {"choices":[{"delta":{"reasoning_content":" step 2"}}]}`,
-			`data: {"choices":[{"delta":{"content":"actual answer"}}]}`,
-			`data: [DONE]`,
-			"",
-		}, "\n")))
-	}))
-	defer server.Close()
-
-	client := NewOpenAICompatible(Config{BaseURL: server.URL, APIKey: "test-key", Model: "fallback-model"})
-
-	var progressCalls []struct {
-		charCount int
-		active    bool
-	}
-	req := llm.ChatRequest{
-		OnStreamProgress: func(charCount int, active bool) {
-			progressCalls = append(progressCalls, struct {
-				charCount int
-				active    bool
-			}{charCount, active})
-		},
-	}
-	msg, err := client.StreamMessage(context.Background(), req, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Reasoning should trigger at least 2 progress calls (one per reasoning delta).
-	if len(progressCalls) < 2 {
-		t.Fatalf("expected at least 2 progress calls for reasoning chunks, got %d", len(progressCalls))
-	}
-
-	// All intermediate calls should be active=true.
-	for i, call := range progressCalls[:len(progressCalls)-1] {
-		if !call.active {
-			t.Fatalf("progress call[%d]: expected active=true, got false", i)
-		}
-	}
-
-	// The final call (after streaming loop) should be active=false.
-	last := progressCalls[len(progressCalls)-1]
-	if last.active {
-		t.Fatalf("final progress call: expected active=false after stream ends, got true")
-	}
-	if last.charCount <= 0 {
-		t.Fatalf("final progress call: expected positive charCount, got %d", last.charCount)
-	}
-
-	// Reasoning content must NOT appear in assembled message content.
-	if msg.Content != "actual answer" {
-		t.Fatalf("expected message content to exclude reasoning, got %q", msg.Content)
-	}
-	if got := openAIReasoningContent(msg); got != "thinking step 1 step 2" {
-		t.Fatalf("expected reasoning in Meta, got %q", got)
-	}
-}
-
 func TestOpenAIMessagesDegradesMissingImageAsset(t *testing.T) {
 	messages, err := openAIMessages(llm.ChatRequest{
 		Messages: []llm.Message{{

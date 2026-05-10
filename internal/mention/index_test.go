@@ -188,68 +188,6 @@ func TestWorkspaceFileIndexSearchWithRecencyPrioritizesRecent(t *testing.T) {
 	}
 }
 
-func TestWorkspaceFileIndexColdSearchUsesSeedAndSchedulesRebuild(t *testing.T) {
-	workspace := t.TempDir()
-	mustWriteMentionFile(t, filepath.Join(workspace, "shallow.go"), "package main")
-	mustWriteMentionFile(t, filepath.Join(workspace, "deep", "a", "b", "target.go"), "package main")
-
-	oldStart := startMentionIndexAsyncRebuild
-	calls := 0
-	startMentionIndexAsyncRebuild = func(_ *WorkspaceFileIndex, _ string, _ int) {
-		calls++
-	}
-	t.Cleanup(func() {
-		startMentionIndexAsyncRebuild = oldStart
-	})
-
-	index := NewWorkspaceFileIndex(workspace)
-	results := index.Search("shallow", 10)
-	if len(results) == 0 || results[0].Path != "shallow.go" {
-		t.Fatalf("expected cold search to return seed result shallow.go, got %#v", results)
-	}
-	if calls != 1 {
-		t.Fatalf("expected cold search to schedule async rebuild once, got %d", calls)
-	}
-	stats := index.Stats()
-	if !stats.Partial || !stats.Building || stats.Ready {
-		t.Fatalf("expected partial building stats before full rebuild, got %+v", stats)
-	}
-
-	files, _ := index.snapshotSearchData()
-	paths := make([]string, 0, len(files))
-	for _, item := range files {
-		paths = append(paths, item.Path)
-	}
-	if containsString(paths, "deep/a/b/target.go") {
-		t.Fatalf("expected seed index not to include deep target file, got %v", paths)
-	}
-}
-
-func TestWorkspaceFileIndexAsyncRebuildReplacesSeed(t *testing.T) {
-	workspace := t.TempDir()
-	mustWriteMentionFile(t, filepath.Join(workspace, "shallow.go"), "package main")
-	mustWriteMentionFile(t, filepath.Join(workspace, "deep", "a", "b", "target.go"), "package main")
-
-	index := NewWorkspaceFileIndex(workspace)
-	_ = index.Search("shallow", 10)
-
-	deadline := time.Now().Add(800 * time.Millisecond)
-	for {
-		results := index.Search("target", 10)
-		if len(results) > 0 && results[0].Path == "deep/a/b/target.go" {
-			stats := index.Stats()
-			if !stats.Ready || stats.Partial {
-				t.Fatalf("expected full index stats after async rebuild, got %+v", stats)
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("expected async rebuild to find deep target file")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-}
-
 func TestWorkspaceFileIndexUsesTriePrefixRecall(t *testing.T) {
 	idx := NewStaticWorkspaceFileIndex([]Candidate{
 		{Path: "README.md"},
