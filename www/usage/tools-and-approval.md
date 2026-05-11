@@ -24,24 +24,17 @@ Read tools run silently. **Write and Execute tools** pause and wait for your app
 
 ## Approval Flow
 
-When the agent wants to call a high-risk tool, it displays:
+When the agent wants to call a high-risk tool, it shows a summary and presents three choices:
 
-- The tool name and the exact arguments it will use
-- A summary of the operation
-- A prompt to approve (`y`), deny (`n`), or explain why it should not run
+| Option | Behavior |
+| ------ | -------- |
+| **Approve this operation only** | Allow just the current request; the same tool will ask again next time |
+| **Approve later requests from this tool** | Auto-approve future calls from this tool for the rest of the TUI session |
+| **Disable approvals for this TUI session** | Auto-approve all approval requests for the rest of this session |
+
+You can also **deny** the request (`Esc` or selecting deny).
 
 The default `approval_policy: on-request` enables this for every high-risk tool call.
-
-## Recommended Workflow
-
-1. **Analyze first** — ask the agent to read and explain before making any changes
-2. **Review the plan** — check what files will be touched and why
-3. **Approve incrementally** — approve each write operation only after you're satisfied
-4. **Use Plan mode** for large tasks so you see the full scope before any execution
-
-```text
-First read the relevant files and tell me what changes you'd propose, without writing anything.
-```
 
 ## Exec Allowlist
 
