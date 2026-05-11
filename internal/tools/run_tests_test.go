@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -14,8 +15,8 @@ func TestRunTestsToolGoProject(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go not found in PATH")
 	}
-	if detectShell() == "cmd" {
-		t.Skip("run_tests uses shell wrapper; cmd.exe may not resolve Go PATH correctly")
+	if runtime.GOOS == "windows" && os.Getenv("CI") == "" {
+		t.Skip("Windows shell wrapper PATH issue; pass on CI")
 	}
 	dir := t.TempDir()
 	initGoProject(t, dir)
@@ -41,8 +42,8 @@ func TestRunTestsToolGoProject(t *testing.T) {
 }
 
 func TestRunTestsToolCustomCommand(t *testing.T) {
-	if detectShell() == "cmd" {
-		t.Skip("run_tests uses shell wrapper; cmd.exe may not resolve Go PATH correctly")
+	if runtime.GOOS == "windows" && os.Getenv("CI") == "" {
+		t.Skip("Windows shell wrapper PATH issue; pass on CI")
 	}
 	dir := t.TempDir()
 
@@ -52,7 +53,7 @@ func TestRunTestsToolCustomCommand(t *testing.T) {
 	})
 	result, err := tool.Run(context.Background(), raw, &ExecutionContext{Workspace: dir})
 	if err != nil {
-		t.Skip("go version command failed:", err)
+		t.Skip("go version failed:", err)
 	}
 	var out struct {
 		OK       bool   `json:"ok"`
