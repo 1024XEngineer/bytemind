@@ -151,13 +151,185 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 		return "", false, err
 	}
 	reply.Normalize()
-	_, cleanedReply, _ := parseAssistantTurnIntent(reply)
+	intent, cleanedReply, explicitIntent := parseAssistantTurnIntent(reply)
 	reply = cleanedReply
 	runner.emitUsageEvent(p.Session, reply.Usage)
 
 	if len(reply.ToolCalls) == 0 {
-		// No tool calls — finalize the turn. Safety nets only for specific claim patterns.
+		if intent == turnIntentUnknown {
+			intent = inferAssistantTurnIntent(reply.Content)
+		}
 		latestUser := latestHumanUserMessageText(p.Session.Messages)
+		if shouldRepairPlanBootstrapTurn(p.RunMode, p.Session.Plan, reply) {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("plan_bootstrap_missing_update")
+				p.TaskReport.RecordStrategyAdjustment("assistant replied in plan mode before creating any structured plan state; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("plan bootstrap repair retries exceeded while waiting for initial investigation or update_plan")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept replying in plan mode without creating the initial structured plan state first (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildPlanBootstrapRepairInstruction(reply, latestUser, attempt, maxAttempts, p.Session.Messages, availableToolNames))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant replied in plan mode before creating structured plan state; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
+		if !hasToolActivitySinceLatestHumanUser(p.Session.Messages) && shouldRepairPlanRevisionTurn(p.RunMode, p.Session.Plan, latestUser, reply) {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("plan_revision_missing_update")
+				p.TaskReport.RecordStrategyAdjustment("assistant responded to converged-plan refinement feedback without update_plan; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("plan revision repair retries exceeded while waiting for update_plan")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept responding to plan-refinement feedback without updating the structured plan first (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildPlanRevisionRepairInstruction(p.Session.Plan, latestUser, reply, attempt, maxAttempts))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant replied to plan refinement feedback without update_plan; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
+		if shouldRepairPlanClarifyTurn(p.RunMode, p.Session.Plan, intent, reply) {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("plan_clarify_missing_active_choice")
+				p.TaskReport.RecordStrategyAdjustment("assistant asked a plan clarification question without update_plan.active_choice; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("plan clarify repair retries exceeded while waiting for active_choice")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept asking plan clarification questions without storing active_choice first (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildPlanClarifyRepairInstruction(p.Session.Plan, reply, attempt, maxAttempts))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant asked a plan clarification question without active_choice; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
+		if shouldRepairPlanDecisionTurn(p.RunMode, p.Session.Plan, intent, reply) {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("plan_state_not_updated_after_user_decision")
+				p.TaskReport.RecordStrategyAdjustment("assistant acknowledged a plan decision without update_plan; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("plan-state repair retries exceeded while waiting for update_plan")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept acknowledging plan decisions without updating the structured plan state first (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildPlanDecisionRepairInstruction(p.Session.Plan, reply, attempt, maxAttempts))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant acknowledged a plan decision without update_plan; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
+		if shouldRepairBuildHandoffTurn(p.RunMode, p.Session.Plan, intent, reply, p.Session.Messages) {
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("build_handoff_not_started")
+				p.TaskReport.RecordStrategyAdjustment("assistant treated an already-switched build handoff as if plan confirmation were still pending; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("build-handoff repair retries exceeded while waiting for execution to start")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept treating an already-approved build handoff as if plan confirmation were still pending (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildBuildHandoffRepairInstruction(p.Session.Plan, reply, latestUser, attempt, maxAttempts))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant treated an already-switched build handoff as pending plan confirmation; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		}
 		if shouldRepairUnexecutedToolClaimTurn(p.RunMode, reply, p.Session.Messages, availableToolNames) {
 			attempt := 0
 			maxAttempts := 0
@@ -178,7 +350,7 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 					}
 					summary := BuildStopSummary(StopSummaryInput{
 						SessionID:     corepkg.SessionID(p.Session.ID),
-						Reason:        fmt.Sprintf("I paused because the assistant kept claiming run_shell was unavailable or timed out without issuing a structured tool call (attempts=%d).", attempt),
+						Reason:        fmt.Sprintf("I paused because the assistant kept claiming run_shell was unavailable or timed out without issuing a structured tool call (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
 						ExecutedTools: *p.ExecutedTools,
 						TaskReport:    p.TaskReport,
 					})
@@ -192,8 +364,48 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 			}
 			return "", false, nil
 		}
-		if p.AdaptiveState != nil {
-			p.AdaptiveState.recordProgress()
+		switch intent {
+		case turnIntentContinueWork:
+			attempt := 0
+			maxAttempts := 0
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordNoProgressTurn()
+				attempt = p.AdaptiveState.recordSemanticRepairAttempt()
+				maxAttempts = p.AdaptiveState.maxSemanticRepairs
+			}
+			if p.TaskReport != nil {
+				p.TaskReport.RecordNoProgressTurn()
+				p.TaskReport.RecordRetry("missing_structured_tool_call")
+				p.TaskReport.RecordStrategyAdjustment("assistant declared continue_work without structured tool calls; injected correction prompt")
+			}
+			if p.AdaptiveState != nil {
+				if p.AdaptiveState.exceededSemanticRepairLimit() || p.AdaptiveState.exceededNoProgressLimit() {
+					if p.TaskReport != nil {
+						p.TaskReport.RecordEscalation("semantic repair retries exceeded while waiting for structured tool calls")
+					}
+					summary := BuildStopSummary(StopSummaryInput{
+						SessionID:     corepkg.SessionID(p.Session.ID),
+						Reason:        fmt.Sprintf("I paused because the assistant kept signaling ongoing work without structured tool calls (attempts=%d, explicit_intent=%t).", attempt, explicitIntent),
+						ExecutedTools: *p.ExecutedTools,
+						TaskReport:    p.TaskReport,
+					})
+					answer, summaryErr := e.finishWithSummary(p.Session, summary, p.Out, streamedText)
+					return answer, true, summaryErr
+				}
+				p.AdaptiveState.schedulePendingControlNote(buildSemanticRepairInstruction(reply, attempt, maxAttempts))
+			}
+			if p.Out != nil {
+				fmt.Fprintf(p.Out, "%sassistant indicated ongoing work but emitted no structured tool calls; retrying with a correction prompt%s\n", ansiDim, ansiReset)
+			}
+			return "", false, nil
+		case turnIntentAskUser, turnIntentFinalize:
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordProgress()
+			}
+		default:
+			if p.AdaptiveState != nil {
+				p.AdaptiveState.recordProgress()
+			}
 		}
 		answer, finalizeErr := e.finalizeTurnWithoutTools(p.RunMode, p.Session, reply, p.Out, streamedText)
 		return answer, true, finalizeErr

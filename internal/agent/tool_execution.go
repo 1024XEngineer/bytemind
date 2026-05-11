@@ -346,6 +346,13 @@ func (e *defaultEngine) executeToolCall(
 			toolMessage.Meta["subagent_tool_calls"] = toolCalls
 		}
 	}
+	if call.Function.Name == "update_plan" {
+		runner.emit(Event{
+			Type:      EventPlanUpdated,
+			SessionID: sessionID,
+			Plan:      planpkg.CloneState(sess.Plan),
+		})
+	}
 	if err := llm.ValidateMessage(toolMessage); err != nil {
 		return toolCallResult{}, err
 	}
@@ -379,7 +386,7 @@ func (e *defaultEngine) toolSafetyClass(name string) tools.SafetyClass {
 func shouldExecuteToolDirectly(name string) bool {
 	switch strings.TrimSpace(name) {
 	case "list_files", "read_file", "search_text", "web_search", "web_fetch",
-		"write_file", "replace_in_file", "apply_patch", "delegate_subagent",
+		"write_file", "replace_in_file", "apply_patch", "update_plan", "delegate_subagent",
 		"task_output", "task_stop":
 		return true
 	default:

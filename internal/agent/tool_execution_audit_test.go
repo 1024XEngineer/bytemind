@@ -190,6 +190,7 @@ func TestShouldExecuteToolDirectlyRoutesSynchronousBuiltins(t *testing.T) {
 		"write_file",
 		"replace_in_file",
 		"apply_patch",
+		"update_plan",
 		"delegate_subagent",
 		"task_output",
 		"task_stop",
@@ -387,6 +388,104 @@ func TestRunPromptExecutesWriteFileDirectly(t *testing.T) {
 	}
 }
 
+func TestRunPromptExecutesUpdatePlanDirectly(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	auditStore := &toolExecutionAuditStore{}
+	events := make([]Event, 0, 6)
+
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role: llm.RoleAssistant,
+			ToolCalls: []llm.ToolCall{{
+				ID:   "tool-direct-plan",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "update_plan",
+					Arguments: `{"explanation":"starting","plan":[{"step":"Inspect provider","status":"completed"},{"step":"Add tests","status":"in_progress"}]}`,
+				},
+			}},
+		},
+		{
+			Role:    llm.RoleAssistant,
+			Content: "done",
+		},
+	}}
+	gateway := &stubRuntimeGateway{}
+
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 4,
+			Stream:        false,
+		},
+		Client:     client,
+		Store:      store,
+		Registry:   tools.DefaultRegistry(),
+		Runtime:    gateway,
+		AuditStore: auditStore,
+		Observer: ObserverFunc(func(event Event) {
+			events = append(events, event)
+		}),
+		Stdin:  strings.NewReader(""),
+		Stdout: io.Discard,
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "update plan", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "done" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+
+	gateway.mu.Lock()
+	callCount := len(gateway.calls)
+	gateway.mu.Unlock()
+	if callCount != 0 {
+		t.Fatalf("expected update_plan to bypass runtime gateway, got %d calls", callCount)
+	}
+	if len(sess.Plan.Steps) != 2 || sess.Plan.Steps[1].Title != "Add tests" {
+		t.Fatalf("unexpected session plan: %#v", sess.Plan)
+	}
+	seenPlanUpdated := false
+	for _, event := range events {
+		if event.Type == EventPlanUpdated {
+			seenPlanUpdated = true
+			break
+		}
+	}
+	if !seenPlanUpdated {
+		t.Fatalf("expected EventPlanUpdated, got %+v", events)
+	}
+
+	auditEvents := auditStore.snapshot()
+	for _, event := range auditEvents {
+		if event.Action == "task_state_changed" {
+			t.Fatalf("did not expect task_state_changed for direct update_plan, got %+v", event)
+		}
+	}
+	var resultEvent *storagepkg.AuditEvent
+	for i := range auditEvents {
+		if auditEvents[i].Action == "tool_execute_result" && auditEvents[i].Metadata["tool_name"] == "update_plan" {
+			resultEvent = &auditEvents[i]
+		}
+	}
+	if resultEvent == nil {
+		t.Fatalf("expected tool_execute_result audit event, got %+v", auditEvents)
+	}
+	if resultEvent.TaskID != "" {
+		t.Fatalf("expected direct update_plan audit to omit task id, got %+v", resultEvent)
+	}
+	if resultEvent.TraceID != corepkg.TraceID("tool-direct-plan") {
+		t.Fatalf("expected trace id %q, got %q", "tool-direct-plan", resultEvent.TraceID)
+	}
+}
 
 func TestRunPromptKeepsNonDirectToolOnRuntimeGateway(t *testing.T) {
 	workspace := t.TempDir()

@@ -227,7 +227,7 @@ func TestRunPromptExecutesMultipleToolCallsInOrder(t *testing.T) {
 	}
 }
 
-func TestRunPromptToolCallEventsEmitted(t *testing.T) {
+func TestRunPromptUpdatePlanSyncsSessionAndEmitsPlanEvent(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
@@ -238,17 +238,17 @@ func TestRunPromptToolCallEventsEmitted(t *testing.T) {
 		{
 			Role: "assistant",
 			ToolCalls: []llm.ToolCall{{
-				ID:   "call-list",
+				ID:   "call-plan",
 				Type: "function",
 				Function: llm.ToolFunctionCall{
-					Name:      "list_files",
-					Arguments: `{}`,
+					Name:      "update_plan",
+					Arguments: `{"explanation":"starting","plan":[{"step":"Inspect provider","status":"completed"},{"step":"Add tests","status":"in_progress"}]}`,
 				},
 			}},
 		},
 		{
 			Role:    "assistant",
-			Content: "Files listed.",
+			Content: "Plan updated.",
 		},
 	}}
 
@@ -271,12 +271,15 @@ func TestRunPromptToolCallEventsEmitted(t *testing.T) {
 		Stdout: io.Discard,
 	})
 
-	answer, err := runner.RunPrompt(context.Background(), sess, "list files", "build", io.Discard)
+	answer, err := runner.RunPrompt(context.Background(), sess, "make a plan", "build", io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if answer != "Files listed." {
+	if answer != "Plan updated." {
 		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(sess.Plan.Steps) != 2 || sess.Plan.Steps[1].Title != "Add tests" || sess.Plan.Steps[1].Status != planpkg.StepInProgress {
+		t.Fatalf("unexpected session plan: %#v", sess.Plan)
 	}
 
 	eventTypes := make([]EventType, 0, len(events))
@@ -288,11 +291,22 @@ func TestRunPromptToolCallEventsEmitted(t *testing.T) {
 		EventRunStarted,
 		EventToolCallStarted,
 		EventToolCallCompleted,
+		EventPlanUpdated,
 		EventAssistantMessage,
 		EventRunFinished,
 	}
 	if !slices.Equal(eventTypes, wantTypes) {
 		t.Fatalf("unexpected event sequence: got=%v want=%v", eventTypes, wantTypes)
+	}
+	var planEvent *Event
+	for i := range events {
+		if events[i].Type == EventPlanUpdated {
+			planEvent = &events[i]
+			break
+		}
+	}
+	if planEvent == nil || len(planEvent.Plan.Steps) != 2 || planEvent.Plan.Steps[1].Title != "Add tests" {
+		t.Fatalf("expected plan in event, got %#v", events)
 	}
 }
 
@@ -321,17 +335,17 @@ func TestRunPromptSystemPromptIncludesToolCatalog(t *testing.T) {
 		{
 			Role: "assistant",
 			ToolCalls: []llm.ToolCall{{
-				ID:   "call-list",
+				ID:   "call-plan",
 				Type: "function",
 				Function: llm.ToolFunctionCall{
-					Name:      "list_files",
-					Arguments: `{}`,
+					Name:      "update_plan",
+					Arguments: `{"plan":[{"step":"Inspect provider","status":"completed"},{"step":"Add tests","status":"in_progress"}]}`,
 				},
 			}},
 		},
 		{
 			Role:    "assistant",
-			Content: "Files listed.",
+			Content: "Plan acknowledged.",
 		},
 	}}
 
@@ -350,7 +364,7 @@ func TestRunPromptSystemPromptIncludesToolCatalog(t *testing.T) {
 		Stdout:   io.Discard,
 	})
 
-	if _, err := runner.RunPrompt(context.Background(), sess, "list files", "build", io.Discard); err != nil {
+	if _, err := runner.RunPrompt(context.Background(), sess, "make a plan", "build", io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.requests) != 2 {

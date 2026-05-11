@@ -2,8 +2,11 @@ package agent
 
 import (
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/1024XEngineer/bytemind/internal/llm"
+	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 )
 
 func latestHumanUserMessageText(messages []llm.Message) string {
@@ -41,6 +44,96 @@ func hasToolActivitySinceIndex(messages []llm.Message, index int) bool {
 		}
 	}
 	return false
+}
+
+func shouldCondensePlanRevisionAnswer(runMode planpkg.AgentMode, state planpkg.State, messages []llm.Message) bool {
+	if runMode != planpkg.ModePlan {
+		return false
+	}
+	state = planpkg.NormalizeState(state)
+	if !planpkg.CanStartExecution(state) {
+		return false
+	}
+	index, latestUser := latestHumanUserMessage(messages)
+	if index < 0 || !looksLikePlanRevisionInput(latestUser) {
+		return false
+	}
+	return hasToolActivitySinceIndex(messages, index)
+}
+
+func condensePlanRevisionAnswer(answer string, latestUser string) string {
+	trimmed := strings.TrimSpace(answer)
+	if isShortPlanRevisionAcknowledgement(trimmed) {
+		return trimmed
+	}
+	return localizedPlanRevisionAcknowledgement(latestUser)
+}
+
+func localizedPlanRevisionAcknowledgement(source string) string {
+	if looksMostlyChinese(source) {
+		return "已按你的反馈更新计划，下面是修订后的完整版本。"
+	}
+	return "Updated the plan with your feedback. The revised full plan is below."
+}
+
+func isShortPlanRevisionAcknowledgement(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	if strings.Contains(text, "\n") || utf8.RuneCountInString(text) > 80 {
+		return false
+	}
+	normalized := strings.ToLower(text)
+	if strings.Count(text, "，")+strings.Count(text, ",")+strings.Count(text, ";")+strings.Count(text, "；") > 1 {
+		return false
+	}
+	if containsAnyToken(normalized,
+		"建议",
+		"比如",
+		"页面",
+		"功能",
+		"布局",
+		"交互",
+		"细节",
+		"设计",
+		"feature",
+		"features",
+		"layout",
+		"interaction",
+		"spec",
+		"specification",
+		"design",
+		"suggest",
+		"recommend",
+		"proposal",
+	) {
+		return false
+	}
+	return !strings.Contains(normalized, "- ") &&
+		!strings.Contains(normalized, "##") &&
+		!strings.Contains(normalized, "###") &&
+		!strings.Contains(normalized, "1.") &&
+		!strings.Contains(normalized, "2.")
+}
+
+func looksMostlyChinese(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	total := 0
+	han := 0
+	for _, r := range text {
+		if unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) {
+			continue
+		}
+		total++
+		if unicode.Is(unicode.Han, r) {
+			han++
+		}
+	}
+	return total > 0 && han*2 >= total
 }
 
 func isToolResultMessage(msg llm.Message) bool {

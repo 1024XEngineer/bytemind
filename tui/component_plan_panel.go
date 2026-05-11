@@ -60,7 +60,7 @@ func (m model) planPanelContent(width int) string {
 
 	lines = append(lines, "", cardTitleStyle.Render("Steps"))
 	if len(m.plan.Steps) == 0 {
-		lines = append(lines, mutedStyle.Render("No structured plan yet."))
+		lines = append(lines, mutedStyle.Render("No structured plan yet. Use update_plan to create one."))
 	} else {
 		for _, step := range m.plan.Steps {
 			lines = append(lines, m.renderPlanStep(step, width), "")
