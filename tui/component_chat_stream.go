@@ -106,20 +106,13 @@ func (m *model) finishAssistantMessage(content string) {
 		current := &m.chatItems[m.streamingIndex]
 		if current.Kind == "assistant" && (current.Status == "thinking" || current.Status == "pending") {
 			m.removeStreamingAssistantPlaceholder()
-			m.chatItems = append(m.chatItems, chatEntry{
-				Kind:   "assistant",
-				Title:  assistantLabel,
-				Body:   finalContent,
-				Status: "final",
-			})
+		} else {
+			current.Title = assistantLabel
+			current.Body = finalContent
+			current.Status = "final"
+			m.streamingIndex = -1
 			return
 		}
-
-		current.Title = assistantLabel
-		current.Body = finalContent
-		current.Status = "final"
-		m.streamingIndex = -1
-		return
 	}
 
 	if idx := m.latestTailOpenAssistantIndex(); idx >= 0 {

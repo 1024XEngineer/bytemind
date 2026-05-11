@@ -7805,6 +7805,30 @@ func TestFinishAssistantMessageFinalizesTailStreamingCardWhenIndexLost(t *testin
 	}
 }
 
+func TestFinishAssistantMessageFinalizesStreamingCardAfterPendingPlaceholder(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "hello", Status: "final"},
+			{Kind: "assistant", Title: assistantLabel, Body: "Hello! How can I help?", Status: "streaming"},
+			{Kind: "assistant", Title: thinkingLabel, Body: "receiving hidden reasoning...", Status: "pending"},
+		},
+		streamingIndex: 2,
+	}
+
+	m.finishAssistantMessage("Hello! How can I help?")
+
+	if len(m.chatItems) != 2 {
+		t.Fatalf("expected pending placeholder to be removed without appending a duplicate answer, got %d items", len(m.chatItems))
+	}
+	last := m.chatItems[1]
+	if last.Title != assistantLabel || last.Status != "final" || last.Body != "Hello! How can I help?" {
+		t.Fatalf("expected streamed assistant card to be finalized in place, got %+v", last)
+	}
+	if m.streamingIndex != -1 {
+		t.Fatalf("expected streaming index to be cleared, got %d", m.streamingIndex)
+	}
+}
+
 func TestFinishAssistantMessageDoesNotMoveFinalAnswerBeforeToolTail(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
