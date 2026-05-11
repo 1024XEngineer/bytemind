@@ -61,3 +61,28 @@ func TestRunSafetyDefaultShowsStatus(t *testing.T) {
 		t.Errorf("expected default safety to show status, got %s", output[:60])
 	}
 }
+
+func TestRunSafetyStatusWithFlagsAfterSubcommand(t *testing.T) {
+	var stdout bytes.Buffer
+	// This was broken: "status -workspace <path>" would ignore -workspace
+	err := RunSafety([]string{"status", "-workspace", "."}, &stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "ByteMind Safety Status") {
+		t.Errorf("expected safety status output, got %s", output[:60])
+	}
+}
+
+func TestRunSafetyExplainWithFlagsAfterSubcommand(t *testing.T) {
+	var stdout bytes.Buffer
+	err := RunSafety([]string{"explain", "-workspace", "."}, &stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "ByteMind Safety Model") {
+		t.Errorf("expected safety explain output, got %s", output[:60])
+	}
+}
