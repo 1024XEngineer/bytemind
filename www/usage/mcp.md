@@ -4,14 +4,14 @@
 
 ## How It Works
 
-1. Configure MCP servers in `mcp.json` or `config.json`
+1. Configure MCP servers in `.bytemind/mcp.json` (project) or `~/.bytemind/mcp.json` (user)
 2. ByteMind loads and connects to configured MCP servers at startup (via stdio subprocess)
-3. Server-provided tools are automatically registered in the tool registry with names like `mcp.<server_id>_<tool_name>`
+3. Server-provided tools are automatically registered in the tool registry with stable keys like `mcp:github:search_code`
 4. The agent invokes these tools as needed, just like built-in tools
 
 ## Configuration File
 
-MCP servers can be configured in a project-level `mcp.json` file or inside `config.json` under the `mcp` field (both are equivalent).
+MCP servers are configured in standalone `mcp.json` files, separate from the main `config.json`. Project-level configuration goes in `.bytemind/mcp.json`, user-level (cross-project) in `~/.bytemind/mcp.json`.
 
 ```json
 {
@@ -70,7 +70,7 @@ MCP servers can be configured in a project-level `mcp.json` file or inside `conf
 
 ## Adding an MCP Server
 
-Edit `mcp.json` in the project root, adding a new entry to the `servers` array:
+Create or edit `.bytemind/mcp.json` in your workspace, adding a new entry to the `servers` array:
 
 ```json
 {
@@ -122,7 +122,7 @@ bytemind mcp test <server-id>
 
 ## Tool Naming
 
-MCP server tools are registered with `mcp.<server_id>_<tool_name>` names. For example, the `search_code` tool from the `github` server is registered as `mcp_github__search_code`. The agent discovers and invokes these tools automatically as needed.
+MCP server tools are registered under stable keys using the `mcp:<server_id>:<tool_name>` pattern. For example, the `search_code` tool from a `github` server registers as `mcp:github:search_code`. The agent discovers and invokes these tools automatically as needed.
 
 ## Configuration Examples
 
@@ -178,16 +178,6 @@ Use the GitHub MCP server to let the agent interact with GitHub resources direct
   ]
 }
 ```
-
-## Health Checks
-
-ByteMind automatically monitors MCP server health. Health check configuration is in `provider_runtime.health`:
-
-- `fail_threshold` (default 3): Consecutive failures before marking unhealthy
-- `recover_probe_sec` (default 30): Recovery probe interval
-- `recover_success_threshold` (default 2): Consecutive successes before recovery
-
-Tools from unhealthy servers are temporarily removed from the registry and automatically re-registered upon recovery.
 
 ## See Also
 

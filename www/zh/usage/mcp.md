@@ -4,14 +4,14 @@
 
 ## 工作原理
 
-1. 在 `mcp.json` 或 `config.json` 中配置 MCP 服务器
+1. 在 `.bytemind/mcp.json`（项目级）或 `~/.bytemind/mcp.json`（用户级）中配置 MCP 服务器
 2. ByteMind 启动时加载并连接到配置的 MCP 服务器（通过 stdio 子进程）
-3. 服务器提供的工具自动注册到工具注册表，以 `mcp.<server_id>_<tool_name>` 格式命名
+3. 服务器提供的工具自动注册到工具注册表，以稳定 key 格式命名，如 `mcp:github:search_code`
 4. Agent 在需要时自动调用这些工具，与其他内置工具一致
 
 ## 配置文件
 
-MCP 服务器可配置在项目根目录的 `mcp.json` 中，或写在 `config.json` 的 `mcp` 字段里（两者等价）。
+MCP 服务器配置在独立的 `mcp.json` 文件中，与主 `config.json` 分开。项目级配置放在 `.bytemind/mcp.json`，用户级（跨项目）配置放在 `~/.bytemind/mcp.json`。
 
 ```json
 {
@@ -70,7 +70,7 @@ MCP 服务器可配置在项目根目录的 `mcp.json` 中，或写在 `config.j
 
 ## 添加 MCP 服务器
 
-编辑项目根目录的 `mcp.json`，在 `servers` 数组中新增条目：
+在工作区的 `.bytemind/mcp.json` 中新建或编辑，在 `servers` 数组中新增条目：
 
 ```json
 {
@@ -122,7 +122,7 @@ bytemind mcp test <server-id>
 
 ## 工具名称
 
-MCP 服务器提供的工具以 `mcp.<server_id>_<tool_name>` 格式注册。例如，`github` 服务器的 `search_code` 工具会注册为 `mcp_github__search_code`。Agent 在需要时会自动发现并调用这些工具。
+MCP 服务器提供的工具以 `mcp:<server_id>:<tool_name>` 格式注册为稳定 key。例如，`github` 服务器的 `search_code` 工具会注册为 `mcp:github:search_code`。Agent 在需要时会自动发现并调用这些工具。
 
 ## 配置示例
 
@@ -178,16 +178,6 @@ MCP 服务器提供的工具以 `mcp.<server_id>_<tool_name>` 格式注册。例
   ]
 }
 ```
-
-## 健康检查
-
-ByteMind 会自动监测 MCP 服务器的健康状态。健康检查配置在 `provider_runtime.health` 中：
-
-- `fail_threshold`（默认 3）：连续失败多少次后标记为不健康
-- `recover_probe_sec`（默认 30）：恢复探测间隔
-- `recover_success_threshold`（默认 2）：连续成功多少次后恢复
-
-不健康的服务器工具会被暂时从注册表中移除，恢复后自动重新注册。
 
 ## 相关页面
 

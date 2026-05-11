@@ -58,19 +58,22 @@ Each rule has `command` (executable name) and `args_pattern` (argument prefix ma
 
 ## System Sandbox Mode
 
-`system_sandbox_mode` determines the underlying implementation mechanism:
+`system_sandbox_mode` controls how strictly sandbox constraints are enforced at the system level:
 
-| Value      | Description                           | Platform   |
-| ---------- | ------------------------------------- | ---------- |
-| `none`     | No system-level sandbox (default)     | All        |
-| `profile`  | OS profile-based process restrictions | macOS      |
-| `bwrap`    | Bubblewrap filesystem isolation       | Linux      |
-| `bind`     | Bind mount-based isolation            | Linux      |
+| Value         | Description                                      |
+| ------------- | ------------------------------------------------ |
+| `off`         | No system-level sandbox (default)                |
+| `best_effort` | Apply system sandbox if supported by the platform |
+| `required`    | Require system sandbox; fail if unavailable       |
+
+:::warning
+`system_sandbox_mode` requires `sandbox_enabled: true`. Setting a non-`off` value without enabling the sandbox will fail validation.
+:::
 
 ```json
 {
-  "system_sandbox_mode": "bwrap",
-  "sandbox_enabled": true
+  "sandbox_enabled": true,
+  "system_sandbox_mode": "best_effort"
 }
 ```
 
@@ -91,12 +94,24 @@ Even with `full_access` approval mode, filesystem and network sandbox restrictio
 
 ## Enabling via Environment Variables
 
-```bash
-# Enable sandbox with writable directories
-BYTEMIND_SANDBOX_ENABLED=true BYTEMIND_WRITABLE_ROOTS=./src,./tests bytemind
+Use the OS path list separator to delimit multiple writable roots (`:` on Linux/macOS, `;` on Windows):
 
-# Enable Linux system sandbox
-BYTEMIND_SANDBOX_ENABLED=true BYTEMIND_SYSTEM_SANDBOX_MODE=bwrap bytemind
+```bash
+# Linux / macOS — colon-separated
+BYTEMIND_SANDBOX_ENABLED=true BYTEMIND_WRITABLE_ROOTS=./src:./tests bytemind
+```
+
+```powershell
+# Windows PowerShell — semicolon-separated
+$env:BYTEMIND_SANDBOX_ENABLED = "true"
+$env:BYTEMIND_WRITABLE_ROOTS = "./src;./tests"
+bytemind
+```
+
+Enable system sandbox mode:
+
+```bash
+BYTEMIND_SANDBOX_ENABLED=true BYTEMIND_SYSTEM_SANDBOX_MODE=best_effort bytemind
 ```
 
 ## Best Practices

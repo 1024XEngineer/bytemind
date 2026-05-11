@@ -58,19 +58,22 @@ ByteMind 的沙箱在三个层面提供保护：
 
 ## 系统沙箱模式
 
-`system_sandbox_mode` 决定沙箱的底层实现机制：
+`system_sandbox_mode` 控制沙箱约束在系统层面的执行严格程度：
 
-| 值         | 说明                         | 适用平台  |
-| ---------- | ---------------------------- | --------- |
-| `none`     | 不使用系统级沙箱（默认）     | 所有平台  |
-| `profile`  | 基于 OS 配置文件限制进程权限 | macOS     |
-| `bwrap`    | 基于 Bubblewrap 的文件系统隔离 | Linux   |
-| `bind`     | 基于 bind mount 的隔离       | Linux     |
+| 值            | 说明                               |
+| ------------- | ---------------------------------- |
+| `off`         | 不使用系统级沙箱（默认）           |
+| `best_effort` | 如果平台支持，应用系统沙箱         |
+| `required`    | 强制要求系统沙箱，若不可用则报错   |
+
+:::warning
+`system_sandbox_mode` 需要 `sandbox_enabled: true`。设置为非 `off` 值但未启用沙箱会导致校验失败。
+:::
 
 ```json
 {
-  "system_sandbox_mode": "bwrap",
-  "sandbox_enabled": true
+  "sandbox_enabled": true,
+  "system_sandbox_mode": "best_effort"
 }
 ```
 
@@ -91,12 +94,24 @@ ByteMind 的沙箱在三个层面提供保护：
 
 ## 通过环境变量启用
 
-```bash
-# 启用沙箱并指定可写目录
-BYTEMIND_SANDBOX_ENABLED=true BYTEMIND_WRITABLE_ROOTS=./src,./tests bytemind
+多个可写目录使用操作系统的路径列表分隔符（Linux/macOS 用 `:`，Windows 用 `;`）：
 
-# 启用 Linux 系统沙箱
-BYTEMIND_SANDBOX_ENABLED=true BYTEMIND_SYSTEM_SANDBOX_MODE=bwrap bytemind
+```bash
+# Linux / macOS — 冒号分隔
+BYTEMIND_SANDBOX_ENABLED=true BYTEMIND_WRITABLE_ROOTS=./src:./tests bytemind
+```
+
+```powershell
+# Windows PowerShell — 分号分隔
+$env:BYTEMIND_SANDBOX_ENABLED = "true"
+$env:BYTEMIND_WRITABLE_ROOTS = "./src;./tests"
+bytemind
+```
+
+启用系统沙箱模式：
+
+```bash
+BYTEMIND_SANDBOX_ENABLED=true BYTEMIND_SYSTEM_SANDBOX_MODE=best_effort bytemind
 ```
 
 ## 最佳实践
