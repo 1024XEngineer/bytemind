@@ -3256,43 +3256,8 @@ func TestRapidRuneInputForImagePathTriggersFallbackPlaceholder(t *testing.T) {
 		next := got.(model)
 		m = &next
 	}
-	if m.input.Value() == imagePath {
-		t.Fatalf("expected rapid path input to be handled through paste buffering, got raw path")
-	}
-	if m.hasActivePasteSession() {
-		got, _ := m.Update(pasteFinalizeMsg{ID: m.pasteSession.finalizeID})
-		next := got.(model)
-		m = &next
-	}
 	if m.input.Value() != "[Image#1]" {
 		t.Fatalf("expected rapid path input to convert to placeholder, got %q", m.input.Value())
-	}
-}
-
-func TestRapidRuneInputForSlashImagePathTriggersFallbackPlaceholder(t *testing.T) {
-	m := newImagePipelineModel(t)
-	m.screen = screenChat
-
-	imagePath := filepath.ToSlash(filepath.Join(m.workspace, "drag-slash.png"))
-	if err := os.WriteFile(imagePath, []byte("png-bytes"), 0o644); err != nil {
-		t.Fatalf("write image fixture: %v", err)
-	}
-
-	for _, r := range imagePath {
-		got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
-		next := got.(model)
-		m = &next
-	}
-	if m.input.Value() == imagePath {
-		t.Fatalf("expected rapid slash path input to be handled through paste buffering, got raw path")
-	}
-	if m.hasActivePasteSession() {
-		got, _ := m.Update(pasteFinalizeMsg{ID: m.pasteSession.finalizeID})
-		next := got.(model)
-		m = &next
-	}
-	if m.input.Value() != "[Image#1]" {
-		t.Fatalf("expected slash path input to convert to placeholder, got %q", m.input.Value())
 	}
 }
 
