@@ -43,6 +43,7 @@ func renderSafetyStatus(workspace, configFile string, w io.Writer) error {
 
 	cfg, err := configpkg.Load(workspace, configFile)
 	if err != nil {
+		fmt.Fprintf(w, "  Config error: %v\n", err)
 		cfg = configpkg.Default(workspace)
 	}
 
@@ -81,8 +82,8 @@ func renderSafetyStatus(workspace, configFile string, w io.Writer) error {
 	write("  Approval bypass: %s", awayPolicyLabel(cfg.AwayPolicy))
 	write("")
 	write("  Summary:")
-	write("    - Write operations: %s", writeAccessSummary(mode))
-	write("    - Shell execution:  %s", writeAccessSummary(mode))
+	write("    - Write operations: %s", writeAccessSummary(mode, cfg.ApprovalPolicy))
+	write("    - Shell execution:  %s", writeAccessSummary(mode, cfg.ApprovalPolicy))
 	write("    - Read operations:  always allowed")
 	write("    - Network access:   restricted")
 	return nil
@@ -148,7 +149,10 @@ func awayPolicyLabel(policy string) string {
 	}
 }
 
-func writeAccessSummary(mode string) string {
+func writeAccessSummary(mode, policy string) string {
+	if policy == "never" {
+		return "auto-approved (approval_policy=never)"
+	}
 	if mode == "full_access" {
 		return "auto-approved"
 	}

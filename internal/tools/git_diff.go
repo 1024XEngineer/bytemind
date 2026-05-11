@@ -37,21 +37,20 @@ func (GitDiffTool) Definition() llm.ToolDefinition {
 }
 
 func (GitDiffTool) Run(ctx context.Context, raw json.RawMessage, execCtx *ExecutionContext) (string, error) {
-	dir := execCtx.Workspace
 	var args struct {
 		Staged bool   `json:"staged"`
 		Path   string `json:"path"`
 	}
-	if json.Unmarshal(raw, &args) == nil && strings.TrimSpace(args.Path) != "" {
-		resolved, err := resolvePath(execCtx.Workspace, args.Path)
-		if err == nil {
-			dir = resolved
-		}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return "", err
 	}
 
-	diffArgs := []string{"-C", dir, "diff", "--unified=8"}
+	diffArgs := []string{"-C", execCtx.Workspace, "diff", "--unified=8"}
 	if args.Staged {
 		diffArgs = append(diffArgs, "--cached")
+	}
+	if strings.TrimSpace(args.Path) != "" {
+		diffArgs = append(diffArgs, "--", strings.TrimSpace(args.Path))
 	}
 	cmd := exec.CommandContext(ctx, "git", diffArgs...)
 	var stdout, stderr bytes.Buffer

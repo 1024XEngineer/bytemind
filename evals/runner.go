@@ -204,11 +204,20 @@ func runTasks(binPath string, tasks []EvalTask) []TaskResult {
 					}
 				}
 			case len(check.FilesModified) > 0:
+				// Verify the file was actually modified by checking git status
 				for _, path := range check.FilesModified {
 					fullPath := filepath.Join(workspace, path)
-					if info, err := os.Stat(fullPath); err != nil || info.IsDir() || info.Size() == 0 {
+					if _, err := os.Stat(fullPath); err != nil {
 						result.Passed = false
-						result.Failures = append(result.Failures, fmt.Sprintf("file missing or empty: %s", path))
+						result.Failures = append(result.Failures, fmt.Sprintf("file missing: %s", path))
+						continue
+					}
+					// Check git diff to confirm the file was actually changed
+					gitCmd := exec.Command("git", "-C", workspace, "diff", "--exit-code", "--", path)
+					if gitCmd.Run() == nil {
+						// exit code 0 = no diff = file not modified
+						result.Passed = false
+						result.Failures = append(result.Failures, fmt.Sprintf("file %s was not modified by the agent", path))
 					}
 				}
 			}

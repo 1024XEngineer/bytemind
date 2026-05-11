@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -48,12 +49,15 @@ func RunDoctor(args []string, stdout, stderr io.Writer) error {
 
 	write("Configuration:")
 	cfg, err := configpkg.Load(workspace, configFile)
-	configFound := err == nil
-	if configFound {
-		pass("config file loaded")
-	} else {
-		warn(fmt.Sprintf("no config file found (optional): %v", err))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			warn(fmt.Sprintf("no config file found (optional): %v", err))
+		} else {
+			fail(fmt.Sprintf("config file error: %v", err))
+		}
 		cfg = configpkg.Default(workspace)
+	} else {
+		pass("config file loaded")
 	}
 
 	write("Provider:")
