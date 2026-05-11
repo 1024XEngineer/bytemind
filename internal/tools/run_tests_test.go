@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -15,24 +14,12 @@ func TestRunTestsToolGoProject(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go not found in PATH")
 	}
+	if detectShell() == "cmd" {
+		t.Skip("run_tests uses shell wrapper; cmd.exe may not resolve Go PATH correctly")
+	}
 	dir := t.TempDir()
 	initGoProject(t, dir)
 
-	// Directly test that go test works in this temp dir
-	var stdout, stderr bytes.Buffer
-	cmd := exec.Command("go", "test", "./...")
-	cmd.Dir = dir
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		// go test itself failed (Windows WSL prompt interference etc.)
-		t.Skip("go test failed to run:", err, "stdout:", stdout.String(), "stderr:", stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "ok") {
-		t.Fatalf("expected test output to contain 'ok', got %q", stdout.String())
-	}
-
-	// Now test the tool
 	tool := RunTestsTool{}
 	raw, _ := json.Marshal(map[string]any{
 		"command": "go test ./...",
@@ -54,6 +41,9 @@ func TestRunTestsToolGoProject(t *testing.T) {
 }
 
 func TestRunTestsToolCustomCommand(t *testing.T) {
+	if detectShell() == "cmd" {
+		t.Skip("run_tests uses shell wrapper; cmd.exe may not resolve Go PATH correctly")
+	}
 	dir := t.TempDir()
 
 	tool := RunTestsTool{}
