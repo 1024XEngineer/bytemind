@@ -40,8 +40,8 @@ func (i planActionItem) Description() string { return i.DescriptionText }
 
 type planActionDelegate struct{}
 
-func (d planActionDelegate) Height() int  { return 4 }
-func (d planActionDelegate) Spacing() int { return 1 }
+func (d planActionDelegate) Height() int  { return 2 }
+func (d planActionDelegate) Spacing() int { return 0 }
 func (d planActionDelegate) Update(tea.Msg, *list.Model) tea.Cmd {
 	return nil
 }
@@ -56,32 +56,32 @@ func (d planActionDelegate) Render(w io.Writer, m list.Model, index int, item li
 	width := max(24, m.Width())
 	bodyWidth := max(16, width-4)
 
-	titleStyle := strongStyle.Copy().Foreground(colorAccent)
-	descStyle := mutedStyle.Copy()
-	cardStyle := lipgloss.NewStyle().
-		Width(width).
-		Padding(0, 1).
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent)
-
-	badgeKind := "accent"
+	// Arrow + shortcut label
+	arrow := "  "
+	labelStyle := approvalOptionIdleStyle
 	if selected {
-		cardStyle = cardStyle.
-			BorderForeground(colorTool).
-			Background(semanticColors.WarningSoft)
-		titleStyle = titleStyle.Foreground(colorTool)
-		descStyle = descStyle.Foreground(lipgloss.Color("#F3E4C7"))
-		badgeKind = "warning"
+		arrow = approvalArrowStyle.Render("❯") + " "
+		labelStyle = approvalOptionSelectedStyle
 	}
 
-	titleParts := []string{renderPillBadge(action.Shortcut, badgeKind), " ", titleStyle.Render(action.TitleText)}
+	shortcut := strings.TrimSpace(action.Shortcut)
+	titleText := strings.TrimSpace(action.TitleText)
 	if action.Recommended {
-		titleParts = append(titleParts, " ", mutedStyle.Render("(推荐)"))
+		titleText += " (推荐)"
 	}
-	title := lipgloss.JoinHorizontal(lipgloss.Left, titleParts...)
-	desc := descStyle.Width(bodyWidth).Render(action.Description())
-	content := lipgloss.JoinVertical(lipgloss.Left, title, desc)
-	fmt.Fprint(w, cardStyle.Render(content)) //nolint:errcheck
+	titleLine := arrow + approvalNumberStyle.Render(shortcut+". ") + labelStyle.Render(titleText)
+
+	// Description line below, indented
+	desc := ""
+	if description := strings.TrimSpace(action.Description()); description != "" {
+		desc = approvalOptionDescriptionStyle.Width(bodyWidth).Render("     " + description)
+	}
+
+	content := titleLine
+	if desc != "" {
+		content += "\n" + desc
+	}
+	fmt.Fprint(w, content) //nolint:errcheck
 }
 
 type planActionPicker struct {
@@ -108,7 +108,7 @@ func newPlanActionPicker(width int, cfg planActionPickerConfig) *planActionPicke
 		items = append(items, item)
 	}
 
-	l := list.New(items, planActionDelegate{}, max(32, width), max(8, len(items)*5))
+	l := list.New(items, planActionDelegate{}, max(32, width), max(4, len(items)*3))
 	l.SetShowTitle(false)
 	l.SetShowFilter(false)
 	l.SetFilteringEnabled(false)
@@ -254,7 +254,7 @@ func (m *model) updatePlanActionPickerSize() {
 		return
 	}
 	width := min(72, max(36, m.chatPanelInnerWidth()))
-	m.planAction.list.SetSize(width, max(8, len(m.planAction.list.Items())*5))
+	m.planAction.list.SetSize(width, max(4, len(m.planAction.list.Items())*3))
 }
 
 func (m model) renderPlanActionPicker() string {
@@ -262,20 +262,39 @@ func (m model) renderPlanActionPicker() string {
 		return ""
 	}
 
-	picker := m.planAction.list
-	boxWidth := min(76, max(40, m.chatPanelInnerWidth()))
-	innerWidth := boxWidth - modalBoxStyle.GetHorizontalFrameSize() - 2
-	picker.SetSize(innerWidth, max(8, len(picker.Items())*5))
+	bannerWidth := max(24, m.chatPanelInnerWidth())
+	innerWidth := max(20, bannerWidth-approvalBannerStyle.GetHorizontalFrameSize())
 
-	lines := []string{modalTitleStyle.Render(m.planAction.title)}
+	picker := m.planAction.list
+	picker.SetSize(innerWidth, max(4, len(picker.Items())*3))
+
+	lines := make([]string, 0, 10)
+
+	// Title in accent bold
+	if title := strings.TrimSpace(m.planAction.title); title != "" {
+		lines = append(lines, approvalTitleStyle.Render(title))
+	}
+
+	// Prompt as subtitle
 	if prompt := strings.TrimSpace(m.planAction.prompt); prompt != "" {
-		lines = append(lines, strongStyle.Width(innerWidth).Render(prompt))
+		lines = append(lines, approvalReasonStyle.Render(trimToWidth(prompt, innerWidth)))
 	}
+
+	lines = append(lines, "") // blank separator
+
+	// List items
+	lines = append(lines, picker.View())
+
+	// Bottom hint
 	if hint := strings.TrimSpace(m.planAction.hint); hint != "" {
-		lines = append(lines, mutedStyle.Width(innerWidth).Render(hint))
+		hintText := approvalHintStyle.Render(hint)
+		lines = append(lines, "", hintText)
 	}
-	lines = append(lines, "", picker.View())
-	return modalBoxStyle.Width(boxWidth).Render(strings.Join(lines, "\n"))
+
+	body := lipgloss.NewStyle().
+		Width(innerWidth).
+		Render(strings.Join(lines, "\n"))
+	return approvalBannerStyle.Width(bannerWidth).Render(body)
 }
 
 func (m model) handlePlanActionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
