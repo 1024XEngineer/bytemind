@@ -60,14 +60,33 @@ func (WebSearchTool) Definition() llm.ToolDefinition {
 	return llm.ToolDefinition{
 		Type: "function",
 		Function: llm.FunctionDefinition{
-			Name:        "web_search",
-			Description: "Search the web without API keys and return candidate sources.",
+			Name: "web_search",
+			Description: "" +
+				"Search the web for up-to-date information that the local workspace cannot provide. " +
+				"Returns ranked results with title, URL, and snippet.\n\n" +
+
+				"When to use (and only then):\n" +
+				"- The user asks about external libraries, APIs, documentation, or latest releases.\n" +
+				"- You need facts that are not in your training data or the workspace.\n" +
+				"- Troubleshooting an error message from a third‑party tool.\n" +
+				"- Gathering context before fetching a specific URL.\n\n" +
+
+				"When NOT to use:\n" +
+				"- For code already in the workspace — use list_files / read_file / search_text instead.\n" +
+				"- For general programming knowledge you already have.\n" +
+				"- When the user asks to inspect, review, or modify the local repository.\n\n" +
+
+				"How to search:\n" +
+				"- Use specific technical terms, error codes, or function signatures — not natural-language questions.\n" +
+				"- Prefer English queries for technical searches; use the user's language only when searching for localized content.\n" +
+				"- Be narrow and precise: a query like \"React 18 useEffect cleanup async\" is better than \"how to handle async in React\".\n" +
+				"- Inspect results and follow up with web_fetch on the most promising URLs for full content.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"query": map[string]any{
 						"type":        "string",
-						"description": "The search query.",
+						"description": "The search query. Use specific technical keywords, error codes, or function names. Avoid vague natural-language questions. Keep it narrow: 3–7 focused terms.",
 					},
 					"max_results": map[string]any{
 						"type":        "integer",

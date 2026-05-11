@@ -43,7 +43,10 @@ func (WebFetchTool) Definition() llm.ToolDefinition {
 		Type: "function",
 		Function: llm.FunctionDefinition{
 			Name:        "web_fetch",
-			Description: "Fetch a web page by URL and return lightweight content for citation.",
+			Description: "" +
+				"Fetch a web page by URL and return lightweight text content. " +
+				"Use after web_search to read the full content of the most promising results. " +
+				"Returns extracted text (or raw HTML if format=html) up to max_chars characters.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
