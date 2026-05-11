@@ -150,7 +150,6 @@
     );
   opacity: 0.8;
   mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.78), transparent 76%);
-  animation: bytemind-ribbon-drift 26s ease-in-out infinite alternate;
 }
 
 .VPHome .VPHero .container,
@@ -263,10 +262,10 @@
   border: 1px solid transparent;
   opacity: 0;
   transition: opacity 220ms ease;
-  animation: bytemind-card-border 6s linear infinite;
 }
 
 .VPHome .VPFeature:hover::before {
+  animation: bytemind-card-border 6s linear infinite;
   opacity: 1;
 }
 
@@ -638,8 +637,10 @@
   .VPHome .VPFeature,
   .VPHome .VPFeature .icon,
   .VPNavBarMenuLink,
+  .VPNavBarMenuLink::after,
   .VPSidebarItem .link,
   .pager-link,
+  .vp-doc h2::before,
   .vp-doc table tr,
   .vp-doc div[class*='language-'],
   .doc-tabs__tab,
@@ -657,5 +658,17 @@
   .doc-tabs__tab:hover,
   .custom-block:hover {
     transform: none;
+  }
+
+  .VPNavBarMenuLink::after,
+  .VPNavBarMenuLink:hover::after,
+  .VPNavBarMenuLink.active::after,
+  .vp-doc h2::before,
+  .vp-doc h2:hover::before {
+    transform: none;
+  }
+
+  .VPSidebarItem .link:hover {
+    padding-left: 0;
   }
 }
