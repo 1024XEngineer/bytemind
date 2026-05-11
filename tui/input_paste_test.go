@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -1235,6 +1237,118 @@ func TestIsSplitPasteContinuationEmptyInput(t *testing.T) {
 func TestIsSplitPasteContinuationPathInput(t *testing.T) {
 	if isSplitPasteContinuation(`C:\Users\test\file`, "paste-key", time.Now()) {
 		t.Fatalf("expected path-like input to not be a split continuation")
+	}
+}
+
+func TestShouldPromoteImplicitImagePathPasteGuards(t *testing.T) {
+	var nilModel *model
+	if nilModel.shouldPromoteImplicitImagePathPaste(`C:/tmp/image.png`, pasteBurstImmediateMinChars, 4) {
+		t.Fatalf("expected nil model to not promote image path paste")
+	}
+
+	m := newImagePipelineModel(t)
+	if m.shouldPromoteImplicitImagePathPaste(`C:/tmp/image.png`, pasteBurstImmediateMinChars-1, 4) {
+		t.Fatalf("expected short path burst to not promote")
+	}
+	if m.shouldPromoteImplicitImagePathPaste("C:/tmp/\nimage.png", pasteBurstImmediateMinChars, 4) {
+		t.Fatalf("expected newline-containing path burst to not promote")
+	}
+	if !m.shouldPromoteImplicitImagePathPaste(`"C:/tmp/image.png"`, pasteBurstImmediateMinChars, 4) {
+		t.Fatalf("expected quoted path burst to promote")
+	}
+}
+
+func TestShouldPromoteImplicitPasteCandidatePromotesImagePathBurst(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.input.SetValue(`C:/tmp/image.pn`)
+	m.pasteBurstCandidate = pasteBurstCandidateState{
+		active:      true,
+		baseInput:   "",
+		lastEventAt: time.Now(),
+		charCount:   len(`C:/tmp/image.pn`),
+		eventCount:  4,
+	}
+
+	if !m.shouldPromoteImplicitPasteCandidate(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}}) {
+		t.Fatalf("expected image path burst to promote into paste session")
+	}
+}
+
+func TestShouldPromoteImplicitPasteCandidateRejectsSmallPathBurst(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.input.SetValue(`C:/tmp`)
+	m.pasteBurstCandidate = pasteBurstCandidateState{
+		active:      true,
+		baseInput:   "",
+		lastEventAt: time.Now(),
+		charCount:   len(`C:/tmp`),
+		eventCount:  1,
+	}
+
+	if m.shouldPromoteImplicitPasteCandidate(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}}) {
+		t.Fatalf("expected small path burst to remain ordinary path input")
+	}
+}
+
+func TestShouldHoldImagePathPastePreviewGuards(t *testing.T) {
+	var nilModel *model
+	if nilModel.shouldHoldImagePathPastePreview() {
+		t.Fatalf("expected nil model to not hold image path preview")
+	}
+
+	m := newImagePipelineModel(t)
+	if m.shouldHoldImagePathPastePreview() {
+		t.Fatalf("expected inactive paste session to not hold preview")
+	}
+
+	m.pasteSession.active = true
+	m.pasteSession.bufferedText = "C:/tmp/\nimage.png"
+	if m.shouldHoldImagePathPastePreview() {
+		t.Fatalf("expected newline-containing buffered text to not hold preview")
+	}
+
+	m.pasteSession.bufferedText = `"C:/tmp/image.png"`
+	if !m.shouldHoldImagePathPastePreview() {
+		t.Fatalf("expected quoted path-like buffered text to hold preview")
+	}
+}
+
+func TestIngestPasteFragmentHoldsImagePathPreview(t *testing.T) {
+	m := newImagePipelineModel(t)
+
+	cmd := m.ingestPasteFragment(`C:/tmp/image.pn`, "paste-burst")
+	if cmd == nil {
+		t.Fatalf("expected paste fragment to schedule finalize")
+	}
+	if m.input.Value() != "" {
+		t.Fatalf("expected image path paste preview to stay buffered, got %q", m.input.Value())
+	}
+	if !m.hasActivePasteSession() {
+		t.Fatalf("expected active paste session")
+	}
+}
+
+func TestFinalizePasteSessionConvertsImagePathFallback(t *testing.T) {
+	m := newImagePipelineModel(t)
+	imagePath := filepath.ToSlash(filepath.Join(m.workspace, "finalize.png"))
+	if err := os.WriteFile(imagePath, []byte("png"), 0o644); err != nil {
+		t.Fatalf("write image fixture: %v", err)
+	}
+
+	m.pasteSession = pasteSessionState{
+		active:       true,
+		baseInput:    "look ",
+		bufferedText: imagePath,
+		sourceKind:   "paste-burst",
+		finalizeID:   1,
+	}
+	m.finalizePasteSession(1)
+
+	if m.input.Value() != "look [Image#1]" {
+		t.Fatalf("expected paste session to attach image path, got %q", m.input.Value())
+	}
+	if !strings.Contains(m.statusNote, "Attached 1 image") {
+		t.Fatalf("expected attach status note, got %q", m.statusNote)
 	}
 }
 

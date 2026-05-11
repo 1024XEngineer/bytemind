@@ -1576,7 +1576,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if fragment, source, ok := m.pasteFragmentFromKey(msg); ok {
-		if source == "paste-key" || source == "paste-burst" || source == "rune-burst-paste" {
+		if source == "paste-key" || source == "rune-burst-paste" || (source == "paste-burst" && !m.shouldHoldImagePathPastePreview()) {
 			m.beginOrAppendPasteTransaction(fragment, source)
 		}
 		return m, m.ingestPasteFragment(fragment, source)
