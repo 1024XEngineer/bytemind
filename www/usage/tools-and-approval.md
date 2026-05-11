@@ -13,6 +13,9 @@ Tools are the actions ByteMind's agent can take. Understanding which tools exist
 | `replace_in_file` | **Write**   | Replace specific content inside a file   |
 | `apply_patch`     | **Write**   | Apply a unified diff patch to a file     |
 | `run_shell`       | **Execute** | Run a shell command                      |
+| `delegate_subagent`| Agent       | Delegate a sub-task to a subagent        |
+| `task_output`      | Task        | Retrieve output from a background task   |
+| `task_stop`        | Task        | Stop a background task                   |
 | `update_plan`     | Plan        | Update the current task plan (Plan mode) |
 | `web_fetch`       | Web         | Fetch and read a URL                     |
 | `web_search`      | Web         | Search the web for information           |
@@ -21,24 +24,17 @@ Read tools run silently. **Write and Execute tools** pause and wait for your app
 
 ## Approval Flow
 
-When the agent wants to call a high-risk tool, it displays:
+When the agent wants to call a high-risk tool, it shows a summary and presents three choices:
 
-- The tool name and the exact arguments it will use
-- A summary of the operation
-- A prompt to approve (`y`), deny (`n`), or explain why it should not run
+| Option | Behavior |
+| ------ | -------- |
+| **Approve this operation only** | Allow just the current request; the same tool will ask again next time |
+| **Approve later requests from this tool** | Auto-approve future calls from this tool for the rest of the TUI session |
+| **Disable approvals for this TUI session** | Auto-approve all approval requests for the rest of this session |
+
+You can also **deny** the request (`Esc` or selecting deny).
 
 The default `approval_policy: on-request` enables this for every high-risk tool call.
-
-## Recommended Workflow
-
-1. **Analyze first** — ask the agent to read and explain before making any changes
-2. **Review the plan** — check what files will be touched and why
-3. **Approve incrementally** — approve each write operation only after you're satisfied
-4. **Use Plan mode** for large tasks so you see the full scope before any execution
-
-```text
-First read the relevant files and tell me what changes you'd propose, without writing anything.
-```
 
 ## Exec Allowlist
 
@@ -73,4 +69,7 @@ See [Configuration](/configuration) for all approval-related settings.
 
 - [Configuration](/configuration) — approval policy, access modes, sandbox
 - [Run Mode](/usage/run-mode) — automated non-interactive execution
+- [Subagents](/usage/subagents) — delegating to specialized agents
+- [MCP](/usage/mcp) — extending tools via MCP servers
+- [Sandbox](/usage/sandbox) — file and command boundaries
 - [Core Concepts](/core-concepts) — tools overview

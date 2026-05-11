@@ -84,11 +84,7 @@ Project skills override user skills, which override builtins with the same name.
 
 ## Creating Custom Skills
 
-Use the built-in skill creator to scaffold a new skill:
-
-```text
-/skill-creator
-```
+Each skill needs a named directory with two files:
 
 Or create one manually. A skill requires two files in a named directory:
 
@@ -162,5 +158,6 @@ description: Brief description for the skill catalog.
 
 ## See Also
 
+- [Subagents](/usage/subagents) — another approach for specialized tasks, ideal when context isolation is needed
 - [Core Concepts](/core-concepts) — skills overview
 - [Chat Mode](/usage/chat-mode) — how to use skills in a session

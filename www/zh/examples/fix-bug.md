@@ -75,3 +75,4 @@ Agent 会调用 `run_shell` 执行测试命令——审批确认即可。
 - [Bug 排查技能](/zh/usage/skills#bug-investigation) — 结构化诊断工作流
 - [工具与审批](/zh/usage/tools-and-approval) — 变更应用前的审阅流程
 - [示例：代码重构](/zh/examples/refactor) — 较大范围变更与 Plan 模式
+- [子代理](/zh/usage/subagents) — 用子代理分工处理复杂任务

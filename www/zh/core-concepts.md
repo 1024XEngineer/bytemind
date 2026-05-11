@@ -46,9 +46,7 @@ Plan 模式下，Agent 会先制定逐步执行计划，每个步骤由你审阅
 
 | 命令            | 说明                         |
 | --------------- | ---------------------------- |
-| `/session`      | 查看当前会话 ID 与摘要       |
-| `/sessions [n]` | 列出最近 n 条会话（默认 10） |
-| `/resume <id>`  | 恢复指定 ID 的会话           |
+| `/session`      | 打开会话选择器，查看/恢复/删除会话 |
 | `/new`          | 在当前工作区开启新会话       |
 
 ## 工具
@@ -107,6 +105,20 @@ ByteMind 内置技能：
 | Write RFC         | `/write-rfc`         | 撰写技术提案   |
 
 技能还支持项目级和用户级自定义，详见[技能](/zh/usage/skills)。
+
+## 子代理
+
+子代理是拥有独立工具集和指令的专项 Agent，由主 Agent 在需要时通过 `delegate_subagent` 工具自动调起。适合需要并行分工、隔离上下文或限制工具权限的复杂场景。
+
+ByteMind 内置三个子代理：`explorer`（只读代码探索）、`review`（代码审查）、`general`（通用编码）。你也可以在 `.agents/agents/` 目录下自定义子代理。
+
+详见[子代理](/zh/usage/subagents)。
+
+## MCP
+
+MCP（Model Context Protocol）允许你通过外部 MCP 服务器扩展 ByteMind 的工具能力。配置后，MCP 服务器提供的工具会自动注册到 Agent 的工具列表中。
+
+详见 [MCP 配置与使用](/zh/usage/mcp)。
 
 ## 上下文预算
 

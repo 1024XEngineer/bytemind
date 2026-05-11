@@ -21,13 +21,16 @@ const enSidebar = [
   {
     text: 'Guide',
     items: [
-      { text: 'Chat Mode', link: '/usage/chat-mode' },
+      { text: 'Interactive Mode (Build)', link: '/usage/chat-mode' },
       { text: 'Run Mode', link: '/usage/run-mode' },
       { text: 'Session Management', link: '/usage/session-management' },
       { text: 'Tools and Approval', link: '/usage/tools-and-approval' },
       { text: 'Provider Setup', link: '/usage/provider-setup' },
       { text: 'Plan Mode', link: '/usage/plan-mode' },
       { text: 'Skills', link: '/usage/skills' },
+      { text: 'Subagents', link: '/usage/subagents' },
+      { text: 'MCP', link: '/usage/mcp' },
+      { text: 'Sandbox', link: '/usage/sandbox' },
     ],
   },
   {
@@ -73,13 +76,16 @@ const zhSidebar = [
   {
     text: '使用指南',
     items: [
-      { text: '聊天模式', link: '/zh/usage/chat-mode' },
+      { text: '交互模式 (Build)', link: '/zh/usage/chat-mode' },
       { text: '单次执行模式', link: '/zh/usage/run-mode' },
       { text: '会话管理', link: '/zh/usage/session-management' },
       { text: '工具与审批', link: '/zh/usage/tools-and-approval' },
       { text: 'Provider 配置', link: '/zh/usage/provider-setup' },
       { text: 'Plan 模式', link: '/zh/usage/plan-mode' },
       { text: '技能', link: '/zh/usage/skills' },
+      { text: '子代理', link: '/zh/usage/subagents' },
+      { text: 'MCP 配置与使用', link: '/zh/usage/mcp' },
+      { text: '沙箱', link: '/zh/usage/sandbox' },
     ],
   },
   {

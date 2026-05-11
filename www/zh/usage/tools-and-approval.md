@@ -13,6 +13,9 @@
 | `replace_in_file` | **写**   | 替换文件中的指定内容          |
 | `apply_patch`     | **写**   | 应用 unified diff 补丁        |
 | `run_shell`       | **执行** | 执行 Shell 命令               |
+| `delegate_subagent`| 代理     | 委派子代理执行子任务          |
+| `task_output`      | 任务     | 查询后台任务的输出            |
+| `task_stop`        | 任务     | 终止后台任务                  |
 | `update_plan`     | 计划     | 更新任务执行计划（Plan 模式） |
 | `web_fetch`       | 网络     | 抓取网页内容                  |
 | `web_search`      | 网络     | 联网搜索                      |
@@ -21,24 +24,17 @@
 
 ## 审批流程
 
-Agent 调用高风险工具时，会展示：
+Agent 调用高风险工具时，会展示操作摘要并弹出三个选项：
 
-- 工具名称和将要使用的具体参数
-- 操作摘要说明
-- 等待你确认（`y`）、拒绝（`n`）或说明理由
+| 选项 | 行为 |
+| ---- | ---- |
+| **Approve this operation only** | 仅允许当前这一次调用，同一工具下次还会弹出审批 |
+| **Approve later requests from this tool** | 当前 TUI 会话内，该工具的后续调用自动通过 |
+| **Disable approvals for this TUI session** | 当前会话内所有工具的审批请求全部自动通过 |
+
+此外也可以直接**拒绝**（`Esc` 关闭对话框或选择拒绝）。
 
 默认的 `approval_policy: on-request` 对每次高风险工具调用都开启此流程。
-
-## 推荐工作流程
-
-1. **先分析**—请 Agent 先读取并解释，不做任何修改
-2. **审阅计划**—确认哪些文件会被动及原因
-3. **逐步审批**—确认每次写入操作前先审阅内容
-4. **复杂任务使用 Plan 模式**，在执行前看到完整范围
-
-```text
-先读取相关文件并告诉我你的修改建议，不要写任何内容。
-```
 
 ## 执行命令白名单
 
@@ -73,4 +69,7 @@ Agent 调用高风险工具时，会展示：
 
 - [配置](/zh/configuration) — 审批策略、权限模式、沙箱
 - [单次执行模式](/zh/usage/run-mode) — 自动化非交互执行
+- [子代理](/zh/usage/subagents) — 委派子代理执行
+- [MCP 配置与使用](/zh/usage/mcp) — 通过 MCP 扩展工具
+- [沙箱](/zh/usage/sandbox) — 文件与命令执行边界
 - [核心概念](/zh/core-concepts) — 工具概述

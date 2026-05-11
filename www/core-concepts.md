@@ -46,9 +46,7 @@ Common session commands:
 
 | Command         | Description                                  |
 | --------------- | -------------------------------------------- |
-| `/session`      | Show current session ID and summary          |
-| `/sessions [n]` | List the most recent n sessions (default 10) |
-| `/resume <id>`  | Resume a session by ID or prefix             |
+| `/session`      | Open session picker to view/resume/delete sessions |
 | `/new`          | Start a new session in the current workspace |
 
 ## Tools
@@ -107,6 +105,20 @@ ByteMind's built-in skills:
 | Write RFC         | `/write-rfc`         | Draft structured technical proposals |
 
 Skills also support project-level and user-level customization. See [Skills](/usage/skills).
+
+## Subagents
+
+Subagents are specialized agents with their own tool sets and instructions, invoked by the main agent via `delegate_subagent` when needed. Ideal for parallel work, context isolation, or restricted tool permissions.
+
+ByteMind includes three built-in subagents: `explorer` (read-only code exploration), `review` (code review), and `general` (general-purpose coding). You can also define custom subagents under `.agents/agents/`.
+
+See [Subagents](/usage/subagents).
+
+## MCP
+
+MCP (Model Context Protocol) lets you extend ByteMind's tool capabilities through external MCP servers. Once configured, server-provided tools are automatically registered in the agent's tool list.
+
+See [MCP Setup and Usage](/usage/mcp).
 
 ## Context Budget
 

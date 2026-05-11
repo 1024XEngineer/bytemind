@@ -53,7 +53,7 @@ BYTEMIND_APPROVAL_MODE=full_access bytemind run -prompt "重新生成所有 API 
 `away_policy` 已降级为兼容字段，不再影响运行时行为。仅在旧系统仍要求该字段时保留即可。
 :::
 
-## 实应示例
+## 实用示例
 
 **更新文档**
 

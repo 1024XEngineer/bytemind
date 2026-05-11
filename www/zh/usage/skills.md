@@ -84,13 +84,7 @@ ByteMind 随附五个内置技能：
 
 ## 创建自定义技能
 
-用内置的 Skill Creator 快速创建：
-
-```text
-/skill-creator
-```
-
-也可手动创建。每个技能需要一个命名目录，包含两个文件：
+每个技能需要一个命名目录，包含两个文件：
 
 **`skill.json`**——清单文件：
 
@@ -162,5 +156,6 @@ description: 简短描述，显示在技能目录中。
 
 ## 相关页面
 
+- [子代理](/zh/usage/subagents) — 另一种专项任务方式，适合需要隔离上下文的场景
 - [核心概念](/zh/core-concepts) — 技能概述
 - [聊天模式](/zh/usage/chat-mode) — 在会话中使用技能
