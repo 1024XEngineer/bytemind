@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -41,6 +42,35 @@ func (f fakeClipboardTextReader) ReadText(context.Context) (string, error) {
 		*f.calls++
 	}
 	return f.text, f.err
+}
+
+type flakyImageStore struct {
+	failFile string
+}
+
+func (s flakyImageStore) PutImage(_ context.Context, in assets.PutImageInput) (assets.ImageMeta, error) {
+	if in.FileName == s.failFile {
+		return assets.ImageMeta{}, errors.New("simulated image store failure")
+	}
+	return assets.ImageMeta{
+		AssetID:   llm.AssetID("asset-" + in.FileName),
+		ImageID:   in.ImageID,
+		MediaType: in.MediaType,
+		FileName:  in.FileName,
+		ByteSize:  int64(len(in.Data)),
+	}, nil
+}
+
+func (s flakyImageStore) GetImageByAssetID(context.Context, corepkg.SessionID, llm.AssetID) (assets.ImageBlob, error) {
+	return assets.ImageBlob{}, errors.New("not implemented")
+}
+
+func (s flakyImageStore) DeleteSessionImages(context.Context, corepkg.SessionID) error {
+	return nil
+}
+
+func (s flakyImageStore) GC(context.Context, []corepkg.SessionID, time.Time) error {
+	return nil
 }
 
 func newImagePipelineModel(t *testing.T) *model {
@@ -483,6 +513,84 @@ func TestApplyWholeInputImagePathFallbackRequiresPasteSignalOrRecentPaste(t *tes
 	}
 	if !strings.Contains(note, "Attached 1 image") {
 		t.Fatalf("expected attach note, got %q", note)
+	}
+}
+
+func TestApplyWholeInputImagePathFallbackConvertsQuotedSlashPath(t *testing.T) {
+	m := newImagePipelineModel(t)
+	imagePath := filepath.ToSlash(filepath.Join(m.workspace, "dragged image.png"))
+	if err := os.WriteFile(imagePath, []byte("png"), 0o644); err != nil {
+		t.Fatalf("write image fixture: %v", err)
+	}
+
+	updated, note := m.applyWholeInputImagePathFallback(`"`+imagePath+`"`, "paste")
+	if updated != "[Image#1]" {
+		t.Fatalf("expected quoted slash path to become image placeholder, got %q", updated)
+	}
+	if strings.Contains(updated, `"`) {
+		t.Fatalf("expected quotes to be removed with path, got %q", updated)
+	}
+	if !strings.Contains(note, "Attached 1 image") {
+		t.Fatalf("expected attach note, got %q", note)
+	}
+}
+
+func TestApplyWholeInputImagePathFallbackReportsPartialIngestFailure(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.imageStore = flakyImageStore{failFile: "bad.png"}
+
+	okPath := filepath.Join(m.workspace, "ok.png")
+	badPath := filepath.Join(m.workspace, "bad.png")
+	for _, path := range []string{okPath, badPath} {
+		if err := os.WriteFile(path, []byte("png"), 0o644); err != nil {
+			t.Fatalf("write image fixture: %v", err)
+		}
+	}
+
+	updated, note := m.applyWholeInputImagePathFallback(okPath+" "+badPath, "paste")
+	if updated != "[Image#1]" {
+		t.Fatalf("expected successful path to remain as placeholder, got %q", updated)
+	}
+	if !strings.Contains(note, "Attached 1 image") || !strings.Contains(note, "simulated image store failure") {
+		t.Fatalf("expected attach note with partial failure, got %q", note)
+	}
+}
+
+func TestApplyWholeInputImagePathFallbackReportsFailureWhenNoImagesAttach(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.imageStore = nil
+
+	imagePath := filepath.Join(m.workspace, "missing-store.png")
+	if err := os.WriteFile(imagePath, []byte("png"), 0o644); err != nil {
+		t.Fatalf("write image fixture: %v", err)
+	}
+
+	updated, note := m.applyWholeInputImagePathFallback(imagePath, "paste")
+	if updated != imagePath {
+		t.Fatalf("expected failed attach to leave input unchanged, got %q", updated)
+	}
+	if !strings.Contains(note, "image store unavailable") {
+		t.Fatalf("expected image store failure note, got %q", note)
+	}
+}
+
+func TestExtractInlineImagePathSpansIncludesMatchingQuotes(t *testing.T) {
+	workspace := t.TempDir()
+	imagePath := filepath.ToSlash(filepath.Join(workspace, "inline.png"))
+	if err := os.WriteFile(imagePath, []byte("png"), 0o644); err != nil {
+		t.Fatalf("write image fixture: %v", err)
+	}
+
+	chunk := `look at "` + imagePath + `" please`
+	spans := extractInlineImagePathSpans(chunk)
+	if len(spans) != 1 {
+		t.Fatalf("expected one image path span, got %d", len(spans))
+	}
+	if got := chunk[spans[0].Start:spans[0].End]; got != `"`+imagePath+`"` {
+		t.Fatalf("expected span to include matching quotes, got %q", got)
+	}
+	if spans[0].Path != filepath.Clean(imagePath) {
+		t.Fatalf("expected cleaned path %q, got %q", filepath.Clean(imagePath), spans[0].Path)
 	}
 }
 
