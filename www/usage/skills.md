@@ -84,11 +84,7 @@ Project skills override user skills, which override builtins with the same name.
 
 ## Creating Custom Skills
 
-Use the built-in skill creator to scaffold a new skill:
-
-```text
-/skill-creator
-```
+Each skill needs a named directory with two files:
 
 Or create one manually. A skill requires two files in a named directory:
 
