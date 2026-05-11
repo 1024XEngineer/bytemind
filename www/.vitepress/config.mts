@@ -28,6 +28,9 @@ const enSidebar = [
       { text: 'Provider Setup', link: '/usage/provider-setup' },
       { text: 'Plan Mode', link: '/usage/plan-mode' },
       { text: 'Skills', link: '/usage/skills' },
+      { text: 'Subagents', link: '/usage/subagents' },
+      { text: 'MCP', link: '/usage/mcp' },
+      { text: 'Sandbox', link: '/usage/sandbox' },
     ],
   },
   {
@@ -80,6 +83,9 @@ const zhSidebar = [
       { text: 'Provider 配置', link: '/zh/usage/provider-setup' },
       { text: 'Plan 模式', link: '/zh/usage/plan-mode' },
       { text: '技能', link: '/zh/usage/skills' },
+      { text: '子代理', link: '/zh/usage/subagents' },
+      { text: 'MCP 配置与使用', link: '/zh/usage/mcp' },
+      { text: '沙箱', link: '/zh/usage/sandbox' },
     ],
   },
   {

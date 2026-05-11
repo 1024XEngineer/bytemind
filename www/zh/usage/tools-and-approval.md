@@ -13,6 +13,9 @@
 | `replace_in_file` | **写**   | 替换文件中的指定内容          |
 | `apply_patch`     | **写**   | 应用 unified diff 补丁        |
 | `run_shell`       | **执行** | 执行 Shell 命令               |
+| `delegate_subagent`| 代理     | 委派子代理执行子任务          |
+| `task_output`      | 任务     | 查询后台任务的输出            |
+| `task_stop`        | 任务     | 终止后台任务                  |
 | `update_plan`     | 计划     | 更新任务执行计划（Plan 模式） |
 | `web_fetch`       | 网络     | 抓取网页内容                  |
 | `web_search`      | 网络     | 联网搜索                      |
@@ -73,4 +76,7 @@ Agent 调用高风险工具时，会展示：
 
 - [配置](/zh/configuration) — 审批策略、权限模式、沙箱
 - [单次执行模式](/zh/usage/run-mode) — 自动化非交互执行
+- [子代理](/zh/usage/subagents) — 委派子代理执行
+- [MCP 配置与使用](/zh/usage/mcp) — 通过 MCP 扩展工具
+- [沙箱](/zh/usage/sandbox) — 文件与命令执行边界
 - [核心概念](/zh/core-concepts) — 工具概述

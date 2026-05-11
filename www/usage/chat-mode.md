@@ -109,4 +109,5 @@ bytemind
 - [Session Management](/usage/session-management)
 - [Tools and Approval](/usage/tools-and-approval)
 - [Plan Mode](/usage/plan-mode)
+- [Subagents](/usage/subagents)
 - [Skills](/usage/skills)

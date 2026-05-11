@@ -162,5 +162,6 @@ description: Brief description for the skill catalog.
 
 ## See Also
 
+- [Subagents](/usage/subagents) — another approach for specialized tasks, ideal when context isolation is needed
 - [Core Concepts](/core-concepts) — skills overview
 - [Chat Mode](/usage/chat-mode) — how to use skills in a session

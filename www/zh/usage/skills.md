@@ -162,5 +162,6 @@ description: 简短描述，显示在技能目录中。
 
 ## 相关页面
 
+- [子代理](/zh/usage/subagents) — 另一种专项任务方式，适合需要隔离上下文的场景
 - [核心概念](/zh/core-concepts) — 技能概述
 - [聊天模式](/zh/usage/chat-mode) — 在会话中使用技能

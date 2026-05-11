@@ -110,4 +110,5 @@ bytemind
 - [会话管理](/zh/usage/session-management)
 - [工具与审批](/zh/usage/tools-and-approval)
 - [Plan 模式](/zh/usage/plan-mode)
+- [子代理](/zh/usage/subagents)
 - [技能](/zh/usage/skills)
