@@ -10,6 +10,7 @@ import (
 )
 
 var streamTurnIntentTagPattern = regexp.MustCompile(`(?is)<turn_intent>\s*[a-z_]*\s*</turn_intent>|</?turn_intent>\s*`)
+var finalAnswerElapsedPattern = regexp.MustCompile(`(?is)\n+\s*(Processed for|Completed in)\s+[0-9]+[hms](?:\s+[0-9]+[hms])*\s*$`)
 
 func stripStreamControlTags(delta string) string {
 	if strings.TrimSpace(delta) == "" {
@@ -121,9 +122,18 @@ func (m *model) finishAssistantMessage(content string) {
 		return
 	}
 
+	if idx := m.latestTailOpenAssistantIndex(); idx >= 0 {
+		m.chatItems[idx].Title = assistantLabel
+		m.chatItems[idx].Body = finalContent
+		m.chatItems[idx].Status = "final"
+		m.streamingIndex = -1
+		return
+	}
+
 	if len(m.chatItems) > 0 {
 		last := &m.chatItems[len(m.chatItems)-1]
-		if last.Kind == "assistant" && last.Title == assistantLabel && strings.TrimSpace(last.Body) == finalContent {
+		if last.Kind == "assistant" && last.Title == assistantLabel && sameAssistantFinalBody(last.Body, finalContent) {
+			last.Body = finalContent
 			last.Status = "final"
 			return
 		}
@@ -135,6 +145,35 @@ func (m *model) finishAssistantMessage(content string) {
 		Body:   finalContent,
 		Status: "final",
 	})
+}
+
+func (m model) latestTailOpenAssistantIndex() int {
+	if len(m.chatItems) == 0 {
+		return -1
+	}
+	index := len(m.chatItems) - 1
+	item := m.chatItems[index]
+	if item.Kind != "assistant" {
+		return -1
+	}
+	switch strings.TrimSpace(strings.ToLower(item.Status)) {
+	case "pending", "thinking", "streaming", "settling":
+		return index
+	default:
+		return -1
+	}
+}
+
+func sameAssistantFinalBody(a, b string) bool {
+	return normalizeAssistantFinalBody(a) == normalizeAssistantFinalBody(b)
+}
+
+func normalizeAssistantFinalBody(content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	return strings.TrimSpace(finalAnswerElapsedPattern.ReplaceAllString(content, ""))
 }
 
 func (m *model) appendChat(item chatEntry) {

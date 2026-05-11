@@ -7779,6 +7779,76 @@ func TestFinishAssistantMessageDoesNotAppendDuplicateCard(t *testing.T) {
 	}
 }
 
+func TestFinishAssistantMessageFinalizesTailStreamingCardWhenIndexLost(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{
+				Kind:   "assistant",
+				Title:  assistantLabel,
+				Body:   "garbled streamed preview",
+				Status: "streaming",
+			},
+		},
+		streamingIndex: -1,
+	}
+
+	m.finishAssistantMessage("clean final answer")
+
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected final message to update tail streaming card, got %d items", len(m.chatItems))
+	}
+	if m.chatItems[0].Status != "final" || m.chatItems[0].Body != "clean final answer" {
+		t.Fatalf("expected tail streaming card to be finalized in place, got %+v", m.chatItems[0])
+	}
+	if m.streamingIndex != -1 {
+		t.Fatalf("expected streaming index to stay cleared, got %d", m.streamingIndex)
+	}
+}
+
+func TestFinishAssistantMessageDoesNotMoveFinalAnswerBeforeToolTail(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "assistant", Title: assistantLabel, Body: "old streamed text", Status: "streaming"},
+			{Kind: "tool", Title: toolEntryTitle("read_file"), Body: "Read main.go", Status: "done"},
+		},
+		streamingIndex: -1,
+	}
+
+	m.finishAssistantMessage("final answer after tool")
+
+	if len(m.chatItems) != 3 {
+		t.Fatalf("expected final message after tool tail, got %d items", len(m.chatItems))
+	}
+	last := m.chatItems[len(m.chatItems)-1]
+	if last.Kind != "assistant" || last.Status != "final" || last.Body != "final answer after tool" {
+		t.Fatalf("expected final assistant answer at tail, got %+v", last)
+	}
+}
+
+func TestFinishAssistantMessageDedupesRepeatedFinalWithElapsedDecoration(t *testing.T) {
+	m := model{
+		runStartedAt: time.Now().Add(-2 * time.Second),
+		chatItems: []chatEntry{
+			{
+				Kind:   "assistant",
+				Title:  assistantLabel,
+				Body:   "same answer\n\nProcessed for 1s",
+				Status: "final",
+			},
+		},
+		streamingIndex: -1,
+	}
+
+	m.finishAssistantMessage("same answer")
+
+	if len(m.chatItems) != 1 {
+		t.Fatalf("expected repeated final message to update existing card, got %d items", len(m.chatItems))
+	}
+	if !strings.Contains(m.chatItems[0].Body, "same answer") || !strings.Contains(m.chatItems[0].Body, "Processed for") {
+		t.Fatalf("expected final body with elapsed decoration, got %q", m.chatItems[0].Body)
+	}
+}
+
 func TestShouldKeepStreamingIndexOnRunFinishedBranches(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
