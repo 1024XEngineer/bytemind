@@ -382,13 +382,18 @@ ByteMind 默认合并三层配置：内置默认值、用户级 `~/.bytemind/con
 
 ### Skills
 
-可复用工作流定义，从三个作用域加载（builtin > user > project）。每个 Skill 有斜杠入口、工具策略和指令文件。
+可复用工作流定义，从三个作用域加载（builtin > user > project）。通过 `/skills` 和 `/skill` 命令管理。
 
 ```text
-/skills              列出可用 Skills 和诊断信息
-/skill clear         清除当前会话的活跃 Skill
-/skill delete <name> 删除项目 Skill
-/<skill-name>        按名称激活 Skill（如 /bug-investigation）
+/help                 显示可用命令
+/session              显示当前会话
+/sessions [limit]     列出最近会话
+/agents [name]        列出可用 SubAgent 或查看某个定义
+/explorer             显示内置 explorer SubAgent 定义
+/review               显示内置 review SubAgent 定义
+/resume <id>          按 id 或前缀恢复最近会话
+/new                  在当前工作区开始新会话
+/quit                 退出 CLI
 ```
 
 ### MCP

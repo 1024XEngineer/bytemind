@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -173,14 +174,14 @@ func (RunTestsTool) Run(ctx context.Context, raw json.RawMessage, execCtx *Execu
 
 func detectTestCommand(dir string) (string, bool) {
 	hasFile := func(name string) bool {
-		_, err := filepath.Glob(filepath.Join(dir, name))
-		return err == nil
+		info, err := os.Stat(filepath.Join(dir, name))
+		return err == nil && !info.IsDir()
 	}
 	fileExists := func(name string) bool {
-		info, err := filepath.Glob(filepath.Join(dir, name))
-		if err != nil || len(info) == 0 {
-			_, err2 := filepath.Glob(filepath.Join(filepath.Dir(dir), name))
-			return err2 == nil
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil || info.IsDir() {
+			info2, err2 := os.Stat(filepath.Join(filepath.Dir(dir), name))
+			return err2 == nil && !info2.IsDir()
 		}
 		return true
 	}

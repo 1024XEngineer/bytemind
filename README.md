@@ -376,13 +376,18 @@ The example below is a **project-level config** and only affects the current wor
 
 ### Skills
 
-Reusable workflow definitions loaded from three scopes (builtin > user > project). Each skill has a slash entry, tool policy, and instruction file.
+Reusable workflow definitions loaded from three scopes (builtin > user > project). Each skill has a slash entry, tool policy, and instruction file. Use the `/skills` and `/skill` commands to list, activate, and manage skills.
 
 ```text
-/skills              List available skills and diagnostics
-/skill clear         Clear the active skill for this session
-/skill delete <name> Delete a project skill
-/<skill-name>        Activate a skill by name (e.g. /bug-investigation)
+/help                 Show available commands
+/session              Show the current session
+/sessions [limit]     List recent sessions
+/agents [name]        List available subagents or show one definition
+/explorer             Show the builtin explorer subagent definition
+/review               Show the builtin review subagent definition
+/resume <id>          Resume a recent session by id or prefix
+/new                  Start a new session in the current workspace
+/quit                 Exit the CLI
 ```
 
 Built-in skills include bug investigation, GitHub PR review, repository onboarding, code review, RFC writing, and skill creation.
