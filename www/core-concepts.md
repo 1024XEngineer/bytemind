@@ -46,9 +46,7 @@ Common session commands:
 
 | Command         | Description                                  |
 | --------------- | -------------------------------------------- |
-| `/session`      | Show current session ID and summary          |
-| `/sessions [n]` | List the most recent n sessions (default 10) |
-| `/resume <id>`  | Resume a session by ID or prefix             |
+| `/session`      | Open session picker to view/resume/delete sessions |
 | `/new`          | Start a new session in the current workspace |
 
 ## Tools

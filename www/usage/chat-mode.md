@@ -77,13 +77,12 @@ Split the HTTP handler layer into a dedicated controller package. Show me the pl
 | Command         | Description                         |
 | --------------- | ----------------------------------- |
 | `/help`              | Show all available commands         |
-| `/session`           | Show current session ID and summary |
-| `/sessions [n]`      | List recent n sessions              |
-| `/resume <id>`       | Resume a session by ID or prefix    |
+| `/session`           | Open session picker to view/resume/delete sessions |
 | `/new`               | Start a new session                 |
 | `/plan`              | Switch to Plan mode                 |
 | `/build`             | Switch back to Build mode           |
 | `/model [provider/model]` | Switch model or open the interactive picker |
+| `/models`            | Show current model and all discovered models |
 | `/agents [name]`     | List subagents or show one definition |
 | `/explorer`          | Show the builtin explorer subagent  |
 | `/review`            | Show the builtin review subagent    |
@@ -105,13 +104,7 @@ Use `/undo-commit` only for the previous commit created by `/commit` in the same
 
 Press `Ctrl+C` or type `/quit` at any time — the session context is automatically saved.
 
-To resume later:
-
-```bash
-bytemind
-/sessions          # find the session ID
-/resume abc123     # resume by ID
-```
+To resume later: start `bytemind`, enter `/session`, select the previous session in the picker, and press `Enter`.
 
 ## See Also
 
