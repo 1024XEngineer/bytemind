@@ -362,6 +362,7 @@ var commandItems = []commandItem{
 	{Name: "/quit", Usage: "/quit", Description: "Exit the current TUI window.", Kind: "command"},
 	{Name: "/skills", Usage: "/skills", Description: "List available skills and current active skill.", Kind: "command"},
 	{Name: "/skill clear", Usage: "/skill clear", Description: "Clear active skill for this session.", Kind: "command"},
+	{Name: "/skill delete", Usage: "/skill delete <name>", Description: "Delete the specified project skill.", Kind: "command"},
 }
 
 type model struct {

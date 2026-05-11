@@ -1,0 +1,14 @@
+id: bugfix_go_001
+name: Fix failing Go test
+description: Fix the CalculateAverage function that panics on empty input
+workspace: examples/bugfix-demo/broken-project
+prompt: "Fix the failing test and verify it passes"
+
+success:
+  - command: "go test ./..."
+    exit_code: 0
+  - file_contains:
+      path: calculator.go
+      pattern: "len\\(nums\\) == 0"
+  - files_modified:
+      - calculator.go

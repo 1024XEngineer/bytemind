@@ -1,0 +1,11 @@
+id: repo_explain_001
+name: Explain repository structure
+description: Agent should explore and summarize the repository structure
+workspace: .
+prompt: "Explore the repository structure and explain what ByteMind does, listing the main directories and their purposes"
+
+success:
+  - output_contains: "internal"
+  - output_contains: "cmd"
+  - output_contains: "tui"
+  - output_contains: "agent"

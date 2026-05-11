@@ -444,6 +444,135 @@ func (delegateSubAgentRenderer) Render(payload string) ToolRenderResult {
 	}
 }
 
+// gitStatusRenderer handles "git_status" tool.
+type gitStatusRenderer struct{}
+
+func (gitStatusRenderer) DisplayLabel() string { return "GIT" }
+
+func (gitStatusRenderer) Render(payload string) ToolRenderResult {
+	var result struct {
+		OK        bool     `json:"ok"`
+		Branch    string   `json:"branch"`
+		Staged    []string `json:"staged"`
+		Unstaged  []string `json:"unstaged"`
+		Untracked []string `json:"untracked"`
+		Summary   string   `json:"summary"`
+	}
+	if json.Unmarshal([]byte(payload), &result) == nil && result.OK {
+		lines := make([]string, 0, 3)
+		if len(result.Staged) > 0 {
+			lines = append(lines, "staged: "+strings.Join(result.Staged, ", "))
+		}
+		if len(result.Unstaged) > 0 {
+			lines = append(lines, "unstaged: "+strings.Join(result.Unstaged, ", "))
+		}
+		if len(result.Untracked) > 0 {
+			lines = append(lines, "untracked: "+strings.Join(result.Untracked, ", "))
+		}
+		return ToolRenderResult{
+			Summary:     result.Summary,
+			DetailLines: lines,
+			Status:      "done",
+			CompactLine: result.Summary,
+		}
+	}
+	// Handle error case
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "error",
+		CompactLine: compact(payload, 80),
+	}
+}
+
+// gitDiffRenderer handles "git_diff" tool.
+type gitDiffRenderer struct{}
+
+func (gitDiffRenderer) DisplayLabel() string { return "DIFF" }
+
+func (gitDiffRenderer) Render(payload string) ToolRenderResult {
+	var result struct {
+		OK      bool     `json:"ok"`
+		Files   []string `json:"files"`
+		Added   int      `json:"added"`
+		Removed int      `json:"removed"`
+		Summary string   `json:"summary"`
+		Diff    string   `json:"diff"`
+	}
+	if json.Unmarshal([]byte(payload), &result) == nil && result.OK {
+		lines := make([]string, 0, len(result.Files)+2)
+		for _, f := range result.Files {
+			lines = append(lines, f)
+		}
+		if len(result.Files) > 0 {
+			lines = append(lines, "")
+			diffLines := strings.Split(result.Diff, "\n")
+			maxPreview := 20
+			for i, dl := range diffLines {
+				if i >= maxPreview {
+					lines = append(lines, "...")
+					break
+				}
+				lines = append(lines, dl)
+			}
+		}
+		return ToolRenderResult{
+			Summary:     result.Summary,
+			DetailLines: lines,
+			Status:      "done",
+			CompactLine: result.Summary,
+		}
+	}
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "error",
+		CompactLine: compact(payload, 80),
+	}
+}
+
+// runTestsRenderer handles "run_tests" tool.
+type runTestsRenderer struct{}
+
+func (runTestsRenderer) DisplayLabel() string { return "TEST" }
+
+func (runTestsRenderer) Render(payload string) ToolRenderResult {
+	var result struct {
+		OK       bool    `json:"ok"`
+		Passed   int     `json:"passed"`
+		Failed   int     `json:"failed"`
+		Skipped  int     `json:"skipped"`
+		ExitCode int     `json:"exit_code"`
+		ElapsedS float64 `json:"elapsed_s"`
+		Command  string  `json:"command"`
+		Stdout   string  `json:"stdout"`
+		Summary  string  `json:"summary"`
+	}
+	if json.Unmarshal([]byte(payload), &result) == nil {
+		status := "done"
+		if !result.OK {
+			status = "warn"
+		}
+		lines := make([]string, 0, 4)
+		lines = append(lines, "command: "+result.Command)
+		if firstLine := strings.Split(strings.TrimSpace(result.Stdout), "\n"); len(firstLine) > 0 && firstLine[0] != "" {
+			lines = append(lines, "output: "+compact(strings.Join(firstLine, "\n"), 80))
+		}
+		return ToolRenderResult{
+			Summary:     result.Summary,
+			DetailLines: lines,
+			Status:      status,
+			CompactLine: fmt.Sprintf("passed=%d failed=%d skipped=%d (%.1fs)", result.Passed, result.Failed, result.Skipped, result.ElapsedS),
+		}
+	}
+	return ToolRenderResult{
+		Summary:     compact(payload, 96),
+		DetailLines: nil,
+		Status:      "done",
+		CompactLine: compact(payload, 80),
+	}
+}
+
 // webFetchRenderer handles "web_fetch" tool.
 type webFetchRenderer struct{}
 

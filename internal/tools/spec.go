@@ -88,8 +88,17 @@ func DefaultToolSpec(def llm.ToolDefinition) ToolSpec {
 		spec.DefaultTimeoutS = 10
 		spec.MaxTimeoutS = 10
 		spec.MaxResultChars = 32 * 1024
+	case "git_status", "git_diff":
+		spec.ReadOnly = true
+		spec.SafetyClass = SafetyClassSafe
 	case "run_shell":
 		spec.SafetyClass = SafetyClassSensitive
+	case "run_tests":
+		spec.ConcurrencySafe = false
+		spec.SafetyClass = SafetyClassSensitive
+		spec.DefaultTimeoutS = 120
+		spec.MaxTimeoutS = 600
+		spec.MaxResultChars = 128 * 1024
 	case "write_file", "replace_in_file", "apply_patch":
 		spec.ConcurrencySafe = false
 		spec.Destructive = true
@@ -194,7 +203,7 @@ func modeAllowed(spec ToolSpec, mode planpkg.AgentMode) bool {
 
 func defaultAllowedModes(name string) []planpkg.AgentMode {
 	switch name {
-	case "list_files", "read_file", "search_text", "web_search", "web_fetch", "update_plan", "run_shell":
+	case "list_files", "read_file", "search_text", "web_search", "web_fetch", "update_plan", "run_shell", "git_status", "git_diff", "run_tests":
 		return []planpkg.AgentMode{planpkg.ModeBuild, planpkg.ModePlan}
 	default:
 		return []planpkg.AgentMode{planpkg.ModeBuild}

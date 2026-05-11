@@ -42,6 +42,14 @@ func TestDispatchCLIRoutesSubcommands(t *testing.T) {
 			calls = append(calls, call{name: "mcp", args: append([]string(nil), args...)})
 			return nil
 		},
+		RunDoctor: func(args []string, stdout, stderr io.Writer) error {
+			calls = append(calls, call{name: "doctor", args: append([]string(nil), args...)})
+			return nil
+		},
+		RunSafety: func(args []string, stdout, stderr io.Writer) error {
+			calls = append(calls, call{name: "safety", args: append([]string(nil), args...)})
+			return nil
+		},
 		RenderUsage: func(w io.Writer) {
 			calls = append(calls, call{name: "help"})
 		},
@@ -97,6 +105,8 @@ func TestDispatchCLIPropagatesHandlerError(t *testing.T) {
 		RunWorker:     func(args []string, stdin io.Reader, stdout, stderr io.Writer) error { return nil },
 		RunInstall:    func(args []string, stdout, stderr io.Writer) error { return nil },
 		RunMCP:        func(args []string, stdin io.Reader, stdout, stderr io.Writer) error { return nil },
+		RunDoctor:     func(args []string, stdout, stderr io.Writer) error { return nil },
+		RunSafety:     func(args []string, stdout, stderr io.Writer) error { return nil },
 		RenderUsage:   func(w io.Writer) {},
 		RenderVersion: func(w io.Writer) {},
 	}

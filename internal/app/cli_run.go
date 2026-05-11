@@ -10,6 +10,8 @@ func RunCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		RunWorker:     RunWorkerArgs,
 		RunInstall:    RunInstall,
 		RunMCP:        RunMCP,
+		RunDoctor:     RunDoctor,
+		RunSafety:     RunSafety,
 		RenderUsage:   RenderUsage,
 		RenderVersion: RenderVersion,
 	})
