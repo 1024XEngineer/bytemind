@@ -39,17 +39,18 @@ Configure multiple providers at once and switch between them at runtime with `/m
 }
 ```
 
-| Command | Action |
-| ------- | ------ |
-| `/model` | Interactive picker with all configured models |
-| `/model openai/gpt-5.4` | Switch to GPT-5.4 |
-| `/models` | Show current active model and all discovered models |
+Switching models: enter `/model` to open an interactive picker listing all configured models across providers. Use `↑↓` to navigate and `Enter` to switch. The config file is updated automatically.
 
-The config file is updated automatically after switching. See [Config Reference](/reference/config-reference#provider-runtime-multi-provider) for every field.
+:::tip Quick jump
+You can also jump directly with `/model <provider>/<model>`, e.g. `/model openai/gpt-5.4`.
+:::
+
+See [Config Reference](/reference/config-reference#provider-runtime-multi-provider) for every field.
 
 ## Single Provider Examples (Legacy)
 
-## OpenAI
+<Tabs default-tab="OpenAI">
+<Tab title="OpenAI">
 
 ```json
 {
@@ -62,7 +63,9 @@ The config file is updated automatically after switching. See [Config Reference]
 }
 ```
 
-## Anthropic
+</Tab>
+
+<Tab title="Anthropic">
 
 ```json
 {
@@ -76,7 +79,9 @@ The config file is updated automatically after switching. See [Config Reference]
 }
 ```
 
-## Gemini
+</Tab>
+
+<Tab title="Gemini">
 
 ```json
 {
@@ -89,7 +94,9 @@ The config file is updated automatically after switching. See [Config Reference]
 }
 ```
 
-## DeepSeek
+</Tab>
+
+<Tab title="DeepSeek">
 
 ```json
 {
@@ -102,7 +109,9 @@ The config file is updated automatically after switching. See [Config Reference]
 }
 ```
 
-## Local Models (Ollama)
+</Tab>
+
+<Tab title="Ollama (Local)">
 
 ```json
 {
@@ -114,6 +123,9 @@ The config file is updated automatically after switching. See [Config Reference]
   }
 }
 ```
+
+</Tab>
+</Tabs>
 
 :::tip Any OpenAI-compatible endpoint works
 If a service accepts `POST /v1/chat/completions` with standard OpenAI request/response format, it works with ByteMind. This includes Azure OpenAI, Groq, Together AI, and most self-hosted inference servers.
