@@ -172,7 +172,7 @@ go run ./cmd/bytemind run \
 | 5 | `run_tests` | Verifies all tests pass |
 | 6 | `git_diff` | Shows the exact change made |
 
-**The bug**: `CalculateAverage` panics on empty slice (divide by zero).  
+**The bug**: `CalculateAverage` returns `NaN` on empty slice (divide by zero).  
 **The fix**: Add a guard clause for `len(nums) == 0`.  
 See [examples/bugfix-demo/](examples/bugfix-demo/README.md) for details and expected output.
 

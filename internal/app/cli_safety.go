@@ -11,6 +11,7 @@ import (
 func RunSafety(args []string, stdout, stderr io.Writer) error {
 	workspace := "."
 	configFile := ""
+	subcommand := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "-workspace", "--workspace":
@@ -23,21 +24,16 @@ func RunSafety(args []string, stdout, stderr io.Writer) error {
 				configFile = args[i+1]
 				i++
 			}
-		case "status":
-			return renderSafetyStatus(workspace, configFile, stdout)
-		case "explain":
-			return renderSafetyExplain(stdout)
+		case "status", "explain":
+			subcommand = args[i]
 		}
 	}
-	// default: show status if no subcommand matched
-	if len(args) > 0 && args[0] != "" {
-		// If first arg is "explain", show explain
-		first := strings.TrimSpace(strings.ToLower(args[0]))
-		if first == "explain" {
-			return renderSafetyExplain(stdout)
-		}
+	switch subcommand {
+	case "explain":
+		return renderSafetyExplain(stdout)
+	default:
+		return renderSafetyStatus(workspace, configFile, stdout)
 	}
-	return renderSafetyStatus(workspace, configFile, stdout)
 }
 
 func renderSafetyStatus(workspace, configFile string, w io.Writer) error {

@@ -187,7 +187,7 @@ func runTasks(binPath string, tasks []EvalTask) []TaskResult {
 		for _, check := range task.Success {
 			switch {
 			case check.Command != "":
-				if ok, msg := checkCommand(check.Command, check.ExitCode); !ok {
+				if ok, msg := checkCommand(check.Command, check.ExitCode, workspace); !ok {
 					result.Passed = false
 					result.Failures = append(result.Failures, msg)
 				}
@@ -218,12 +218,15 @@ func runTasks(binPath string, tasks []EvalTask) []TaskResult {
 	return results
 }
 
-func checkCommand(command string, expectedExitCode *int) (bool, string) {
+func checkCommand(command string, expectedExitCode *int, workspace string) (bool, string) {
 	parts := strings.Fields(command)
 	if len(parts) == 0 {
 		return false, "empty command in success check"
 	}
 	cmd := exec.Command(parts[0], parts[1:]...)
+	if workspace != "" {
+		cmd.Dir = workspace
+	}
 	if err := cmd.Run(); err != nil {
 		if expectedExitCode != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {

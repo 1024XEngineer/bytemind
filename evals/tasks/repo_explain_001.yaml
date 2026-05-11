@@ -5,7 +5,8 @@ workspace: .
 prompt: "Explore the repository structure and explain what ByteMind does, listing the main directories and their purposes"
 
 success:
-  - output_contains: "internal"
-  - output_contains: "cmd"
-  - output_contains: "tui"
-  - output_contains: "agent"
+  - output_contains:
+      - "internal"
+      - "cmd"
+      - "tui"
+      - "agent"

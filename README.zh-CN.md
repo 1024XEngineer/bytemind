@@ -178,7 +178,7 @@ go run ./cmd/bytemind run \
 | 5 | `run_tests` | 验证所有测试通过 |
 | 6 | `git_diff` | 展示精确的修改内容 |
 
-**Bug**: `CalculateAverage` 在空切片上除零崩溃。  
+**Bug**: `CalculateAverage` 在空切片上除零返回 NaN。  
 **修复**: 添加 `len(nums) == 0` 守卫条件。  
 详见 [examples/bugfix-demo/](examples/bugfix-demo/README.md)。
 

@@ -2,8 +2,8 @@
 
 ## The Bug
 
-`CalculateAverage` panics on an empty slice because `len(nums)` is 0 and dividing by zero produces `NaN`.
-The test `TestCalculateAverageEmpty` expects `0` for empty input.
+`CalculateAverage` returns `NaN` (not-a-number) on an empty slice because `len(nums)` is 0 and dividing by zero in IEEE 754 produces `NaN`.
+The test `TestCalculateAverageEmpty` expects `0` for empty input, so the test fails.
 
 ## Expected Fix
 
@@ -24,7 +24,7 @@ func CalculateAverage(nums []float64) float64 {
 
 1. `read_file` calculator.go → understands the code
 2. `read_file` calculator_test.go → understands the test expectation
-3. `run_tests` → confirms the failure: `panic: runtime error: floating point NaN`
+3. `run_tests` → confirms the failure: `NaN` from divide-by-zero
 4. `replace_in_file` or `apply_patch` → adds empty guard clause
 5. `run_tests` → confirms all tests pass
 6. `git_diff` → shows the 3-line change
