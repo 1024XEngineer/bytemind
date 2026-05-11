@@ -24,7 +24,7 @@ import (
 
 var imagePlaceholderPattern = regexp.MustCompile(`\[Image ?#(\d+)\]`)
 var imageMentionPattern = regexp.MustCompile(`(?i)@([^\s@]+?\.(?:png|jpe?g|webp|gif))`)
-var inlineWindowsImagePathPattern = regexp.MustCompile(`(?i)[a-z]:\\[^\r\n\t"'<>|]*?\.(?:png|jpe?g|webp|gif)`)
+var inlineWindowsImagePathPattern = regexp.MustCompile(`(?i)[a-z]:[\\/][^\r\n\t"'<>|]*?\.(?:png|jpe?g|webp|gif)`)
 var inlineUnixImagePathPattern = regexp.MustCompile(`(?i)/(?:[^\r\n\t"'<>|/]+/)*[^\r\n\t"'<>|/]+\.(?:png|jpe?g|webp|gif)`)
 
 type inputMutationClass string
@@ -400,6 +400,30 @@ func (m *model) applyWholeInputImagePathFallback(text, source string) (string, s
 			!(m.inputBurstSize >= 4 && isLikelyPathInput(strings.TrimSpace(text))) {
 			return text, ""
 		}
+	}
+
+	if paths := extractImagePathsFromChunk(text, m.workspace); len(paths) > 0 {
+		placeholders := make([]string, 0, len(paths))
+		notes := make([]string, 0, len(paths))
+		for _, path := range paths {
+			placeholder, note, ok := m.ingestImageFromPath(path)
+			if !ok {
+				notes = append(notes, note)
+				continue
+			}
+			placeholders = append(placeholders, placeholder)
+		}
+		if len(placeholders) == 0 {
+			return text, strings.Join(notes, "; ")
+		}
+
+		updated := strings.Join(placeholders, " ")
+		m.syncInputImageRefs(updated)
+		note := fmt.Sprintf("Attached %d image(s): %s", len(placeholders), strings.Join(placeholders, ", "))
+		if len(notes) > 0 {
+			note += "; " + notes[0]
+		}
+		return updated, note
 	}
 
 	spans := extractInlineImagePathSpans(text)
@@ -1124,9 +1148,17 @@ func extractInlineImagePathSpans(chunk string) []imagePathSpan {
 			if _, ok := mediaTypeFromPath(resolved); !ok {
 				continue
 			}
+			start, end := loc[0], loc[1]
+			if start > 0 && end < len(chunk) {
+				openQuote := chunk[start-1]
+				if (openQuote == '"' || openQuote == '\'') && chunk[end] == openQuote {
+					start--
+					end++
+				}
+			}
 			matches = append(matches, imagePathSpan{
-				Start: loc[0],
-				End:   loc[1],
+				Start: start,
+				End:   end,
 				Path:  resolved,
 			})
 		}

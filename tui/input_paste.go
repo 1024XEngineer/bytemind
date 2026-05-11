@@ -30,6 +30,7 @@ const (
 	clipboardCaptureArmWindow      = 1200 * time.Millisecond
 	clipboardCaptureRapidRuneGap   = 30 * time.Millisecond
 	clipboardCaptureMinPrefixRunes = 4
+	imagePathPasteFinalizeDelay    = 500 * time.Millisecond
 	maxSinglePastedCharLength      = 200000
 	pasteSoftWrapWidth             = 72
 )
@@ -75,6 +76,12 @@ func trimTrailingPasteTerminators(input string) string {
 
 func schedulePasteFinalize(id int) tea.Cmd {
 	return tea.Tick(pasteAggregateDebounce, func(time.Time) tea.Msg {
+		return pasteFinalizeMsg{ID: id}
+	})
+}
+
+func scheduleImagePathPasteFinalize(id int) tea.Cmd {
+	return tea.Tick(imagePathPasteFinalizeDelay, func(time.Time) tea.Msg {
 		return pasteFinalizeMsg{ID: id}
 	})
 }
@@ -220,13 +227,16 @@ func (m *model) shouldPromoteImplicitPasteCandidate(msg tea.KeyMsg) bool {
 	if trimmed == "" || strings.Contains(trimmed, "[Paste #") || strings.Contains(trimmed, "[Pasted #") {
 		return false
 	}
-	if isLikelyPathInput(trimmed) || len(extractImagePathsFromChunk(projected, m.workspace)) > 0 || len(extractInlineImagePathSpans(projected)) > 0 {
-		return false
-	}
 	projectedChars := m.pasteBurstCandidate.charCount + len([]rune(strings.TrimSpace(fragment)))
 	projectedEvents := m.pasteBurstCandidate.eventCount
 	if strings.TrimSpace(fragment) != "" {
 		projectedEvents++
+	}
+	if m.shouldPromoteImplicitImagePathPaste(projected, projectedChars, projectedEvents) {
+		return true
+	}
+	if isLikelyPathInput(trimmed) || len(extractImagePathsFromChunk(projected, m.workspace)) > 0 || len(extractInlineImagePathSpans(projected)) > 0 {
+		return false
 	}
 	if strings.Contains(projected, "\n") && projectedChars >= pasteBurstImmediateMinChars {
 		return true
@@ -270,11 +280,15 @@ func (m *model) captureImplicitPasteCandidate(msg tea.KeyMsg) tea.Cmd {
 	}
 	id := m.appendPasteSessionFragment(fragment, source)
 	m.clearPasteBurstCandidate()
+	if m.shouldFinalizeImagePathPasteSession() {
+		m.finalizePasteSession(id)
+		return schedulePasteBurstSettle(generation)
+	}
 	if m.shouldFinalizePasteImmediately(source, m.pasteSession.bufferedText) || m.shouldCompressPastedText(m.pasteSession.bufferedText, source) {
 		m.finalizePasteSession(id)
 		return schedulePasteBurstSettle(generation)
 	}
-	return tea.Batch(schedulePasteFinalize(id), schedulePasteBurstSettle(generation))
+	return tea.Batch(m.schedulePasteSessionFinalize(id), schedulePasteBurstSettle(generation))
 }
 
 func (m *model) shouldCaptureImplicitPasteSpecialKey(msg tea.KeyMsg) bool {
@@ -357,7 +371,7 @@ func (m *model) captureImplicitPasteSpecialKey(msg tea.KeyMsg) tea.Cmd {
 		m.finalizePasteSession(id)
 		return schedulePasteBurstSettle(generation)
 	}
-	return tea.Batch(schedulePasteFinalize(id), schedulePasteBurstSettle(generation))
+	return tea.Batch(m.schedulePasteSessionFinalize(id), schedulePasteBurstSettle(generation))
 }
 
 func (m *model) beginPasteSession(source string) {
@@ -605,6 +619,18 @@ func (m *model) finalizePasteSession(id int) {
 			return
 		}
 	}
+	if updated, note := m.applyWholeInputImagePathFallback(candidate, source); updated != candidate {
+		m.setInputValue(base + updated)
+		m.lastPasteAt = now
+		m.armPasteSubmitGuard(now)
+		m.lastInputAt = now
+		m.inputBurstSize = max(1, len([]rune(candidate)))
+		if strings.TrimSpace(note) != "" {
+			m.statusNote = note
+		}
+		m.syncInputOverlays()
+		return
+	}
 	if (source != "paste-key" && strings.Contains(candidate, "\n")) || m.shouldCompressPastedText(candidate, source) || (isPasteLikeSource(source) && m.isLongPastedText(candidate)) {
 		marker, stored, err := m.compressPastedText(candidate)
 		if err != nil {
@@ -649,10 +675,14 @@ func (m *model) ingestPasteFragment(fragment, source string) tea.Cmd {
 		m.finalizePasteSession(id)
 		return schedulePasteBurstSettle(generation)
 	}
-	if shouldPreviewPasteSession(source) {
+	if m.shouldFinalizeImagePathPasteSession() {
+		m.finalizePasteSession(id)
+		return schedulePasteBurstSettle(generation)
+	}
+	if shouldPreviewPasteSession(source) && !m.shouldHoldImagePathPastePreview() {
 		m.syncPasteSessionPreview()
 	}
-	return tea.Batch(schedulePasteFinalize(id), schedulePasteBurstSettle(generation))
+	return tea.Batch(m.schedulePasteSessionFinalize(id), schedulePasteBurstSettle(generation))
 }
 
 func (m model) handlePastePayload(payload string) (tea.Model, tea.Cmd) {
@@ -1050,6 +1080,55 @@ func isCtrlVSource(source string) bool {
 func isPasteLikeSource(source string) bool {
 	source = strings.ToLower(strings.TrimSpace(source))
 	return isCtrlVSource(source) || strings.Contains(source, "paste")
+}
+
+func (m *model) shouldPromoteImplicitImagePathPaste(projected string, projectedChars, projectedEvents int) bool {
+	if m == nil || projectedEvents < 2 || projectedChars < 3 {
+		return false
+	}
+	trimmed := strings.TrimSpace(projected)
+	if trimmed == "" || strings.ContainsAny(trimmed, "\r\n\t") {
+		return false
+	}
+	return isLikelyPathInput(strings.Trim(trimmed, `"'`))
+}
+
+func (m *model) schedulePasteSessionFinalize(id int) tea.Cmd {
+	if m.shouldHoldImagePathPastePreview() {
+		return scheduleImagePathPasteFinalize(id)
+	}
+	return schedulePasteFinalize(id)
+}
+
+func (m *model) shouldHoldImagePathPastePreview() bool {
+	if m == nil || !m.pasteSession.active {
+		return false
+	}
+	trimmed := strings.TrimSpace(m.pasteSession.bufferedText)
+	if trimmed == "" || strings.ContainsAny(trimmed, "\r\n\t") {
+		return false
+	}
+	return isLikelyPathInput(strings.Trim(trimmed, `"'`))
+}
+
+func (m *model) shouldFinalizeImagePathPasteSession() bool {
+	if !m.shouldHoldImagePathPastePreview() {
+		return false
+	}
+	text := strings.TrimSpace(m.pasteSession.bufferedText)
+	if hasUnclosedPathQuote(text) {
+		return false
+	}
+	return len(extractImagePathsFromChunk(text, m.workspace)) > 0 || len(extractInlineImagePathSpans(text)) > 0
+}
+
+func hasUnclosedPathQuote(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < 2 {
+		return false
+	}
+	quote := value[0]
+	return (quote == '"' || quote == '\'') && value[len(value)-1] != quote
 }
 
 func (m *model) shouldCompressPastedText(input, source string) bool {
