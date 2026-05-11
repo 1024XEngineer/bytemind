@@ -26,6 +26,9 @@ func TestBuiltinToolRenderersRegistered(t *testing.T) {
 		"delegate_subagent": "SUBAGENT",
 		"web_search":        "SEARCH",
 		"web_fetch":         "FETCH",
+		"git_status":        "GIT",
+		"git_diff":          "DIFF",
+		"run_tests":         "TEST",
 	}
 
 	for name, wantLabel := range tests {
@@ -370,6 +373,9 @@ func TestBuiltinRenderersFallbackOnInvalidJSON(t *testing.T) {
 		delegateSubAgentRenderer{},
 		webSearchRenderer{},
 		webFetchRenderer{},
+		gitStatusRenderer{},
+		gitDiffRenderer{},
+		runTestsRenderer{},
 	}
 
 	payload := "{"
@@ -384,6 +390,69 @@ func TestBuiltinRenderersFallbackOnInvalidJSON(t *testing.T) {
 		if got.CompactLine != payload {
 			t.Fatalf("expected fallback compact line %q for %T, got %q", payload, renderer, got.CompactLine)
 		}
+	}
+}
+
+func TestGitStatusRendererRenderBranches(t *testing.T) {
+	okPayload := `{"ok":true,"branch":"main","staged":["a.go"],"unstaged":[],"untracked":["b.go"],"total":2,"summary":"1 staged, 1 untracked on main"}`
+	got := gitStatusRenderer{}.Render(okPayload)
+	if got.Status != "done" {
+		t.Fatalf("expected done status, got %q", got.Status)
+	}
+	if got.Summary != "1 staged, 1 untracked on main" {
+		t.Fatalf("unexpected summary: %q", got.Summary)
+	}
+	if len(got.DetailLines) != 2 {
+		t.Fatalf("expected 2 detail lines, got %d", len(got.DetailLines))
+	}
+
+	errPayload := `{"ok":false,"error":"not a git repository"}`
+	gotErr := gitStatusRenderer{}.Render(errPayload)
+	if strings.TrimSpace(gotErr.Summary) == "" {
+		t.Fatalf("expected fallback summary for error payload")
+	}
+}
+
+func TestGitDiffRendererRenderBranches(t *testing.T) {
+	okPayload := `{"ok":true,"files":["main.go"],"added":3,"removed":1,"summary":"1 file(s), +3/-1 lines","diff":"diff --git a/main.go b/main.go\n+added\n-removed"}`
+	got := gitDiffRenderer{}.Render(okPayload)
+	if got.Status != "done" {
+		t.Fatalf("expected done status, got %q", got.Status)
+	}
+	if got.Summary != "1 file(s), +3/-1 lines" {
+		t.Fatalf("unexpected summary: %q", got.Summary)
+	}
+	if len(got.DetailLines) < 2 {
+		t.Fatalf("expected at least 2 detail lines (file + preview), got %d", len(got.DetailLines))
+	}
+
+	errPayload := `{"ok":false,"error":"git diff failed"}`
+	gotErr := gitDiffRenderer{}.Render(errPayload)
+	if strings.TrimSpace(gotErr.Summary) == "" {
+		t.Fatalf("expected fallback summary for error payload")
+	}
+}
+
+func TestRunTestsRendererRenderBranches(t *testing.T) {
+	passPayload := `{"ok":true,"passed":5,"failed":0,"skipped":1,"exit_code":0,"elapsed_s":1.5,"command":"go test ./...","stdout":"ok test 1.5s","summary":"Tests: passed=5 failed=0 skipped=1 (1.5s)"}`
+	got := runTestsRenderer{}.Render(passPayload)
+	if got.Status != "done" {
+		t.Fatalf("expected done status, got %q", got.Status)
+	}
+	if got.Summary != "Tests: passed=5 failed=0 skipped=1 (1.5s)" {
+		t.Fatalf("unexpected summary: %q", got.Summary)
+	}
+	if !strings.Contains(got.CompactLine, "passed=5") {
+		t.Fatalf("compact line should include stats, got %q", got.CompactLine)
+	}
+
+	failPayload := `{"ok":false,"passed":3,"failed":2,"skipped":0,"exit_code":1,"elapsed_s":2.0,"command":"go test ./...","stdout":"FAIL","summary":"Tests FAILED: passed=3 failed=2 skipped=0 (2.0s)"}`
+	gotFail := runTestsRenderer{}.Render(failPayload)
+	if gotFail.Status != "warn" {
+		t.Fatalf("expected warn status, got %q", gotFail.Status)
+	}
+	if gotFail.Summary != "Tests FAILED: passed=3 failed=2 skipped=0 (2.0s)" {
+		t.Fatalf("unexpected fail summary: %q", gotFail.Summary)
 	}
 }
 

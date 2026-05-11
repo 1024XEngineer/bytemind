@@ -476,11 +476,10 @@ func (gitStatusRenderer) Render(payload string) ToolRenderResult {
 			CompactLine: result.Summary,
 		}
 	}
-	// Handle error case
 	return ToolRenderResult{
 		Summary:     compact(payload, 96),
 		DetailLines: nil,
-		Status:      "error",
+		Status:      "done",
 		CompactLine: compact(payload, 80),
 	}
 }
@@ -526,7 +525,7 @@ func (gitDiffRenderer) Render(payload string) ToolRenderResult {
 	return ToolRenderResult{
 		Summary:     compact(payload, 96),
 		DetailLines: nil,
-		Status:      "error",
+		Status:      "done",
 		CompactLine: compact(payload, 80),
 	}
 }
