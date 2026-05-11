@@ -1,6 +1,6 @@
 # Plan Mode
 
-In Plan mode the agent first produces a written step-by-step execution plan for you to review and approve before any code changes are made. This gives you full visibility and control over large or risky tasks.
+In Plan mode the agent first produces a structured execution plan (with step lists, risk annotations, and verification strategy) via the `update_plan` tool for you to review and approve before any code changes are made. This gives you full visibility and control over large or risky tasks.
 
 ## Activating Plan Mode
 

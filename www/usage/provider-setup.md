@@ -43,7 +43,6 @@ Configure multiple providers at once and switch between them at runtime with `/m
 | ------- | ------ |
 | `/model` | Interactive picker with all configured models |
 | `/model openai/gpt-5.4` | Switch to GPT-5.4 |
-| `/models` | Show current active model and all discovered models |
 
 The config file is updated automatically after switching. See [Config Reference](/reference/config-reference#provider-runtime-multi-provider) for every field.
 

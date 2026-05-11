@@ -7,7 +7,7 @@ Every ByteMind conversation lives inside a **session**. Sessions are automatical
 - Each session has a unique ID (e.g. `abc123def`)
 - Session data is stored under ByteMind's home directory, which defaults to `.bytemind/` in your user home directory
 - When you start `bytemind`, it creates a new session or lets you resume an existing one
-- The full message history is preserved, so the agent has context for follow-up tasks
+- Message history is preserved, giving the agent accumulated context for follow-up tasks; very long sessions automatically trigger context compaction to stay within model window limits
 
 ## Listing Sessions
 

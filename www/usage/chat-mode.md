@@ -1,6 +1,6 @@
-# Chat Mode
+# Interactive Mode (Build)
 
-The default interactive mode (`bytemind`) is the primary way to use ByteMind. It supports multi-turn conversations, persistent context, and dynamic task adjustment. `bytemind chat` still works as a compatibility alias.
+The default interactive mode (`bytemind`) is the primary way to use ByteMind — known as **Build mode**. It supports multi-turn conversations, persistent context, and dynamic task adjustment. `bytemind chat` still works as a compatibility alias.
 
 ```bash
 bytemind
@@ -11,23 +11,28 @@ bytemind
 When you start chat mode, ByteMind:
 
 1. Resolves the current directory as the workspace
-2. Loads the global user config and merges any optional `.bytemind/config.json` from the current workspace
+2. Loads the global user config (`~/.bytemind/config.json`) first, then merges the workspace `.bytemind/config.json` on top (overriding same-name fields)
 3. Initializes or resumes an existing session
 4. Enters interactive mode and waits for your input
-
-:::warning Do not open very large folders directly
-Start ByteMind inside a specific code repository or project subdirectory. Your home directory, a drive root, Downloads, Desktop, or a large folder with many unrelated files is not a good default workspace.
-:::
 
 After you describe a task, the agent calls tools (read files, search code, run commands) to complete it. High-risk tool calls pause and wait for your approval.
 
 ## Startup Options
 
+| Option                 | Description                        | Default       |
+| ---------------------- | ---------------------------------- | ------------- |
+| `-config <path>`       | Custom config file path            | auto-detected |
+| `-max-iterations <n>`  | Max tool-call turns per task       | 32            |
+| `-workspace <path>`    | Workspace directory                | current dir   |
+| `-v`                   | Verbose/debug output               | false         |
+
+**Examples:**
+
 ```bash
-bytemind                         # use the default interactive mode
-bytemind -max-iterations 64      # raise the iteration limit
-bytemind -config ./my.json       # use a custom config file
-bytemind -workspace ./my-project # choose a workspace
+bytemind
+bytemind -max-iterations 64
+bytemind -config ~/.bytemind/work.json
+bytemind -workspace ./my-project
 ```
 
 ## Best Practices
@@ -71,16 +76,20 @@ Split the HTTP handler layer into a dedicated controller package. Show me the pl
 
 | Command         | Description                         |
 | --------------- | ----------------------------------- |
-| `/help`         | Show all available commands         |
-| `/session`      | Show current session ID and summary |
-| `/sessions [n]` | List recent n sessions              |
-| `/resume <id>`  | Resume a session by ID or prefix    |
-| `/new`          | Start a new session                 |
-| `/plan`         | Switch to Plan mode                 |
-| `/build`        | Switch back to Build mode           |
-| `/commit <message>` | Stage all current changes and create a local Git commit |
-| `/undo-commit` | Undo the last local commit created by `/commit` in this session |
-| `/quit`         | Exit safely                         |
+| `/help`              | Show all available commands         |
+| `/session`           | Show current session ID and summary |
+| `/sessions [n]`      | List recent n sessions              |
+| `/resume <id>`       | Resume a session by ID or prefix    |
+| `/new`               | Start a new session                 |
+| `/plan`              | Switch to Plan mode                 |
+| `/build`             | Switch back to Build mode           |
+| `/model [provider/model]` | Switch model or open the interactive picker |
+| `/agents [name]`     | List subagents or show one definition |
+| `/explorer`          | Show the builtin explorer subagent  |
+| `/review`            | Show the builtin review subagent    |
+| `/commit <message>`  | Stage all current changes and create a local Git commit |
+| `/undo-commit`       | Undo the last local commit created by `/commit` in this session |
+| `/quit`              | Exit safely                         |
 
 For `/commit`, choose the command from the slash palette or type it directly, then provide the commit message yourself:
 

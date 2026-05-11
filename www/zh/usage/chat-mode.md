@@ -1,6 +1,6 @@
-# 聊天模式
+# 交互模式 (Build)
 
-默认交互模式（`bytemind`）是 ByteMind 的主要使用方式，支持多轮对话、上下文持久化和动态任务调整。`bytemind chat` 仍可作为兼容别名使用。
+默认交互模式（`bytemind`）是 ByteMind 的主要使用方式，即 **Build 模式**。支持多轮对话、上下文持久化和动态任务调整。`bytemind chat` 仍可作为兼容别名使用。
 
 ```bash
 bytemind
@@ -11,23 +11,28 @@ bytemind
 启动后，ByteMind 会：
 
 1. 将当前目录解析为工作区
-2. 读取用户目录的全局配置，并合并当前工作区可选的 `.bytemind/config.json`
+2. 加载用户全局配置（`~/.bytemind/config.json`），再合并工作区的 `.bytemind/config.json`（若存在则覆盖同名字段）
 3. 初始化或恢复已有会话
 4. 进入交互模式，等待你的输入
-
-:::warning 不要直接打开大文件夹
-请在具体代码仓库或项目子目录中启动 ByteMind。用户主目录、磁盘根目录、Downloads、Desktop 或包含大量无关文件的大文件夹不适合作为默认工作区。
-:::
 
 你输入任务描述后，Agent 会自动调用工具（读取文件、搜索代码、执行命令等）完成任务，高风险操作前会弹出审批提示。
 
 ## 启动选项
 
+| 参数                    | 说明                   | 默认值   |
+| ----------------------- | ---------------------- | -------- |
+| `-config <路径>`        | 指定配置文件路径       | 自动检测 |
+| `-max-iterations <n>`   | 单任务最大工具调用轮次 | 32       |
+| `-workspace <路径>`     | 指定工作区目录         | 当前目录 |
+| `-v`                    | 开启详细/调试输出      | false    |
+
+**示例：**
+
 ```bash
-bytemind                         # 使用默认交互模式
-bytemind -max-iterations 64      # 提高迭代上限
-bytemind -config ./my.json       # 使用自定义配置文件
-bytemind -workspace ./my-project # 指定工作区
+bytemind
+bytemind -max-iterations 64
+bytemind -config ~/.bytemind/work.json
+bytemind -workspace ./my-project
 ```
 
 ## 最佳实践
@@ -69,18 +74,22 @@ bytemind -workspace ./my-project # 指定工作区
 
 ## 会话命令参考
 
-| 命令            | 说明                   |
-| --------------- | ---------------------- |
-| `/help`         | 查看所有可用命令       |
-| `/session`      | 查看当前会话 ID 与摘要 |
-| `/sessions [n]` | 列出最近 n 条会话      |
-| `/resume <id>`  | 恢复指定会话           |
-| `/new`          | 开启新会话             |
-| `/plan`         | 切换到 Plan 模式       |
-| `/build`        | 切换回 Build 模式      |
-| `/commit <message>` | 暂存当前全部改动并创建本地 Git commit |
-| `/undo-commit` | 回退当前会话里由 `/commit` 创建的最后一个本地 commit |
-| `/quit`         | 安全退出               |
+| 命令                 | 说明                   |
+| -------------------- | ---------------------- |
+| `/help`              | 查看所有可用命令       |
+| `/session`           | 查看当前会话 ID 与摘要 |
+| `/sessions [n]`      | 列出最近 n 条会话      |
+| `/resume <id>`       | 恢复指定会话           |
+| `/new`               | 开启新会话             |
+| `/plan`              | 切换到 Plan 模式       |
+| `/build`             | 切换回 Build 模式      |
+| `/model [provider/model]` | 切换模型或打开选择器 |
+| `/agents [name]`     | 列出可用子代理或查看详情 |
+| `/explorer`          | 显示内置代码探索子代理 |
+| `/review`            | 显示内置代码审查子代理 |
+| `/commit <message>`  | 暂存当前全部改动并创建本地 Git commit |
+| `/undo-commit`       | 回退当前会话里由 `/commit` 创建的最后一个本地 commit |
+| `/quit`              | 安全退出               |
 
 使用 `/commit` 时，可以从 Slash 命令面板选择，也可以直接输入，但需要自己填写 commit message：
 
@@ -110,5 +119,6 @@ bytemind
 - [会话管理](/zh/usage/session-management)
 - [工具与审批](/zh/usage/tools-and-approval)
 - [Plan 模式](/zh/usage/plan-mode)
+- [Provider 配置](/zh/usage/provider-setup)
 - [子代理](/zh/usage/subagents)
 - [技能](/zh/usage/skills)
