@@ -140,3 +140,14 @@ func (s *Store) Load(id string) (*Session, error) {
 	}
 	return s.load(id)
 }
+
+func (s *Store) LoadInWorkspace(workspace, id string) (*Session, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("session id is required")
+	}
+	if strings.TrimSpace(workspace) == "" {
+		return s.load(id)
+	}
+	return s.loadInWorkspace(workspace, id)
+}

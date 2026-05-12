@@ -560,6 +560,35 @@ func TestLoadSessionsCmdBranches(t *testing.T) {
 	})
 }
 
+func TestLoadSessionsCmdScopesToWorkspace(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	current := session.New(workspace)
+	current.ID = "current-workspace"
+	current.Messages = []llm.Message{llm.NewUserTextMessage("current")}
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	other := session.New(t.TempDir())
+	other.ID = "other-workspace"
+	other.Messages = []llm.Message{llm.NewUserTextMessage("other")}
+	if err := store.Save(other); err != nil {
+		t.Fatal(err)
+	}
+
+	m := model{store: store, workspace: workspace}
+	msg := m.loadSessionsCmd()().(sessionsLoadedMsg)
+	if msg.Err != nil {
+		t.Fatalf("expected loadSessionsCmd success, got err=%v", msg.Err)
+	}
+	if len(msg.Summaries) != 1 || msg.Summaries[0].ID != current.ID {
+		t.Fatalf("expected only current workspace session, got %+v", msg.Summaries)
+	}
+}
+
 func TestReloadSessionsUsesFetchLimit(t *testing.T) {
 	spy := &listLimitSpyStore{
 		summaries: []session.Summary{
@@ -715,6 +744,44 @@ func TestHandleSessionsModalEnterSuccessClosesModal(t *testing.T) {
 	}
 	if updated.sess == nil || updated.sess.ID != target.ID {
 		t.Fatalf("expected enter to resume selected session, got %#v", updated.sess)
+	}
+}
+
+func TestResumeSessionScopesPrefixToWorkspace(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	current := session.New(workspace)
+	current.ID = "current"
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	target := session.New(workspace)
+	target.ID = "resume-current"
+	target.Messages = []llm.Message{llm.NewUserTextMessage("current target")}
+	if err := store.Save(target); err != nil {
+		t.Fatal(err)
+	}
+	other := session.New(t.TempDir())
+	other.ID = "resume-other"
+	other.Messages = []llm.Message{llm.NewUserTextMessage("other target")}
+	if err := store.Save(other); err != nil {
+		t.Fatal(err)
+	}
+
+	m := model{
+		store:     store,
+		workspace: workspace,
+		sess:      current,
+		input:     textarea.New(),
+	}
+	if err := m.resumeSession("resume"); err != nil {
+		t.Fatalf("expected workspace-scoped prefix to resolve, got %v", err)
+	}
+	if m.sess == nil || m.sess.ID != target.ID {
+		t.Fatalf("expected current workspace target to resume, got %#v", m.sess)
 	}
 }
 

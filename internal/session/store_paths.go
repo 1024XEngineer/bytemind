@@ -74,7 +74,26 @@ func (s *Store) findSessionSource(id string) (sessionSource, error) {
 	if err != nil {
 		return sessionSource{}, err
 	}
+	return findSessionSourceInSources(sources, normalizedID)
+}
 
+func (s *Store) findSessionSourceInWorkspace(workspace, id string) (sessionSource, error) {
+	if strings.TrimSpace(workspace) == "" {
+		return s.findSessionSource(id)
+	}
+	normalizedID, err := normalizeSessionID(id)
+	if err != nil {
+		return sessionSource{}, err
+	}
+
+	sources, err := s.sessionSourcesInWorkspace(workspace)
+	if err != nil {
+		return sessionSource{}, err
+	}
+	return findSessionSourceInSources(sources, normalizedID)
+}
+
+func findSessionSourceInSources(sources []sessionSource, normalizedID string) (sessionSource, error) {
 	var newestEvents *sessionSource
 	var newestLegacy *sessionSource
 	for i := range sources {
@@ -106,9 +125,9 @@ func (s *Store) findSessionSource(id string) (sessionSource, error) {
 }
 
 func (s *Store) sessionSources() ([]sessionSource, error) {
-	root := strings.TrimSpace(s.files.Root())
-	if root == "" {
-		return nil, errors.New("session root is required")
+	root, err := s.sessionRoot()
+	if err != nil {
+		return nil, err
 	}
 
 	projectEntries, err := os.ReadDir(root)
@@ -122,66 +141,109 @@ func (s *Store) sessionSources() ([]sessionSource, error) {
 			continue
 		}
 		projectID := projectEntry.Name()
-		projectDir := filepath.Join(root, projectID)
-		entries, err := os.ReadDir(projectDir)
+		projectSources, err := s.sessionSourcesInProject(projectID, filepath.Join(root, projectID))
 		if err != nil {
 			return nil, err
 		}
-		for _, entry := range entries {
-			name := strings.TrimSpace(entry.Name())
-			if name == "" {
-				continue
-			}
-			if entry.IsDir() {
-				paths := sessionPaths{
-					ProjectID: projectID,
-					SessionID: name,
-					Dir:       filepath.Join(projectDir, name),
-				}
-				paths.Events = filepath.Join(paths.Dir, eventsFileName)
-				paths.Snapshot = filepath.Join(paths.Dir, snapshotFileName)
-
-				eventsInfo, eventsErr := os.Stat(paths.Events)
-				snapshotInfo, snapshotErr := os.Stat(paths.Snapshot)
-				if eventsErr != nil && snapshotErr != nil {
-					continue
-				}
-				paths.Legacy = filepath.Join(projectDir, name+".jsonl")
-				sources = append(sources, sessionSource{
-					kind:      sourceKindEvents,
-					updatedAt: newestModTime(eventsInfo, snapshotInfo),
-					paths:     paths,
-				})
-				continue
-			}
-
-			if strings.EqualFold(filepath.Ext(name), ".jsonl") && !strings.EqualFold(name, eventsFileName) {
-				legacyPath := filepath.Join(projectDir, name)
-				info, err := os.Stat(legacyPath)
-				if err != nil {
-					return nil, err
-				}
-				sessionID := strings.TrimSuffix(name, filepath.Ext(name))
-				sources = append(sources, sessionSource{
-					kind:      sourceKindLegacy,
-					updatedAt: info.ModTime().UTC(),
-					paths: sessionPaths{
-						ProjectID: projectID,
-						SessionID: sessionID,
-						Legacy:    legacyPath,
-					},
-				})
-			}
-		}
+		sources = append(sources, projectSources...)
 	}
 
+	sortSessionSources(sources)
+	return sources, nil
+}
+
+func (s *Store) sessionSourcesInWorkspace(workspace string) ([]sessionSource, error) {
+	root, err := s.sessionRoot()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(root); err != nil {
+		return nil, err
+	}
+
+	projectID := storagepkg.WorkspaceProjectID(workspace)
+	sources, err := s.sessionSourcesInProject(projectID, filepath.Join(root, projectID))
+	if errors.Is(err, os.ErrNotExist) {
+		return []sessionSource{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	sortSessionSources(sources)
+	return sources, nil
+}
+
+func (s *Store) sessionRoot() (string, error) {
+	root := strings.TrimSpace(s.files.Root())
+	if root == "" {
+		return "", errors.New("session root is required")
+	}
+	return root, nil
+}
+
+func (s *Store) sessionSourcesInProject(projectID, projectDir string) ([]sessionSource, error) {
+	entries, err := os.ReadDir(projectDir)
+	if err != nil {
+		return nil, err
+	}
+
+	sources := make([]sessionSource, 0, len(entries))
+	for _, entry := range entries {
+		name := strings.TrimSpace(entry.Name())
+		if name == "" {
+			continue
+		}
+		if entry.IsDir() {
+			paths := sessionPaths{
+				ProjectID: projectID,
+				SessionID: name,
+				Dir:       filepath.Join(projectDir, name),
+			}
+			paths.Events = filepath.Join(paths.Dir, eventsFileName)
+			paths.Snapshot = filepath.Join(paths.Dir, snapshotFileName)
+
+			eventsInfo, eventsErr := os.Stat(paths.Events)
+			snapshotInfo, snapshotErr := os.Stat(paths.Snapshot)
+			if eventsErr != nil && snapshotErr != nil {
+				continue
+			}
+			paths.Legacy = filepath.Join(projectDir, name+".jsonl")
+			sources = append(sources, sessionSource{
+				kind:      sourceKindEvents,
+				updatedAt: newestModTime(eventsInfo, snapshotInfo),
+				paths:     paths,
+			})
+			continue
+		}
+
+		if strings.EqualFold(filepath.Ext(name), ".jsonl") && !strings.EqualFold(name, eventsFileName) {
+			legacyPath := filepath.Join(projectDir, name)
+			info, err := os.Stat(legacyPath)
+			if err != nil {
+				return nil, err
+			}
+			sessionID := strings.TrimSuffix(name, filepath.Ext(name))
+			sources = append(sources, sessionSource{
+				kind:      sourceKindLegacy,
+				updatedAt: info.ModTime().UTC(),
+				paths: sessionPaths{
+					ProjectID: projectID,
+					SessionID: sessionID,
+					Legacy:    legacyPath,
+				},
+			})
+		}
+	}
+	return sources, nil
+}
+
+func sortSessionSources(sources []sessionSource) {
 	sort.Slice(sources, func(i, j int) bool {
 		if sources[i].paths.SessionID == sources[j].paths.SessionID {
 			return sources[i].updatedAt.After(sources[j].updatedAt)
 		}
 		return sources[i].paths.SessionID < sources[j].paths.SessionID
 	})
-	return sources, nil
 }
 
 func newestModTime(first, second os.FileInfo) time.Time {

@@ -12,7 +12,21 @@ func (s *Store) List(limit int) ([]Summary, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	return s.summariesFromSources(sources, limit)
+}
 
+func (s *Store) ListInWorkspace(workspace string, limit int) ([]Summary, []string, error) {
+	if strings.TrimSpace(workspace) == "" {
+		return s.List(limit)
+	}
+	sources, err := s.sessionSourcesInWorkspace(workspace)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.summariesFromSources(sources, limit)
+}
+
+func (s *Store) summariesFromSources(sources []sessionSource, limit int) ([]Summary, []string, error) {
 	summaries := make([]Summary, 0, len(sources))
 	warnings := make([]string, 0)
 	seenIDs := make(map[string]struct{}, len(sources))

@@ -101,6 +101,93 @@ func TestStoreListReturnsRecentSessions(t *testing.T) {
 	}
 }
 
+func TestStoreListInWorkspaceScopesToWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workspace := t.TempDir()
+	current := New(workspace)
+	current.ID = "current"
+	current.Messages = []llm.Message{{Role: "user", Content: "current workspace"}}
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+
+	otherWorkspace := t.TempDir()
+	other := New(otherWorkspace)
+	other.ID = "other"
+	other.Messages = []llm.Message{{Role: "user", Content: "other workspace"}}
+	if err := store.Save(other); err != nil {
+		t.Fatal(err)
+	}
+
+	otherProjectDir := filepath.Join(dir, storagepkg.WorkspaceProjectID(otherWorkspace))
+	if err := os.WriteFile(filepath.Join(otherProjectDir, "broken.jsonl"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, warnings, err := store.ListInWorkspace(workspace, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings from other workspaces, got %#v", warnings)
+	}
+	if len(summaries) != 1 || summaries[0].ID != current.ID {
+		t.Fatalf("expected only current workspace session, got %#v", summaries)
+	}
+
+	missing, warnings, err := store.ListInWorkspace(filepath.Join(t.TempDir(), "missing"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missing) != 0 || len(warnings) != 0 {
+		t.Fatalf("expected missing workspace to return an empty list, got summaries=%#v warnings=%#v", missing, warnings)
+	}
+}
+
+func TestStoreLoadInWorkspaceScopesDuplicateIDs(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workspace := t.TempDir()
+	current := New(workspace)
+	current.ID = "same-id"
+	current.Messages = []llm.Message{{Role: "user", Content: "current"}}
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+
+	otherWorkspace := t.TempDir()
+	other := New(otherWorkspace)
+	other.ID = current.ID
+	other.Messages = []llm.Message{{Role: "user", Content: "other"}}
+	if err := store.Save(other); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := store.LoadInWorkspace(workspace, current.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Workspace != workspace || loaded.Messages[0].Content != "current" {
+		t.Fatalf("expected current workspace session, got %#v", loaded)
+	}
+
+	loaded, err = store.LoadInWorkspace(otherWorkspace, other.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Workspace != otherWorkspace || loaded.Messages[0].Content != "other" {
+		t.Fatalf("expected other workspace session, got %#v", loaded)
+	}
+}
+
 func TestStoreListSkipsEmptySessionFiles(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewStore(dir)
