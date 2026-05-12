@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -1235,6 +1237,230 @@ func TestIsSplitPasteContinuationEmptyInput(t *testing.T) {
 func TestIsSplitPasteContinuationPathInput(t *testing.T) {
 	if isSplitPasteContinuation(`C:\Users\test\file`, "paste-key", time.Now()) {
 		t.Fatalf("expected path-like input to not be a split continuation")
+	}
+}
+
+func TestShouldPromoteImplicitImagePathPasteGuards(t *testing.T) {
+	var nilModel *model
+	if nilModel.shouldPromoteImplicitImagePathPaste(`C:/tmp/image.png`, pasteBurstImmediateMinChars, 4) {
+		t.Fatalf("expected nil model to not promote image path paste")
+	}
+
+	m := newImagePipelineModel(t)
+	if m.shouldPromoteImplicitImagePathPaste(`C:`, 2, 2) {
+		t.Fatalf("expected short path burst to not promote")
+	}
+	if m.shouldPromoteImplicitImagePathPaste("C:/tmp/\nimage.png", pasteBurstImmediateMinChars, 4) {
+		t.Fatalf("expected newline-containing path burst to not promote")
+	}
+	if !m.shouldPromoteImplicitImagePathPaste(`"C:/tmp/image.png"`, pasteBurstImmediateMinChars, 4) {
+		t.Fatalf("expected quoted path burst to promote")
+	}
+}
+
+func TestRapidPathPrefixStartsHiddenPasteSession(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+
+	for _, r := range "C:/" {
+		got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		next := got.(model)
+		m = &next
+	}
+
+	if m.input.Value() != "" {
+		t.Fatalf("expected rapid path prefix to stay hidden in paste session, got %q", m.input.Value())
+	}
+	if !m.hasActivePasteSession() {
+		t.Fatalf("expected rapid path prefix to start paste session")
+	}
+	if m.pasteSession.bufferedText != "C:/" {
+		t.Fatalf("expected buffered path prefix, got %q", m.pasteSession.bufferedText)
+	}
+}
+
+func TestShouldPromoteImplicitPasteCandidatePromotesImagePathBurst(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.input.SetValue(`C:/tmp/image.pn`)
+	m.pasteBurstCandidate = pasteBurstCandidateState{
+		active:      true,
+		baseInput:   "",
+		lastEventAt: time.Now(),
+		charCount:   len(`C:/tmp/image.pn`),
+		eventCount:  4,
+	}
+
+	if !m.shouldPromoteImplicitPasteCandidate(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}}) {
+		t.Fatalf("expected image path burst to promote into paste session")
+	}
+}
+
+func TestShouldPromoteImplicitPasteCandidateRejectsSmallPathBurst(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.input.SetValue(`C`)
+	m.pasteBurstCandidate = pasteBurstCandidateState{
+		active:      true,
+		baseInput:   "",
+		lastEventAt: time.Now(),
+		charCount:   len(`C`),
+		eventCount:  1,
+	}
+
+	if m.shouldPromoteImplicitPasteCandidate(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}}) {
+		t.Fatalf("expected incomplete path prefix to remain ordinary input")
+	}
+}
+
+func TestShouldPromoteImplicitPasteCandidateRejectsPathBeforePromotionThreshold(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.input.SetValue(`C:`)
+	m.pasteBurstCandidate = pasteBurstCandidateState{
+		active:      true,
+		baseInput:   "",
+		lastEventAt: time.Now(),
+		charCount:   len(`C:`),
+		eventCount:  0,
+	}
+
+	if m.shouldPromoteImplicitPasteCandidate(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}}) {
+		t.Fatalf("expected path-like input below promotion threshold to stay ordinary")
+	}
+}
+
+func TestShouldHoldImagePathPastePreviewGuards(t *testing.T) {
+	var nilModel *model
+	if nilModel.shouldHoldImagePathPastePreview() {
+		t.Fatalf("expected nil model to not hold image path preview")
+	}
+
+	m := newImagePipelineModel(t)
+	if m.shouldHoldImagePathPastePreview() {
+		t.Fatalf("expected inactive paste session to not hold preview")
+	}
+
+	m.pasteSession.active = true
+	m.pasteSession.bufferedText = "C:/tmp/\nimage.png"
+	if m.shouldHoldImagePathPastePreview() {
+		t.Fatalf("expected newline-containing buffered text to not hold preview")
+	}
+
+	m.pasteSession.bufferedText = `"C:/tmp/image.png"`
+	if !m.shouldHoldImagePathPastePreview() {
+		t.Fatalf("expected quoted path-like buffered text to hold preview")
+	}
+}
+
+func TestShouldFinalizeImagePathPasteSessionGuards(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.pasteSession = pasteSessionState{
+		active:       true,
+		bufferedText: `"C:/tmp/image.png`,
+		sourceKind:   "paste-burst",
+	}
+	if m.shouldFinalizeImagePathPasteSession() {
+		t.Fatalf("expected unclosed quoted path to stay buffered")
+	}
+
+	if hasUnclosedPathQuote(`"`) {
+		t.Fatalf("expected single quote character to not count as unclosed path quote")
+	}
+}
+
+func TestScheduleImagePathPasteFinalizeMsg(t *testing.T) {
+	cmd := scheduleImagePathPasteFinalize(42)
+	msg := cmd()
+	finalize, ok := msg.(pasteFinalizeMsg)
+	if !ok {
+		t.Fatalf("expected pasteFinalizeMsg, got %T", msg)
+	}
+	if finalize.ID != 42 {
+		t.Fatalf("expected finalize id 42, got %d", finalize.ID)
+	}
+}
+
+func TestIngestPasteFragmentHoldsImagePathPreview(t *testing.T) {
+	m := newImagePipelineModel(t)
+
+	cmd := m.ingestPasteFragment(`C:/tmp/image.pn`, "paste-burst")
+	if cmd == nil {
+		t.Fatalf("expected paste fragment to schedule finalize")
+	}
+	if m.input.Value() != "" {
+		t.Fatalf("expected image path paste preview to stay buffered, got %q", m.input.Value())
+	}
+	if !m.hasActivePasteSession() {
+		t.Fatalf("expected active paste session")
+	}
+}
+
+func TestIngestPasteFragmentFinalizesCompleteImagePathImmediately(t *testing.T) {
+	m := newImagePipelineModel(t)
+	imagePath := filepath.ToSlash(filepath.Join(m.workspace, "immediate.png"))
+	if err := os.WriteFile(imagePath, []byte("png"), 0o644); err != nil {
+		t.Fatalf("write image fixture: %v", err)
+	}
+
+	cmd := m.ingestPasteFragment(imagePath, "paste-burst")
+	if cmd == nil {
+		t.Fatalf("expected image path paste to schedule settle")
+	}
+	if m.hasActivePasteSession() {
+		t.Fatalf("expected complete image path to finalize immediately")
+	}
+	if m.input.Value() != "[Image#1]" {
+		t.Fatalf("expected image placeholder, got %q", m.input.Value())
+	}
+}
+
+func TestCaptureImplicitPasteCandidateFinalizesCompleteImagePath(t *testing.T) {
+	m := newImagePipelineModel(t)
+	imagePath := filepath.ToSlash(filepath.Join(m.workspace, "capture.png"))
+	if err := os.WriteFile(imagePath, []byte("png"), 0o644); err != nil {
+		t.Fatalf("write image fixture: %v", err)
+	}
+	prefix := strings.TrimSuffix(imagePath, "g")
+	m.input.SetValue(prefix)
+	m.pasteBurstCandidate = pasteBurstCandidateState{
+		active:      true,
+		baseInput:   "",
+		lastEventAt: time.Now(),
+		charCount:   len([]rune(prefix)),
+		eventCount:  3,
+	}
+
+	cmd := m.captureImplicitPasteCandidate(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	if cmd == nil {
+		t.Fatalf("expected paste burst settle command")
+	}
+	if m.hasActivePasteSession() {
+		t.Fatalf("expected completed image path to finalize paste session")
+	}
+	if m.input.Value() != "[Image#1]" {
+		t.Fatalf("expected image placeholder, got %q", m.input.Value())
+	}
+}
+
+func TestFinalizePasteSessionConvertsImagePathFallback(t *testing.T) {
+	m := newImagePipelineModel(t)
+	imagePath := filepath.ToSlash(filepath.Join(m.workspace, "finalize.png"))
+	if err := os.WriteFile(imagePath, []byte("png"), 0o644); err != nil {
+		t.Fatalf("write image fixture: %v", err)
+	}
+
+	m.pasteSession = pasteSessionState{
+		active:       true,
+		baseInput:    "look ",
+		bufferedText: imagePath,
+		sourceKind:   "paste-burst",
+		finalizeID:   1,
+	}
+	m.finalizePasteSession(1)
+
+	if m.input.Value() != "look [Image#1]" {
+		t.Fatalf("expected paste session to attach image path, got %q", m.input.Value())
+	}
+	if !strings.Contains(m.statusNote, "Attached 1 image") {
+		t.Fatalf("expected attach status note, got %q", m.statusNote)
 	}
 }
 
