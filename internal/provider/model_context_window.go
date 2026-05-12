@@ -86,5 +86,5 @@ func LookupModelContextWindow(ctx context.Context, providerType, baseURL, apiKey
 	if ctx == nil {
 		return 0
 	}
-	return FetchModelContextWindow(ctx, providerType, baseURL, apiKey, modelID)
+	return contextWindowFetchFunc(ctx, providerType, baseURL, apiKey, modelID)
 }
