@@ -119,6 +119,25 @@ function Payload-FromImageUrl([string]$value) {
 			$uri = [System.Uri]$urlText
 			return (Payload-FromPath $uri.LocalPath)
 		} catch {
+			$ext = [System.IO.Path]::GetExtension($candidate).ToLowerInvariant()
+			$textExts = @('.txt','.py','.go','.js','.ts','.java','.c','.cpp','.cs','.rs',
+				'.json','.yaml','.yml','.md','.csv','.xml','.html','.css','.scss','.less',
+				'.sh','.bash','.bat','.ps1','.toml','.ini','.cfg','.conf','.log','.sql',
+				'.rb','.php','.swift','.kt','.kts','.scala','.lua','.r','.m','.mm',
+				'.pl','.pm','.hs','.erl','.ex','.exs','.clj','.edn','.dart',
+				'.proto','.tf','.hcl','.cmake','.make','.mk','.gradle','.sbt',
+				'.dockerfile','.gitignore','.env')
+			if ($textExts -contains $ext) {
+				try {
+					$text = [System.IO.File]::ReadAllText($candidate, [System.Text.Encoding]::UTF8)
+					if (-not [string]::IsNullOrWhiteSpace($text)) {
+						$bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+						return (@{file_type='text';media_type='text/plain';file_name=([System.IO.Path]::GetFileName($candidate));data=[Convert]::ToBase64String($bytes)} | ConvertTo-Json -Compress)
+					}
+				} catch {
+					return ''
+				}
+			}
 			return ''
 		}
 	}
@@ -253,6 +272,7 @@ func parseClipboardImageOutput(raw string) (string, []byte, string, error) {
 	}
 
 	type payload struct {
+		FileType  string `json:"file_type"`
 		MediaType string `json:"media_type"`
 		FileName  string `json:"file_name"`
 		Data      string `json:"data"`
@@ -263,6 +283,9 @@ func parseClipboardImageOutput(raw string) (string, []byte, string, error) {
 			decoded, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(p.Data))
 			if decodeErr != nil {
 				return "", nil, "", decodeErr
+			}
+			if p.MediaType == "" {
+				p.MediaType = "image/png"
 			}
 			return strings.TrimSpace(p.MediaType), decoded, strings.TrimSpace(p.FileName), nil
 		}
@@ -314,67 +337,69 @@ func (m *model) ensureSessionImageAssets() {
 
 func (m *model) applyInputImagePipeline(before, after, source string) (string, string) {
 	class, prefix, inserted, suffix := classifyInputMutation(before, after, source)
-	if class != inputMutationPasteFilled {
-		return after, ""
-	}
+	_ = class
 
-	paths := extractImagePathsFromChunk(inserted, m.workspace)
-	if len(paths) > 0 {
-		placeholders := make([]string, 0, len(paths))
-		notes := make([]string, 0, len(paths))
-		for _, path := range paths {
-			placeholder, note, ok := m.ingestImageFromPath(path)
+	filePaths := extractFilePathsFromChunk(inserted)
+	if len(filePaths) > 0 {
+		placeholders := make([]string, 0, len(filePaths))
+		imagePlaceholders := make([]string, 0, len(filePaths))
+		notes := make([]string, 0, len(filePaths))
+		for _, path := range filePaths {
+			placeholder, note, ok := m.ingestFileFromPath(path)
 			if !ok {
 				notes = append(notes, note)
 				continue
 			}
 			placeholders = append(placeholders, placeholder)
-		}
-		if len(placeholders) == 0 {
-			if len(notes) > 0 {
-				return after, notes[0]
+			if strings.HasPrefix(placeholder, "[Image#") {
+				imagePlaceholders = append(imagePlaceholders, placeholder)
 			}
-			return after, ""
 		}
-
-		replacement := strings.Join(placeholders, " ")
-		updated := after[:prefix] + replacement + after[len(after)-suffix:]
-		m.syncInputImageRefs(updated)
-		note := fmt.Sprintf("Attached %d image(s): %s", len(placeholders), strings.Join(placeholders, ", "))
+		if len(placeholders) > 0 {
+			replacement := strings.Join(placeholders, " ")
+			updated := after[:prefix] + replacement + after[len(after)-suffix:]
+			m.syncInputImageRefs(updated)
+			note := buildIngestNote(imagePlaceholders, notes, m.pastedTextFiles)
+			return updated, note
+		}
 		if len(notes) > 0 {
-			note += "; " + notes[0]
+			return after, notes[0]
 		}
-		return updated, note
 	}
 
 	spans := extractInlineImagePathSpans(inserted)
-	if len(spans) == 0 {
-		return after, ""
+	if len(spans) > 0 {
+		return m.applyInlineFilePathSpans(after, prefix, suffix, inserted, spans)
 	}
+	return after, ""
+}
 
+func (m *model) applyInlineFilePathSpans(after string, prefix, suffix int, inserted string, spans []imagePathSpan) (string, string) {
 	var transformed strings.Builder
 	transformed.Grow(len(inserted))
-	attached := make([]string, 0, len(spans))
+	attachedImages := make([]string, 0, len(spans))
 	notes := make([]string, 0, len(spans))
 	last := 0
 	for _, span := range spans {
 		if span.Start > last {
 			transformed.WriteString(inserted[last:span.Start])
 		}
-		placeholder, note, ok := m.ingestImageFromPath(span.Path)
+		placeholder, note, ok := m.ingestFileFromPath(span.Path)
 		if !ok {
 			transformed.WriteString(inserted[span.Start:span.End])
 			notes = append(notes, note)
 		} else {
 			transformed.WriteString(placeholder)
-			attached = append(attached, placeholder)
+			if strings.HasPrefix(placeholder, "[Image#") {
+				attachedImages = append(attachedImages, placeholder)
+			}
 		}
 		last = span.End
 	}
 	if last < len(inserted) {
 		transformed.WriteString(inserted[last:])
 	}
-	if len(attached) == 0 {
+	if len(attachedImages) == 0 && len(m.pastedTextFiles) == 0 {
 		if len(notes) > 0 {
 			return after, notes[0]
 		}
@@ -383,11 +408,31 @@ func (m *model) applyInputImagePipeline(before, after, source string) (string, s
 
 	updated := after[:prefix] + transformed.String() + after[len(after)-suffix:]
 	m.syncInputImageRefs(updated)
-	note := fmt.Sprintf("Attached %d image(s): %s", len(attached), strings.Join(attached, ", "))
-	if len(notes) > 0 {
-		note += "; " + notes[0]
-	}
+	note := buildIngestNote(attachedImages, notes, m.pastedTextFiles)
 	return updated, note
+}
+
+func buildIngestNote(imagePlaceholders, notes []string, textFiles map[string]string) string {
+	imageCount := len(imagePlaceholders)
+	textCount := len(textFiles)
+	if imageCount == 0 && textCount == 0 && len(notes) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, 3)
+	if imageCount > 0 {
+		parts = append(parts, fmt.Sprintf("Attached %d image(s): %s", imageCount, strings.Join(imagePlaceholders, ", ")))
+	}
+	if textCount > 0 {
+		fileNames := make([]string, 0, textCount)
+		for path := range textFiles {
+			fileNames = append(fileNames, filepath.Base(path))
+		}
+		parts = append(parts, fmt.Sprintf("Read %d text file(s): %s", textCount, strings.Join(fileNames, ", ")))
+	}
+	if len(notes) > 0 {
+		parts = append(parts, notes[0])
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (m *model) applyWholeInputImagePathFallback(text, source string) (string, string) {
@@ -427,46 +472,10 @@ func (m *model) applyWholeInputImagePathFallback(text, source string) (string, s
 	}
 
 	spans := extractInlineImagePathSpans(text)
-	if len(spans) == 0 {
-		return text, ""
+	if len(spans) > 0 {
+		return m.applyInlineFilePathSpans(text, 0, 0, text, spans)
 	}
-
-	var transformed strings.Builder
-	transformed.Grow(len(text))
-	attached := make([]string, 0, len(spans))
-	notes := make([]string, 0, len(spans))
-	last := 0
-	for _, span := range spans {
-		if span.Start > last {
-			transformed.WriteString(text[last:span.Start])
-		}
-		placeholder, note, ok := m.ingestImageFromPath(span.Path)
-		if !ok {
-			transformed.WriteString(text[span.Start:span.End])
-			notes = append(notes, note)
-		} else {
-			transformed.WriteString(placeholder)
-			attached = append(attached, placeholder)
-		}
-		last = span.End
-	}
-	if last < len(text) {
-		transformed.WriteString(text[last:])
-	}
-	if len(attached) == 0 {
-		if len(notes) > 0 {
-			return text, notes[0]
-		}
-		return text, ""
-	}
-
-	updated := transformed.String()
-	m.syncInputImageRefs(updated)
-	note := fmt.Sprintf("Attached %d image(s): %s", len(attached), strings.Join(attached, ", "))
-	if len(notes) > 0 {
-		note += "; " + notes[0]
-	}
-	return updated, note
+	return text, ""
 }
 
 func (m *model) handleEmptyClipboardPaste() string {
@@ -477,6 +486,18 @@ func (m *model) handleEmptyClipboardPaste() string {
 	if err != nil {
 		return err.Error()
 	}
+
+	if mediaType == "text/plain" && len(data) > 0 {
+		current := m.input.Value()
+		content := string(data)
+		updated := content
+		if strings.TrimSpace(current) != "" {
+			updated = current + " " + content
+		}
+		m.setInputValue(updated)
+		return fmt.Sprintf("Attached text from clipboard: %s (%d bytes)", fileName, len(data))
+	}
+
 	placeholder, note, ok := m.ingestImageBinary(mediaType, fileName, data)
 	if !ok {
 		return note
@@ -496,15 +517,27 @@ func (m *model) handleEmptyClipboardPaste() string {
 }
 
 func (m *model) ingestImageFromPath(path string) (string, string, bool) {
-	data, err := os.ReadFile(path)
+	return m.ingestFileFromPath(path)
+}
+
+func (m *model) ingestFileFromPath(path string) (string, string, bool) {
+	fileType, mime, data, err := readFile(path)
 	if err != nil {
-		return "", fmt.Sprintf("failed to read image %s: %v", path, err), false
+		return "", fmt.Sprintf("failed to read %s: %v", path, err), false
 	}
-	mediaType, ok := mediaTypeFromPath(path)
-	if !ok {
-		return "", fmt.Sprintf("unsupported image format: %s", filepath.Ext(path)), false
+
+	switch fileType {
+	case FileTypeImage:
+		return m.ingestImageBinary(mime, filepath.Base(path), data)
+	case FileTypeText, FileTypePDF:
+		if m.pastedTextFiles == nil {
+			m.pastedTextFiles = make(map[string]string, 4)
+		}
+		m.pastedTextFiles[path] = string(data)
+		return path, "", true
+	default:
+		return "", fmt.Sprintf("unsupported file type: %s", path), false
 	}
-	return m.ingestImageBinary(mediaType, filepath.Base(path), data)
 }
 
 func (m *model) ingestImageBinary(mediaType, fileName string, data []byte) (string, string, bool) {
@@ -633,9 +666,10 @@ func (m *model) buildPromptInput(raw string) (RunPromptInput, string, error) {
 	placeholderMatches := imagePlaceholderPattern.FindAllStringSubmatchIndex(resolvedRaw, -1)
 	mentionMatches := extractMentionImageSpans(resolvedRaw, m.inputImageMentions)
 	if len(placeholderMatches) == 0 && len(mentionMatches) == 0 {
+		finalRaw := m.appendPastedTextFiles(resolvedRaw)
 		assets := m.hydrateHistoricalRequestAssets(nil)
 		return RunPromptInput{
-			UserMessage: llm.NewUserTextMessage(resolvedRaw),
+			UserMessage: llm.NewUserTextMessage(finalRaw),
 			Assets:      assets,
 			DisplayText: raw,
 		}, raw, nil
@@ -725,6 +759,8 @@ func (m *model) buildPromptInput(raw string) (RunPromptInput, string, error) {
 	}
 	appendTextPart(resolvedRaw[last:])
 
+	parts = m.appendPastedTextFileParts(parts)
+
 	if len(parts) == 0 {
 		parts = append(parts, llm.Part{Type: llm.PartText, Text: &llm.TextPart{Value: resolvedRaw}})
 	}
@@ -741,6 +777,48 @@ func (m *model) buildPromptInput(raw string) (RunPromptInput, string, error) {
 		Assets:      assetPayloads,
 		DisplayText: raw,
 	}, raw, nil
+}
+
+func (m *model) appendPastedTextFiles(raw string) string {
+	if m == nil || len(m.pastedTextFiles) == 0 {
+		return raw
+	}
+	var b strings.Builder
+	b.Grow(len(raw) + 4096)
+	b.WriteString(raw)
+	m.writePastedTextFileBlocks(&b)
+	m.pastedTextFiles = nil
+	return b.String()
+}
+
+func (m *model) appendPastedTextFileParts(parts []llm.Part) []llm.Part {
+	if m == nil || len(m.pastedTextFiles) == 0 {
+		return parts
+	}
+	var b strings.Builder
+	m.writePastedTextFileBlocks(&b)
+	parts = append(parts, llm.Part{Type: llm.PartText, Text: &llm.TextPart{Value: b.String()}})
+	m.pastedTextFiles = nil
+	return parts
+}
+
+func (m *model) writePastedTextFileBlocks(b *strings.Builder) {
+	for path, content := range m.pastedTextFiles {
+		b.WriteString("\n\n[文件: ")
+		b.WriteString(path)
+		b.WriteString("]\n```")
+		ext := strings.TrimPrefix(filepath.Ext(path), ".")
+		if ext == "" {
+			ext = "text"
+		}
+		b.WriteString(ext)
+		b.WriteString("\n")
+		b.WriteString(content)
+		if !strings.HasSuffix(content, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("```")
+	}
 }
 
 func (m *model) hydrateHistoricalRequestAssets(current map[llm.AssetID]llm.ImageAsset) map[llm.AssetID]llm.ImageAsset {
@@ -921,37 +999,14 @@ func lenCommonSuffix(a, b string) int {
 }
 
 func extractImagePathsFromChunk(chunk, workspace string) []string {
-	tokens := splitPathTokens(chunk)
-	if len(tokens) == 0 {
+	paths := extractFilePathsFromChunk(chunk)
+	if len(paths) == 0 {
 		return nil
 	}
-
-	paths := make([]string, 0, len(tokens))
-	candidateCount := 0
-	for _, token := range tokens {
-		token = strings.TrimSpace(strings.Trim(token, `"'`))
-		if token == "" {
-			continue
+	for _, p := range paths {
+		if fileType, _ := classifyFile(p); fileType != FileTypeImage {
+			return nil
 		}
-		candidateCount++
-
-		resolved := token
-		if !filepath.IsAbs(resolved) {
-			resolved = filepath.Join(workspace, token)
-		}
-		resolved = filepath.Clean(resolved)
-		info, err := os.Stat(resolved)
-		if err != nil || info.IsDir() {
-			continue
-		}
-		if _, ok := mediaTypeFromPath(resolved); !ok {
-			continue
-		}
-		paths = append(paths, resolved)
-	}
-
-	if candidateCount == 0 || len(paths) != candidateCount {
-		return nil
 	}
 	return paths
 }
@@ -1140,7 +1195,10 @@ func extractInlineImagePathSpans(chunk string) []imagePathSpan {
 				continue
 			}
 			raw := chunk[loc[0]:loc[1]]
-			resolved := filepath.Clean(raw)
+			resolved, err := resolvePath(raw)
+			if err != nil {
+				continue
+			}
 			info, err := os.Stat(resolved)
 			if err != nil || info.IsDir() {
 				continue

@@ -109,9 +109,15 @@ func (m *model) consumePasteEchoKey(msg tea.KeyMsg) bool {
 		// Terminal variation: some explicit paste flows do not echo payload
 		// characters back through key events. In that case the first plain Enter
 		// after paste should close the transaction but must not submit.
+		// After the submit guard expires, treat Enter as a real submission.
+		if !m.pasteSubmitGuardUntil.IsZero() && time.Now().Before(m.pasteSubmitGuardUntil) {
+			m.clearPasteTransaction()
+			m.releasePasteSubmitSuppression()
+			return true
+		}
 		m.clearPasteTransaction()
-		m.releasePasteSubmitSuppression()
-		return true
+		m.pasteTransaction.AwaitTrailingEnter = false
+		return false
 	}
 	if strings.HasPrefix(remaining, fragment) {
 		m.pasteTransaction.Consumed += len([]rune(fragment))
@@ -179,7 +185,12 @@ func (m *model) shouldConsumeTrailingPasteEnter(msg tea.KeyMsg) bool {
 	// In terminal mode we cannot reliably distinguish a user Enter from a
 	// delayed echoed Enter after paste. Consume the first plain Enter once the
 	// payload has been fully echoed, and require the next Enter to submit.
-	return true
+	// After the submit guard expires, treat Enter as a real submission.
+	if !m.pasteSubmitGuardUntil.IsZero() && time.Now().Before(m.pasteSubmitGuardUntil) {
+		return true
+	}
+	m.pasteTransaction.AwaitTrailingEnter = false
+	return false
 }
 
 func shouldAppendPasteTransactionPayload(currentSource, nextSource string) bool {

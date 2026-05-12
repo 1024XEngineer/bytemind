@@ -846,52 +846,6 @@ func TestNormalizeKeyNameStripsSpecialChars(t *testing.T) {
 	}
 }
 
-// --- looksLikeMarkdownPasteFragment ---
-
-func TestLooksLikeMarkdownPasteFragmentHeaders(t *testing.T) {
-	if !looksLikeMarkdownPasteFragment("# Title") {
-		t.Fatalf("expected true for # prefix")
-	}
-	if !looksLikeMarkdownPasteFragment("## Subtitle") {
-		t.Fatalf("expected true for ## prefix")
-	}
-}
-
-func TestLooksLikeMarkdownPasteFragmentBlockquote(t *testing.T) {
-	if !looksLikeMarkdownPasteFragment("> quoted text") {
-		t.Fatalf("expected true for > prefix")
-	}
-}
-
-func TestLooksLikeMarkdownPasteFragmentLists(t *testing.T) {
-	if !looksLikeMarkdownPasteFragment("- item") {
-		t.Fatalf("expected true for - prefix")
-	}
-	if !looksLikeMarkdownPasteFragment("* item") {
-		t.Fatalf("expected true for * prefix")
-	}
-	if !looksLikeMarkdownPasteFragment("1. first item") {
-		t.Fatalf("expected true for numbered list")
-	}
-}
-
-func TestLooksLikeMarkdownPasteFragmentCodeBlock(t *testing.T) {
-	if !looksLikeMarkdownPasteFragment("```go") {
-		t.Fatalf("expected true for code block")
-	}
-}
-
-func TestLooksLikeMarkdownPasteFragmentPlainText(t *testing.T) {
-	if looksLikeMarkdownPasteFragment("just regular text") {
-		t.Fatalf("expected false for plain text")
-	}
-}
-
-func TestLooksLikeMarkdownPasteFragmentEmpty(t *testing.T) {
-	if looksLikeMarkdownPasteFragment("") {
-		t.Fatalf("expected false for empty")
-	}
-}
 
 // --- isMeaningfulThinking ---
 

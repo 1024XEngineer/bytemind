@@ -477,6 +477,7 @@ type model struct {
 	inputImageMentions         map[string]llm.AssetID
 	orphanedImages             map[llm.AssetID]time.Time
 	nextImageID                int
+	pastedTextFiles            map[string]string // absPath → text content
 	pastedContents             map[string]pastedContent
 	pastedOrder                []string
 	nextPasteID                int
@@ -487,7 +488,6 @@ type model struct {
 	nextVirtualPastePart       int
 	pasteTransaction           pasteTransactionState
 	pasteSession               pasteSessionState
-	pasteConfirmPending        bool
 	pasteBurstActive           bool
 	pasteBurstLastEventAt      time.Time
 	pasteBurstSource           string
@@ -601,6 +601,7 @@ func newModel(opts Options) model {
 		inputImageMentions:   make(map[string]llm.AssetID, 8),
 		orphanedImages:       make(map[llm.AssetID]time.Time, 8),
 		nextImageID:          nextSessionImageID(opts.Session),
+		pastedTextFiles:      make(map[string]string, 4),
 		pastedContents:       make(map[string]pastedContent, maxStoredPastedContents),
 		pastedOrder:          make([]string, 0, maxStoredPastedContents),
 		pasteExpandLevel:     make(map[string]int),
@@ -1139,7 +1140,7 @@ func (m model) pasteDebugState() string {
 		lastInputAgo = time.Since(m.lastInputAt).Round(time.Millisecond).String()
 	}
 	return fmt.Sprintf(
-		"state{screen=%s mode=%s inputLen=%d burst=%d candidate=%v/%d/%d session=%v capture=%v confirm=%v lastInputAgo=%s}",
+		"state{screen=%s mode=%s inputLen=%d burst=%d candidate=%v/%d/%d session=%v capture=%v lastInputAgo=%s}",
 		m.screen,
 		m.mode,
 		len([]rune(m.input.Value())),
@@ -1149,7 +1150,6 @@ func (m model) pasteDebugState() string {
 		m.pasteBurstCandidate.charCount,
 		m.hasActivePasteSession(),
 		m.hasActivePasteBurst(),
-		m.pasteConfirmPending,
 		lastInputAgo,
 	)
 }
@@ -1236,7 +1236,7 @@ func (m *model) commitImplicitClipboardPaste(prefix, clipboardText string) bool 
 	m.setInputValue(base + marker)
 	now := time.Now()
 	m.lastPasteAt = now
-	m.markPasteConfirmPending(now)
+	m.armPasteSubmitGuard(now)
 	m.statusNote = fmt.Sprintf("Long pasted text (%d lines) compressed as %s. Use [Paste #%s], [Paste #%s line10], or [Paste #%s line10~line20].",
 		content.Lines, marker, content.ID, content.ID, content.ID)
 	m.syncInputOverlays()
@@ -1345,13 +1345,6 @@ func (m model) pasteFragmentFromKey(msg tea.KeyMsg) (string, string, bool) {
 			return "", "", false
 		}
 	}
-	if msg.Type != tea.KeyRunes || len(msg.Runes) == 0 {
-		return "", "", false
-	}
-	fragment := string(msg.Runes)
-	if looksLikeMarkdownPasteFragment(strings.TrimSpace(normalizeNewlines(fragment))) {
-		return fragment, "rune", true
-	}
 	return "", "", false
 }
 
@@ -1363,8 +1356,7 @@ func (m model) hasImplicitPasteCandidateEvidence() bool {
 		}
 		return !m.lastInputAt.IsZero() &&
 			time.Since(m.lastInputAt) <= 250*time.Millisecond &&
-			m.inputBurstSize >= 2 &&
-			looksLikeMarkdownPasteFragment(trimmed)
+			m.inputBurstSize >= 2
 	}
 	if m.pasteBurstCandidate.lastEventAt.IsZero() {
 		return false
@@ -1919,52 +1911,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "enter" && !msg.Paste {
 		if m.hasActivePasteSession() {
 			m.finalizePasteSession(m.pasteSession.finalizeID)
+		}
+		if !m.pasteSubmitGuardUntil.IsZero() && time.Now().Before(m.pasteSubmitGuardUntil) {
+			return m, nil
+		}
+		if !m.lastPasteAt.IsZero() && time.Since(m.lastPasteAt) <= pasteSubmitGuard {
 			return m, nil
 		}
 		rawValue := m.input.Value()
-		if next, handled := m.handleSuppressedPasteEnter(rawValue); handled {
-			return next, nil
-		}
-		if markerChain, ok := extractLeadingCompressedMarker(rawValue); ok {
-			tail := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rawValue), markerChain))
-			if tail != "" {
-				if m.hasCompressedMarkerTailPasteEvidence("paste-enter") && m.shouldCompressPastedText(tail, "paste-enter") {
-					marker, content, err := m.compressPastedText(tail)
-					if err != nil {
-						m.statusNote = err.Error()
-						return m, nil
-					}
-					combined := strings.TrimSpace(markerChain) + marker
-					m.setInputValue(combined)
-					m.markPasteConfirmPending(time.Now())
-					m.syncInputOverlays()
-					m.statusNote = fmt.Sprintf("Detected another pasted block and compressed it as %s (%d lines). Press Enter again to send.", marker, content.Lines)
-					return m, nil
-				}
-				if m.hasCompressedMarkerTailPasteEvidence("paste-enter") && (len(tail) >= 24 || strings.Contains(tail, "\n")) {
-					m.setInputValue(strings.TrimSpace(markerChain))
-					m.syncInputOverlays()
-					m.statusNote = "Detected continued paste chunk after compressed marker. Kept compressed markers only; press Enter again to send."
-					return m, nil
-				}
-			}
-		}
-		// Check whether the input has already been compressed.
-		isAlreadyCompressed := strings.Contains(rawValue, "[Paste #") || strings.Contains(rawValue, "[Pasted #")
-
-		// Compress long pasted content before sending.
-		if !isAlreadyCompressed && m.shouldCompressPastedText(rawValue, inputMutationSource(msg)) {
-			marker, content, err := m.compressPastedText(rawValue)
-			if err != nil {
-				m.statusNote = err.Error()
-				return m, nil
-			}
-			m.setInputValue(marker)
-			m.markPasteConfirmPending(time.Now())
-			m.syncInputOverlays()
-			m.statusNote = fmt.Sprintf("Long pasted text (%d lines) compressed as %s. Press Enter again to send. Use [Paste #%s] or [Paste #%s line10~line20] later.", content.Lines, marker, content.ID, content.ID)
-			return m, nil
-		}
 		value := strings.TrimSpace(rawValue)
 		if m.startupGuide.Active && !strings.HasPrefix(value, "/") {
 			return m.submitStartupGuideInput()
@@ -1998,7 +1952,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if strings.HasPrefix(value, "/") {
 			m.input.Reset()
-			m.clearPasteConfirmPending()
+			m.pasteSubmitGuardUntil = time.Time{}
 			m.clearPasteBurstCapture()
 			next, cmd, err := m.executeCommand(value)
 			if err != nil {
@@ -2134,7 +2088,6 @@ func (m *model) clearStartupGuidePasteState() {
 	m.clearHiddenPasteProbe()
 	m.releasePasteSubmitSuppression()
 	m.clearVirtualPasteParts()
-	m.clearPasteConfirmPending()
 	m.clearPasteBurstCapture()
 	m.clearPasteBurstCandidate()
 }
@@ -2151,9 +2104,6 @@ func (m model) submitStartupGuideInput() (tea.Model, tea.Cmd) {
 }
 
 func (m model) shouldSuppressEnterAfterPaste() bool {
-	if m.pasteConfirmPending {
-		return true
-	}
 	if !m.pasteSubmitGuardUntil.IsZero() && time.Now().Before(m.pasteSubmitGuardUntil) {
 		return true
 	}
@@ -2176,9 +2126,6 @@ func (m model) shouldSuppressEnterAfterPaste() bool {
 }
 
 func (m model) hasImplicitPasteBurst() bool {
-	if m.pasteConfirmPending {
-		return true
-	}
 	if m.lastInputAt.IsZero() {
 		return false
 	}
@@ -2224,9 +2171,6 @@ func (m model) shouldTreatRapidEnterAsPasteContinuation() bool {
 	if !m.hasImplicitPasteCandidateEvidence() {
 		return false
 	}
-	if m.inputBurstSize >= 2 && looksLikeMarkdownPasteFragment(trimmed) {
-		return true
-	}
 	return m.inputBurstSize >= pasteBurstImmediateMinChars
 }
 
@@ -2240,86 +2184,7 @@ func (m model) shouldAppendEnterToActivePasteSession() bool {
 	return time.Since(m.pasteSession.lastEventAt) <= 400*time.Millisecond
 }
 
-func looksLikeMarkdownPasteFragment(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return false
-	}
-	switch {
-	case strings.HasPrefix(value, "#"),
-		strings.HasPrefix(value, ">"),
-		strings.HasPrefix(value, "- "),
-		strings.HasPrefix(value, "* "),
-		strings.HasPrefix(value, "```"):
-		return true
-	}
-	if len(value) >= 3 && value[0] >= '0' && value[0] <= '9' {
-		if dot := strings.Index(value, ". "); dot > 0 && dot <= 2 {
-			return true
-		}
-	}
-	return false
-}
 
-func (m model) handleSuppressedPasteEnter(rawValue string) (tea.Model, bool) {
-	if !m.shouldSuppressEnterAfterPaste() {
-		return m, false
-	}
-	rawValue = strings.TrimSpace(rawValue)
-	if rawValue == "" {
-		m.clearPasteConfirmPending()
-		return m, true
-	}
-	if markerChain, ok := extractLeadingCompressedMarker(rawValue); ok {
-		tail := strings.TrimSpace(strings.TrimPrefix(rawValue, markerChain))
-		if tail != "" {
-			if m.hasCompressedMarkerTailPasteEvidence("paste-enter") &&
-				(m.shouldCompressPastedText(tail, "paste-enter") || m.isLongPastedText(tail)) {
-				marker, content, err := m.compressPastedText(tail)
-				if err != nil {
-					m.statusNote = err.Error()
-					return m, true
-				}
-				combined := strings.TrimSpace(markerChain) + marker
-				m.setInputValue(combined)
-				m.markPasteConfirmPending(time.Now())
-				m.syncInputOverlays()
-				m.statusNote = fmt.Sprintf("Detected another pasted block and compressed it as %s (%d lines). Press Enter again to send.", marker, content.Lines)
-				return m, true
-			}
-			if m.hasCompressedMarkerTailPasteEvidence("paste-enter") && (len(tail) >= 24 || strings.Contains(tail, "\n")) {
-				m.setInputValue(strings.TrimSpace(markerChain))
-				m.syncInputOverlays()
-				m.statusNote = "Detected continued paste chunk after compressed marker. Kept compressed markers only; press Enter again to send."
-				return m, true
-			}
-		}
-		if m.pasteConfirmPending {
-			m.releasePasteSubmitSuppression()
-			m.statusNote = "Paste compressed. Press Enter again to send."
-		}
-		return m, true
-	}
-	if m.shouldCompressPastedText(rawValue, "paste-enter") || (m.hasImplicitPasteBurst() && m.isLongPastedText(rawValue)) {
-		marker, content, err := m.compressPastedText(rawValue)
-		if err != nil {
-			m.statusNote = err.Error()
-			return m, true
-		}
-		m.setInputValue(marker)
-		m.markPasteConfirmPending(time.Now())
-		m.syncInputOverlays()
-		m.statusNote = fmt.Sprintf("Long pasted text (%d lines) compressed as %s. Press Enter again to send. Use [Paste #%s] or [Paste #%s line10~line20] later.", content.Lines, marker, content.ID, content.ID)
-		return m, true
-	}
-	if m.pasteConfirmPending {
-		m.releasePasteSubmitSuppression()
-		m.statusNote = "Paste captured. Press Enter again to send."
-		return m, true
-	}
-	m.clearPasteConfirmPending()
-	return m, true
-}
 
 func (m *model) armPasteSubmitGuard(now time.Time) {
 	if m == nil {
