@@ -38,7 +38,7 @@ func TestLookupModelContextWindowGeminiUsesFetch(t *testing.T) {
 		return 0
 	}
 
-	cw := LookupModelContextWindow(context.Background(), "gemini", "", "", "gemini-unknown-v42")
+	cw := LookupModelContextWindow(context.Background(), "gemini", "", "", "x99-custom-unknown")
 	if cw != 999999 {
 		t.Fatalf("expected mock fetch to return 999999, got %d", cw)
 	}
