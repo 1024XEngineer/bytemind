@@ -290,6 +290,29 @@ func TestLoadSkillFromFSDirWithEntrySlash(t *testing.T) {
 	}
 }
 
+func TestHasBuiltinSkills(t *testing.T) {
+	if HasBuiltinSkills("") {
+		t.Error("expected false for empty dir")
+	}
+	if HasBuiltinSkills("nonexistent-path") {
+		t.Error("expected false for non-existent dir")
+	}
+	root := t.TempDir()
+	builtinDir := filepath.Join(root, "internal", "skills", "review")
+	if err := os.MkdirAll(builtinDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if HasBuiltinSkills(filepath.Join(root, "internal", "skills")) {
+		t.Error("expected false when review dir exists but skill.json missing")
+	}
+	if err := os.WriteFile(filepath.Join(builtinDir, "skill.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !HasBuiltinSkills(filepath.Join(root, "internal", "skills")) {
+		t.Error("expected true when review/skill.json exists")
+	}
+}
+
 func TestUseEmbeddedBuiltinsIsNoopWhenBuiltinDirExists(t *testing.T) {
 	root := t.TempDir()
 	builtinDir := filepath.Join(root, "builtin")
