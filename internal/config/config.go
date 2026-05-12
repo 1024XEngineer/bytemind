@@ -30,6 +30,7 @@ const (
 	DefaultContextBudgetWarningRatio     = 0.85
 	DefaultContextBudgetCriticalRatio    = 0.95
 	DefaultContextBudgetMaxReactiveRetry = 1
+	DefaultContextBudgetFallback         = 128000
 	DefaultMCPSyncTTLSeconds             = 30
 	DefaultMCPStartupTimeoutSeconds      = 20
 	DefaultMCPCallTimeoutSeconds         = 60

@@ -515,6 +515,10 @@ type model struct {
 	stagnationStart  time.Time
 	stagnationActive bool
 	reducedMotion    bool
+
+	// contextWindowCache caches API model context window lookups to avoid
+	// repeat HTTP requests during streaming.
+	contextWindowCache map[string]int
 }
 
 func newModel(opts Options) model {

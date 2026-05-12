@@ -491,10 +491,10 @@ func TestContextBudgetRatiosValidCustom(t *testing.T) {
 
 // --- contextBudgetQuota ---
 
-func TestContextBudgetQuotaUnknownModel(t *testing.T) {
+func TestContextBudgetQuotaUnknownModelFallsBack(t *testing.T) {
 	r := &Runner{config: config.Config{}}
-	if got := r.contextBudgetQuota(); got != 0 {
-		t.Fatalf("expected 0 for unknown model, got %d", got)
+	if got := r.contextBudgetQuota(); got != config.DefaultContextBudgetFallback {
+		t.Fatalf("expected %d fallback for unknown model, got %d", config.DefaultContextBudgetFallback, got)
 	}
 }
 

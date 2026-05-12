@@ -62,7 +62,7 @@ func (r *Runner) contextBudgetQuota() int {
 	if quota > 0 {
 		return quota
 	}
-	return 0
+	return config.DefaultContextBudgetFallback
 }
 
 func (r *Runner) modelContextWindow() int {

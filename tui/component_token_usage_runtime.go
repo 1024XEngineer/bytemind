@@ -199,8 +199,17 @@ func (m *model) refreshTokenBudget() {
 		if contextWindow := registry.ContextWindow(provider.ProviderID(providerID), provider.ModelID(modelID)); contextWindow > 0 {
 			budget = contextWindow
 		} else if _, providerCfg, ok := config.SelectedProviderConfig(runtimeCfg); ok {
-			if cw := provider.LookupModelContextWindow(context.Background(), providerCfg.Type, providerCfg.BaseURL, providerCfg.ResolveAPIKey(), modelID); cw > 0 {
-				budget = cw
+			cacheKey := providerID + ":" + modelID
+			if cached, ok := m.contextWindowCache[cacheKey]; ok {
+				budget = cached
+			} else {
+				if cw := provider.LookupModelContextWindow(context.Background(), providerCfg.Type, providerCfg.BaseURL, providerCfg.ResolveAPIKey(), modelID); cw > 0 {
+					budget = cw
+				}
+				if m.contextWindowCache == nil {
+					m.contextWindowCache = make(map[string]int)
+				}
+				m.contextWindowCache[cacheKey] = budget
 			}
 		}
 	}
