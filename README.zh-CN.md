@@ -35,6 +35,8 @@
   <img src="https://img.shields.io/badge/Runtime-Skills%20%7C%20MCP%20%7C%20SubAgents-6d28d9?style=flat-square" alt="Runtime" />
   <a href="https://github.com/1024XEngineer/bytemind/actions"><img src="https://img.shields.io/github/actions/workflow/status/1024XEngineer/bytemind/ci.yml?style=flat-square&logo=github&label=CI" alt="CI" /></a>
   <a href="./evals/README.md"><img src="https://img.shields.io/badge/evals-%E5%8F%AF%E5%A4%8D%E7%8E%B0%E8%AF%84%E6%B5%8B-8b5cf6?style=flat-square" alt="Evals" /></a>
+  <a href="./DEMO.md"><img src="https://img.shields.io/badge/demo-5-%E5%88%86%E9%92%9F-16a34a?style=flat-square" alt="Demo" /></a>
+  <a href="https://codecov.io/gh/1024XEngineer/bytemind"><img src="https://img.shields.io/codecov/c/github/1024XEngineer/bytemind?style=flat-square&token=&label=%E8%A6%86%E7%9B%96%E7%8E%87" alt="Coverage" /></a>
 </p>
 
 <p align="center">
@@ -180,19 +182,42 @@ go run ./cmd/bytemind run \
 
 **Bug**: `CalculateAverage` 在空切片上除零返回 NaN。  
 **修复**: 添加 `len(nums) == 0` 守卫条件。  
-详见 [examples/bugfix-demo/](examples/bugfix-demo/README.md)。
+
+**离线验证**（无需 API Key）：
+```bash
+go run ./evals/runner.go -smoke -run bugfix_go_001
+```
+
+详见 [examples/bugfix-demo/](examples/bugfix-demo/README.md)、[DEMO.md](DEMO.md)（评审向导）和 [ENGINEERING.md](ENGINEERING.md)（工程证据）。
 
 ---
 
-## 终端预览
+## 工程证据
 
-<p align="center">
-  <img src="./docs/assets/bytemind-terminal-preview.webp" alt="ByteMind 终端运行截图" width="960" />
-</p>
+ByteMind 专为需要可复现、可验证工程输出的评估场景而设计。
+
+### 真实 Agent 循环
+多步工具调用 + 观测反馈、上下文压缩、限流重试、执行预算控制（`internal/agent/engine_run_loop.go`）。
+
+### 编码原生工具
+14 个内置工具，输出结构化 JSON — `git_status`、`git_diff`、`run_tests`、文件读写搜索、补丁应用、Shell 执行和 Web 访问。每个工具都有单元测试和安全分类。
+
+### 可复现 Demo
+`examples/bugfix-demo/broken-project` 是一个自包含的 Go 项目，初始 `go test ./...` 失败，Agent 修复后通过。提供离线验证方式。
+
+### 评估系统
+YAML 定义评估任务，通过 `evals/runner.go` 运行，支持命令退出码、输出模式、文件内容正则、文件修改检测。已集成 CI（`-validate` / `-smoke`）。
+
+### 安全边界
+三层安全模型：审批策略（`on-request`/`always`/`never`）、沙箱（`off`/`best_effort`/`required`）、运行时边界（可写目录、执行白名单、网络白名单）。详见 `bytemind safety explain`。
+
+### CI 与测试
+PR 门禁 CI：`go build ./...`、单元测试 + 覆盖率、Linux/macOS/Windows 沙箱验收、评估冒烟检查。
+
+### 可扩展性
+Skills（可复用工作流）、MCP（外部工具集成）、SubAgents（聚焦委派）。
 
 ---
-
-<a id="功能矩阵"></a>
 
 ## 功能矩阵
 

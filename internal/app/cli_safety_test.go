@@ -86,3 +86,51 @@ func TestRunSafetyExplainWithFlagsAfterSubcommand(t *testing.T) {
 		t.Errorf("expected safety explain output, got %s", output[:60])
 	}
 }
+
+func TestRunSafetyStatusContainsShelAllowlist(t *testing.T) {
+	var stdout bytes.Buffer
+	err := RunSafety([]string{"status"}, &stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "Shell allowlist") {
+		t.Errorf("expected Shell allowlist section, got %s", output[:100])
+	}
+}
+
+func TestRunSafetyStatusContainsAccessSummary(t *testing.T) {
+	var stdout bytes.Buffer
+	err := RunSafety([]string{"status"}, &stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "Access summary") {
+		t.Errorf("expected Access summary section, got %s", output[:100])
+	}
+}
+
+func TestRunSafetyExplainContainsWhatIsNotProtected(t *testing.T) {
+	var stdout bytes.Buffer
+	err := RunSafety([]string{"explain"}, &stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "NOT protected") {
+		t.Errorf("expected 'NOT protected' section, got %s", output[:200])
+	}
+}
+
+func TestRunSafetyExplainContainsEmoji(t *testing.T) {
+	var stdout bytes.Buffer
+	err := RunSafety([]string{"explain"}, &stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "\u2705") {
+		t.Errorf("expected checkmark emoji in safety explain output")
+	}
+}

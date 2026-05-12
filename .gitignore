@@ -16,3 +16,8 @@ demos/
 
 .tmp-gocache/
 output/
+
+coverage
+
+cov
+coverage.out

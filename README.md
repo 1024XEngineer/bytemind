@@ -35,6 +35,8 @@
   <img src="https://img.shields.io/badge/Runtime-Skills%20%7C%20MCP%20%7C%20SubAgents-6d28d9?style=flat-square" alt="Runtime" />
   <a href="https://github.com/1024XEngineer/bytemind/actions"><img src="https://img.shields.io/github/actions/workflow/status/1024XEngineer/bytemind/ci.yml?style=flat-square&logo=github&label=CI" alt="CI" /></a>
   <a href="./evals/README.md"><img src="https://img.shields.io/badge/evals-reproducible-8b5cf6?style=flat-square" alt="Evals" /></a>
+  <a href="./DEMO.md"><img src="https://img.shields.io/badge/demo-5--minute-16a34a?style=flat-square" alt="Demo" /></a>
+  <a href="https://codecov.io/gh/1024XEngineer/bytemind"><img src="https://img.shields.io/codecov/c/github/1024XEngineer/bytemind?style=flat-square&token=&label=coverage" alt="Coverage" /></a>
 </p>
 
 <p align="center">
@@ -174,7 +176,40 @@ go run ./cmd/bytemind run \
 
 **The bug**: `CalculateAverage` returns `NaN` on empty slice (divide by zero).  
 **The fix**: Add a guard clause for `len(nums) == 0`.  
-See [examples/bugfix-demo/](examples/bugfix-demo/README.md) for details and expected output.
+
+**Offline verification** (no API key needed):
+```bash
+go run ./evals/runner.go -smoke -run bugfix_go_001
+```
+
+See [examples/bugfix-demo/](examples/bugfix-demo/README.md) for details, [DEMO.md](DEMO.md) for a judge-facing walkthrough, and [ENGINEERING.md](ENGINEERING.md) for engineering evidence.
+
+---
+
+## Engineering Evidence
+
+ByteMind is built for evaluators who need reproducible, verifiable engineering output.
+
+### Real Agent Loop
+Multi-step tool use with observation feedback, context compaction, rate-limit retry, and execution budgets (`internal/agent/engine_run_loop.go`).
+
+### Coding-native Tools
+14 built-in tools with JSON-structured output — `git_status`, `git_diff`, `run_tests`, file read/search/write/patch, shell execution, and web access. Each tool has unit tests and a safety classification.
+
+### Reproducible Demo
+`examples/bugfix-demo/broken-project` is a self-contained Go project that fails `go test ./...` initially and passes after agent fix. Complete with expected output and offline verification.
+
+### Evaluation System
+YAML-defined eval tasks run via `evals/runner.go` with flexible success criteria: command exit codes, output patterns, file content regex, and file modification detection. CI-integrated with `-validate` and `-smoke` flags.
+
+### Safety Boundary
+Three-layer safety model: approval policy (`on-request`/`always`/`never`), sandbox (`off`/`best_effort`/`required`), and runtime boundaries (writable roots, exec allowlist, network allowlist). See `bytemind safety explain`.
+
+### CI and Testing
+PR-gated CI: `go build ./...`, unit tests with coverage, sandbox acceptance on Linux/macOS/Windows, and eval smoke checks. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+### Extensibility
+Skills, MCP servers, and SubAgents for encoding reusable workflows and delegating focused work.
 
 ---
 

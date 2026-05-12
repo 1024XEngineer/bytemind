@@ -24,6 +24,10 @@
           "gpt-5.4-mini",
           "gpt-5.4"
         ]
+      },
+      "mock": {
+        "type": "mock",
+        "model": "bugfix-demo"
       }
     },
     "health": {

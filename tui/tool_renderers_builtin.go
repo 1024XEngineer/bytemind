@@ -552,10 +552,15 @@ func (runTestsRenderer) Render(payload string) ToolRenderResult {
 		if !result.OK {
 			status = "warn"
 		}
-		lines := make([]string, 0, 4)
+		lines := make([]string, 0, 6)
 		lines = append(lines, "command: "+result.Command)
+		lines = append(lines, fmt.Sprintf("tests: passed=%d failed=%d skipped=%d (%.1fs)", result.Passed, result.Failed, result.Skipped, result.ElapsedS))
 		if firstLine := strings.Split(strings.TrimSpace(result.Stdout), "\n"); len(firstLine) > 0 && firstLine[0] != "" {
-			lines = append(lines, "output: "+compact(strings.Join(firstLine, "\n"), 80))
+			preview := strings.Join(firstLine, "\n")
+			if len(preview) > 80 {
+				preview = preview[:80] + "..."
+			}
+			lines = append(lines, "output: "+preview)
 		}
 		return ToolRenderResult{
 			Summary:     result.Summary,

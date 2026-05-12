@@ -12,6 +12,7 @@ const (
 	ProviderOpenAI    ProviderID = "openai"
 	ProviderAnthropic ProviderID = "anthropic"
 	ProviderGemini    ProviderID = "gemini"
+	ProviderMock      ProviderID = "mock"
 )
 
 type ErrorCode string

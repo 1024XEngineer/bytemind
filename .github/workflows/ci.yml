@@ -49,6 +49,22 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+      - name: Eval validate (verify task definitions)
+        run: go run ./evals/runner.go -validate
+
+      - name: Bugfix demo smoke (verify project structure)
+        run: |
+          echo "=== Verify broken-project structure ==="
+          test -f examples/bugfix-demo/broken-project/calculator.go
+          test -f examples/bugfix-demo/broken-project/calculator_test.go
+          echo "=== Verify broken-project test fails ==="
+          if (cd examples/bugfix-demo/broken-project && go test ./... 2>&1); then
+            echo "FAIL: tests passed but should have failed"
+            exit 1
+          else
+            echo "OK: broken-project tests failed as expected"
+          fi
+
   sandbox-acceptance:
     if: github.event.pull_request.draft == false
     name: Sandbox Acceptance (${{ matrix.os }})
