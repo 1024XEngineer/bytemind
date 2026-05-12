@@ -402,7 +402,7 @@ func TestCheckFileContainsWithSymlinkedPath(t *testing.T) {
 }
 
 func TestRunTasksWithNonexistentBinary(t *testing.T) {
-	tasks := []EvalTask{{ID: "t1", Name: "T", Workspace: ".", Prompt: "p", Success: []Check{{Command: "go version"}}}}
+	tasks := []EvalTask{{ID: "t1", Name: "T", Workspace: ".", Prompt: "p", Success: []Check{{Command: "nonexistent_cmd_xyz"}}}}
 	results := RunTasks("/nonexistent_binary_path", tasks)
 	if len(results) != 1 { t.Fatalf("expected 1 result, got %d", len(results)) }
 	if results[0].Passed { t.Fatalf("expected failure, got passed") }
@@ -418,7 +418,7 @@ func TestRunTasksWithFilesModifiedCheck(t *testing.T) {
 func TestRunTasksWithMultipleChecks(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.go"), []byte("package main"), 0o644)
-	results := RunTasks("/nonexistent", []EvalTask{{ID: "t1", Workspace: dir, Prompt: "p", Success: []Check{{Command: "go version"}, {FileContains: []FileContainsCheck{{Path: "test.go", Pattern: "package main"}}}}}})
+	results := RunTasks("/nonexistent", []EvalTask{{ID: "t1", Workspace: dir, Prompt: "p", Success: []Check{{Command: "nonexistent_cmd"}, {FileContains: []FileContainsCheck{{Path: "test.go", Pattern: "package main"}}}}}})
 	if len(results) != 1 { t.Fatalf("expected 1") }
 }
 
