@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/mention"
 	planpkg "github.com/1024XEngineer/bytemind/internal/plan"
 	"github.com/1024XEngineer/bytemind/internal/session"
 
@@ -44,9 +45,11 @@ func (m model) renderSessionsModal() string {
 		summary := m.sessions[i]
 		prefix := "  "
 		style := lipgloss.NewStyle()
+		wsStyle := mutedStyle
 		if i == m.sessionCursor {
 			prefix = "> "
 			style = style.Foreground(colorAccent).Bold(true)
+			wsStyle = wsStyle.Foreground(colorAccent)
 		}
 		rawCount := summary.RawMessageCount
 		if rawCount == 0 {
@@ -54,7 +57,7 @@ func (m model) renderSessionsModal() string {
 		}
 		line := fmt.Sprintf("%s%s  %s  raw:%d", prefix, summary.ID, summary.UpdatedAt.Local().Format("2006-01-02 15:04"), rawCount)
 		lines = append(lines, style.Render(line))
-		lines = append(lines, mutedStyle.Render("   "+summary.Workspace))
+		lines = append(lines, wsStyle.Render("   "+compact(summary.Workspace, 56)))
 		lines = append(lines, mutedStyle.Render("   "+displaySessionTitle(summary)))
 		lines = append(lines, "")
 	}
@@ -107,6 +110,7 @@ func (m model) handleSessionsModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.statusNote = err.Error()
 		} else {
 			m.sessionsOpen = false
+			return m, m.loadSessionsCmd()
 		}
 	}
 	return m, nil
@@ -174,13 +178,12 @@ func (m *model) resumeSession(prefix string) error {
 	if err != nil {
 		return err
 	}
-	next, err := loadSessionForWorkspace(m.store, m.workspace, id)
+	next, err := m.store.Load(id)
 	if err != nil {
 		return err
 	}
-	if !sameWorkspace(m.workspace, next.Workspace) {
-		return fmt.Errorf("session %s belongs to workspace %s", next.ID, next.Workspace)
-	}
+	m.workspace = next.Workspace
+	m.mentionIndex = mention.NewWorkspaceFileIndex(m.workspace)
 	m.sess = next
 	m.resetSessionApprovalState()
 	m.screen = screenChat
@@ -191,7 +194,7 @@ func (m *model) resumeSession(prefix string) error {
 	m.runIndicatorState = runIndicatorReady
 	m.lastRunDuration = 0
 	m.phase = "idle"
-	m.statusNote = "Resumed session " + shortID(next.ID)
+	m.statusNote = "Resumed session " + shortID(next.ID) + " (" + m.workspace + ")"
 	m.chatAutoFollow = true
 	m.restoreTokenUsageFromSession(next)
 	m.syncTokenUsageComponent()
@@ -251,7 +254,8 @@ func (m *model) reloadSessions() error {
 		m.sessionCursor = 0
 		return nil
 	}
-	summaries, _, err := listSessionsForWorkspace(m.store, m.workspace, sessionListFetchLimit())
+	// List sessions across all workspaces for cross-workspace resume.
+	summaries, _, err := m.store.List(sessionListFetchLimit())
 	if err != nil {
 		return err
 	}

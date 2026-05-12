@@ -64,7 +64,7 @@ func (s *Store) CleanupZeroMessageSessions(workspace, activeSessionID string) (C
 	workspace = strings.TrimSpace(workspace)
 	activeSessionID = strings.TrimSpace(activeSessionID)
 
-	summaries, _, err := s.ListInWorkspace(workspace, 0)
+	summaries, _, err := s.ListInWorkspace(workspace, 500)
 	if err != nil {
 		return result, err
 	}

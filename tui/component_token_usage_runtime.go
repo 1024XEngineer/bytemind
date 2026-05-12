@@ -121,7 +121,8 @@ func (m model) loadSessionsCmd() tea.Cmd {
 		if m.store == nil {
 			return sessionsLoadedMsg{}
 		}
-		summaries, _, err := listSessionsForWorkspace(m.store, m.workspace, sessionListFetchLimit())
+		// List sessions across all workspaces so the user can browse and switch.
+		summaries, _, err := m.store.List(sessionListFetchLimit())
 		return sessionsLoadedMsg{Summaries: summaries, Err: err}
 	}
 }

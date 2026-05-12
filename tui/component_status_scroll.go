@@ -10,9 +10,13 @@ import (
 )
 
 func (m model) renderTopRightCluster(width int) string {
-	parts := make([]string, 0, 2)
+	parts := make([]string, 0, 3)
 	if toast := strings.TrimSpace(m.selectionToast); toast != "" {
 		parts = append(parts, selectionToastStyle.Render(toast))
+	}
+	ws := compact(m.workspace, 28)
+	if ws != "" {
+		parts = append(parts, workspaceBadgeStyle.Render(ws))
 	}
 	if badge := strings.TrimSpace(m.renderTokenBadge(width)); badge != "" {
 		parts = append(parts, badge)
