@@ -23,12 +23,17 @@ func main() {
 	tasks := eval.LoadTasks(*tasksDir)
 
 	if *validate {
-		if len(tasks) == 0 {
+		validTasks, errCount := eval.ValidateTasks(*tasksDir)
+		if errCount > 0 {
+			fmt.Fprintf(os.Stderr, "ERROR: %d task file(s) have parse errors\n", errCount)
+			os.Exit(1)
+		}
+		if len(validTasks) == 0 {
 			fmt.Fprintln(os.Stderr, "ERROR: no valid tasks found in", *tasksDir)
 			os.Exit(1)
 		}
-		fmt.Printf("OK: %d task(s) loaded successfully\n", len(tasks))
-		for _, task := range tasks {
+		fmt.Printf("OK: %d task(s) loaded successfully\n", len(validTasks))
+		for _, task := range validTasks {
 			fmt.Printf("  \u2713 %s (%s)\n", task.ID, task.Name)
 		}
 		return

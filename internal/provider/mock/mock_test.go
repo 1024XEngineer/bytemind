@@ -92,20 +92,20 @@ func CalculateAverage(nums []float64) float64 {
 
 	var args struct {
 		Path      string `json:"path"`
-		OldString string `json:"oldString"`
-		NewString string `json:"newString"`
+		Old string `json:"old"`
+		New string `json:"new"`
 	}
 	if err := json.Unmarshal([]byte(msg.ToolCalls[0].Function.Arguments), &args); err != nil {
 		t.Fatalf("invalid JSON args: %v", err)
 	}
-	if args.OldString == "" {
-		t.Fatal("expected non-empty oldString (should have been read from file)")
+	if args.Old == "" {
+		t.Fatal("expected non-empty old (should have been read from file)")
 	}
-	if !strings.Contains(args.OldString, "return total / float64") {
-		t.Fatalf("oldString should contain the target line, got: %q", args.OldString)
+	if !strings.Contains(args.Old, "return total / float64") {
+		t.Fatalf("old should contain the target line, got: %q", args.Old)
 	}
-	if !strings.Contains(args.NewString, "len(nums) == 0") {
-		t.Fatalf("newString should contain the guard, got: %q", args.NewString)
+	if !strings.Contains(args.New, "len(nums) == 0") {
+		t.Fatalf("new should contain the guard, got: %q", args.New)
 	}
 }
 
@@ -129,14 +129,13 @@ func TestMockProviderDynamicReplaceFileNotFound(t *testing.T) {
 		t.Fatal("expected tool call even with missing file")
 	}
 	var args struct {
-		OldString string `json:"oldString"`
+		Old string `json:"old"`
 	}
 	if err := json.Unmarshal([]byte(msg.ToolCalls[0].Function.Arguments), &args); err != nil {
 		t.Fatalf("invalid JSON args: %v", err)
 	}
-	// When file is not found, oldString should be empty (graceful fallback)
-	if args.OldString != "" {
-		t.Fatalf("expected empty oldString for missing file, got: %q", args.OldString)
+	if args.Old != "" {
+		t.Fatalf("expected empty old for missing file, got: %q", args.Old)
 	}
 }
 
@@ -318,20 +317,20 @@ func TestDynamicReplacePartialMatch(t *testing.T) {
 	}
 
 	var args struct {
-		OldString string `json:"oldString"`
-		NewString string `json:"newString"`
+		Old string `json:"old"`
+		New string `json:"new"`
 	}
 	if err := json.Unmarshal([]byte(msg.ToolCalls[0].Function.Arguments), &args); err != nil {
 		t.Fatalf("invalid JSON args: %v", err)
 	}
-	if args.OldString == "" {
-		t.Fatal("expected non-empty oldString via partial match")
+	if args.Old == "" {
+		t.Fatal("expected non-empty old via partial match")
 	}
-	if !strings.Contains(args.OldString, "return total") {
-		t.Fatalf("expected matched line content, got: %q", args.OldString)
+	if !strings.Contains(args.Old, "return total") {
+		t.Fatalf("expected matched line content, got: %q", args.Old)
 	}
-	if !strings.Contains(args.NewString, "len(nums) == 0") {
-		t.Fatalf("expected guard clause in newString, got: %q", args.NewString)
+	if !strings.Contains(args.New, "len(nums) == 0") {
+		t.Fatalf("expected guard clause in new, got: %q", args.New)
 	}
 }
 
@@ -364,13 +363,13 @@ func main() {}`
 	}
 
 	var args struct {
-		OldString string `json:"oldString"`
+		Old string `json:"old"`
 	}
 	if err := json.Unmarshal([]byte(msg.ToolCalls[0].Function.Arguments), &args); err != nil {
 		t.Fatalf("invalid JSON args: %v", err)
 	}
-	if args.OldString != "" {
-		t.Fatalf("expected empty oldString for no match, got: %q", args.OldString)
+	if args.Old != "" {
+		t.Fatalf("expected empty old for no match, got: %q", args.Old)
 	}
 }
 

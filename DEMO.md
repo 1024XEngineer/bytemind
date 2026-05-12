@@ -42,7 +42,7 @@ go test ./...
 | 2 | `read_file` | `{"path":"calculator.go"}` | Source with `CalculateAverage` and `FindMax` functions |
 | 3 | `read_file` | `{"path":"calculator_test.go"}` | Tests including `TestCalculateAverageEmpty` |
 | 4 | `run_tests` | `{}` | Failing test: `TestCalculateAverageEmpty` returns NaN |
-| 5 | `replace_in_file` | `{"path":"calculator.go","oldString":"return total / float64(len(nums))","newString":"if len(nums) == 0 {\n\t\treturn 0\n\t}\n\treturn total / float64(len(nums))"}` | File updated |
+| 5 | `replace_in_file` | `{"path":"calculator.go","old":"return total / float64(len(nums))","new":"if len(nums) == 0 {\n\t\treturn 0\n\t}\n\treturn total / float64(len(nums))"}` | File updated |
 | 6 | `run_tests` | `{}` | All tests pass (`ok`) |
 | 7 | `git_diff` | `{}` | Unified diff showing the guard clause |
 

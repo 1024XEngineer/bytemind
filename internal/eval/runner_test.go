@@ -114,7 +114,26 @@ func TestLoadTasksSkipsNonYaml(t *testing.T) {
 func TestLoadTasksBadYaml(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "bad.yaml"), []byte("{{ invalid"), 0o644)
-	if len(LoadTasks(dir)) != 0 { t.Fatal("expected 0") }
+	if len(LoadTasks(dir)) != 0 { t.Fatal("expected empty for LoadTasks") }
+	_, errs := ValidateTasks(dir)
+	if errs == 0 { t.Fatal("ValidateTasks should report error for bad YAML") }
+}
+
+func TestValidateTasksMixed(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "good.yaml"), []byte("id: t1\nname: Test\nworkspace: .\nprompt: test"), 0o644)
+	os.WriteFile(filepath.Join(dir, "bad.yaml"), []byte("{{ invalid"), 0o644)
+	tasks, errs := ValidateTasks(dir)
+	if len(tasks) != 1 { t.Fatalf("expected 1 good task, got %d", len(tasks)) }
+	if errs != 1 { t.Fatalf("expected 1 error, got %d", errs) }
+}
+
+func TestValidateTasksAllGood(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "task.yaml"), []byte("id: t1\nname: Test\nworkspace: .\nprompt: test"), 0o644)
+	tasks, errs := ValidateTasks(dir)
+	if len(tasks) != 1 { t.Fatalf("expected 1 task, got %d", len(tasks)) }
+	if errs != 0 { t.Fatalf("expected 0 errors, got %d", errs) }
 }
 
 func TestFilterTasks(t *testing.T) {

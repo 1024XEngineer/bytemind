@@ -92,8 +92,13 @@ func renderSafetyStatus(workspace, configFile string, w io.Writer) error {
 	write("Access summary:")
 	write("  \u2705 Read operations: always allowed")
 	if cfg.ApprovalPolicy == "never" || mode == "full_access" {
-		write("  \u274c Write operations: auto-approved (no prompt)")
-		write("  \u274c Shell execution: auto-approved (no prompt)")
+		if cfg.ApprovalPolicy == "never" {
+			write("  \u274c Write operations: blocked (approval_policy=never denies high-risk tools)")
+			write("  \u274c Shell execution: blocked (approval_policy=never denies high-risk tools)")
+		} else {
+			write("  \u274c Write operations: auto-approved (no prompt)")
+			write("  \u274c Shell execution: auto-approved (no prompt)")
+		}
 	} else {
 		write("  \u2705 Write operations: require confirmation")
 		write("  \u2705 Shell execution: require confirmation")
@@ -124,7 +129,7 @@ func renderSafetyExplain(w io.Writer) error {
 	write("2. Approval Policy (config: approval_policy)")
 	write("   on-request  \u2014 high-risk tools prompt for approval (default)")
 	write("   always      \u2014 all tools require approval")
-	write("   never       \u2014 all tools auto-approved (use with caution)")
+	write("   never       \u2014 high-risk tools are blocked entirely (deny, not auto-approve)")
 	write("")
 	write("3. Approval Mode (config: approval_mode)")
 	write("   interactive \u2014 user sees approval prompts in TUI")

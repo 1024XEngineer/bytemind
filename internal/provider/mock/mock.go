@@ -122,15 +122,18 @@ func (m *MockProvider) makeToolCall(name, args string) llm.Message {
 }
 
 func (m *MockProvider) buildReplaceArgs(r *ReadAndReplaceStep) string {
-	// Read the actual file content and build replace_in_file args dynamically
 	fullPath := r.Path
-	if m.workspace != "" && !filepath.IsAbs(r.Path) {
-		fullPath = filepath.Join(m.workspace, r.Path)
+	ws := m.workspace
+	if ws == "" {
+		ws = os.Getenv("BYTEMIND_MOCK_WORKSPACE")
+	}
+	if ws != "" && !filepath.IsAbs(r.Path) {
+		fullPath = filepath.Join(ws, r.Path)
 	}
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		// Fallback: if file can't be read, return empty replace
-		return fmt.Sprintf(`{"path":"%s","oldString":"","newString":""}`, r.Path)
+		return fmt.Sprintf(`{"path":"%s","old":"","new":""}`, r.Path)
 	}
 	content := string(data)
 	lines := strings.Split(content, "\n")
@@ -155,12 +158,12 @@ func (m *MockProvider) buildReplaceArgs(r *ReadAndReplaceStep) string {
 		}
 	}
 	if oldLine == "" {
-		return fmt.Sprintf(`{"path":"%s","oldString":"","newString":""}`, r.Path)
+		return fmt.Sprintf(`{"path":"%s","old":"","new":""}`, r.Path)
 	}
 
 	oldJSON, _ := json.Marshal(oldLine)
 	newJSON, _ := json.Marshal(r.NewLines)
-	return fmt.Sprintf(`{"path":"%s","oldString":%s,"newString":%s}`, r.Path, string(oldJSON), string(newJSON))
+	return fmt.Sprintf(`{"path":"%s","old":%s,"new":%s}`, r.Path, string(oldJSON), string(newJSON))
 }
 
 func (m *MockProvider) Model() string {
