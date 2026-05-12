@@ -4367,7 +4367,7 @@ func TestCommandPaletteDoesNotExposeSkillAuthor(t *testing.T) {
 	}
 }
 
-func TestFilteredCommandsIncludeSkillSlashCommands(t *testing.T) {
+func TestFilteredCommandsExcludeSkillSlashCommands(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, "internal", "skills", "review"), 0o755); err != nil {
 		t.Fatal(err)
@@ -4405,19 +4405,27 @@ func TestFilteredCommandsIncludeSkillSlashCommands(t *testing.T) {
 	}
 
 	items := m.filteredCommands()
-	found := false
 	for _, item := range items {
-		if item.Name == "review" && item.Usage == "/review" && item.Kind == "skill" {
+		if item.Name == "review" && item.Kind == "skill" {
+			t.Fatalf("skill commands should NOT appear in filtered commands, found %q", item.Name)
+		}
+	}
+
+	m.syncCommandPalette()
+	skills := m.skillPickerItems()
+	found := false
+	for _, s := range skills {
+		if s.Name == "review" && s.Usage == "/review" && s.Kind == "skill" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected /review skill command in filtered commands, got %+v", items)
+		t.Fatal("expected /review skill in skillPickerItems")
 	}
 }
 
-func TestFilteredCommandsIncludeProjectSkillSlashCommands(t *testing.T) {
+func TestFilteredCommandsExcludeProjectSkillSlashCommands(t *testing.T) {
 	workspace := t.TempDir()
 	skillDir := filepath.Join(workspace, ".bytemind", "skills", "review-plus")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
@@ -4459,15 +4467,22 @@ func TestFilteredCommandsIncludeProjectSkillSlashCommands(t *testing.T) {
 	}
 
 	items := m.filteredCommands()
-	found := false
 	for _, item := range items {
-		if item.Name == "review-plus" && item.Usage == "/review-plus" && item.Kind == "skill" {
+		if item.Name == "review-plus" && item.Kind == "skill" {
+			t.Fatalf("skill commands should NOT appear in filtered commands, found %q", item.Name)
+		}
+	}
+
+	skills := m.skillPickerItems()
+	found := false
+	for _, s := range skills {
+		if s.Name == "review-plus" && s.Usage == "/review-plus" && s.Kind == "skill" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected /review-plus project skill command in filtered commands, got %+v", items)
+		t.Fatal("expected /review-plus project skill in skillPickerItems")
 	}
 }
 

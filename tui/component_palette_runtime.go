@@ -221,15 +221,7 @@ func (m model) filteredCommands() []commandItem {
 }
 
 func (m model) commandPaletteItems() []commandItem {
-	items := visibleCommandItems("")
-	skills := m.skillPickerItems()
-	if len(skills) == 0 {
-		return items
-	}
-	merged := make([]commandItem, 0, len(items)+len(skills))
-	merged = append(merged, items...)
-	merged = append(merged, skills...)
-	return merged
+	return visibleCommandItems("")
 }
 
 func (m model) skillPickerItems() []commandItem {
