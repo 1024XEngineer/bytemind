@@ -6,6 +6,7 @@ import (
 
 	"github.com/1024XEngineer/bytemind/internal/config"
 	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/provider/mock"
 )
 
 func NewClient(cfg config.ProviderConfig) (llm.Client, error) {
@@ -43,6 +44,8 @@ func newBaseClientWithProviderID(providerID ProviderID, cfg config.ProviderConfi
 		return NewAnthropic(clientCfg), nil
 	case "gemini":
 		return NewGemini(clientCfg), nil
+	case "mock":
+		return mock.New(cfg.Model), nil
 	default:
 		return nil, fmt.Errorf("unsupported provider type %q", cfg.Type)
 	}
@@ -58,6 +61,9 @@ func NewDomainClient(cfg config.ProviderConfig) (Client, error) {
 	}
 	if providerID == "gemini" {
 		providerID = ProviderGemini
+	}
+	if providerID == "mock" {
+		providerID = ProviderMock
 	}
 	if providerID == "" {
 		providerID = ProviderID("unknown")

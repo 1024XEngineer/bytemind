@@ -215,6 +215,12 @@ func (r *Registry) Get(name string) (ResolvedTool, bool) {
 	return cloneResolvedTool(resolved), true
 }
 
+func (r *Registry) Count() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.tools)
+}
+
 func (r *Registry) List() []ResolvedTool {
 	r.mu.RLock()
 	snapshot := make(map[string]ResolvedTool, len(r.tools))

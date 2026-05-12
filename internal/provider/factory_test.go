@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/1024XEngineer/bytemind/internal/config"
+	"github.com/1024XEngineer/bytemind/internal/llm"
 )
 
 func TestNewClientReturnsOpenAICompatible(t *testing.T) {
@@ -311,6 +312,58 @@ func TestHealthConfigFromRuntime(t *testing.T) {
 	cfg := HealthConfigFromRuntime(config.ProviderHealthRuntimeConfig{FailThreshold: 4, RecoverProbeSec: 12, RecoverSuccessThreshold: 3, WindowSize: 6})
 	if cfg.FailThreshold != 4 || cfg.RecoverProbeSec != 12 || cfg.RecoverSuccessThreshold != 3 || cfg.WindowSize != 6 {
 		t.Fatalf("unexpected health config %#v", cfg)
+	}
+}
+
+func TestNewBaseClientReturnsMock(t *testing.T) {
+	client, err := newBaseClient(config.ProviderConfig{
+		Type:  "mock",
+		Model: "text-only",
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	ctx := context.Background()
+	msg, err := client.CreateMessage(ctx, llm.ChatRequest{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if msg.Content == "" {
+		t.Fatal("expected non-empty mock response")
+	}
+}
+
+func TestNewBaseClientReturnsMockWithBugfixDemoPreset(t *testing.T) {
+	client, err := newBaseClient(config.ProviderConfig{
+		Type:  "mock",
+		Model: "bugfix-demo",
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	ctx := context.Background()
+	msg, err := client.CreateMessage(ctx, llm.ChatRequest{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(msg.ToolCalls) == 0 {
+		t.Fatal("expected tool call in first response of bugfix-demo preset")
+	}
+	if msg.ToolCalls[0].Function.Name != "list_files" {
+		t.Fatalf("expected first tool call to be list_files, got %s", msg.ToolCalls[0].Function.Name)
+	}
+}
+
+func TestNewDomainClientMock(t *testing.T) {
+	client, err := NewDomainClient(config.ProviderConfig{
+		Type:  "mock",
+		Model: "text-only",
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if client.ProviderID() != "mock" {
+		t.Fatalf("expected provider id 'mock', got %q", client.ProviderID())
 	}
 }
 

@@ -43,49 +43,67 @@ func renderSafetyStatus(workspace, configFile string, w io.Writer) error {
 
 	cfg, err := configpkg.Load(workspace, configFile)
 	if err != nil {
-		fmt.Fprintf(w, "  Config error: %v\n", err)
+		write("  Config error: %v", err)
 		cfg = configpkg.Default(workspace)
 	}
 
 	mode, _ := configpkg.NormalizeApprovalMode(cfg.ApprovalMode)
 	write("ByteMind Safety Status")
 	write("")
-	write("  Approval policy: %s", cfg.ApprovalPolicy)
-	write("  Approval mode:   %s", mode)
-	if len(cfg.WritableRoots) == 0 {
-		write("  Writable roots:  none (defaults to workspace only)")
+
+	write("Policy:")
+	if mode == "full_access" {
+		write("  \u274c Approval mode: full_access \u2014 ALL tools approved without prompts")
 	} else {
-		write("  Writable roots:  %s", strings.Join(cfg.WritableRoots, ", "))
+		write("  \u2705 Approval mode: %s", mode)
 	}
-	write("  Shell allowlist:")
-	if len(cfg.ExecAllowlist) == 0 {
-		write("    (none)")
-	} else {
-		for _, rule := range cfg.ExecAllowlist {
-			write("    - %s %s", rule.Command, strings.Join(rule.ArgsPattern, " "))
-		}
-	}
+	write("  \u2705 Approval policy: %s", cfg.ApprovalPolicy)
+
+	write("Boundary:")
 	if cfg.SandboxEnabled {
-		write("  Sandbox:         enabled (%s)", cfg.SystemSandboxMode)
+		write("  \u2705 Sandbox: enabled (%s)", cfg.SystemSandboxMode)
 	} else {
-		write("  Sandbox:         disabled")
+		write("  \u26a0\ufe0f Sandbox: disabled")
+	}
+	if len(cfg.WritableRoots) == 0 {
+		write("  \u26a0\ufe0f Writable roots: none (defaults to workspace only)")
+	} else {
+		write("  \u2705 Writable roots: %s", strings.Join(cfg.WritableRoots, ", "))
 	}
 	if len(cfg.NetworkAllowlist) == 0 {
-		write("  Network access:  restricted (agent-initiated only)")
+		write("  \u26a0\ufe0f Network access: restricted (agent-initiated only)")
 	} else {
 		targets := make([]string, len(cfg.NetworkAllowlist))
 		for i, r := range cfg.NetworkAllowlist {
 			targets[i] = r.Host
 		}
-		write("  Network access:  restricted to %s", strings.Join(targets, ", "))
+		write("  \u26a0\ufe0f Network access: restricted to %s", strings.Join(targets, ", "))
 	}
-	write("  Approval bypass: %s", awayPolicyLabel(cfg.AwayPolicy))
-	write("")
-	write("  Summary:")
-	write("    - Write operations: %s", writeAccessSummary(mode, cfg.ApprovalPolicy))
-	write("    - Shell execution:  %s", writeAccessSummary(mode, cfg.ApprovalPolicy))
-	write("    - Read operations:  always allowed")
-	write("    - Network access:   restricted")
+
+	write("Shell allowlist:")
+	if len(cfg.ExecAllowlist) == 0 {
+		write("  \u26a0\ufe0f (none \u2014 all shell commands require approval)")
+	} else {
+		for _, rule := range cfg.ExecAllowlist {
+			write("  \u2705 %s %s", rule.Command, strings.Join(rule.ArgsPattern, " "))
+		}
+	}
+
+	write("Access summary:")
+	write("  \u2705 Read operations: always allowed")
+	if cfg.ApprovalPolicy == "never" || mode == "full_access" {
+		write("  \u274c Write operations: auto-approved (no prompt)")
+		write("  \u274c Shell execution: auto-approved (no prompt)")
+	} else {
+		write("  \u2705 Write operations: require confirmation")
+		write("  \u2705 Shell execution: require confirmation")
+	}
+	write("  \u26a0\ufe0f Network access: restricted")
+
+	if mode == "full_access" {
+		write("")
+		write("  \u26a0\ufe0f full_access mode bypasses all approval prompts. Recommended for CI/demo only.")
+	}
 	return nil
 }
 
@@ -94,47 +112,52 @@ func renderSafetyExplain(w io.Writer) error {
 		fmt.Fprintf(w, format+"\n", v...)
 	}
 
-	write("ByteMind Safety Model")
-	write("")
-	write("ByteMind uses a layered safety architecture:")
+	write("ByteMind Safety Model \u2014 Layered Safety Architecture")
 	write("")
 	write("1. Tool Safety Classes")
-	write("   Each tool is classified into a safety class:")
-	write("     safe        - read-only, always allowed")
-	write("     moderate    - read-modify, requires policy check")
-	write("     sensitive   - shell execution, requires approval")
-	write("     destructive - file modification, requires approval")
+	write("   Each tool is classified into a safety class in its spec (internal/tools/spec.go):")
+	write("     \u2705 safe        \u2014 read-only, always allowed (e.g. read_file, git_status)")
+	write("     \u26a0\ufe0f moderate   \u2014 read-modify, requires policy check (e.g. replace_in_file)")
+	write("     \u26a0\ufe0f sensitive  \u2014 shell execution, requires approval (e.g. run_shell, run_tests)")
+	write("     \u274c destructive \u2014 file modification, requires approval (e.g. write_file)")
 	write("")
-	write("2. Approval Policy")
-	write("   on-request  - high-risk tools prompt for approval (default)")
-	write("   always      - all tools require approval")
-	write("   never       - all tools auto-approved")
+	write("2. Approval Policy (config: approval_policy)")
+	write("   on-request  \u2014 high-risk tools prompt for approval (default)")
+	write("   always      \u2014 all tools require approval")
+	write("   never       \u2014 all tools auto-approved (use with caution)")
 	write("")
-	write("3. Approval Mode")
-	write("   interactive - user sees approval prompts in TUI")
-	write("   full_access - all tools approved without prompting")
+	write("3. Approval Mode (config: approval_mode)")
+	write("   interactive \u2014 user sees approval prompts in TUI")
+	write("   full_access \u2014 ALL tools approved without prompting. Intended for CI/demo only.")
 	write("")
-	write("4. Sandbox")
-	write("   off         - no sandbox enforcement")
-	write("   best_effort - sandbox if available, fallback otherwise")
-	write("   required    - sandbox mandatory, fail if unavailable")
+	write("4. Sandbox (config: sandbox_enabled / system_sandbox_mode)")
+	write("   off         \u2014 no sandbox enforcement")
+	write("   best_effort \u2014 sandbox if available, fallback otherwise")
+	write("   required    \u2014 sandbox mandatory, fail if unavailable")
 	write("")
-	write("5. Writable Roots")
+	write("5. Writable Roots (config: writable_roots)")
 	write("   Restricts file writes to specific directories.")
 	write("   Default: only the workspace directory.")
+	write("   Empty list = workspace only. Add paths to allow writes elsewhere.")
 	write("")
-	write("6. Shell Allowlist")
-	write("   Commands like 'go test', 'npm test' are low-risk.")
-	write("   Commands like 'rm -rf', 'sudo' require approval.")
-	write("   Unrecognized shell commands require approval.")
+	write("6. Shell Allowlist (config: exec_allowlist)")
+	write("   Known safe commands (e.g. 'go test', 'npm test') run without approval.")
+	write("   Commands like 'rm -rf', 'sudo', or anything not in the allowlist require approval.")
+	write("   Empty allowlist = ALL shell commands require approval.")
 	write("")
-	write("7. Network Allowlist")
-	write("   Controls which external hosts the agent can reach.")
-	write("   Default: restricted (agent-initiated access only).")
+	write("7. Network Allowlist (config: network_allowlist)")
+	write("   Controls which external hosts the agent can reach via web tools.")
+	write("   Default: restricted (agent-initiated access to any host).")
+	write("   Add host patterns to restrict to specific services.")
 	write("")
 	write("8. Mode Authorization")
-	write("   Plan mode: only read-only shell commands permitted.")
-	write("   Build mode: all approved tools available.")
+	write("   Plan mode \u2014 only read-only shell commands permitted. No file modifications.")
+	write("   Build mode \u2014 all approved tools available based on policy.")
+	write("")
+	write("What is NOT protected:")
+	write("  \u2022 The agent runs on your machine with your user privileges.")
+	write("  \u2022 ByteMind does not virtualize or containerize execution (unless sandbox is enabled).")
+	write("  \u2022 full_access mode disables all approval gates \u2014 only use in CI or trusted scenarios.")
 	write("")
 	write("For configuration, see config.example.json or use CLI flags.")
 	return nil
