@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -589,6 +590,42 @@ func TestLoadSessionsCmdScopesToWorkspace(t *testing.T) {
 	}
 }
 
+func TestListSessionsForWorkspaceFallbackBranches(t *testing.T) {
+	summaries, warnings, err := listSessionsForWorkspace(nil, t.TempDir(), 8)
+	if err != nil || summaries != nil || warnings != nil {
+		t.Fatalf("expected nil store to return empty result, got summaries=%#v warnings=%#v err=%v", summaries, warnings, err)
+	}
+
+	workspace := t.TempDir()
+	otherWorkspace := t.TempDir()
+	spy := &listLimitSpyStore{
+		summaries: []session.Summary{
+			{ID: "keep", Workspace: workspace},
+			{ID: "drop", Workspace: otherWorkspace},
+		},
+	}
+	summaries, warnings, err = listSessionsForWorkspace(spy, filepathWithDot(workspace), 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 || len(summaries) != 1 || summaries[0].ID != "keep" {
+		t.Fatalf("expected fallback list to filter current workspace, got summaries=%#v warnings=%#v", summaries, warnings)
+	}
+
+	listErr := errors.New("list failed")
+	spy = &listLimitSpyStore{listErr: listErr}
+	if _, _, err := listSessionsForWorkspace(spy, workspace, 8); !errors.Is(err, listErr) {
+		t.Fatalf("expected fallback list error, got %v", err)
+	}
+}
+
+func TestLoadSessionForWorkspaceFallsBackToPlainLoad(t *testing.T) {
+	spy := &listLimitSpyStore{}
+	if _, err := loadSessionForWorkspace(spy, t.TempDir(), "missing"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected fallback load error, got %v", err)
+	}
+}
+
 func TestReloadSessionsUsesFetchLimit(t *testing.T) {
 	spy := &listLimitSpyStore{
 		summaries: []session.Summary{
@@ -918,4 +955,8 @@ func prepareCleanupSessions(t *testing.T) (*session.Store, string, *session.Sess
 
 func fmtSessionID(i int) string {
 	return fmt.Sprintf("session-%02d", i)
+}
+
+func filepathWithDot(path string) string {
+	return path + string(os.PathSeparator) + "."
 }

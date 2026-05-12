@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -185,6 +186,106 @@ func TestStoreLoadInWorkspaceScopesDuplicateIDs(t *testing.T) {
 	}
 	if loaded.Workspace != otherWorkspace || loaded.Messages[0].Content != "other" {
 		t.Fatalf("expected other workspace session, got %#v", loaded)
+	}
+}
+
+func TestStoreWorkspaceHelpersFallbacksAndErrors(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	sess := New(workspace)
+	sess.ID = "workspace-helper"
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, warnings, err := store.ListInWorkspace("", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 || len(summaries) != 1 || summaries[0].ID != sess.ID {
+		t.Fatalf("expected empty workspace to fall back to full list, got summaries=%#v warnings=%#v", summaries, warnings)
+	}
+
+	loaded, err := store.LoadInWorkspace("", sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ID != sess.ID {
+		t.Fatalf("expected empty workspace to fall back to load, got %#v", loaded)
+	}
+
+	if _, err := store.LoadInWorkspace(workspace, "missing"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected missing workspace session to return not-exist, got %v", err)
+	}
+	if _, err := store.LoadInWorkspace(workspace, "   "); err == nil || !strings.Contains(err.Error(), "session id is required") {
+		t.Fatalf("expected empty session id error, got %v", err)
+	}
+
+	if _, err := store.findSessionSourceInWorkspace("", sess.ID); err != nil {
+		t.Fatalf("expected empty workspace source lookup to fall back, got %v", err)
+	}
+	if _, err := store.findSessionSourceInWorkspace(workspace, "../bad"); err == nil {
+		t.Fatal("expected invalid session id to fail before workspace lookup")
+	}
+	if _, err := store.loadFromSource(sessionSource{kind: sourceKind("unknown")}); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected unknown source kind to return not-exist, got %v", err)
+	}
+}
+
+func TestStoreListInWorkspaceReturnsRootError(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := store.ListInWorkspace(t.TempDir(), 0); err == nil {
+		t.Fatal("expected missing session root to return an error")
+	}
+	if _, err := store.findSessionSourceInWorkspace(t.TempDir(), "missing"); err == nil {
+		t.Fatal("expected missing session root to return a source lookup error")
+	}
+}
+
+func TestStoreSessionSourcesInProjectReturnsReadError(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.sessionSourcesInProject("project", string([]byte{0})); err == nil {
+		t.Fatal("expected invalid project path to return an error")
+	}
+}
+
+func TestStoreSessionRootRequiresConfiguredRoot(t *testing.T) {
+	store := &Store{}
+	if _, err := store.sessionRoot(); err == nil || !strings.Contains(err.Error(), "session root is required") {
+		t.Fatalf("expected missing root error, got %v", err)
+	}
+}
+
+func TestSortSessionSourcesOrdersDuplicateIDsByNewest(t *testing.T) {
+	older := time.Date(2026, 5, 12, 10, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Minute)
+	sources := []sessionSource{
+		{updatedAt: older, paths: sessionPaths{SessionID: "same"}},
+		{updatedAt: newer, paths: sessionPaths{SessionID: "same"}},
+		{updatedAt: newer, paths: sessionPaths{SessionID: "aaa"}},
+	}
+
+	sortSessionSources(sources)
+	if sources[0].paths.SessionID != "aaa" {
+		t.Fatalf("expected different IDs to sort lexically first, got %#v", sources)
+	}
+	if !sources[1].updatedAt.Equal(newer) || !sources[2].updatedAt.Equal(older) {
+		t.Fatalf("expected duplicate IDs to sort newest first, got %#v", sources)
 	}
 }
 
