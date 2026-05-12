@@ -218,17 +218,49 @@ func collectImageAssetIDsFromMessages(messages []llm.Message) []llm.AssetID {
 	return assetIDs
 }
 
-func mediaTypeFromPath(path string) (string, bool) {
+type FileType int
+
+const (
+	FileTypeImage FileType = iota
+	FileTypeText
+	FileTypePDF
+	FileTypeBinary
+	FileTypeUnknown
+)
+
+func classifyFile(path string) (FileType, string) {
 	switch strings.ToLower(strings.TrimPrefix(filepath.Ext(strings.TrimSpace(path)), ".")) {
 	case "png":
-		return "image/png", true
+		return FileTypeImage, "image/png"
 	case "jpg", "jpeg":
-		return "image/jpeg", true
+		return FileTypeImage, "image/jpeg"
 	case "webp":
-		return "image/webp", true
+		return FileTypeImage, "image/webp"
 	case "gif":
-		return "image/gif", true
+		return FileTypeImage, "image/gif"
+	case "bmp":
+		return FileTypeImage, "image/bmp"
+	case "txt", "py", "go", "js", "ts", "java", "c", "cpp", "cs",
+		"rs", "json", "yaml", "yml", "md", "csv", "xml",
+		"html", "css", "scss", "less", "sh", "bash", "bat", "ps1",
+		"toml", "ini", "cfg", "conf", "log", "sql",
+		"rb", "php", "swift", "kt", "kts", "scala",
+		"lua", "r", "m", "mm", "pl", "pm",
+		"hs", "erl", "ex", "exs", "clj", "edn", "dart",
+		"proto", "tf", "hcl", "cmake", "make", "mk",
+		"gradle", "sbt", "dockerfile", "gitignore", "env":
+		return FileTypeText, "text/plain"
+	case "pdf":
+		return FileTypePDF, "application/pdf"
 	default:
-		return "", false
+		return FileTypeUnknown, ""
 	}
+}
+
+func mediaTypeFromPath(path string) (string, bool) {
+	fileType, mime := classifyFile(path)
+	if fileType == FileTypeImage {
+		return mime, true
+	}
+	return "", false
 }
