@@ -64,7 +64,17 @@ func (m *Manager) Reload() Catalog {
 	overrides := make([]Override, 0, 4)
 
 	for _, item := range scopes {
-		skills, skillDiags := loadSkillsFromScope(item.scope, item.dir)
+		var skills []Skill
+		var skillDiags []Diagnostic
+		if item.scope == ScopeBuiltin {
+			if _, err := os.Stat(item.dir); os.IsNotExist(err) {
+				skills, skillDiags = loadBuiltinFromEmbedded(item.scope)
+			} else {
+				skills, skillDiags = loadSkillsFromScope(item.scope, item.dir)
+			}
+		} else {
+			skills, skillDiags = loadSkillsFromScope(item.scope, item.dir)
+		}
 		diags = append(diags, skillDiags...)
 		for _, skill := range skills {
 			prev, exists := loaded[skill.Name]
