@@ -42,27 +42,29 @@ func fetchGeminiContextWindow(ctx context.Context, baseURL, apiKey, modelID stri
 		apiURL += sep + "key=" + apiKey
 	}
 
-	cli := &http.Client{Timeout: 10 * time.Second}
+	return fetchModelInfoWithClient(ctx, defaultHTTPClient, apiURL)
+}
+
+// defaultHTTPClient is exposed as a variable so tests can swap it.
+var defaultHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
+func fetchModelInfoWithClient(ctx context.Context, cli *http.Client, apiURL string) int {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return 0
 	}
-
 	resp, err := cli.Do(req)
 	if err != nil {
 		return 0
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		return 0
 	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return 0
 	}
-
 	var info struct {
 		InputTokenLimit int `json:"inputTokenLimit"`
 	}
