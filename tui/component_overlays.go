@@ -270,6 +270,13 @@ func renderApprovalChoice(label, tone string, selected bool) string {
 	return approvalOptionIdleStyle.Render("  " + label)
 }
 
+var breathBgSequence = []string{
+	"#0F1A28",
+	"#13253B",
+	"#1A2D45",
+	"#13253B",
+}
+
 func (m model) renderActiveSkillBanner() string {
 	if m.sess == nil || m.sess.ActiveSkill == nil {
 		return ""
@@ -293,6 +300,8 @@ func (m model) renderActiveSkillBanner() string {
 		line += " | args: " + strings.Join(pairs, ", ")
 	}
 
+	bg := breathBgSequence[m.breathStep%len(breathBgSequence)]
+	bannerStyle := activeSkillBannerStyle.Copy().Background(lipgloss.Color(bg))
 	width := max(24, m.chatPanelInnerWidth())
-	return activeSkillBannerStyle.Width(width).Render(accentStyle.Render(line))
+	return bannerStyle.Width(width).Render(accentStyle.Render(line))
 }
