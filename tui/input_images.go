@@ -26,6 +26,8 @@ var imagePlaceholderPattern = regexp.MustCompile(`\[Image ?#(\d+)\]`)
 var imageMentionPattern = regexp.MustCompile(`(?i)@([^\s@]+?\.(?:png|jpe?g|webp|gif))`)
 var inlineWindowsImagePathPattern = regexp.MustCompile(`(?i)[a-z]:[\\/][^\r\n\t"'<>|]*?\.(?:png|jpe?g|webp|gif)`)
 var inlineUnixImagePathPattern = regexp.MustCompile(`(?i)/(?:[^\r\n\t"'<>|/]+/)*[^\r\n\t"'<>|/]+\.(?:png|jpe?g|webp|gif)`)
+var inlineWindowsFilePathPattern = regexp.MustCompile(`(?i)[a-z]:[\\/][^\r\n\t"'<>|]*?\.\w{1,10}`)
+var inlineUnixFilePathPattern = regexp.MustCompile(`(?i)/(?:[^\r\n\t"'<>|/]+/)*[^\r\n\t"'<>|/]+\.\w{1,10}`)
 
 type inputMutationClass string
 
@@ -472,6 +474,9 @@ func (m *model) applyWholeInputImagePathFallback(text, source string) (string, s
 	}
 
 	spans := extractInlineImagePathSpans(text)
+	if len(spans) == 0 {
+		spans = extractInlineFilePathSpans(text)
+	}
 	if len(spans) > 0 {
 		return m.applyInlineFilePathSpans(text, 0, 0, text, spans)
 	}
@@ -1223,6 +1228,62 @@ func extractInlineImagePathSpans(chunk string) []imagePathSpan {
 	}
 	appendMatches(inlineWindowsImagePathPattern)
 	appendMatches(inlineUnixImagePathPattern)
+
+	if len(matches) == 0 {
+		return nil
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].Start == matches[j].Start {
+			return matches[i].End < matches[j].End
+		}
+		return matches[i].Start < matches[j].Start
+	})
+	filtered := make([]imagePathSpan, 0, len(matches))
+	lastEnd := -1
+	for _, span := range matches {
+		if span.Start < lastEnd {
+			continue
+		}
+		filtered = append(filtered, span)
+		lastEnd = span.End
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
+}
+
+func extractInlineFilePathSpans(chunk string) []imagePathSpan {
+	chunk = strings.TrimSpace(chunk)
+	if chunk == "" {
+		return nil
+	}
+
+	matches := make([]imagePathSpan, 0, 4)
+	appendMatches := func(pattern *regexp.Regexp) {
+		for _, loc := range pattern.FindAllStringIndex(chunk, -1) {
+			if len(loc) != 2 || loc[1] <= loc[0] {
+				continue
+			}
+			raw := chunk[loc[0]:loc[1]]
+			resolved, err := resolvePath(raw)
+			if err != nil {
+				continue
+			}
+			info, err := os.Stat(resolved)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			matches = append(matches, imagePathSpan{
+				Start: loc[0],
+				End:   loc[1],
+				Path:  resolved,
+			})
+		}
+	}
+	appendMatches(inlineWindowsFilePathPattern)
+	appendMatches(inlineUnixFilePathPattern)
 
 	if len(matches) == 0 {
 		return nil
