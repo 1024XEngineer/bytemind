@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"path/filepath"
+	"path"
 	"strings"
 	"time"
 )
@@ -28,7 +28,7 @@ func loadSkillsFromFS(scope Scope, fsys fs.FS, root string) ([]Skill, []Diagnost
 		if !entry.IsDir() {
 			continue
 		}
-		skillDir := filepath.Join(root, entry.Name())
+		skillDir := path.Join(root, entry.Name())
 		skill, ok, skillDiags := loadSkillFromFSDir(scope, fsys, skillDir, entry.Name())
 		diags = append(diags, skillDiags...)
 		if ok {
@@ -39,8 +39,8 @@ func loadSkillsFromFS(scope Scope, fsys fs.FS, root string) ([]Skill, []Diagnost
 }
 
 func loadSkillFromFSDir(scope Scope, fsys fs.FS, skillDir, dirName string) (Skill, bool, []Diagnostic) {
-	manifestPath := filepath.Join(skillDir, "skill.json")
-	skillPath := filepath.Join(skillDir, "SKILL.md")
+	manifestPath := path.Join(skillDir, "skill.json")
+	skillPath := path.Join(skillDir, "SKILL.md")
 
 	hasManifest := fileExistsFS(fsys, manifestPath)
 	hasSkill := fileExistsFS(fsys, skillPath)

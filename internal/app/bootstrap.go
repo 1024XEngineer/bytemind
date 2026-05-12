@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/provider"
 	runtimepkg "github.com/1024XEngineer/bytemind/internal/runtime"
 	"github.com/1024XEngineer/bytemind/internal/session"
+	skillspkg "github.com/1024XEngineer/bytemind/internal/skills"
 	storagepkg "github.com/1024XEngineer/bytemind/internal/storage"
 	"github.com/1024XEngineer/bytemind/internal/tools"
 )
@@ -150,18 +152,24 @@ func Bootstrap(req BootstrapRequest) (Runtime, error) {
 	)
 	baseExtensions := extensionspkg.NewManager(workspace)
 	extensions := extensionsruntime.NewManager(workspace, req.ConfigPath, baseExtensions, cfg)
+	skillManager := skillspkg.NewManager(workspace)
+	builtinDir := filepath.Join(workspace, "internal", "skills")
+	if _, err := os.Stat(builtinDir); os.IsNotExist(err) {
+		skillManager.UseEmbeddedBuiltins()
+	}
 	runner := agent.NewRunner(agent.Options{
-		Workspace:    workspace,
-		Config:       cfg,
-		Client:       client,
-		Store:        store,
-		Registry:     tools.DefaultRegistry(),
-		TaskManager:  taskManager,
-		Extensions:   extensions,
-		AuditStore:   auditStore,
-		PromptStore:  promptStore,
-		Stdin:        req.Stdin,
-		Stdout:       req.Stdout,
+		Workspace:     workspace,
+		Config:        cfg,
+		Client:        client,
+		Store:         store,
+		Registry:      tools.DefaultRegistry(),
+		TaskManager:   taskManager,
+		Extensions:    extensions,
+		SkillManager:  skillManager,
+		AuditStore:    auditStore,
+		PromptStore:   promptStore,
+		Stdin:         req.Stdin,
+		Stdout:        req.Stdout,
 	})
 
 	return Runtime{

@@ -24,6 +24,8 @@ type Manager struct {
 
 	catalog Catalog
 	lookup  map[string]string
+
+	useEmbeddedBuiltins bool
 }
 
 func NewManager(workspace string) *Manager {
@@ -64,17 +66,7 @@ func (m *Manager) Reload() Catalog {
 	overrides := make([]Override, 0, 4)
 
 	for _, item := range scopes {
-		var skills []Skill
-		var skillDiags []Diagnostic
-		if item.scope == ScopeBuiltin {
-			if _, err := os.Stat(item.dir); os.IsNotExist(err) {
-				skills, skillDiags = loadBuiltinFromEmbedded(item.scope)
-			} else {
-				skills, skillDiags = loadSkillsFromScope(item.scope, item.dir)
-			}
-		} else {
-			skills, skillDiags = loadSkillsFromScope(item.scope, item.dir)
-		}
+		skills, skillDiags := loadSkillsFromScope(item.scope, item.dir)
 		diags = append(diags, skillDiags...)
 		for _, skill := range skills {
 			prev, exists := loaded[skill.Name]
@@ -88,6 +80,18 @@ func (m *Manager) Reload() Catalog {
 				})
 			}
 			loaded[skill.Name] = skill
+		}
+	}
+
+	if m.useEmbeddedBuiltins {
+		if _, err := os.Stat(m.builtinDir); os.IsNotExist(err) {
+			embSkills, embDiags := loadBuiltinFromEmbedded(ScopeBuiltin)
+			diags = append(diags, embDiags...)
+			for _, skill := range embSkills {
+				if _, exists := loaded[skill.Name]; !exists {
+					loaded[skill.Name] = skill
+				}
+			}
 		}
 	}
 
@@ -165,6 +169,12 @@ func (m *Manager) Find(name string) (Skill, bool) {
 		}
 	}
 	return Skill{}, false
+}
+
+func (m *Manager) UseEmbeddedBuiltins() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.useEmbeddedBuiltins = true
 }
 
 func (m *Manager) Workspace() string {
