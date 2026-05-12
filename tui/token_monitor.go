@@ -50,7 +50,7 @@ func newTokenUsageComponent() tokenUsageComponent {
 	simpleRing := readEnvFlag("BYTEMIND_TOKEN_MONITOR_SIMPLE")
 	noBraille := simpleRing || compatRing || readEnvFlag("BYTEMIND_TOKEN_MONITOR_NO_BRAILLE")
 	return tokenUsageComponent{
-		total:        5000,
+		total:        0,
 		ringSegments: 8,
 		simpleRing:   simpleRing,
 		noBraille:    noBraille,

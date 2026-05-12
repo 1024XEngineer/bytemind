@@ -135,7 +135,7 @@ func TestNewModelRestoresTokenBudgetOnFirstRender(t *testing.T) {
 		Session: sess,
 		Config: config.Config{
 			TokenQuota: 12345,
-			Provider:   config.ProviderConfig{Model: "gpt-5.4"},
+			Provider:   config.ProviderConfig{Model: "custom-unknown-model"},
 		},
 		Workspace: t.TempDir(),
 	})
@@ -151,6 +151,30 @@ func TestNewModelRestoresTokenBudgetOnFirstRender(t *testing.T) {
 	}
 	if m.tokenUsage.unavailable {
 		t.Fatal("expected restored session usage to mark token monitor available")
+	}
+}
+
+func TestNewModelUsesContextWindowForKnownModel(t *testing.T) {
+	sess := session.New(t.TempDir())
+	sess.Messages = append(sess.Messages, llm.Message{
+		Role:  llm.RoleAssistant,
+		Usage: &llm.Usage{TotalTokens: 42},
+	})
+
+	m := newModel(Options{
+		Session: sess,
+		Config: config.Config{
+			TokenQuota: 12345,
+			Provider:   config.ProviderConfig{Model: "gpt-5.4"},
+		},
+		Workspace: t.TempDir(),
+	})
+
+	if m.tokenBudget != 1000000 {
+		t.Fatalf("expected context window 1000000 for gpt-5.4, got %d", m.tokenBudget)
+	}
+	if m.tokenUsage.total != 1000000 {
+		t.Fatalf("expected token monitor total to match context window, got %d", m.tokenUsage.total)
 	}
 }
 

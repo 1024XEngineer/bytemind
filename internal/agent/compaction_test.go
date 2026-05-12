@@ -491,24 +491,25 @@ func TestContextBudgetRatiosValidCustom(t *testing.T) {
 
 // --- contextBudgetQuota ---
 
-func TestContextBudgetQuotaDefault(t *testing.T) {
+func TestContextBudgetQuotaUnknownModel(t *testing.T) {
 	r := &Runner{config: config.Config{}}
-	if got := r.contextBudgetQuota(); got != 5000 {
-		t.Fatalf("expected 5000, got %d", got)
+	if got := r.contextBudgetQuota(); got != 0 {
+		t.Fatalf("expected 0 for unknown model, got %d", got)
 	}
 }
 
-func TestContextBudgetQuotaCustom(t *testing.T) {
-	r := &Runner{config: config.Config{TokenQuota: 10000}}
-	if got := r.contextBudgetQuota(); got != 10000 {
-		t.Fatalf("expected 10000, got %d", got)
-	}
-}
-
-func TestContextBudgetQuotaNegative(t *testing.T) {
-	r := &Runner{config: config.Config{TokenQuota: -1}}
-	if got := r.contextBudgetQuota(); got != 5000 {
-		t.Fatalf("expected default 5000 for negative, got %d", got)
+func TestContextBudgetQuotaKnownModel(t *testing.T) {
+	r := &Runner{config: config.Config{
+		ProviderRuntime: config.ProviderRuntimeConfig{
+			DefaultProvider: "openai",
+			DefaultModel:    "gpt-4o",
+			Providers: map[string]config.ProviderConfig{
+				"openai": {Type: "openai", Model: "gpt-4o"},
+			},
+		},
+	}}
+	if got := r.contextBudgetQuota(); got != 128000 {
+		t.Fatalf("expected 128000 for gpt-4o, got %d", got)
 	}
 }
 
