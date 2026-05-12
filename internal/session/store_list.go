@@ -60,17 +60,17 @@ func (s *Store) summariesFromSources(sources []sessionSource, limit int) ([]Summ
 		})
 	}
 
-	// Sort by session UpdatedAt descending (snapshot value or fallback to source file mtime)
+	// Use the max of snapshot UpdatedAt and source file mtime.
+	// snapshot UpdatedAt can lag behind if events were appended after the last snapshot refresh.
+	for i := range metas {
+		snapAt := metas[i].updatedAt
+		mt := metas[i].source.updatedAt
+		if !snapAt.IsZero() && mt.After(snapAt) {
+			metas[i].updatedAt = mt
+		}
+	}
 	sort.Slice(metas, func(i, j int) bool {
-		left := metas[i].updatedAt
-		if left.IsZero() {
-			left = metas[i].source.updatedAt
-		}
-		right := metas[j].updatedAt
-		if right.IsZero() {
-			right = metas[j].source.updatedAt
-		}
-		return left.After(right)
+		return metas[i].updatedAt.After(metas[j].updatedAt)
 	})
 
 	// Phase 2: determine how many to fully replay.
