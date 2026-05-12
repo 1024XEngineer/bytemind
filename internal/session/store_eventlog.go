@@ -188,7 +188,18 @@ func (s *Store) load(sessionID string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.loadFromSource(source)
+}
 
+func (s *Store) loadInWorkspace(workspace, sessionID string) (*Session, error) {
+	source, err := s.findSessionSourceInWorkspace(workspace, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return s.loadFromSource(source)
+}
+
+func (s *Store) loadFromSource(source sessionSource) (*Session, error) {
 	switch source.kind {
 	case sourceKindEvents:
 		state, _, _, err := s.replayFromEventStore(source.paths)

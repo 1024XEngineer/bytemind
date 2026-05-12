@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -560,6 +561,71 @@ func TestLoadSessionsCmdBranches(t *testing.T) {
 	})
 }
 
+func TestLoadSessionsCmdScopesToWorkspace(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	current := session.New(workspace)
+	current.ID = "current-workspace"
+	current.Messages = []llm.Message{llm.NewUserTextMessage("current")}
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	other := session.New(t.TempDir())
+	other.ID = "other-workspace"
+	other.Messages = []llm.Message{llm.NewUserTextMessage("other")}
+	if err := store.Save(other); err != nil {
+		t.Fatal(err)
+	}
+
+	m := model{store: store, workspace: workspace}
+	msg := m.loadSessionsCmd()().(sessionsLoadedMsg)
+	if msg.Err != nil {
+		t.Fatalf("expected loadSessionsCmd success, got err=%v", msg.Err)
+	}
+	if len(msg.Summaries) != 1 || msg.Summaries[0].ID != current.ID {
+		t.Fatalf("expected only current workspace session, got %+v", msg.Summaries)
+	}
+}
+
+func TestListSessionsForWorkspaceFallbackBranches(t *testing.T) {
+	summaries, warnings, err := listSessionsForWorkspace(nil, t.TempDir(), 8)
+	if err != nil || summaries != nil || warnings != nil {
+		t.Fatalf("expected nil store to return empty result, got summaries=%#v warnings=%#v err=%v", summaries, warnings, err)
+	}
+
+	workspace := t.TempDir()
+	otherWorkspace := t.TempDir()
+	spy := &listLimitSpyStore{
+		summaries: []session.Summary{
+			{ID: "keep", Workspace: workspace},
+			{ID: "drop", Workspace: otherWorkspace},
+		},
+	}
+	summaries, warnings, err = listSessionsForWorkspace(spy, filepathWithDot(workspace), 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 || len(summaries) != 1 || summaries[0].ID != "keep" {
+		t.Fatalf("expected fallback list to filter current workspace, got summaries=%#v warnings=%#v", summaries, warnings)
+	}
+
+	listErr := errors.New("list failed")
+	spy = &listLimitSpyStore{listErr: listErr}
+	if _, _, err := listSessionsForWorkspace(spy, workspace, 8); !errors.Is(err, listErr) {
+		t.Fatalf("expected fallback list error, got %v", err)
+	}
+}
+
+func TestLoadSessionForWorkspaceFallsBackToPlainLoad(t *testing.T) {
+	spy := &listLimitSpyStore{}
+	if _, err := loadSessionForWorkspace(spy, t.TempDir(), "missing"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected fallback load error, got %v", err)
+	}
+}
+
 func TestReloadSessionsUsesFetchLimit(t *testing.T) {
 	spy := &listLimitSpyStore{
 		summaries: []session.Summary{
@@ -718,6 +784,44 @@ func TestHandleSessionsModalEnterSuccessClosesModal(t *testing.T) {
 	}
 }
 
+func TestResumeSessionScopesPrefixToWorkspace(t *testing.T) {
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	current := session.New(workspace)
+	current.ID = "current"
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	target := session.New(workspace)
+	target.ID = "resume-current"
+	target.Messages = []llm.Message{llm.NewUserTextMessage("current target")}
+	if err := store.Save(target); err != nil {
+		t.Fatal(err)
+	}
+	other := session.New(t.TempDir())
+	other.ID = "resume-other"
+	other.Messages = []llm.Message{llm.NewUserTextMessage("other target")}
+	if err := store.Save(other); err != nil {
+		t.Fatal(err)
+	}
+
+	m := model{
+		store:     store,
+		workspace: workspace,
+		sess:      current,
+		input:     textarea.New(),
+	}
+	if err := m.resumeSession("resume"); err != nil {
+		t.Fatalf("expected workspace-scoped prefix to resolve, got %v", err)
+	}
+	if m.sess == nil || m.sess.ID != target.ID {
+		t.Fatalf("expected current workspace target to resume, got %#v", m.sess)
+	}
+}
+
 func TestDeleteSelectedSessionAdditionalErrorBranches(t *testing.T) {
 	t.Run("empty list", func(t *testing.T) {
 		m := model{}
@@ -851,4 +955,8 @@ func prepareCleanupSessions(t *testing.T) (*session.Store, string, *session.Sess
 
 func fmtSessionID(i int) string {
 	return fmt.Sprintf("session-%02d", i)
+}
+
+func filepathWithDot(path string) string {
+	return path + string(os.PathSeparator) + "."
 }

@@ -174,7 +174,7 @@ func (m *model) resumeSession(prefix string) error {
 	if err != nil {
 		return err
 	}
-	next, err := m.store.Load(id)
+	next, err := loadSessionForWorkspace(m.store, m.workspace, id)
 	if err != nil {
 		return err
 	}
@@ -251,7 +251,7 @@ func (m *model) reloadSessions() error {
 		m.sessionCursor = 0
 		return nil
 	}
-	summaries, _, err := m.store.List(sessionListFetchLimit())
+	summaries, _, err := listSessionsForWorkspace(m.store, m.workspace, sessionListFetchLimit())
 	if err != nil {
 		return err
 	}
@@ -389,4 +389,43 @@ func sameWorkspace(a, b string) bool {
 		right = b
 	}
 	return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
+}
+
+type workspaceSessionLister interface {
+	ListInWorkspace(workspace string, limit int) ([]session.Summary, []string, error)
+}
+
+type workspaceSessionLoader interface {
+	LoadInWorkspace(workspace, id string) (*session.Session, error)
+}
+
+func listSessionsForWorkspace(store SessionStore, workspace string, limit int) ([]session.Summary, []string, error) {
+	if store == nil {
+		return nil, nil, nil
+	}
+	workspace = strings.TrimSpace(workspace)
+	if workspace != "" {
+		if lister, ok := store.(workspaceSessionLister); ok {
+			return lister.ListInWorkspace(workspace, limit)
+		}
+	}
+
+	summaries, warnings, err := store.List(limit)
+	if err != nil || workspace == "" {
+		return summaries, warnings, err
+	}
+	filtered := make([]session.Summary, 0, len(summaries))
+	for _, summary := range summaries {
+		if sameWorkspace(workspace, summary.Workspace) {
+			filtered = append(filtered, summary)
+		}
+	}
+	return filtered, warnings, nil
+}
+
+func loadSessionForWorkspace(store SessionStore, workspace, id string) (*session.Session, error) {
+	if loader, ok := store.(workspaceSessionLoader); ok && strings.TrimSpace(workspace) != "" {
+		return loader.LoadInWorkspace(workspace, id)
+	}
+	return store.Load(id)
 }

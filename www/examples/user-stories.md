@@ -60,7 +60,7 @@ Use /sessions to view the session list. Sessions auto-persist as JSONL.
 
 ### 1. Switch to Build Mode
 
-Resume with /resume <id>, switch to Build mode:
+Resume with `/resume <id>`, switch to Build mode:
 
 > "Implement the push notification module: APNs and FCM providers, message queue, and retry logic."
 

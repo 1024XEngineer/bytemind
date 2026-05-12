@@ -120,7 +120,7 @@ func (m model) loadSessionsCmd() tea.Cmd {
 		if m.store == nil {
 			return sessionsLoadedMsg{}
 		}
-		summaries, _, err := m.store.List(sessionListFetchLimit())
+		summaries, _, err := listSessionsForWorkspace(m.store, m.workspace, sessionListFetchLimit())
 		return sessionsLoadedMsg{Summaries: summaries, Err: err}
 	}
 }
