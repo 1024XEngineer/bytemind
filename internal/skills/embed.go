@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -201,6 +203,17 @@ func loadSkillFromFSDir(scope Scope, fsys fs.FS, skillDir, dirName string) (Skil
 		skill.Instruction = ""
 	}
 	return skill, true, diags
+}
+
+func HasBuiltinSkills(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(dir, "review", "skill.json"))
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
 }
 
 func fileExistsFS(fsys fs.FS, path string) bool {

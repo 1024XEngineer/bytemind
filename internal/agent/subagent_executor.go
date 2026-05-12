@@ -194,6 +194,7 @@ func (e *defaultSubAgentExecutor) newSubAgentChildRunner(workspace string, maxTu
 		Registry:        r.registry,
 		Executor:        r.executor,
 		PolicyGateway:   r.policyGateway,
+		SkillManager:    r.skillManager,
 		TaskManager:     r.taskManager,
 		Runtime:         r.runtime,
 		Extensions:      r.extensions,

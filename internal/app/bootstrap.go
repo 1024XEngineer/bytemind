@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io"
 	"log"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -153,8 +152,7 @@ func Bootstrap(req BootstrapRequest) (Runtime, error) {
 	baseExtensions := extensionspkg.NewManager(workspace)
 	extensions := extensionsruntime.NewManager(workspace, req.ConfigPath, baseExtensions, cfg)
 	skillManager := skillspkg.NewManager(workspace)
-	builtinDir := filepath.Join(workspace, "internal", "skills")
-	if _, err := os.Stat(builtinDir); os.IsNotExist(err) {
+	if !skillspkg.HasBuiltinSkills(filepath.Join(workspace, "internal", "skills")) {
 		skillManager.UseEmbeddedBuiltins()
 	}
 	runner := agent.NewRunner(agent.Options{
