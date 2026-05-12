@@ -200,6 +200,96 @@ func TestFileExistsFSOnDirectory(t *testing.T) {
 	}
 }
 
+func TestLoadSkillFromFSDirWithSkillOnly(t *testing.T) {
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "noskilljson")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: from-skill\n---\n# Body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skills, diags := loadSkillsFromFS(ScopeBuiltin, os.DirFS(root), ".")
+	if len(skills) != 1 || skills[0].Name != "from-skill" {
+		t.Fatalf("expected skill named from-skill, got %+v", skills)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("expected no diagnostics, got %v", diags)
+	}
+}
+
+func TestLoadSkillFromFSDirWithNameFromDirName(t *testing.T) {
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "dir-name-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "skill.json"), []byte(`{"description":"no name in manifest"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skills, diags := loadSkillsFromFS(ScopeBuiltin, os.DirFS(root), ".")
+	if len(skills) != 1 || skills[0].Name != "dir-name-skill" {
+		t.Fatalf("expected skill name from dir, got %+v", skills)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("expected no diagnostics, got %v", diags)
+	}
+}
+
+func TestLoadSkillFromFSDirWithToolPolicyDiagnostic(t *testing.T) {
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "bad-policy")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "skill.json"), []byte(`{"name":"bad-policy","tools":{"policy":"invalid"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skills, diags := loadSkillsFromFS(ScopeBuiltin, os.DirFS(root), ".")
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skills))
+	}
+	found := false
+	for _, d := range diags {
+		if d.Level == "warn" && d.Skill == "bad-policy" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning diagnostic for invalid tool policy, got %v", diags)
+	}
+}
+
+func TestLoadSkillFromFSDirWithTitle(t *testing.T) {
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "titled")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "skill.json"), []byte(`{"name":"titled","title":"My Title","description":"test"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skills, _ := loadSkillsFromFS(ScopeBuiltin, os.DirFS(root), ".")
+	if len(skills) != 1 || skills[0].Title != "My Title" {
+		t.Fatalf("expected title 'My Title', got %+v", skills)
+	}
+}
+
+func TestLoadSkillFromFSDirWithEntrySlash(t *testing.T) {
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "aliased")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "skill.json"), []byte(`{"name":"aliased","description":"test","entry":{"slash":"custom-slash"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skills, _ := loadSkillsFromFS(ScopeBuiltin, os.DirFS(root), ".")
+	if len(skills) != 1 || skills[0].Entry.Slash != "/custom-slash" {
+		t.Fatalf("expected entry slash '/custom-slash', got %+v", skills[0].Entry)
+	}
+}
+
 func TestUseEmbeddedBuiltinsIsNoopWhenBuiltinDirExists(t *testing.T) {
 	root := t.TempDir()
 	builtinDir := filepath.Join(root, "builtin")
