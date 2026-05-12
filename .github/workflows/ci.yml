@@ -58,7 +58,12 @@ jobs:
           test -f examples/bugfix-demo/broken-project/calculator.go
           test -f examples/bugfix-demo/broken-project/calculator_test.go
           echo "=== Verify broken-project test fails ==="
-          cd examples/bugfix-demo/broken-project && go test ./... 2>&1; STATUS=$?; if [ $STATUS -eq 0 ]; then echo "FAIL: tests passed but should have failed"; exit 1; fi
+          if (cd examples/bugfix-demo/broken-project && go test ./... 2>&1); then
+            echo "FAIL: tests passed but should have failed"
+            exit 1
+          else
+            echo "OK: broken-project tests failed as expected"
+          fi
 
   sandbox-acceptance:
     if: github.event.pull_request.draft == false
