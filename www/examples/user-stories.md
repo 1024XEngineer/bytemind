@@ -1,193 +1,305 @@
-﻿# User Stories
+# ByteMind User Stories
 
-Four end-to-end scenarios covering all of ByteMind's functionality.
-
----
-
-## Story 1: Design — "Creating a Technical Plan for a New Module"
-
-**Role**: A backend engineer who needs to produce a technical plan for a push notification module.
-
-### 1. Install and Onboard
-
-Install ByteMind on Windows:
-
- + '`' + powershell
-iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex
- + '`' + 
-
-Copy the example config, fill in your API key, and add backup providers.
-
-### 2. Launch Plan Mode and Explore
-
- + '`' + ash
-bytemind chat
- + '`' + 
-
-Use  + '/new' +  to create a session,  + '/models' +  to switch models. Press Tab to open the sub-agent panel:
-
- + '`' + 	ext
-@explorer Map all code files and module dependencies related to push notifications.
- + '`' + 
-
-The sub-agent traverses the project with list_files, search_text, and read_file, returning a dependency report.
-
-### 3. Plan Mode: From Exploration to Proposal
-
-Enter /plan:
-
-> "Design a push notification module supporting both APNs and FCM channels."
-
-ByteMind walks through the Plan phase pipeline: explore -> clarify -> draft -> converge_ready -> approved_to_build.
-
-The Plan panel shows step status and risk levels. Context window usage triggers a warning at 85%.
-
-### 4. Load a Skill
-
-Activate the write-rfc skill: /skill write-rfc
-
-### 5. Persistence
-
-Use /sessions to view the session list. Sessions auto-persist as JSONL.
-
-**Covered features**: Run modes (chat/tui, install), Providers (OpenAI-compatible, Anthropic, Gemini, routing, model switching), TUI (Bubble Tea, onboarding, panels, context visualization, autocomplete), Plan mode (phase pipeline, step tracking, risk levels), Tools (list_files, read_file, search_text, web_fetch, web_search), Sub-agents (explorer), Skills (write-rfc), Sessions (JSONL persistence, restore), Context (window budget, alerts), Notifications, Config
+These stories show common combinations of ByteMind's currently implemented capabilities and call out the architecture chain behind each workflow. They are not a complete feature matrix, and they do not promise that every internal module is covered. For complete commands and configuration fields, use the reference pages.
 
 ---
 
-## Story 2: Development — "Building the Push Notification Module"
+## Story 1: Onboard a New Repository
 
-**Role**: After confirming the plan, switch to Build mode to start coding.
+> **Role**: A backend engineer has just inherited a Go project and wants to understand the structure, entry points, and test flow before changing code.
 
-### 1. Switch to Build Mode
+### 1. Configure a Model and Start
 
-Resume with `/resume <id>`, switch to Build mode:
+Create a global config at `~/.bytemind/config.json`. If you want to switch between multiple models, use the current `provider_runtime.providers` object format:
 
-> "Implement the push notification module: APNs and FCM providers, message queue, and retry logic."
+```json
+{
+  "provider_runtime": {
+    "current_provider": "deepseek",
+    "default_provider": "deepseek",
+    "default_model": "deepseek-v4-flash",
+    "providers": {
+      "deepseek": {
+        "type": "openai-compatible",
+        "base_url": "https://api.deepseek.com",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model": "deepseek-v4-flash",
+        "models": ["deepseek-v4-flash", "deepseek-v4-pro"]
+      },
+      "openai": {
+        "type": "openai-compatible",
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "OPENAI_API_KEY",
+        "model": "gpt-5.4-mini",
+        "models": ["gpt-5.4-mini", "gpt-5.4"]
+      }
+    }
+  }
+}
+```
 
-Build mode streams thinking and tool calls in different colors.
+Start ByteMind from the project directory:
 
-### 2. High-Intensity Tool Calling
+```bash
+bytemind
+```
 
-ByteMind orchestrates: write_file, replace_in_file, apply_patch, run_shell. The TUI renders tool output with syntax-highlighted diffs.
+`bytemind chat` and `bytemind tui` are compatibility entry points that open the same interactive TUI.
 
-### 3. Safety Approval and Sandbox
+### 2. Explore Read-Only First
 
-With approval_policy: "on-request", shell commands trigger an approval dialog. Sandbox enforces:
-- File sandbox (writable_roots)
-- Command whitelist (go build/test/mod/vet/fmt)
-- Network sandbox (api.github.com only)
+Start with a bounded prompt:
 
-### 4. Provider Failover
+```text
+Please learn this repository first: map the entry points, main packages, test commands, and configuration loading flow. Do not modify files.
+```
 
-When primary provider returns 503, health checks auto-switch to backup provider. Status bar shows the switch.
+ByteMind can call read-only tools such as `list_files`, `read_file`, and `search_text`. If the task benefits from isolated context, you can explicitly mention the built-in explorer subagent:
 
-### 5. Parallel Sub-agent Acceleration
+```text
+@explorer Locate the configuration loading path, CLI entry point, and test entry points. Return key file paths.
+```
 
-Dispatch general sub-agent in background: @general Write unit tests for push/. Check results with task_output.
+`@explorer` is a delegation hint to the main Agent. When appropriate, the main Agent calls `delegate_subagent` to run the read-only explorer, instead of requiring you to call low-level tools directly.
 
-### 6. Budget Control and Context Compression
+### 3. Use Sessions and Model Switching
 
-After 50+ tool calls, stop summary triggers. Context compression auto-compresses earlier turns. Duplicate call detection catches repeats.
+To switch models, enter:
 
-### 7. Token Usage Monitoring
+```text
+/model
+```
 
-Real-time token monitor shows input/output/total. Alert fires near threshold. Data persisted to SQLite.
+The TUI opens a picker for configured provider/model targets. You can also switch directly with a target such as `/model openai/gpt-5.4`.
 
-**Covered features**: Build mode, yolo, Provider health/failover, Streaming, tool loop, max_iterations, stop summary, duplicate detection, context compression, write_file/replace_in_file/apply_patch/run_shell, Markdown rendering, diff highlighting, approval dialog, background tasks, token monitoring, file/network/command sandbox, worktree isolation
+The conversation is saved automatically. To resume later in the TUI, enter:
+
+```text
+/session
+```
+
+Then select a recent session with the arrow keys and press `Enter`. The TUI does not expose `/resume <id>`; that command is kept for CLI or scripted recovery paths.
+
+### Architecture Chain
+
+TUI input layer -> Session Store -> Agent Runner -> Tool Registry -> Subagent Gateway -> Provider Runtime -> TUI session and tool rendering
+
+| Layer | Capabilities Involved |
+| ---- | --------------------- |
+| User entry | `bytemind`, `/model`, `/session` |
+| Session layer | Session creation, autosave, recent session restore |
+| Agent orchestration | Decide whether to explore directly or delegate to `explorer` |
+| Tool layer | `list_files`, `read_file`, `search_text`, `delegate_subagent` |
+| Provider layer | `provider_runtime` configuration and model switching |
 
 ---
 
-## Story 3: Debugging — "Investigating Push Failure in Production"
+## Story 2: Plan First, Then Execute a Multi-File Change
 
-**Role**: Push module has intermittent failures. Find the root cause.
+> **Role**: The engineer needs to extract token validation logic into a separate package. The change touches multiple call sites, so they want to review the plan before writing files.
 
-### 1. Quick Problem Location
+### 1. Switch to Plan Mode
 
-Resume session: /resume push-module
+In the TUI, press `Tab` to switch between Build and Plan modes. After switching to Plan, enter:
 
-> "Push notifications failing intermittently. Error: 'connection timeout after 30s'."
+```text
+Extract token validation from the auth module into internal/tokenval. First give me a plan with files, risks, and verification commands. Do not write files until I confirm.
+```
 
-ByteMind searches for timeout configs, finds hardcoded 30s in push/apns.go.
+In Plan mode, the Agent explores the relevant code first and then maintains structured steps through `update_plan`. A typical plan includes:
 
-### 2. Deep Investigation: Shell + Web
+- Read the existing auth middleware and tests
+- Design the smallest useful `internal/tokenval` interface
+- Update call sites
+- Add or adjust tests
+- Run `go test ./...`
 
-Runs go test -v -run TestAPNsRetry ./push/..., finds no timeout coverage. Web searches "APNs timeout best practice", fetches Apple docs.
+### 2. Approve the Plan and Enter Build
 
-### 3. Activate Bug Investigation Skill
+After approving the plan, use the on-screen execution action to start implementation. As a compatibility fallback, `start execution` or `continue execution` can also move the current plan into execution.
 
-/skill bug-investigation replaces prompt with bug investigation template. Systematically checks:
-- Reproduction conditions
-- Impact scope
-- Code root cause
-- Config/environment factors
-- Fix plan and regression
+During execution, ByteMind may call `read_file`, `search_text`, `write_file`, `replace_in_file`, `apply_patch`, and `run_shell`. In the default approval mode, file writes and shell commands ask for confirmation. Reads and searches usually run without interruption.
 
-Finds two root causes: hardcoded timeout + retry logic not catching context.DeadlineExceeded.
+### 3. Control Risk with Approval and Rollback
 
-### 4. Fix and Verify
+If ByteMind wants to run:
 
-> "Make timeout configurable (default 60s), fix retry.go context.DeadlineExceeded handling."
+```bash
+go test ./...
+```
 
-ByteMind uses replace_in_file, then go vet and go test -race to verify.
+The TUI shows the command and reason when approval is required. You can approve only this operation, or allow later requests from the same tool during the current TUI session.
 
-**Covered features**: chat TUI, /resume, search_text, read_file, run_shell, replace_in_file, web_search, web_fetch, bug-investigation skill, diff syntax highlighting, mouse/clipboard, command whitelist
+If a file edit goes in the wrong direction, the TUI provides:
+
+```text
+/rollback
+```
+
+It lists file edit snapshots recorded by `write_file`, `replace_in_file`, or `apply_patch`. Use `/rollback last` or a specific operation id to undo a ByteMind-recorded file edit. This is not a Git rollback and does not replace reviewing the diff.
+
+### Architecture Chain
+
+TUI mode state -> Plan State -> `update_plan` -> Agent Runner -> Tool Registry -> Approval/Sandbox -> file edit snapshots -> TUI tool-call rendering
+
+| Layer | Capabilities Involved |
+| ---- | --------------------- |
+| User entry | `Tab` Build / Plan toggle, plan approval, `/rollback` |
+| Plan layer | Structured steps, risks, and verification plan |
+| Tool layer | `read_file`, `search_text`, `write_file`, `replace_in_file`, `apply_patch`, `run_shell` |
+| Safety layer | High-risk tool approval, `exec_allowlist`, sandbox boundaries |
+| Recovery layer | File edit snapshots and rollback |
 
 ---
 
-## Story 4: Code Review — "Reviewing the Push Module PR"
+## Story 3: Investigate a Reproducible Bug
 
-**Role**: A teammate reviews the push module changes with deep analysis.
+> **Role**: A production endpoint intermittently returns 500. The engineer has an error keyword and a short log excerpt, and wants ByteMind to find the root cause and propose the smallest fix.
 
-### 1. Start the Review
+### 1. Choose the Bug Investigation Workflow
 
- + '`' + ash
-bytemind chat
- + '`' + 
+Use the skill picker to choose the built-in Bug Investigation skill:
 
-> "Review this branch against main. Focus on concurrency safety, error handling, resource leaks."
+```text
+/skills-select
+```
 
-### 2. Activate Review Skill + Review Sub-agent
+You can also list currently loaded skills:
 
-/skill review then @review Review all files under push/ for concurrency safety issues.
+```text
+/skills
+```
 
-Sub-agent finds improperly closed channel in push/queue.go causing goroutine leak.
+After activating the skill, enter:
 
-### 3. Per-File Review with MCP Integration
+```text
+Symptom: the order creation endpoint intermittently returns 500, and logs contain "nil pointer in price calculator". Please gather the reproduction path and evidence first, then propose the smallest fix.
+```
 
- + '`' + ash
-bytemind mcp add my-linter -- node ./linter-mcp-server.js
+The skill steers the Agent toward evidence gathering before guessing at a patch.
+
+### 2. Read Code and Run Verification
+
+ByteMind first uses `search_text` to find the error keyword and related call chain, then uses `read_file` to inspect implementation and tests. When verification is needed, it can run a focused command through `run_shell`, for example:
+
+```bash
+go test ./internal/order -run TestCreateOrder
+```
+
+If the command is not covered by `exec_allowlist`, the default flow asks for approval before running it.
+
+### 3. Patch and Re-Test
+
+After confirming the root cause, ask for a narrow fix:
+
+```text
+Only fix the nil pointer issue in the price calculator, and add one unit test that reproduces it. Do not refactor unrelated code.
+```
+
+ByteMind patches only the relevant files and re-runs focused tests. If it reaches `max_iterations`, it outputs a stop summary with completed work, blockers, and recommended next steps instead of silently continuing.
+
+### Architecture Chain
+
+Skill Manager -> Agent Runner -> Tool Registry -> Approval/Sandbox -> Provider Runtime -> Session Store -> TUI result rendering
+
+| Layer | Capabilities Involved |
+| ---- | --------------------- |
+| User entry | `/skills-select`, `/skills`, natural-language symptom |
+| Skill layer | Bug Investigation skill injects the investigation workflow |
+| Agent orchestration | Evidence first, minimal fix, verification loop |
+| Tool layer | `search_text`, `read_file`, `run_shell`, write-capable tools |
+| Budget layer | `max_iterations` limit and stop summary |
+
+---
+
+## Story 4: Review the Current Branch and Commit the Result
+
+> **Role**: A teammate wants to review the current branch against `main`, focusing on regression risk and missing tests.
+
+### 1. Start the Review Workflow
+
+Start ByteMind and describe the review target:
+
+```text
+Review the current branch against main. Prioritize correctness issues, regression risks, and missing tests. Give findings first, and do not modify files.
+```
+
+ByteMind can use `run_shell` for necessary Git information, then `read_file` and `search_text` to inspect relevant code. Review output should lead with concrete issues, file locations, and risk, rather than a broad summary.
+
+If you want read-only review in isolated context, mention the review subagent:
+
+```text
+@review Read-only review the current changes, focusing on concurrency safety and error handling.
+```
+
+The main Agent can call the built-in `review` subagent through `delegate_subagent` when appropriate. The review subagent is read-only and does not modify files.
+
+### 2. Check MCP Status
+
+If the project has MCP servers configured, manage them from the shell:
+
+```bash
 bytemind mcp list
-bytemind mcp health my-linter
- + '`' + 
+bytemind mcp add github --cmd npx --args "-y,@modelcontextprotocol/server-github"
+bytemind mcp test github
+```
 
-MCP tools auto-register. Reviews push/apns.go, push/fcm.go, push/queue.go, push/retry.go.
+In the TUI, inspect current MCP configuration and runtime status:
 
-### 4. Diff Preview and Summary
+```text
+/mcp list
+/mcp show github
+```
 
-diff_preview generates change summary. TUI diff renderer highlights additions/deletions/modifications.
+MCP-provided tools register with stable keys such as `mcp:github:search_code`.
 
-Final report: Critical (goroutine leak, high), Suggestion (timeout config validation, medium), Test coverage (timeout scenarios covered, pass).
+### 3. Create a Local Commit
 
-Session auto-persisted. Use /session for message stats and token consumption.
+After the change has been reviewed and tested, create a local commit from the TUI:
 
-**Covered features**: MCP management (add/list/health), MCP panel, diff renderer, review skill, review sub-agent, diff_preview, JSONL persistence, token display
+```text
+/commit fix(order): guard nil price calculator
+```
+
+ByteMind runs `git add -A`, creates the commit, and reports the commit hash, message, and file count. If the just-created commit needs to be undone, use:
+
+```text
+/undo-commit
+```
+
+This only undoes the last local commit created by `/commit` in the current session, and keeps file changes in the working tree.
+
+### Architecture Chain
+
+TUI input layer -> Skill / subagent hint -> Agent Runner -> Tool Registry / MCP Runtime -> Commit Command -> Session Store
+
+| Layer | Capabilities Involved |
+| ---- | --------------------- |
+| User entry | Review prompt, `@review`, `/mcp list`, `/commit` |
+| Review layer | Review skill or read-only review subagent |
+| Extension layer | MCP configuration, status inspection, external tool registration |
+| Tool layer | `run_shell`, `read_file`, `search_text`, MCP tools |
+| Git layer | Local commit and `/undo-commit` |
 
 ---
 
-## Feature Coverage Overview
+## Common Capabilities Reference
 
-| Module | Story 1 | Story 2 | Story 3 | Story 4 |
-|--------|:---:|:---:|:---:|:---:|
-| Run Modes (chat/tui, run, install, mcp, yolo) | ✅ | ✅ | ✅ | ✅ |
-| Providers (OpenAI, Anthropic, Gemini, routing, failover) | ✅ | ✅ | | |
-| Engine (conversation, streaming, Build/Plan mode, compression) | ✅ | ✅ | ✅ | |
-| Tools (files, search, shell, web, diff) | ✅ | ✅ | ✅ | ✅ |
-| TUI (Bubble Tea, panels, rendering, notifications) | ✅ | ✅ | ✅ | ✅ |
-| Security (approval, sandbox, whitelist, worktree) | | ✅ | ✅ | |
-| Extensions (MCP, Skills, Sub-agents) | ✅ | ✅ | ✅ | ✅ |
-| Plan Mode (pipeline, tracking, risks) | ✅ | | | |
-| Sessions (persistence, restore) | ✅ | ✅ | ✅ | ✅ |
-| Context & Token (budget, compression, monitoring) | ✅ | ✅ | | ✅ |
-| Background Tasks (parallel, timeout) | | ✅ | | |
-| Notifications (desktop, approval) | ✅ | ✅ | | |
-| Config (JSON, env vars, provider_runtime) | ✅ | | | |
+| Scenario | Recommended Entry |
+| ---- | ----------------- |
+| Start an interactive session | `bytemind`, `bytemind chat`, `bytemind tui` |
+| Run a one-shot non-interactive task | `bytemind run -prompt "task"` |
+| Switch Build / Plan | Press `Tab` in the TUI |
+| View and restore sessions | `/session` in the TUI |
+| Start a new session | `/new` in the TUI |
+| Switch models | `/model` or `/model provider/model` in the TUI |
+| View subagents | `/agents` in the TUI |
+| Hint that a subagent should be used | Mention `@explorer` or `@review` in the task |
+| View skills | `/skills` or `/skills-select` in the TUI |
+| Clear the active skill | `/skill clear` in the TUI |
+| Check MCP status | `/mcp list`, `/mcp show <id>` in the TUI |
+| Manage MCP config | `bytemind mcp <list|add|remove|enable|disable|test|reload>` in the shell |
+| Compact a long conversation | `/compact` in the TUI |
+| Roll back ByteMind file edits | `/rollback` in the TUI |
+| Create a local commit | `/commit <message>` in the TUI |
+| Undo the commit created in this session | `/undo-commit` in the TUI |
