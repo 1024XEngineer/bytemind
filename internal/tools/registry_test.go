@@ -24,10 +24,13 @@ func TestDefaultRegistryDefinitionsAreSortedAndComplete(t *testing.T) {
 	want := []string{
 		"apply_patch",
 		"delegate_subagent",
+		"git_diff",
+		"git_status",
 		"list_files",
 		"read_file",
 		"replace_in_file",
 		"run_shell",
+		"run_tests",
 		"search_text",
 		"task_output",
 		"task_stop",

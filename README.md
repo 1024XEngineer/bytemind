@@ -33,6 +33,8 @@
   <img src="https://img.shields.io/badge/Provider-OpenAI--Compatible%20%7C%20Anthropic-334155?style=flat-square" alt="Provider" />
   <img src="https://img.shields.io/badge/Mode-Build%20%7C%20Plan-0f766e?style=flat-square" alt="Mode" />
   <img src="https://img.shields.io/badge/Runtime-Skills%20%7C%20MCP%20%7C%20SubAgents-6d28d9?style=flat-square" alt="Runtime" />
+  <a href="https://github.com/1024XEngineer/bytemind/actions"><img src="https://img.shields.io/github/actions/workflow/status/1024XEngineer/bytemind/ci.yml?style=flat-square&logo=github&label=CI" alt="CI" /></a>
+  <a href="./evals/README.md"><img src="https://img.shields.io/badge/evals-reproducible-8b5cf6?style=flat-square" alt="Evals" /></a>
 </p>
 
 <p align="center">
@@ -150,6 +152,32 @@ bytemind run -prompt "Refactor this module and update tests" -max-iterations 64
 
 ---
 
+## 5-Minute Demo
+
+A reproducible bug-fix cycle that demonstrates ByteMind's full engineering loop:
+
+```bash
+go run ./cmd/bytemind run \
+  -prompt "Fix the failing test and verify it passes" \
+  -workspace examples/bugfix-demo/broken-project \
+  -approval-mode full_access
+```
+
+| Step | Tool | What happens |
+|------|------|-------------|
+| 1 | `list_files` | Reads project structure |
+| 2 | `read_file` | Reads source code and test file |
+| 3 | `run_tests` | Discovers the failing test |
+| 4 | `replace_in_file` | Fixes the divide-by-zero bug |
+| 5 | `run_tests` | Verifies all tests pass |
+| 6 | `git_diff` | Shows the exact change made |
+
+**The bug**: `CalculateAverage` returns `NaN` on empty slice (divide by zero).  
+**The fix**: Add a guard clause for `len(nums) == 0`.  
+See [examples/bugfix-demo/](examples/bugfix-demo/README.md) for details and expected output.
+
+---
+
 ## Terminal Preview
 
 <p align="center">
@@ -169,6 +197,8 @@ bytemind run -prompt "Refactor this module and update tests" -max-iterations 64
 | **Agent Loop** | Multi-step tool use + observations | More than a one-shot reply |
 | **Build / Plan** | Separate planning and execution modes | Better for high-risk changes |
 | **Files** | Read, search, write, replace, patch | Core repository operations |
+| **Git** | `git_status`, `git_diff` | Show working tree status and changes |
+| **Testing** | `run_tests` | Auto-detect and run project tests |
 | **Shell** | Run commands under approval | Keep execution visible and controlled |
 | **Web** | Search and fetch external content | Useful when external context is needed |
 | **Sessions** | Persist and resume tasks | Suitable for long-running work |
@@ -187,6 +217,9 @@ bytemind run -prompt "Refactor this module and update tests" -max-iterations 64
 | `list_files` | Inspect repository structure and candidate file scopes |
 | `read_file` | Read source code, docs, config, and test content |
 | `search_text` | Locate symbols, error messages, or call sites by keyword |
+| `git_status` | Show the working tree status (staged, unstaged, untracked) |
+| `git_diff` | Output a unified diff of the current changes |
+| `run_tests` | Auto-detect and run project tests, return results |
 | `write_file` | Create or fully rewrite files |
 | `replace_in_file` | Make small text replacements in existing files |
 | `apply_patch` | Apply incremental file changes through patches |
@@ -343,7 +376,7 @@ The example below is a **project-level config** and only affects the current wor
 
 ### Skills
 
-The CLI currently exposes reusable workflow helpers through the registered slash commands below.
+Reusable workflow definitions loaded from three scopes (builtin > user > project). Each skill has a slash entry, tool policy, and instruction file. Use the `/skills` and `/skill` commands to list, activate, and manage skills.
 
 ```text
 /help                 Show available commands
@@ -357,6 +390,8 @@ The CLI currently exposes reusable workflow helpers through the registered slash
 /quit                 Exit the CLI
 ```
 
+Built-in skills include bug investigation, GitHub PR review, repository onboarding, code review, RFC writing, and skill creation.
+
 ### MCP
 
 Use MCP to connect ByteMind to external tools and context beyond local repository operations.
@@ -365,11 +400,11 @@ Use MCP to connect ByteMind to external tools and context beyond local repositor
 
 SubAgents provide isolated execution contexts for focused work:
 
-- broad repository discovery
-- file targeting
-- read-only exploration
-- bug scope reduction
-- review / analysis subtasks
+| SubAgent | Tools | Purpose |
+|----------|-------|---------|
+| `explorer` | `list_files`, `read_file`, `search_text` | Read-only repository exploration |
+| `review` | `list_files`, `read_file`, `search_text` | Code review and bug detection |
+| `general` | File tools + edit tools | Multi-step coding tasks |
 
 <p align="center">
   <img src="https://img.shields.io/badge/Skills-Reusable%20workflows-0284c7?style=for-the-badge" alt="Skills" />
@@ -392,22 +427,40 @@ SubAgents provide isolated execution contexts for focused work:
 > ByteMind is designed around a simple principle:<br>
 > **AI can execute, but humans should keep the final control boundary.**
 
+### Safety diagnostics
+
+```bash
+# View current safety configuration
+bytemind safety status
+
+# Understand the safety model
+bytemind safety explain
+
+# Check environment, config, and dependencies
+bytemind doctor
+```
+
 ---
 
 ## Project Structure
 
 ```text
-cmd/bytemind            CLI entrypoint
-internal/app            Application bootstrap
+cmd/bytemind            CLI entrypoint (chat / run / doctor / safety / mcp)
+internal/app            Application bootstrap and CLI dispatch
 internal/agent          Agent loop, prompts, streaming, subagent execution
 internal/config         Config loading, defaults, environment overrides
 internal/llm            Common message and tool types
 internal/provider       Provider adapters and provider runtime
 internal/session        Session persistence
-internal/tools          File / patch / shell / web tools
+internal/tools          Tool registry and 14 built-in tools
 internal/skills         Skills discovery and loading
 internal/subagents      SubAgent manager and preflight gateway
 internal/sandbox        Runtime boundary and sandbox-related logic
+tui/                    Terminal UI (BubbleTea framework)
+examples/bugfix-demo    5-minute reproducible bug-fix demo
+evals/                  Evaluation tasks and runner
+docs/                   Architecture docs, RFCs, PRDs
+scripts/                Cross-platform install scripts
 ```
 
 ---

@@ -51,6 +51,23 @@ bytemind run -prompt "Update the README installation section"
 bytemind run -prompt "Rename Foo to Bar across all Go files" -max-iterations 64
 ```
 
+## `bytemind doctor`
+
+Check the environment, configuration, API key, workspace, and security settings.
+
+```bash
+bytemind doctor [-workspace path]
+```
+
+## `bytemind safety`
+
+View or explain the ByteMind safety model.
+
+```bash
+bytemind safety status         # Show current safety configuration
+bytemind safety explain        # Explain the layered safety model
+```
+
 ## `bytemind --version`
 
 Print the installed version, then exit.
@@ -75,12 +92,10 @@ These are typed inside an active `bytemind` interactive session, not on the shel
 | `/build`                                      | Switch to Build mode                         |
 | `/commit <message>`                           | Stage all current changes and create a local Git commit |
 | `/undo-commit`                                | Undo the last local commit created by `/commit` in this session |
+| `/skills`                                     | List available skills and diagnostics        |
+| `/skill clear`                                | Clear the active skill for this session      |
+| `/skill delete <name>`                        | Delete a project skill                       |
 | `/quit`                                       | Exit safely                                  |
-| `/bug-investigation [symptom="..."]`          | Activate bug investigation skill             |
-| `/review [base_ref=<ref>]`                    | Activate code review skill                   |
-| `/github-pr [pr_number=<n>] [base_ref=<ref>]` | Activate GitHub PR skill                     |
-| `/repo-onboarding`                            | Activate repo onboarding skill               |
-| `/write-rfc [path=<file>]`                    | Activate RFC writing skill                   |
 
 ### `/commit <message>`
 

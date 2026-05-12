@@ -14,6 +14,9 @@ func DefaultUsageLines() []string {
 		"bytemind --yolo [tui flags]",
 		"bytemind install [-to dir] [-name binary-name]",
 		"bytemind mcp <list|add|remove|enable|disable|test|reload> [options]",
+		"bytemind doctor [-workspace path]",
+		"bytemind safety status [-workspace path]",
+		"bytemind safety explain",
 		"tip: install without Go (macOS/Linux): curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash",
 		"tip: install without Go (Windows): iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex",
 	}

@@ -51,6 +51,23 @@ bytemind run -prompt "更新 README 安装章节"
 bytemind run -prompt "全库重命名 Foo 为 Bar" -max-iterations 64
 ```
 
+## `bytemind doctor`
+
+检查环境、配置、API Key、工作区和安全设置。
+
+```bash
+bytemind doctor [-workspace 路径]
+```
+
+## `bytemind safety`
+
+查看或解释 ByteMind 安全模型。
+
+```bash
+bytemind safety status         # 显示当前安全配置
+bytemind safety explain        # 解释安全模型
+```
+
 ## `bytemind --version`
 
 输出已安装的版本后退出。
@@ -75,12 +92,10 @@ bytemind --version
 | `/build`                                      | 切换到 Build 模式            |
 | `/commit <message>`                           | 暂存当前全部改动并创建本地 Git commit |
 | `/undo-commit`                                | 回退当前会话里由 `/commit` 创建的最后一个本地 commit |
+| `/skills`                                     | 列出可用 Skills 和诊断信息    |
+| `/skill clear`                                | 清除当前会话的活跃 Skill      |
+| `/skill delete <name>`                        | 删除项目 Skill                |
 | `/quit`                                       | 安全退出                     |
-| `/bug-investigation [symptom="..."]`          | 激活 Bug 排查技能            |
-| `/review [base_ref=<ref>]`                    | 激活代码审查技能             |
-| `/github-pr [pr_number=<n>] [base_ref=<ref>]` | 激活 GitHub PR 技能          |
-| `/repo-onboarding`                            | 激活仓库入门技能             |
-| `/write-rfc [path=<文件>]`                    | 激活 RFC 撰写技能            |
 
 ### `/commit <message>`
 

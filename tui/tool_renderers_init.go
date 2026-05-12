@@ -11,5 +11,8 @@ func init() {
 	RegisterToolRenderer("update_plan", updatePlanRenderer{})
 	RegisterToolRenderer("web_search", webSearchRenderer{})
 	RegisterToolRenderer("web_fetch", webFetchRenderer{})
+	RegisterToolRenderer("git_status", gitStatusRenderer{})
+	RegisterToolRenderer("git_diff", gitDiffRenderer{})
+	RegisterToolRenderer("run_tests", runTestsRenderer{})
 	RegisterToolRenderer("delegate_subagent", delegateSubAgentRenderer{})
 }

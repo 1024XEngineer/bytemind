@@ -33,6 +33,8 @@
   <img src="https://img.shields.io/badge/Provider-OpenAI--Compatible%20%7C%20Anthropic-334155?style=flat-square" alt="Provider" />
   <img src="https://img.shields.io/badge/Mode-Build%20%7C%20Plan-0f766e?style=flat-square" alt="Mode" />
   <img src="https://img.shields.io/badge/Runtime-Skills%20%7C%20MCP%20%7C%20SubAgents-6d28d9?style=flat-square" alt="Runtime" />
+  <a href="https://github.com/1024XEngineer/bytemind/actions"><img src="https://img.shields.io/github/actions/workflow/status/1024XEngineer/bytemind/ci.yml?style=flat-square&logo=github&label=CI" alt="CI" /></a>
+  <a href="./evals/README.md"><img src="https://img.shields.io/badge/evals-%E5%8F%AF%E5%A4%8D%E7%8E%B0%E8%AF%84%E6%B5%8B-8b5cf6?style=flat-square" alt="Evals" /></a>
 </p>
 
 <p align="center">
@@ -156,6 +158,32 @@ bytemind run -prompt "重构这个模块并更新测试" -max-iterations 64
 
 ---
 
+## 5 分钟演示
+
+一个可复现的 Bug 修复闭环，展示 ByteMind 的完整工程能力：
+
+```bash
+go run ./cmd/bytemind run \
+  -prompt "修复失败的测试并验证它通过" \
+  -workspace examples/bugfix-demo/broken-project \
+  -approval-mode full_access
+```
+
+| 步骤 | 工具 | 内容 |
+|------|------|------|
+| 1 | `list_files` | 读取项目结构 |
+| 2 | `read_file` | 读取源码和测试文件 |
+| 3 | `run_tests` | 发现失败的测试 |
+| 4 | `replace_in_file` | 修复除零 Bug |
+| 5 | `run_tests` | 验证所有测试通过 |
+| 6 | `git_diff` | 展示精确的修改内容 |
+
+**Bug**: `CalculateAverage` 在空切片上除零返回 NaN。  
+**修复**: 添加 `len(nums) == 0` 守卫条件。  
+详见 [examples/bugfix-demo/](examples/bugfix-demo/README.md)。
+
+---
+
 ## 终端预览
 
 <p align="center">
@@ -175,6 +203,8 @@ bytemind run -prompt "重构这个模块并更新测试" -max-iterations 64
 | **Agent Loop** | 多步骤工具调用 + 观察结果 | 不只是一次性问答 |
 | **Build / Plan** | 规划与执行分离 | 更适合高风险改动 |
 | **文件能力** | 读取、搜索、写入、替换、补丁 | 核心仓库操作 |
+| **Git 能力** | `git_status`, `git_diff` | 查看工作区状态和变更 |
+| **测试能力** | `run_tests` | 自动检测并运行项目测试 |
 | **Shell** | 在审批下执行命令 | 让执行过程可控 |
 | **Web** | 搜索和抓取外部内容 | 需要外部上下文时使用 |
 | **会话管理** | 持久化和恢复任务 | 适合长期工作 |
@@ -193,6 +223,9 @@ bytemind run -prompt "重构这个模块并更新测试" -max-iterations 64
 | `list_files` | 检查仓库结构和候选文件范围 |
 | `read_file` | 读取源码、文档、配置和测试内容 |
 | `search_text` | 按关键词定位符号、错误信息或调用点 |
+| `git_status` | 查看工作区状态（暂存、未暂存、未跟踪） |
+| `git_diff` | 输出当前变更的 unified diff |
+| `run_tests` | 自动检测并运行项目测试，返回结果 |
 | `write_file` | 创建或完整写入文件 |
 | `replace_in_file` | 对已有文件做小范围文本替换 |
 | `apply_patch` | 以补丁方式增量修改文件 |
@@ -349,7 +382,7 @@ ByteMind 默认合并三层配置：内置默认值、用户级 `~/.bytemind/con
 
 ### Skills
 
-当前 CLI 通过下列已注册的斜杠命令暴露可复用工作流相关能力。
+可复用工作流定义，从三个作用域加载（builtin > user > project）。通过 `/skills` 和 `/skill` 命令管理。
 
 ```text
 /help                 显示可用命令
@@ -369,13 +402,13 @@ MCP 用于把 ByteMind 连接到本地仓库之外的外部工具和上下文。
 
 ### SubAgents
 
-SubAgents 提供聚焦型隔离执行上下文，适用于：
+SubAgents 提供聚焦型隔离执行上下文：
 
-- 大范围仓库探索
-- 文件定位
-- 只读探索
-- Bug 范围收敛
-- 审查 / 分析子任务
+| SubAgent | 工具 | 用途 |
+|----------|------|------|
+| `explorer` | `list_files`, `read_file`, `search_text` | 只读仓库探索 |
+| `review` | `list_files`, `read_file`, `search_text` | 代码审查和 Bug 检测 |
+| `general` | 文件工具 + 编辑工具 | 多步骤编码任务 |
 
 <p align="center">
   <img src="https://img.shields.io/badge/Skills-可复用工作流-0284c7?style=for-the-badge" alt="Skills" />
@@ -398,6 +431,19 @@ SubAgents 提供聚焦型隔离执行上下文，适用于：
 > ByteMind 的设计原则很简单：<br>
 > **AI 可以执行，但最终控制边界必须掌握在人手里。**
 
+### 安全诊断
+
+```bash
+# 查看当前安全配置
+bytemind safety status
+
+# 了解安全模型
+bytemind safety explain
+
+# 检查环境、配置和依赖
+bytemind doctor
+```
+
 ---
 
 ## 项目结构
@@ -414,6 +460,11 @@ internal/tools          文件 / patch / shell / web 工具
 internal/skills         Skills 发现与加载
 internal/subagents      SubAgent 管理与 preflight gateway
 internal/sandbox        运行边界与沙箱相关逻辑
+tui/                    终端 UI（BubbleTea 框架）
+examples/bugfix-demo    5 分钟可复现 Bug 修复演示
+evals/                  评测任务与运行器
+docs/                   架构文档、RFC、PRD
+scripts/                跨平台安装脚本
 ```
 
 ---

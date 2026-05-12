@@ -11,12 +11,14 @@ type DispatchHandlers struct {
 	RunWorker     func(args []string, stdin io.Reader, stdout, stderr io.Writer) error
 	RunInstall    func(args []string, stdout, stderr io.Writer) error
 	RunMCP        func(args []string, stdin io.Reader, stdout, stderr io.Writer) error
+	RunDoctor     func(args []string, stdout, stderr io.Writer) error
+	RunSafety     func(args []string, stdout, stderr io.Writer) error
 	RenderUsage   func(w io.Writer)
 	RenderVersion func(w io.Writer)
 }
 
 func DispatchCLI(args []string, stdin io.Reader, stdout, stderr io.Writer, handlers DispatchHandlers) error {
-	if handlers.RunTUI == nil || handlers.RunOneShot == nil || handlers.RunWorker == nil || handlers.RunInstall == nil || handlers.RunMCP == nil || handlers.RenderUsage == nil || handlers.RenderVersion == nil {
+	if handlers.RunTUI == nil || handlers.RunOneShot == nil || handlers.RunWorker == nil || handlers.RunInstall == nil || handlers.RunMCP == nil || handlers.RunDoctor == nil || handlers.RunSafety == nil || handlers.RenderUsage == nil || handlers.RenderVersion == nil {
 		return fmt.Errorf("cli dispatch handlers are incomplete")
 	}
 	if len(args) == 0 {
@@ -41,6 +43,10 @@ func DispatchCLI(args []string, stdin io.Reader, stdout, stderr io.Writer, handl
 		return handlers.RunInstall(args[1:], stdout, stderr)
 	case "mcp":
 		return handlers.RunMCP(args[1:], stdin, stdout, stderr)
+	case "doctor":
+		return handlers.RunDoctor(args[1:], stdout, stderr)
+	case "safety":
+		return handlers.RunSafety(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		handlers.RenderUsage(stdout)
 		return nil
