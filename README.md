@@ -366,7 +366,7 @@ The example below is a **project-level config** and only affects the current wor
   },
   "approval_policy": "on-request",
   "approval_mode": "interactive",
-  "max_iterations": 32,
+  "max_iterations": 64,
   "stream": true
 }
 ```

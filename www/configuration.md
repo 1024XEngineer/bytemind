@@ -22,7 +22,7 @@ Works with OpenAI, DeepSeek, Tongyi Qianwen, Azure OpenAI, and other compatible 
     "api_key": "YOUR_API_KEY"
   },
   "approval_policy": "on-request",
-  "max_iterations": 32,
+  "max_iterations": 64,
   "stream": true
 }
 ```
@@ -57,7 +57,7 @@ bytemind
     "anthropic_version": "2023-06-01"
   },
   "approval_policy": "on-request",
-  "max_iterations": 32,
+  "max_iterations": 64,
   "stream": true
 }
 ```
@@ -248,7 +248,7 @@ When the limit is reached, the agent produces a progress summary and stops inste
   },
   "approval_policy": "on-request",
   "approval_mode": "interactive",
-  "max_iterations": 32,
+  "max_iterations": 64,
   "stream": true,
   "update_check": { "enabled": true },
   "context_budget": {

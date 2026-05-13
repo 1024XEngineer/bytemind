@@ -208,7 +208,7 @@ Desktop notification preferences.
 
 | Type    | Default |
 | ------- | ------- |
-| integer | `32`    |
+| integer | `64`    |
 
 Maximum number of tool-call rounds per task. When reached, the agent summarizes progress and stops.
 
@@ -319,7 +319,7 @@ Controls context window management.
       "cooldown_seconds": 3
     }
   },
-  "max_iterations": 32,
+  "max_iterations": 64,
   "stream": true,
   "sandbox_enabled": false,
   "writable_roots": [],
@@ -345,7 +345,7 @@ Controls context window management.
   },
   "approval_policy": "on-request",
   "approval_mode": "interactive",
-  "max_iterations": 32,
+  "max_iterations": 64,
   "stream": true,
   "sandbox_enabled": false,
   "context_budget": {

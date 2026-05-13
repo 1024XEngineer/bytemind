@@ -325,6 +325,13 @@ func (m *model) handleAgentEvent(event Event) {
 		}
 	case EventUsageUpdated:
 		m.applyUsage(event.Usage)
+	case EventStatusUpdated:
+		if content := strings.TrimSpace(event.Content); content != "" {
+			m.statusNote = content
+			m.phase = "thinking"
+			m.llmConnected = true
+			m.lastTokenReceivedAt = time.Now()
+		}
 	case EventRunFinished:
 		if strings.TrimSpace(event.Content) != "" {
 			m.statusNote = "Run finished."
@@ -495,4 +502,3 @@ func (m model) startRunCmd(runCtx context.Context, runID int, prompt RunPromptIn
 		return nil
 	}
 }
-

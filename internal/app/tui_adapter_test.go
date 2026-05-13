@@ -201,6 +201,9 @@ func TestMapAgentEventAndType(t *testing.T) {
 	if got := mapAgentEventType(agent.EventThinkingProgress); got != tui.EventThinkingProgress {
 		t.Fatalf("expected thinking-progress mapping, got %q", got)
 	}
+	if got := mapAgentEventType(agent.EventStatusUpdated); got != tui.EventStatusUpdated {
+		t.Fatalf("expected status-updated mapping, got %q", got)
+	}
 	const unknown = agent.EventType("custom")
 	if got := mapAgentEventType(unknown); got != tui.EventType(unknown) {
 		t.Fatalf("expected fallback mapping for unknown event type, got %q", got)

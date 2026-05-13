@@ -210,7 +210,7 @@ $env:DEEPSEEK_API_KEY = "sk-..."
 
 | 类型    | 默认值 |
 | ------- | ------ |
-| integer | `32`   |
+| integer | `64`   |
 
 单任务最大工具调用轮次。到达上限后 Agent 输出阶段性总结并停止。
 
@@ -321,7 +321,7 @@ $env:DEEPSEEK_API_KEY = "sk-..."
       "cooldown_seconds": 3
     }
   },
-  "max_iterations": 32,
+  "max_iterations": 64,
   "stream": true,
   "sandbox_enabled": false,
   "writable_roots": [],
@@ -347,7 +347,7 @@ $env:DEEPSEEK_API_KEY = "sk-..."
   },
   "approval_policy": "on-request",
   "approval_mode": "interactive",
-  "max_iterations": 32,
+  "max_iterations": 64,
   "stream": true,
   "sandbox_enabled": false,
   "context_budget": {

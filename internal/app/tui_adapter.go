@@ -228,6 +228,8 @@ func mapAgentEventType(value agent.EventType) tui.EventType {
 		return tui.EventRunFinished
 	case agent.EventThinkingProgress:
 		return tui.EventThinkingProgress
+	case agent.EventStatusUpdated:
+		return tui.EventStatusUpdated
 	default:
 		return tui.EventType(value)
 	}

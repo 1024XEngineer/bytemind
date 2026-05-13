@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -138,15 +139,40 @@ func (r *Runner) maybeAutoCompactSession(ctx context.Context, sess *session.Sess
 	if level == budgetNone {
 		return false, nil
 	}
+	r.emitStatus("Context budget is high; compacting long history before continuing...")
 	_, changed, err := r.compactSession(ctx, sess, true, true, string(level))
 	if err != nil {
 		return false, err
+	}
+	if changed {
+		r.emitStatus("Context compacted. Continuing...")
 	}
 	return changed, nil
 }
 
 func (r *Runner) CompactSession(ctx context.Context, sess *session.Session) (string, bool, error) {
 	return r.compactSession(ctx, sess, false, false, "manual")
+}
+
+func (r *Runner) compactSessionForContinuation(ctx context.Context, sess *session.Session, out io.Writer, reason string) {
+	if r == nil || sess == nil || len(sess.Messages) < 2 {
+		return
+	}
+	r.emitStatus("Execution budget reached; compacting context for continuation...")
+	_, changed, err := r.compactSession(ctx, sess, true, true, reason)
+	if err != nil {
+		if out != nil {
+			fmt.Fprintf(out, "%scontext compaction skipped: %v%s\n", ansiDim, err, ansiReset)
+		}
+		r.emitStatus("Context compaction skipped; writing pause summary.")
+		return
+	}
+	if changed {
+		if out != nil {
+			fmt.Fprintf(out, "%scontext compacted for continuation%s\n", ansiDim, ansiReset)
+		}
+		r.emitStatus("Context compacted. Writing pause summary...")
+	}
 }
 
 func (r *Runner) compactSession(ctx context.Context, sess *session.Session, keepLatestUser, pairAware bool, reason string) (string, bool, error) {

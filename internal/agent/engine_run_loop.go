@@ -79,13 +79,14 @@ func (e *defaultEngine) runPromptTurns(ctx context.Context, sess *session.Sessio
 		ExecutedTools: executedToolNames,
 		TaskReport:    taskReport,
 	})
+	runner.compactSessionForContinuation(ctx, sess, out, "execution_budget_exhausted")
 	return e.finishWithSummary(sess, summary, out, false)
 }
 
 const (
-	maxRateLimitRetry      = 8
-	rateLimitBaseDelay     = 3 * time.Second
-	rateLimitMaxDelay      = 60 * time.Second
+	maxRateLimitRetry  = 8
+	rateLimitBaseDelay = 3 * time.Second
+	rateLimitMaxDelay  = 60 * time.Second
 )
 
 func (e *defaultEngine) processTurnWithReactiveCompaction(ctx context.Context, setup runPromptSetup, params turnProcessParams) (string, bool, error) {
@@ -109,6 +110,7 @@ func (e *defaultEngine) processTurnWithReactiveCompaction(ctx context.Context, s
 			}
 			compactionAttempt++
 
+			runner.emitStatus("Context exceeded the model window; compacting and retrying...")
 			_, compacted, compactErr := runner.compactSession(ctx, params.Session, true, true, "reactive_prompt_too_long")
 			if compactErr != nil {
 				return "", false, compactErr
@@ -116,6 +118,7 @@ func (e *defaultEngine) processTurnWithReactiveCompaction(ctx context.Context, s
 			if !compacted {
 				return "", false, err
 			}
+			runner.emitStatus("Context compacted. Retrying request...")
 			if params.Out != nil {
 				fmt.Fprintf(params.Out, "%scontext exceeded model window; compacted and retrying (%d/%d)%s\n", ansiDim, compactionAttempt, maxCompactionRetry, ansiReset)
 			}

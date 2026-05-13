@@ -22,7 +22,7 @@ After you describe a task, the agent calls tools (read files, search code, run c
 | Option                 | Description                        | Default       |
 | ---------------------- | ---------------------------------- | ------------- |
 | `-config <path>`       | Custom config file path            | auto-detected |
-| `-max-iterations <n>`  | Max tool-call turns per task       | 32            |
+| `-max-iterations <n>`  | Max tool-call turns per task       | 64            |
 | `-workspace <path>`    | Workspace directory                | current dir   |
 | `-v`                   | Verbose/debug output               | false         |
 
