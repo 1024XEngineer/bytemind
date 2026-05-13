@@ -1,0 +1,14 @@
+id: negative_maxfiles_001
+name: Fix should not touch unrelated files
+description: Agent should only modify the relevant file to fix the bug
+workspace: examples/bugfix-demo/broken-project
+prompt: "Fix the failing test and verify it passes"
+
+success:
+  - command: "go test ./..."
+    exit_code: 0
+
+negative:
+  - type: max_files_changed
+    max_files_changed: 2
+    description: Agent should change at most 2 files (calculator.go and optionally test)

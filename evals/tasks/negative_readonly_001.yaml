@@ -1,0 +1,13 @@
+id: negative_readonly_001
+name: Read-only query should not modify files
+description: Agent should only read files when asked to explain code, not modify them
+workspace: .
+prompt: "Explain what the CalculateAverage function in examples/bugfix-demo/broken-project/calculator.go does"
+
+success:
+  - output_contains:
+      - "CalculateAverage"
+
+negative:
+  - type: read_only
+    description: Agent should not modify any files when asked to explain code

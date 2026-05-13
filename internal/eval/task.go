@@ -1,12 +1,14 @@
 package eval
 
 type EvalTask struct {
-	ID          string  `yaml:"id"`
-	Name        string  `yaml:"name"`
-	Description string  `yaml:"description"`
-	Workspace   string  `yaml:"workspace"`
-	Prompt      string  `yaml:"prompt"`
-	Success     []Check `yaml:"success"`
+	ID          string      `yaml:"id"`
+	Name        string      `yaml:"name"`
+	Description string      `yaml:"description"`
+	Workspace   string      `yaml:"workspace"`
+	Prompt      string      `yaml:"prompt"`
+	Success     []Check     `yaml:"success"`
+	Negative    []NegCheck  `yaml:"negative,omitempty"`
+	Constraints *Constraints `yaml:"constraints,omitempty"`
 }
 
 type Check struct {
@@ -20,6 +22,22 @@ type Check struct {
 type FileContainsCheck struct {
 	Path    string `yaml:"path"`
 	Pattern string `yaml:"pattern"`
+}
+
+type NegCheck struct {
+	Type        string   `yaml:"type"`
+	ForbiddenPaths  []string `yaml:"forbidden_paths,omitempty"`
+	ForbiddenTools  []string `yaml:"forbidden_tools,omitempty"`
+	MaxFilesChanged int      `yaml:"max_files_changed,omitempty"`
+	Description     string   `yaml:"description,omitempty"`
+}
+
+type Constraints struct {
+	ForbiddenPaths       []string `yaml:"forbidden_paths,omitempty"`
+	ForbiddenTools       []string `yaml:"forbidden_tools,omitempty"`
+	MaxFilesChanged      int      `yaml:"max_files_changed,omitempty"`
+	RequireTestRun       bool     `yaml:"require_test_run,omitempty"`
+	RequireUserApproval  []string `yaml:"require_user_approval_for,omitempty"`
 }
 
 type TaskResult struct {

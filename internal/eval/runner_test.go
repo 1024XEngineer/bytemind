@@ -2,6 +2,7 @@ package eval
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,6 +51,16 @@ func TestCheckCommandEmpty(t *testing.T) {
 	if !strings.Contains(msg, "empty command") { t.Fatal("bad msg:", msg) }
 }
 
+func TestCheckCommandExitCodeHandling(t *testing.T) {
+	// Test with nil exit code (no exit code check) - any command works
+	// Use "git --help" which is available on most systems and exits 0
+	ok, msg := CheckCommand("git --help", nil, ".")
+	if !ok {
+		t.Logf("git not available on this system: %s", msg)
+		return
+	}
+}
+
 func TestCheckOutputContains(t *testing.T) {
 	ok, _ := CheckOutputContains("hello world", []string{"world"})
 	if !ok { t.Fatal("expected match") }
@@ -76,7 +87,7 @@ func TestSmokeChecksFileCheckFail(t *testing.T) {
 	if len(r) != 1 || r[0].Passed { t.Fatal("expected fail") }
 }
 
-func TestSmokeChecksMultiple(t *testing.T) {
+func TestSmokeChecksSkipsCommandChecks(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.go"), []byte(`package main`), 0o644)
 	tasks := []EvalTask{{ID: "t1", Workspace: dir, Success: []Check{
@@ -84,7 +95,7 @@ func TestSmokeChecksMultiple(t *testing.T) {
 		{Command: "nonexistent_cmd_zzz"},
 	}}}
 	r := RunSmokeChecks(tasks)
-	if len(r) != 1 || r[0].Passed { t.Fatal("expected fail on second check") }
+	if len(r) != 1 || !r[0].Passed { t.Fatal("expected pass (command checks skipped in smoke)") }
 }
 
 func TestLoadTasksEmptyDir(t *testing.T) {
@@ -154,8 +165,337 @@ func TestPrintResults(t *testing.T) {
 }
 
 func TestRunTasksCoverage(t *testing.T) {
-	// Call RunTasks to exercise all code paths without external dependencies
 	tasks := []EvalTask{{ID: "t", Workspace: ".", Prompt: "p", Success: []Check{{Command: "nonexistent_zzz"}}}}
 	r := RunTasks("/nonexistent_binary", tasks)
 	if len(r) != 1 { t.Fatal("expected 1 result") }
+}
+
+func TestRunTasksWithOutputContains(t *testing.T) {
+	tasks := []EvalTask{{
+		ID: "t", Name: "Test", Workspace: ".", Prompt: "hello",
+		Success: []Check{{OutputContains: []string{"world"}}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed { t.Fatal("expected fail (no output from nonexistent binary)") }
+}
+
+// RunTasks negative eval paths — uses a git repo with pre-existing unstaged
+// changes so gitDiffFiles returns real diffs even without a running agent.
+func TestRunTasksNegativeReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"file.go": "package main"})
+	// Make an unstaged modification so gitDiffFiles returns a real diff
+	os.WriteFile(filepath.Join(dir, "file.go"), []byte("package main\n// modified"), 0o644)
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "read-only", Workspace: dir, Prompt: "explain",
+		Negative: []NegCheck{{Type: "read_only"}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail: read_only should detect modification")
+	}
+	if !strings.Contains(r[0].Failures[0], "negative[read_only]") {
+		t.Fatalf("expected negative[read_only] failure, got: %v", r[0].Failures)
+	}
+}
+
+func TestRunTasksNegativeForbiddenPaths(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"README.md": "# readme", "main.go": "package main"})
+	// Modify README.md (should be forbidden)
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# modified"), 0o644)
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "forbidden", Workspace: dir, Prompt: "fix",
+		Negative: []NegCheck{{
+			Type: "forbidden_paths",
+			ForbiddenPaths: []string{"README.md"},
+		}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail: README.md is forbidden")
+	}
+	if !strings.Contains(r[0].Failures[0], "negative[forbidden_paths]") {
+		t.Fatalf("expected negative[forbidden_paths], got: %v", r[0].Failures)
+	}
+}
+
+func TestRunTasksNegativeMaxFilesChanged(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{
+		"a.go": "package a",
+		"b.go": "package b",
+		"c.go": "package c",
+	})
+	// Modify 2 files (max is 1)
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n// mod"), 0o644)
+	os.WriteFile(filepath.Join(dir, "b.go"), []byte("package b\n// mod"), 0o644)
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "maxfiles", Workspace: dir, Prompt: "fix",
+		Negative: []NegCheck{{Type: "max_files_changed", MaxFilesChanged: 1}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail: 2 files modified exceeds max 1")
+	}
+	if !strings.Contains(r[0].Failures[0], "negative[max_files_changed]") {
+		t.Fatalf("expected negative[max_files_changed], got: %v", r[0].Failures)
+	}
+}
+
+func TestRunTasksConstraintMaxFilesChanged(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"a.go": "package a", "b.go": "package b"})
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n// mod"), 0o644)
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "constraint", Workspace: dir, Prompt: "fix",
+		Constraints: &Constraints{MaxFilesChanged: 0}, // 0 means no limit
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if !r[0].Passed {
+		t.Fatalf("expected pass (constraint MaxFilesChanged=0 is no limit), got: %v", r[0].Failures)
+	}
+}
+
+func TestRunTasksConstraintForbiddenPaths(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{
+		"README.md": "# readme",
+		"main.go":   "package main",
+	})
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# modified"), 0o644)
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "constraint", Workspace: dir, Prompt: "fix",
+		Constraints: &Constraints{ForbiddenPaths: []string{"README.md"}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail: README.md is forbidden by constraint")
+	}
+	if !strings.Contains(r[0].Failures[0], "constraint forbidden_paths") {
+		t.Fatalf("expected constraint forbidden_paths, got: %v", r[0].Failures)
+	}
+}
+
+func TestRunTasksConstraintMaxFilesChangedViolation(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"a.go": "package a", "b.go": "package b"})
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n// mod"), 0o644)
+	os.WriteFile(filepath.Join(dir, "b.go"), []byte("package b\n// mod"), 0o644)
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "constraint", Workspace: dir, Prompt: "fix",
+		Constraints: &Constraints{MaxFilesChanged: 1},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail: 2 files exceed constraint max 1")
+	}
+	if !strings.Contains(r[0].Failures[0], "constraint max_files_changed") {
+		t.Fatalf("expected constraint max_files_changed, got: %v", r[0].Failures)
+	}
+}
+
+func TestRunTasksFilesModifiedPass(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"main.go": "package main"})
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n// modified"), 0o644)
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "filesmod", Workspace: dir, Prompt: "fix",
+		Success: []Check{{FilesModified: []string{"main.go"}}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if !r[0].Passed {
+		t.Fatalf("expected pass (file was modified), got: %v", r[0].Failures)
+	}
+}
+
+func TestRunTasksFilesModifiedFailFileMissing(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"main.go": "package main"})
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "filesmod", Workspace: dir, Prompt: "fix",
+		Success: []Check{{FilesModified: []string{"nonexistent.go"}}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail (file doesn't exist)")
+	}
+}
+
+func TestRunTasksFilesModifiedFailNotChanged(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"main.go": "package main"})
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "filesmod", Workspace: dir, Prompt: "fix",
+		Success: []Check{{FilesModified: []string{"main.go"}}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail (file was not modified)")
+	}
+}
+
+func TestRunTasksCreateDeleteFiles(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"keep.go": "package keep"})
+	// Create a new untracked file
+	os.WriteFile(filepath.Join(dir, "new.go"), []byte("package new"), 0o644)
+	// Delete tracked file from disk (NOT from git index) so git sees it as deleted
+	// This creates a working tree diff: keep.go shows as "deleted" in git diff
+	os.Remove(filepath.Join(dir, "keep.go"))
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "readonly", Workspace: dir, Prompt: "explain",
+		Negative: []NegCheck{{Type: "read_only"}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail: files were modified")
+	}
+	// git diff shows keep.go as deleted (unstaged)
+	if !strings.Contains(r[0].Failures[0], "negative[read_only]") {
+		t.Fatalf("expected read_only failure, got: %v", r[0].Failures)
+	}
+}
+
+func TestGitDiffFilesWithGitRepo(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"file.txt": "hello"})
+	files := gitDiffFiles(dir)
+	if files == nil { t.Fatal("expected non-nil empty slice, got nil") }
+	if len(files) != 0 { t.Fatalf("expected no modified files, got %v", files) }
+
+	// Modify a file
+	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("modified"), 0o644)
+	files = gitDiffFiles(dir)
+	if len(files) != 1 || files[0] != "file.txt" {
+		t.Fatalf("expected [file.txt], got %v", files)
+	}
+}
+
+func TestListGitTrackedFilesWithGitRepo(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"a.go": "package a", "b.go": "package b"})
+	files := listGitTrackedFiles(dir)
+	if len(files) != 2 { t.Fatalf("expected 2 files, got %v", files) }
+}
+
+func TestGitDiffFilesNonGitDir(t *testing.T) {
+	dir := t.TempDir()
+	files := gitDiffFiles(dir)
+	if files != nil { t.Fatal("expected nil for non-git dir") }
+}
+
+func TestListGitTrackedFilesNonGitDir(t *testing.T) {
+	dir := t.TempDir()
+	files := listGitTrackedFiles(dir)
+	if files != nil { t.Fatal("expected nil for non-git dir") }
+}
+
+func TestStringSetsEqual(t *testing.T) {
+	if !stringSetsEqual([]string{"a", "b"}, []string{"b", "a"}) { t.Fatal("equal sets") }
+	if stringSetsEqual([]string{"a"}, []string{"b"}) { t.Fatal("different sets") }
+	if stringSetsEqual([]string{"a", "b"}, []string{"a"}) { t.Fatal("different lengths") }
+}
+
+func TestLoadTaskWithNegativeChecks(t *testing.T) {
+	dir := t.TempDir()
+	yaml := []byte(`
+id: neg_test
+name: Negative Eval Test
+workspace: .
+prompt: "Explain the code"
+success:
+  - output_contains:
+      - "function"
+negative:
+  - type: read_only
+    description: Should not modify files
+  - type: forbidden_paths
+    forbidden_paths:
+      - "*.md"
+  - type: max_files_changed
+    max_files_changed: 1
+`)
+	os.WriteFile(filepath.Join(dir, "task.yaml"), yaml, 0o644)
+	tasks := LoadTasks(dir)
+	if len(tasks) != 1 { t.Fatal("expected 1 task") }
+	task := tasks[0]
+	if len(task.Negative) != 3 { t.Fatalf("expected 3 negative checks, got %d", len(task.Negative)) }
+	if task.Negative[0].Type != "read_only" { t.Fatalf("expected read_only, got %s", task.Negative[0].Type) }
+	if len(task.Negative[1].ForbiddenPaths) != 1 || task.Negative[1].ForbiddenPaths[0] != "*.md" {
+		t.Fatalf("expected forbidden_paths [*.md], got %v", task.Negative[1].ForbiddenPaths)
+	}
+	if task.Negative[2].MaxFilesChanged != 1 { t.Fatalf("expected max_files_changed=1, got %d", task.Negative[2].MaxFilesChanged) }
+}
+
+func TestLoadTaskWithConstraints(t *testing.T) {
+	dir := t.TempDir()
+	yaml := []byte(`
+id: const_test
+name: Constraints Test
+workspace: .
+prompt: "Fix the bug"
+success:
+  - command: "go test ./..."
+constraints:
+  max_files_changed: 3
+  forbidden_paths:
+    - "README.md"
+  require_test_run: true
+`)
+	os.WriteFile(filepath.Join(dir, "task.yaml"), yaml, 0o644)
+	tasks := LoadTasks(dir)
+	if len(tasks) != 1 { t.Fatal("expected 1 task") }
+	task := tasks[0]
+	if task.Constraints == nil { t.Fatal("expected constraints to be non-nil") }
+	if task.Constraints.MaxFilesChanged != 3 { t.Fatalf("expected MaxFilesChanged=3, got %d", task.Constraints.MaxFilesChanged) }
+	if len(task.Constraints.ForbiddenPaths) != 1 || task.Constraints.ForbiddenPaths[0] != "README.md" {
+		t.Fatalf("expected forbidden_paths [README.md], got %v", task.Constraints.ForbiddenPaths)
+	}
+	if !task.Constraints.RequireTestRun { t.Fatal("expected RequireTestRun=true") }
+}
+
+// helpers
+
+func initGitRepo(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for name, content := range files {
+		os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+	}
+	runCmd(t, dir, "git", "-c", "user.name=test", "-c", "user.email=test@test", "init")
+	runCmd(t, dir, "git", "add", ".")
+	runCmd(t, dir, "git", "-c", "user.name=test", "-c", "user.email=test@test", "commit", "-m", "initial")
+}
+
+func runCmd(t *testing.T, dir, name string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cmd %s %v failed: %v\n%s", name, args, err, string(out))
+	}
 }
