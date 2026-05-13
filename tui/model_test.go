@@ -3367,8 +3367,8 @@ func TestShortBracketedPastePayloadKeepsTrailingNewlineBoundary(t *testing.T) {
 	}
 	got, _ = updated.Update(pasteFinalizeMsg{ID: updated.pasteSession.finalizeID})
 	finalized := got.(model)
-	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(finalized.input.Value()) {
-		t.Fatalf("expected short multiline paste payload to finalize into marker, got %q", finalized.input.Value())
+	if finalized.input.Value() != "# title" {
+		t.Fatalf("expected short paste payload to trim trailing newline and keep literal text, got %q", finalized.input.Value())
 	}
 }
 func TestRapidBareEnterAfterRecentBurstIsTreatedAsPasteContinuation(t *testing.T) {
