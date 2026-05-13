@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	corepkg "github.com/1024XEngineer/bytemind/internal/core"
@@ -27,4 +28,12 @@ func (r *Runner) emit(event Event) {
 		return
 	}
 	r.observer.HandleEvent(event)
+}
+
+func (r *Runner) emitStatus(content string) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return
+	}
+	r.emit(Event{Type: EventStatusUpdated, Content: content})
 }

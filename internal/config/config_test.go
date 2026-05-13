@@ -52,8 +52,8 @@ func TestLoadUsesEnvOverrides(t *testing.T) {
 	if cfg.Stream {
 		t.Fatalf("expected stream override to disable streaming")
 	}
-	if cfg.MaxIterations != 32 {
-		t.Fatalf("expected default max iterations 32, got %d", cfg.MaxIterations)
+	if cfg.MaxIterations != DefaultMaxIterations {
+		t.Fatalf("expected default max iterations %d, got %d", DefaultMaxIterations, cfg.MaxIterations)
 	}
 	if cfg.Provider.ResolveAPIKey() != "secret" {
 		t.Fatalf("expected api key from env")
@@ -156,6 +156,31 @@ func TestLoadIgnoresInvalidTokenQuotaEnv(t *testing.T) {
 	}
 	if cfg.TokenQuota != DefaultTokenQuota {
 		t.Fatalf("expected invalid token quota to fall back to default %d, got %d", DefaultTokenQuota, cfg.TokenQuota)
+	}
+}
+
+func TestEnsureDefaultConfigFileUsesDefaultBudgets(t *testing.T) {
+	home := t.TempDir()
+	if err := ensureDefaultConfigFile(home); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		MaxIterations int `json:"max_iterations"`
+		TokenQuota    int `json:"token_quota"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw.MaxIterations != DefaultMaxIterations {
+		t.Fatalf("expected default max iterations %d, got %d", DefaultMaxIterations, raw.MaxIterations)
+	}
+	if raw.TokenQuota != DefaultTokenQuota {
+		t.Fatalf("expected default token quota %d, got %d", DefaultTokenQuota, raw.TokenQuota)
 	}
 }
 
@@ -264,7 +289,6 @@ func TestLoadUsesUpdateCheckEnvOverride(t *testing.T) {
 		t.Fatalf("expected BYTEMIND_UPDATE_CHECK=false to disable update checks")
 	}
 }
-
 
 func TestLoadAppliesContextBudgetDefaultsWhenMissing(t *testing.T) {
 	workspace := t.TempDir()

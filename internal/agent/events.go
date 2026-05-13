@@ -18,6 +18,7 @@ const (
 	EventUsageUpdated      EventType = "usage_updated"
 	EventRunFinished       EventType = "run_finished"
 	EventThinkingProgress  EventType = "thinking_progress"
+	EventStatusUpdated     EventType = "status_updated"
 )
 
 type Event struct {

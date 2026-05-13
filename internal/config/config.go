@@ -27,6 +27,7 @@ const (
 
 const (
 	DefaultTokenQuota                    = 0
+	DefaultMaxIterations                 = 64
 	DefaultContextBudgetWarningRatio     = 0.85
 	DefaultContextBudgetCriticalRatio    = 0.95
 	DefaultContextBudgetMaxReactiveRetry = 1
@@ -76,8 +77,6 @@ type ProviderConfig struct {
 	ExtraHeaders     map[string]string `json:"extra_headers"`
 	AnthropicVersion string            `json:"anthropic_version"`
 }
-
-
 
 type ContextBudgetConfig struct {
 	WarningRatio     float64 `json:"warning_ratio"`
@@ -203,7 +202,7 @@ func Default(workspace string) Config {
 				CooldownSeconds:    3,
 			},
 		},
-		MaxIterations: 32,
+		MaxIterations: DefaultMaxIterations,
 		Stream:        true,
 		UpdateCheck: UpdateCheckConfig{
 			Enabled: true,
@@ -401,7 +400,7 @@ func ensureDefaultConfigFile(home string) error {
 				CooldownSeconds:    3,
 			},
 		},
-		MaxIterations: 32,
+		MaxIterations: DefaultMaxIterations,
 		Stream:        true,
 		UpdateCheck: UpdateCheckConfig{
 			Enabled: true,
@@ -905,7 +904,7 @@ func normalize(cfg *Config) error {
 		cfg.Provider.ExtraHeaders[key] = trimmedValue
 	}
 	if cfg.MaxIterations <= 0 {
-		cfg.MaxIterations = 32
+		cfg.MaxIterations = DefaultMaxIterations
 	}
 	if !isSupportedProviderType(cfg.Provider.Type) {
 		return errors.New("provider.type must be one of openai-compatible, openai, anthropic, gemini (or leave it empty with provider.auto_detect_type=true)")

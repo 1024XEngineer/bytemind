@@ -858,6 +858,27 @@ func TestHandleAgentEventRunFinishedSetsIdle(t *testing.T) {
 	}
 }
 
+func TestHandleAgentEventStatusUpdatedShowsProgress(t *testing.T) {
+	m := model{
+		phase:        "responding",
+		llmConnected: false,
+	}
+	m.handleAgentEvent(Event{Type: EventStatusUpdated, Content: "Compacting context..."})
+
+	if m.statusNote != "Compacting context..." {
+		t.Fatalf("expected status note update, got %q", m.statusNote)
+	}
+	if m.phase != "thinking" {
+		t.Fatalf("expected thinking phase, got %q", m.phase)
+	}
+	if !m.llmConnected {
+		t.Fatal("expected llmConnected=true")
+	}
+	if m.lastTokenReceivedAt.IsZero() {
+		t.Fatal("expected activity timestamp to update")
+	}
+}
+
 func TestHandleAgentEventRunStartedResetsEstimatedOutput(t *testing.T) {
 	m := model{
 		tempEstimatedOutput: 500,
@@ -945,7 +966,7 @@ func TestHandleAgentEventPlanUpdatedCopiesPlan(t *testing.T) {
 
 func TestHandleAgentEventThinkingProgressCreatesThinkingCard(t *testing.T) {
 	m := model{
-		phase:  "thinking",
+		phase:   "thinking",
 		spinner: spinner.New(),
 	}
 	m.handleAgentEvent(Event{
@@ -981,7 +1002,7 @@ func TestHandleAgentEventThinkingProgressCreatesThinkingCard(t *testing.T) {
 
 func TestHandleAgentEventThinkingProgressInactiveRemovesNote(t *testing.T) {
 	m := model{
-		phase:                  "thinking",
+		phase:                   "thinking",
 		reasoningProgressActive: true,
 		spinner:                 spinner.New(),
 	}
@@ -1004,7 +1025,7 @@ func TestHandleAgentEventThinkingProgressInactiveRemovesNote(t *testing.T) {
 
 func TestHandleAgentEventAssistantDeltaClearsReasoningProgress(t *testing.T) {
 	m := model{
-		phase:                  "thinking",
+		phase:                   "thinking",
 		reasoningProgressActive: true,
 	}
 	m.handleAgentEvent(Event{Type: EventAssistantDelta, Content: "Here is the answer."})
@@ -1019,7 +1040,7 @@ func TestHandleAgentEventAssistantDeltaClearsReasoningProgress(t *testing.T) {
 
 func TestHandleAgentEventToolCallStartedClearsReasoningProgress(t *testing.T) {
 	m := model{
-		phase:                  "thinking",
+		phase:                   "thinking",
 		reasoningProgressActive: true,
 		chatItems: []chatEntry{
 			{Kind: "assistant", Title: thinkingLabel, Body: "thinking...", Status: "thinking"},

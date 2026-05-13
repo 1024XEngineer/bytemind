@@ -362,7 +362,7 @@ ByteMind 默认合并三层配置：内置默认值、用户级 `~/.bytemind/con
   },
   "approval_policy": "on-request",
   "approval_mode": "interactive",
-  "max_iterations": 32,
+  "max_iterations": 64,
   "stream": true
 }
 ```

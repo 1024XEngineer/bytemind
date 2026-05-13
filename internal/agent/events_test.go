@@ -28,6 +28,28 @@ func TestObserverFuncHandleEvent(t *testing.T) {
 	}
 }
 
+func TestRunnerEmitStatusTrimsAndSkipsEmpty(t *testing.T) {
+	events := make([]Event, 0, 1)
+	runner := &Runner{
+		observer: ObserverFunc(func(event Event) {
+			events = append(events, event)
+		}),
+	}
+
+	runner.emitStatus("  Compacting context...  ")
+	runner.emitStatus("   ")
+
+	if len(events) != 1 {
+		t.Fatalf("expected one status event, got %#v", events)
+	}
+	if events[0].Type != EventStatusUpdated {
+		t.Fatalf("expected status event, got %q", events[0].Type)
+	}
+	if events[0].Content != "Compacting context..." {
+		t.Fatalf("expected trimmed content, got %q", events[0].Content)
+	}
+}
+
 func TestSubAgentObserver(t *testing.T) {
 	t.Run("wraps and tags events with agentID and invocationID", func(t *testing.T) {
 		var receivedEvent Event
@@ -116,6 +138,7 @@ func TestEventTypes(t *testing.T) {
 		{EventPlanUpdated, "plan_updated"},
 		{EventUsageUpdated, "usage_updated"},
 		{EventRunFinished, "run_finished"},
+		{EventStatusUpdated, "status_updated"},
 	}
 
 	for _, tc := range tests {

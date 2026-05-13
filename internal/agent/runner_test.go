@@ -178,6 +178,122 @@ func TestRunPromptReturnsBudgetSummaryInsteadOfError(t *testing.T) {
 	}
 }
 
+func TestRunPromptCompactsSessionWhenExecutionBudgetExhausted(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+	client := &fakeClient{replies: []llm.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []llm.ToolCall{{
+				ID:   "call-1",
+				Type: "function",
+				Function: llm.ToolFunctionCall{
+					Name:      "list_files",
+					Arguments: `{}`,
+				},
+			}},
+		},
+		{Role: llm.RoleAssistant, Content: "Goal: inspect workspace\nPending: continue from budget pause"},
+	}}
+	statuses := make([]string, 0, 2)
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider:      config.ProviderConfig{Model: "test-model"},
+			MaxIterations: 1,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+		Observer: ObserverFunc(func(event Event) {
+			if event.Type == EventStatusUpdated {
+				statuses = append(statuses, event.Content)
+			}
+		}),
+	})
+
+	answer, err := runner.RunPrompt(context.Background(), sess, "inspect workspace", "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(answer, "Paused before a final answer.") {
+		t.Fatalf("expected pause summary, got %q", answer)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("expected normal turn + budget compaction request, got %d", len(client.requests))
+	}
+	if len(client.requests[1].Tools) != 0 {
+		t.Fatalf("expected budget compaction request to disable tools, got %#v", client.requests[1].Tools)
+	}
+	if len(sess.Messages) != 3 {
+		t.Fatalf("expected compacted summary + latest user + pause summary, got %#v", sess.Messages)
+	}
+	if !strings.Contains(sess.Messages[0].Text(), "Goal: inspect workspace") {
+		t.Fatalf("expected first message to be compaction summary, got %#v", sess.Messages[0])
+	}
+	if strings.TrimSpace(sess.Messages[1].Text()) != "inspect workspace" {
+		t.Fatalf("expected latest user message to be preserved, got %#v", sess.Messages[1])
+	}
+	if !strings.Contains(sess.Messages[2].Text(), "execution budget of 1 turns") {
+		t.Fatalf("expected pause summary after compaction, got %#v", sess.Messages[2])
+	}
+	if !slices.Contains(statuses, "Execution budget reached; compacting context for continuation...") {
+		t.Fatalf("expected budget compaction status, got %#v", statuses)
+	}
+	if !slices.Contains(statuses, "Context compacted. Writing pause summary...") {
+		t.Fatalf("expected compacted status, got %#v", statuses)
+	}
+}
+
+func TestCompactSessionForContinuationSkipsOnCompactionError(t *testing.T) {
+	workspace := t.TempDir()
+	sess := session.New(workspace)
+	sess.Messages = []llm.Message{
+		llm.NewUserTextMessage("inspect workspace"),
+		llm.NewAssistantTextMessage("still checking files"),
+	}
+	statuses := make([]string, 0, 2)
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			Provider: config.ProviderConfig{Model: "test-model"},
+			Stream:   false,
+		},
+		Client: &scriptedTurnClient{steps: []scriptedTurnStep{{
+			err: errors.New("summary unavailable"),
+		}}},
+		Registry: tools.DefaultRegistry(),
+		Observer: ObserverFunc(func(event Event) {
+			if event.Type == EventStatusUpdated {
+				statuses = append(statuses, event.Content)
+			}
+		}),
+	})
+
+	var out bytes.Buffer
+	runner.compactSessionForContinuation(context.Background(), sess, &out, "budget_exhausted")
+
+	if !strings.Contains(out.String(), "context compaction skipped: summary unavailable") {
+		t.Fatalf("expected skipped compaction output, got %q", out.String())
+	}
+	if !slices.Contains(statuses, "Execution budget reached; compacting context for continuation...") {
+		t.Fatalf("expected initial compaction status, got %#v", statuses)
+	}
+	if !slices.Contains(statuses, "Context compaction skipped; writing pause summary.") {
+		t.Fatalf("expected skipped compaction status, got %#v", statuses)
+	}
+	if len(sess.Messages) != 2 {
+		t.Fatalf("expected failed compaction to leave session unchanged, got %#v", sess.Messages)
+	}
+}
+
 func TestRunPromptStopsOnRepeatedToolPlan(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())
