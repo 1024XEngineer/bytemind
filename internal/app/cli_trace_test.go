@@ -43,6 +43,54 @@ func TestRunTraceList(t *testing.T) {
 	}
 }
 
+func TestTraceShowWithEvents(t *testing.T) {
+	home := t.TempDir()
+	auditDir := filepath.Join(home, "audit")
+	os.MkdirAll(auditDir, 0o755)
+	path := filepath.Join(auditDir, "2026-05-13.jsonl")
+	content := `{"event_id":"e1","session_id":"s1","trace_id":"tr1","actor":"agent","action":"tool_call","result":"success","timestamp":"2026-05-13T10:00:00Z","metadata":{"tool_name":"read_file"}}` + "\n" +
+		`{"event_id":"e2","session_id":"s1","trace_id":"tr1","actor":"agent","action":"tool_call","result":"success","timestamp":"2026-05-13T10:01:00Z","metadata":{"tool_name":"write_file"}}` + "\n"
+	os.WriteFile(path, []byte(content), 0o644)
+
+	defer os.Setenv("BYTEMIND_HOME", os.Getenv("BYTEMIND_HOME"))
+	os.Setenv("BYTEMIND_HOME", home)
+
+	var stdout bytes.Buffer
+	err := traceShow("tr1", &stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "Trace: tr1") {
+		t.Errorf("expected trace header, got %s", output[:80])
+	}
+	if !strings.Contains(output, "agent") {
+		t.Errorf("expected actor 'agent' in output, got %s", output[:80])
+	}
+}
+
+func TestTraceShowWithOtherAction(t *testing.T) {
+	home := t.TempDir()
+	auditDir := filepath.Join(home, "audit")
+	os.MkdirAll(auditDir, 0o755)
+	path := filepath.Join(auditDir, "2026-05-13.jsonl")
+	content := `{"event_id":"e3","session_id":"s1","trace_id":"tr2","actor":"user","action":"submit_feedback","result":"approved","timestamp":"2026-05-13T10:00:00Z","metadata":{"rating":"5"}}` + "\n"
+	os.WriteFile(path, []byte(content), 0o644)
+
+	defer os.Setenv("BYTEMIND_HOME", os.Getenv("BYTEMIND_HOME"))
+	os.Setenv("BYTEMIND_HOME", home)
+
+	var stdout bytes.Buffer
+	err := traceShow("tr2", &stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "submit_feedback") {
+		t.Errorf("expected submit_feedback action, got %s", output[:80])
+	}
+}
+
 func TestRunTraceShowMissingID(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := RunTrace([]string{"show"}, &stdout, &stderr)

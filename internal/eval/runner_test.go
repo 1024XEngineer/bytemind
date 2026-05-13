@@ -165,22 +165,127 @@ func TestPrintResults(t *testing.T) {
 }
 
 func TestRunTasksCoverage(t *testing.T) {
-	// Call RunTasks with nonexistent binary; verify coverage of basic paths
 	tasks := []EvalTask{{ID: "t", Workspace: ".", Prompt: "p", Success: []Check{{Command: "nonexistent_zzz"}}}}
 	r := RunTasks("/nonexistent_binary", tasks)
 	if len(r) != 1 { t.Fatal("expected 1 result") }
 }
 
 func TestRunTasksWithOutputContains(t *testing.T) {
-	// output_contains is checked against the agent's output
 	tasks := []EvalTask{{
 		ID: "t", Name: "Test", Workspace: ".", Prompt: "hello",
 		Success: []Check{{OutputContains: []string{"world"}}},
 	}}
 	r := RunTasks("/nonexistent_binary", tasks)
 	if len(r) != 1 { t.Fatal("expected 1 result") }
-	// output from nonexistent binary is empty, so output_contains should fail
 	if r[0].Passed { t.Fatal("expected fail (no output from nonexistent binary)") }
+}
+
+// RunTasks negative eval paths — uses a git repo with pre-existing unstaged
+// changes so gitDiffFiles returns real diffs even without a running agent.
+func TestRunTasksNegativeReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"file.go": "package main"})
+	// Make an unstaged modification so gitDiffFiles returns a real diff
+	os.WriteFile(filepath.Join(dir, "file.go"), []byte("package main\n// modified"), 0o644)
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "read-only", Workspace: dir, Prompt: "explain",
+		Negative: []NegCheck{{Type: "read_only"}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail: read_only should detect modification")
+	}
+	if !strings.Contains(r[0].Failures[0], "negative[read_only]") {
+		t.Fatalf("expected negative[read_only] failure, got: %v", r[0].Failures)
+	}
+}
+
+func TestRunTasksNegativeForbiddenPaths(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"README.md": "# readme", "main.go": "package main"})
+	// Modify README.md (should be forbidden)
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# modified"), 0o644)
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "forbidden", Workspace: dir, Prompt: "fix",
+		Negative: []NegCheck{{
+			Type: "forbidden_paths",
+			ForbiddenPaths: []string{"README.md"},
+		}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail: README.md is forbidden")
+	}
+	if !strings.Contains(r[0].Failures[0], "negative[forbidden_paths]") {
+		t.Fatalf("expected negative[forbidden_paths], got: %v", r[0].Failures)
+	}
+}
+
+func TestRunTasksNegativeMaxFilesChanged(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{
+		"a.go": "package a",
+		"b.go": "package b",
+		"c.go": "package c",
+	})
+	// Modify 2 files (max is 1)
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n// mod"), 0o644)
+	os.WriteFile(filepath.Join(dir, "b.go"), []byte("package b\n// mod"), 0o644)
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "maxfiles", Workspace: dir, Prompt: "fix",
+		Negative: []NegCheck{{Type: "max_files_changed", MaxFilesChanged: 1}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail: 2 files modified exceeds max 1")
+	}
+	if !strings.Contains(r[0].Failures[0], "negative[max_files_changed]") {
+		t.Fatalf("expected negative[max_files_changed], got: %v", r[0].Failures)
+	}
+}
+
+func TestRunTasksConstraintMaxFilesChanged(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"a.go": "package a", "b.go": "package b"})
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n// mod"), 0o644)
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "constraint", Workspace: dir, Prompt: "fix",
+		Constraints: &Constraints{MaxFilesChanged: 0}, // 0 means no limit
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if !r[0].Passed {
+		t.Fatalf("expected pass (constraint MaxFilesChanged=0 is no limit), got: %v", r[0].Failures)
+	}
+}
+
+func TestRunTasksConstraintForbiddenPaths(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{
+		"README.md": "# readme",
+		"main.go":   "package main",
+	})
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# modified"), 0o644)
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "constraint", Workspace: dir, Prompt: "fix",
+		Constraints: &Constraints{ForbiddenPaths: []string{"README.md"}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail: README.md is forbidden by constraint")
+	}
+	if !strings.Contains(r[0].Failures[0], "constraint forbidden_paths") {
+		t.Fatalf("expected constraint forbidden_paths, got: %v", r[0].Failures)
+	}
 }
 
 func TestGitDiffFilesWithGitRepo(t *testing.T) {
