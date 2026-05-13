@@ -1,14 +1,19 @@
 package app
 
-import "testing"
+import (
+	"bytes"
+	"io"
+	"testing"
+)
 
-func TestRunInitPanicFree(t *testing.T) {
+func TestRunInitDoesNotPanic(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("RunInit panicked: %v", r)
 		}
 	}()
-	// RunInit reads stdin interactively, so in test mode it will
-	// likely error. We just verify no panic.
-	_ = RunInit([]string{"-workspace", "."}, nil, nil)
+	// Init reads from os.Stdin, so in non-interactive test env it
+	// won't complete. Just verify parsing flags doesn't panic.
+	var buf bytes.Buffer
+	_ = RunInit([]string{"-workspace", "."}, &buf, io.Discard)
 }
