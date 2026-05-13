@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -298,7 +299,7 @@ func (c *StdioClient) runRPC(ctx context.Context, cfg ServerConfig, requests []r
 	if err != nil {
 		return nil, newClientError(ClientErrorTransport, "failed to open mcp stdout pipe", err)
 	}
-	var stderr bytes.Buffer
+	var stderr lockedBuffer
 	cmd.Stderr = &stderr
 
 	if err := cmd.Start(); err != nil {
@@ -494,6 +495,23 @@ func stopCommand(cmd *exec.Cmd, stdin io.WriteCloser) {
 	case <-done:
 	case <-time.After(time.Second):
 	}
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 type rpcRequest struct {
