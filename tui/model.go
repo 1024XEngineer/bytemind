@@ -273,6 +273,8 @@ type mouseSelectionScrollTickMsg struct {
 
 type landingGlowTickMsg struct{}
 
+type breathTickMsg struct{}
+
 type pasteFinalizeMsg struct {
 	ID int
 }
@@ -508,6 +510,7 @@ type model struct {
 	startupGuide               StartupGuide
 	mouseYOffset               int
 	landingGlowStep            int
+	breathStep                 int
 
 	// Status dot animation
 	lastTokenTime    time.Time
@@ -749,12 +752,21 @@ func (m model) Init() tea.Cmd {
 		m.tokenUsage.tickCmd(),
 		m.loadSessionsCmd(),
 		landingTick,
+		breathTickCmd(),
 	)
 }
 
 func landingGlowTickCmd() tea.Cmd {
 	return tea.Tick(landingGlowTickInterval, func(time.Time) tea.Msg {
 		return landingGlowTickMsg{}
+	})
+}
+
+const breathTickInterval = 600 * time.Millisecond
+
+func breathTickCmd() tea.Cmd {
+	return tea.Tick(breathTickInterval, func(time.Time) tea.Msg {
+		return breathTickMsg{}
 	})
 }
 
@@ -1035,6 +1047,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.landingGlowStep = (m.landingGlowStep + 1) % 2048
 		return m, landingGlowTickCmd()
+	case breathTickMsg:
+		m.breathStep++
+		return m, breathTickCmd()
 		case statusDotTickMsg:
 			if m.reducedMotion {
 				return m, nil

@@ -514,8 +514,6 @@ var (
 				Padding(0, 1)
 
 	activeSkillBannerStyle = lipgloss.NewStyle().
-				BorderStyle(lipgloss.NormalBorder()).
-				BorderForeground(semanticColors.Accent).
 				Background(lipgloss.Color("#0F1A28")).
 				Padding(0, 1)
 
