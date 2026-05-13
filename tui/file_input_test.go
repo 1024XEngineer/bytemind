@@ -147,6 +147,25 @@ func TestResolvePathWindowsPOSIX(t *testing.T) {
 	}
 }
 
+func TestResolveWindowsPOSIXPath(t *testing.T) {
+	resolved, ok := resolveWindowsPOSIXPath("/c/Users/test/file.txt")
+	if !ok {
+		t.Fatal("expected POSIX-style Windows path to resolve")
+	}
+	if !strings.HasPrefix(resolved, "C:") || !strings.Contains(resolved, `\Users\test\file.txt`) {
+		t.Fatalf("unexpected resolved path: %q", resolved)
+	}
+	if _, ok := resolveWindowsPOSIXPath("c/Users/test/file.txt"); ok {
+		t.Fatal("expected path without leading slash to be rejected")
+	}
+	if _, ok := resolveWindowsPOSIXPath("/1/Users/test/file.txt"); ok {
+		t.Fatal("expected non-letter drive to be rejected")
+	}
+	if _, ok := resolveWindowsPOSIXPath("/not-a-drive/file.txt"); ok {
+		t.Fatal("expected non-drive path to be rejected")
+	}
+}
+
 func TestReadFileImageType(t *testing.T) {
 	dir := t.TempDir()
 	imagePath := filepath.Join(dir, "test.png")
@@ -181,6 +200,146 @@ func TestReadFileTextType(t *testing.T) {
 	}
 	if string(data) != "hello world" {
 		t.Errorf("data = %s, want hello world", string(data))
+	}
+}
+
+func TestReadFileSpecialFileTypesAndTextBinaryDetection(t *testing.T) {
+	dir := t.TempDir()
+
+	bmpPath := filepath.Join(dir, "image.bmp")
+	if err := os.WriteFile(bmpPath, []byte("bmp-data"), 0o644); err != nil {
+		t.Fatalf("write bmp fixture: %v", err)
+	}
+	ft, mime, data, err := readFile(bmpPath)
+	if err != nil {
+		t.Fatalf("readFile bmp: %v", err)
+	}
+	if ft != FileTypeImage || mime != "image/png" || string(data) != "bmp-data" {
+		t.Fatalf("unexpected bmp read result: type=%v mime=%q data=%q", ft, mime, string(data))
+	}
+
+	pdfPath := filepath.Join(dir, "doc.pdf")
+	if err := os.WriteFile(pdfPath, []byte("%PDF-1.7"), 0o644); err != nil {
+		t.Fatalf("write pdf fixture: %v", err)
+	}
+	ft, mime, data, err = readFile(pdfPath)
+	if err != nil {
+		t.Fatalf("readFile pdf: %v", err)
+	}
+	if ft != FileTypePDF || mime != "application/pdf" || string(data) != "%PDF-1.7" {
+		t.Fatalf("unexpected pdf read result: type=%v mime=%q data=%q", ft, mime, string(data))
+	}
+
+	textPath := filepath.Join(dir, "bad.txt")
+	if err := os.WriteFile(textPath, []byte{'o', 'k', 0}, 0o644); err != nil {
+		t.Fatalf("write text fixture: %v", err)
+	}
+	ft, _, _, err = readFile(textPath)
+	if err == nil {
+		t.Fatal("expected null byte text file to fail")
+	}
+	if ft != FileTypeBinary || !strings.Contains(err.Error(), "null bytes") {
+		t.Fatalf("expected binary null-byte error, got type=%v err=%v", ft, err)
+	}
+}
+
+func TestReadFileRejectsTooLargeFile(t *testing.T) {
+	dir := t.TempDir()
+	largePath := filepath.Join(dir, "large.txt")
+	f, err := os.Create(largePath)
+	if err != nil {
+		t.Fatalf("create large fixture: %v", err)
+	}
+	if err := f.Truncate(maxFileReadSize + 1); err != nil {
+		_ = f.Close()
+		t.Fatalf("truncate large fixture: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close large fixture: %v", err)
+	}
+
+	_, _, _, err = readFile(largePath)
+	if err == nil || !strings.Contains(err.Error(), "exceeds max file size") {
+		t.Fatalf("expected max file size error, got %v", err)
+	}
+}
+
+func TestReadFileReadError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod read denial is Unix-specific")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "secret.txt")
+	if err := os.WriteFile(path, []byte("secret"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatalf("chmod fixture: %v", err)
+	}
+	defer func() {
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatalf("restore fixture mode: %v", err)
+		}
+	}()
+
+	_, _, _, err := readFile(path)
+	if err == nil {
+		t.Skip("current user can still read chmod 000 file")
+	}
+	if !strings.Contains(err.Error(), "read ") {
+		t.Fatalf("expected read error, got %v", err)
+	}
+}
+
+func TestResolvePathUnescapesSpacesOnUnix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("escaped space handling only applies on Unix")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	resolved, err := resolvePath(`dir\ with\ space/file.txt`)
+	if err != nil {
+		t.Fatalf("resolve escaped path: %v", err)
+	}
+	expected := filepath.Clean(filepath.Join(cwd, "dir with space/file.txt"))
+	if resolved != expected {
+		t.Fatalf("resolvePath escaped spaces = %q, want %q", resolved, expected)
+	}
+}
+
+func TestResolvePathReturnsRelativeErrorWhenGetwdFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows cannot remove the process working directory while it is current")
+	}
+
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get original cwd: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(original); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	}()
+
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	if err := os.Remove(dir); err != nil {
+		t.Fatalf("remove current dir: %v", err)
+	}
+
+	_, err = resolvePath("relative.txt")
+	if err == nil || !strings.Contains(err.Error(), "cannot resolve relative path") {
+		t.Fatalf("expected cwd resolution error, got %v", err)
+	}
+	if paths := extractFilePathsFromChunk("relative.txt"); paths != nil {
+		t.Fatalf("expected nil paths when cwd cannot be resolved, got %v", paths)
 	}
 }
 
@@ -278,5 +437,11 @@ func TestExtractFilePathsFromChunkQuotedPaths(t *testing.T) {
 	paths := extractFilePathsFromChunk(`"` + pathWithSpaces + `"`)
 	if len(paths) != 1 {
 		t.Fatalf("expected 1 path for quoted path, got %d: %v", len(paths), paths)
+	}
+}
+
+func TestExtractFilePathsFromChunkIgnoresEmptyQuotedToken(t *testing.T) {
+	if paths := extractFilePathsFromChunk(`""`); paths != nil {
+		t.Fatalf("expected nil for empty quoted token, got %v", paths)
 	}
 }

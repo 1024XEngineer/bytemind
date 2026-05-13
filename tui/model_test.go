@@ -6881,6 +6881,34 @@ func TestBusyEnterSuppressedForRecentPasteBurstSingleLine(t *testing.T) {
 	}
 }
 
+func TestEnterSuppressedWhilePasteSubmitGuardActive(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	input.SetValue("ready to send")
+	input.CursorEnd()
+
+	canceled := false
+	m := model{
+		screen:                screenChat,
+		busy:                  true,
+		input:                 input,
+		pasteSubmitGuardUntil: time.Now().Add(time.Second),
+		sess:                  session.New("E:\\bytemind"),
+		workspace:             "E:\\bytemind",
+		runCancel:             func() { canceled = true },
+	}
+
+	got, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+
+	if cmd != nil {
+		t.Fatalf("expected guarded enter not to schedule a command")
+	}
+	if canceled || updated.interrupting || len(updated.pendingBTW) != 0 || len(updated.chatItems) != 0 {
+		t.Fatalf("expected guarded enter to have no submit side effects, canceled=%v interrupting=%v pending=%#v chat=%#v", canceled, updated.interrupting, updated.pendingBTW, updated.chatItems)
+	}
+}
+
 func Skip_BusyEnterLongTypedText(t *testing.T) {
 	input := textarea.New()
 	input.Focus()

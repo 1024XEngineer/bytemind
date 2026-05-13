@@ -73,18 +73,8 @@ func resolvePath(token string) (string, error) {
 	}
 
 	if runtime.GOOS == "windows" && strings.HasPrefix(token, "/") {
-		parts := strings.SplitN(token[1:], "/", 2)
-		if len(parts) >= 1 && len(parts[0]) == 1 {
-			c := parts[0][0]
-			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
-				drive := strings.ToUpper(string(c)) + ":"
-				rest := ""
-				if len(parts) == 2 {
-					rest = parts[1]
-				}
-				token = drive + "\\" + strings.ReplaceAll(rest, "/", "\\")
-				return filepath.Clean(token), nil
-			}
+		if resolved, ok := resolveWindowsPOSIXPath(token); ok {
+			return resolved, nil
 		}
 	}
 
@@ -93,6 +83,26 @@ func resolvePath(token string) (string, error) {
 		return "", fmt.Errorf("cannot resolve relative path %q: %w", token, err)
 	}
 	return filepath.Clean(filepath.Join(cwd, token)), nil
+}
+
+func resolveWindowsPOSIXPath(token string) (string, bool) {
+	if !strings.HasPrefix(token, "/") {
+		return "", false
+	}
+	parts := strings.SplitN(token[1:], "/", 2)
+	if len(parts) == 0 || len(parts[0]) != 1 {
+		return "", false
+	}
+	c := parts[0][0]
+	if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+		return "", false
+	}
+	drive := strings.ToUpper(string(c)) + ":"
+	rest := ""
+	if len(parts) == 2 {
+		rest = parts[1]
+	}
+	return filepath.Clean(drive + "\\" + strings.ReplaceAll(rest, "/", "\\")), true
 }
 
 func readFile(absPath string) (FileType, string, []byte, error) {
@@ -148,9 +158,6 @@ func extractFilePathsFromChunk(chunk string) []string {
 	candidateCount := 0
 	for _, token := range tokens {
 		token = strings.TrimSpace(strings.Trim(token, `"'`))
-		if token == "" {
-			continue
-		}
 		candidateCount++
 
 		resolved, err := resolvePath(token)

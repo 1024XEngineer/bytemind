@@ -21,7 +21,6 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
-
 var imagePlaceholderPattern = regexp.MustCompile(`\[Image ?#(\d+)\]`)
 var imageMentionPattern = regexp.MustCompile(`(?i)@([^\s@]+?\.(?:png|jpe?g|webp|gif))`)
 var inlineWindowsImagePathPattern = regexp.MustCompile(`(?i)[a-z]:[\\/][^\r\n\t"'<>|]*?\.(?:png|jpe?g|webp|gif)`)
@@ -46,12 +45,8 @@ type clipboardImageReader interface {
 
 type defaultClipboardImageReader struct{}
 
-func (defaultClipboardImageReader) ReadImage(ctx context.Context) (string, []byte, string, error) {
-	if runtime.GOOS != "windows" {
-		return "", nil, "", llm.WrapError("clipboard", llm.ErrorCodeClipboardUnavailable, fmt.Errorf("clipboard image is only supported on windows in this build"))
-	}
-
-	script := strings.TrimSpace(`
+func clipboardImagePowerShellScript() string {
+	return strings.TrimSpace(`
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
@@ -243,7 +238,14 @@ if ($dataObj.GetDataPresent([System.Windows.Forms.DataFormats]::Html)) {
 
 return ''
 `)
+}
 
+func (defaultClipboardImageReader) ReadImage(ctx context.Context) (string, []byte, string, error) {
+	if runtime.GOOS != "windows" {
+		return "", nil, "", llm.WrapError("clipboard", llm.ErrorCodeClipboardUnavailable, fmt.Errorf("clipboard image is only supported on windows in this build"))
+	}
+
+	script := clipboardImagePowerShellScript()
 	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-STA", "-Command", script).CombinedOutput()
 	if err != nil {
 		return "", nil, "", llm.WrapError("clipboard", llm.ErrorCodeClipboardUnavailable, fmt.Errorf("clipboard image read failed: %s", strings.TrimSpace(string(out))))
@@ -1196,9 +1198,6 @@ func extractInlineImagePathSpans(chunk string) []imagePathSpan {
 	matches := make([]imagePathSpan, 0, 4)
 	appendMatches := func(pattern *regexp.Regexp) {
 		for _, loc := range pattern.FindAllStringIndex(chunk, -1) {
-			if len(loc) != 2 || loc[1] <= loc[0] {
-				continue
-			}
 			raw := chunk[loc[0]:loc[1]]
 			resolved, err := resolvePath(raw)
 			if err != nil {
@@ -1248,9 +1247,6 @@ func extractInlineImagePathSpans(chunk string) []imagePathSpan {
 		filtered = append(filtered, span)
 		lastEnd = span.End
 	}
-	if len(filtered) == 0 {
-		return nil
-	}
 	return filtered
 }
 
@@ -1263,9 +1259,6 @@ func extractInlineFilePathSpans(chunk string) []imagePathSpan {
 	matches := make([]imagePathSpan, 0, 4)
 	appendMatches := func(pattern *regexp.Regexp) {
 		for _, loc := range pattern.FindAllStringIndex(chunk, -1) {
-			if len(loc) != 2 || loc[1] <= loc[0] {
-				continue
-			}
 			raw := chunk[loc[0]:loc[1]]
 			resolved, err := resolvePath(raw)
 			if err != nil {
@@ -1303,9 +1296,6 @@ func extractInlineFilePathSpans(chunk string) []imagePathSpan {
 		}
 		filtered = append(filtered, span)
 		lastEnd = span.End
-	}
-	if len(filtered) == 0 {
-		return nil
 	}
 	return filtered
 }
