@@ -1142,7 +1142,7 @@ func TestExtractInlineFilePathSpansMultipleFilesAndMissingPath(t *testing.T) {
 		}
 	}
 
-	spans := extractInlineFilePathSpans(missing + " " + second + " " + first)
+	spans := extractInlineFilePathSpans(missing + "\n" + second + "\n" + first)
 	if len(spans) != 2 {
 		t.Fatalf("expected two existing file spans, got %d: %#v", len(spans), spans)
 	}
