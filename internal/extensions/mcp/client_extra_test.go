@@ -90,9 +90,9 @@ func TestValidateServerConfig(t *testing.T) {
 	}
 }
 
-func TestWithTimeoutIfMissing(t *testing.T) {
+func TestWithTimeoutLimit(t *testing.T) {
 	ctx := context.Background()
-	withoutTimeout, cancel := withTimeoutIfMissing(ctx, 0)
+	withoutTimeout, cancel := withTimeoutLimit(ctx, 0)
 	defer cancel()
 	if _, has := withoutTimeout.Deadline(); has {
 		t.Fatal("did not expect deadline when timeout <= 0")
@@ -100,7 +100,7 @@ func TestWithTimeoutIfMissing(t *testing.T) {
 
 	parent, parentCancel := context.WithTimeout(context.Background(), time.Second)
 	defer parentCancel()
-	inherited, inheritedCancel := withTimeoutIfMissing(parent, 5*time.Second)
+	inherited, inheritedCancel := withTimeoutLimit(parent, 5*time.Second)
 	defer inheritedCancel()
 	parentDeadline, _ := parent.Deadline()
 	inheritedDeadline, hasDeadline := inherited.Deadline()
@@ -111,7 +111,19 @@ func TestWithTimeoutIfMissing(t *testing.T) {
 		t.Fatalf("expected inherited deadline %v, got %v", parentDeadline, inheritedDeadline)
 	}
 
-	withTimeout, withTimeoutCancel := withTimeoutIfMissing(context.Background(), 50*time.Millisecond)
+	longParent, longParentCancel := context.WithTimeout(context.Background(), time.Hour)
+	defer longParentCancel()
+	capped, cappedCancel := withTimeoutLimit(longParent, 50*time.Millisecond)
+	defer cappedCancel()
+	cappedDeadline, hasCappedDeadline := capped.Deadline()
+	if !hasCappedDeadline {
+		t.Fatal("expected capped deadline")
+	}
+	if remaining := time.Until(cappedDeadline); remaining <= 0 || remaining > time.Second {
+		t.Fatalf("expected deadline near timeout, got remaining=%v", remaining)
+	}
+
+	withTimeout, withTimeoutCancel := withTimeoutLimit(context.Background(), 50*time.Millisecond)
 	defer withTimeoutCancel()
 	if _, has := withTimeout.Deadline(); !has {
 		t.Fatal("expected deadline when timeout is set")
@@ -362,6 +374,41 @@ func TestCallToolErrorAndFallbackPaths(t *testing.T) {
 	cfg.CallTimeout = 20 * time.Millisecond
 	_, err = client.CallTool(context.Background(), cfg, "echo", json.RawMessage(`{}`))
 	assertClientErrorCode(t, err, ClientErrorTimeout)
+}
+
+func TestDiscoverUsesStartupTimeoutWhenParentDeadlineIsLonger(t *testing.T) {
+	client := NewStdioClient()
+	cfg := helperServerConfig(t, "sleep")
+	cfg.StartupTimeout = 20 * time.Millisecond
+
+	parent, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	started := time.Now()
+	_, err := client.Discover(parent, cfg)
+	elapsed := time.Since(started)
+
+	assertClientErrorCode(t, err, ClientErrorTimeout)
+	if elapsed > 2*time.Second {
+		t.Fatalf("expected startup timeout to cap long parent deadline, elapsed=%v", elapsed)
+	}
+}
+
+func TestRunRPCTimeoutDoesNotWaitForStdoutEOF(t *testing.T) {
+	client := NewStdioClient()
+	cfg := helperServerConfig(t, "hold_stdout_child")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	_, err := client.runRPC(ctx, cfg, []rpcRequest{
+		newRPCRequest(1, "initialize", initializeParams(defaultProtocolVersions[0])),
+	})
+	elapsed := time.Since(started)
+
+	assertClientErrorCode(t, err, ClientErrorTimeout)
+	if elapsed > time.Second {
+		t.Fatalf("expected context timeout without waiting for stdout EOF, elapsed=%v", elapsed)
+	}
 }
 
 func TestRunRPCZeroRequestAndStopCommandBranches(t *testing.T) {

@@ -110,9 +110,20 @@ func TestResolveToolsReturnsContextError(t *testing.T) {
 		t.Fatalf("expected *Adapter type, got %T", ext)
 	}
 	adapter.Invalidate()
-	_, err = ext.ResolveTools(context.Background())
+	tools, err := ext.ResolveTools(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveTools should degrade and continue when only MCP discovery times out, got %v", err)
+	}
+	if len(tools) != 0 {
+		t.Fatalf("expected no tools after discovery timeout, got %#v", tools)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	adapter.Invalidate()
+	_, err = ext.ResolveTools(ctx)
 	if err == nil {
-		t.Fatal("expected context error from ResolveTools")
+		t.Fatal("expected caller context error from ResolveTools")
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected deadline exceeded, got %v", err)

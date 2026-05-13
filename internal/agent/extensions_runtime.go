@@ -36,7 +36,10 @@ func (r *Runner) syncExtensionTools(ctx context.Context, force bool) error {
 
 	resolvedTools, resolveErr := resolver.ResolveAllTools(ctx)
 	if resolveErr != nil && (errors.Is(resolveErr, context.Canceled) || errors.Is(resolveErr, context.DeadlineExceeded)) {
-		return resolveErr
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		resolveErr = nil
 	}
 
 	nextKeys := map[string]map[string]struct{}{}

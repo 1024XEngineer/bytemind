@@ -113,7 +113,7 @@ func FromMCPServer(cfg ServerConfig, opts ...Option) (extensionspkg.Extension, e
 	}
 
 	if options.eagerDiscover {
-		startupCtx, cancel := withTimeoutIfMissing(context.Background(), cfg.StartupTimeout)
+		startupCtx, cancel := withTimeoutLimit(context.Background(), cfg.StartupTimeout)
 		defer cancel()
 		_ = adapter.maybeRefresh(startupCtx, true)
 	}
@@ -133,7 +133,7 @@ func (a *Adapter) ResolveTools(ctx context.Context) ([]extensionspkg.ExtensionTo
 	if a == nil {
 		return nil, newExtensionError(extensionspkg.ErrCodeInvalidExtension, "mcp adapter is nil", nil)
 	}
-	if err := a.maybeRefresh(ctx, false); err != nil && contextError(err) != nil {
+	if err := a.maybeRefresh(ctx, false); err != nil && ctx.Err() != nil && contextError(err) != nil {
 		return nil, err
 	}
 
@@ -408,11 +408,7 @@ func (t mcpTool) Run(ctx context.Context, raw json.RawMessage, _ *toolspkg.Execu
 		}
 	}
 	defer release()
-	callCtx := ctx
-	cancel := func() {}
-	if _, has := ctx.Deadline(); !has && t.server.CallTimeout > 0 {
-		callCtx, cancel = context.WithTimeout(ctx, t.server.CallTimeout)
-	}
+	callCtx, cancel := withTimeoutLimit(ctx, t.server.CallTimeout)
 	defer cancel()
 
 	output, err := t.client.CallTool(callCtx, t.server, t.descriptor.Name, raw)
