@@ -46,6 +46,9 @@ func (m *model) appendAssistantDelta(delta string) {
 			delta = m.suppressedAssistantDelta + delta
 			m.suppressedAssistantDelta = ""
 		}
+		if m.deltaDuplicatesFinalAssistant(delta) {
+			return
+		}
 	}
 	if m.streamingIndex >= 0 && m.streamingIndex < len(m.chatItems) {
 		current := m.chatItems[m.streamingIndex].Body
@@ -132,12 +135,80 @@ func (m *model) finishAssistantMessage(content string) {
 		}
 	}
 
+	m.removeLatestOpenAssistantInCurrentTurn()
 	m.chatItems = append(m.chatItems, chatEntry{
 		Kind:   "assistant",
 		Title:  assistantLabel,
 		Body:   finalContent,
 		Status: "final",
 	})
+}
+
+func (m *model) removeLatestOpenAssistantInCurrentTurn() {
+	for i := len(m.chatItems) - 1; i >= 0; i-- {
+		item := m.chatItems[i]
+		if item.Kind == "user" {
+			return
+		}
+		if item.Kind != "assistant" {
+			continue
+		}
+		switch strings.TrimSpace(strings.ToLower(item.Status)) {
+		case "pending", "thinking", "streaming", "settling":
+			m.chatItems = append(m.chatItems[:i], m.chatItems[i+1:]...)
+			if m.streamingIndex == i {
+				m.streamingIndex = -1
+			} else if m.streamingIndex > i {
+				m.streamingIndex--
+			}
+			return
+		}
+	}
+}
+
+func (m *model) removeDuplicateOpenAssistantPreviews() {
+	for i := 0; i < len(m.chatItems); i++ {
+		item := m.chatItems[i]
+		if item.Kind != "assistant" || !isOpenAssistantStatus(item.Status) {
+			continue
+		}
+		if normalizeAssistantFinalBody(item.Body) == "" {
+			continue
+		}
+		for j := i + 1; j < len(m.chatItems); j++ {
+			next := m.chatItems[j]
+			if next.Kind == "user" {
+				break
+			}
+			if next.Kind == "assistant" && isFinalAssistantStatus(next.Status) && sameAssistantFinalBody(item.Body, next.Body) {
+				m.chatItems = append(m.chatItems[:i], m.chatItems[i+1:]...)
+				if m.streamingIndex == i {
+					m.streamingIndex = -1
+				} else if m.streamingIndex > i {
+					m.streamingIndex--
+				}
+				i--
+				break
+			}
+		}
+	}
+}
+
+func (m model) deltaDuplicatesFinalAssistant(delta string) bool {
+	delta = normalizeAssistantFinalBody(delta)
+	if delta == "" {
+		return false
+	}
+	for i := len(m.chatItems) - 1; i >= 0; i-- {
+		item := m.chatItems[i]
+		if item.Kind == "user" {
+			return false
+		}
+		if item.Kind == "assistant" && isFinalAssistantStatus(item.Status) {
+			return normalizeAssistantFinalBody(item.Body) == delta
+		}
+	}
+	return false
 }
 
 func (m model) latestTailOpenAssistantIndex() int {
@@ -155,6 +226,19 @@ func (m model) latestTailOpenAssistantIndex() int {
 	default:
 		return -1
 	}
+}
+
+func isOpenAssistantStatus(status string) bool {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "pending", "thinking", "streaming", "settling":
+		return true
+	default:
+		return false
+	}
+}
+
+func isFinalAssistantStatus(status string) bool {
+	return strings.TrimSpace(strings.ToLower(status)) == "final"
 }
 
 func sameAssistantFinalBody(a, b string) bool {

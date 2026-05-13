@@ -809,6 +809,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case agentEventMsg:
 		m.handleAgentEvent(msg.Event)
+		m.removeDuplicateOpenAssistantPreviews()
 		m.refreshViewport()
 		return m, waitForAsync(m.async)
 	case runFinishedMsg:
@@ -905,6 +906,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.stalled = false
 		m.lastTokenReceivedAt = time.Time{}
+		m.removeDuplicateOpenAssistantPreviews()
 		m.refreshViewport()
 		return m, tea.Batch(waitForAsync(m.async), m.loadSessionsCmd())
 	case approvalRequestMsg:

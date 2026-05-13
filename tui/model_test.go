@@ -8019,7 +8019,7 @@ func TestFinishAssistantMessageFinalizesStreamingCardAfterPendingPlaceholder(t *
 	}
 }
 
-func TestFinishAssistantMessageDoesNotMoveFinalAnswerBeforeToolTail(t *testing.T) {
+func TestFinishAssistantMessageRemovesStaleStreamingBeforeToolTail(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
 			{Kind: "assistant", Title: assistantLabel, Body: "old streamed text", Status: "streaming"},
@@ -8030,8 +8030,11 @@ func TestFinishAssistantMessageDoesNotMoveFinalAnswerBeforeToolTail(t *testing.T
 
 	m.finishAssistantMessage("final answer after tool")
 
-	if len(m.chatItems) != 3 {
-		t.Fatalf("expected final message after tool tail, got %d items", len(m.chatItems))
+	if len(m.chatItems) != 2 {
+		t.Fatalf("expected stale streaming card to be removed before appending final answer, got %d items", len(m.chatItems))
+	}
+	if m.chatItems[0].Kind != "tool" || m.chatItems[0].Status != "done" {
+		t.Fatalf("expected tool tail to remain before final answer, got %+v", m.chatItems[0])
 	}
 	last := m.chatItems[len(m.chatItems)-1]
 	if last.Kind != "assistant" || last.Status != "final" || last.Body != "final answer after tool" {

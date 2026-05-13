@@ -76,8 +76,10 @@ func (m *model) syncViewportSize() {
 	if bodyHeight < 6 {
 		bodyHeight = 6
 	}
-	statusHeight := lipgloss.Height(m.renderStatusBar())
-	panelInnerHeight := max(4, bodyHeight-panelStyle.GetVerticalFrameSize()-statusHeight-1)
+	width := max(24, m.chatPanelInnerWidth())
+	statusHeight := lipgloss.Height(m.renderStatusBarWithWidth(width))
+	topRightHeight := m.mainPanelTopRightHeight(width)
+	panelInnerHeight := max(4, bodyHeight-panelStyle.GetVerticalFrameSize()-statusHeight-topRightHeight-1)
 	m.planView.Width = 0
 	m.planView.Height = 0
 	contentHeight := max(3, panelInnerHeight)
@@ -86,6 +88,18 @@ func (m *model) syncViewportSize() {
 	m.copyView.Width = m.viewport.Width
 	m.copyView.Height = m.viewport.Height
 	m.syncCopyViewOffset()
+}
+
+func (m model) mainPanelTopRightHeight(width int) int {
+	width = max(1, width)
+	height := 0
+	if badge := strings.TrimSpace(m.renderTopRightCluster(width)); badge != "" {
+		height += lipgloss.Height(lipgloss.PlaceHorizontal(width, lipgloss.Right, badge))
+		if popup := strings.TrimSpace(m.tokenUsage.PopupView()); popup != "" {
+			height += lipgloss.Height(lipgloss.PlaceHorizontal(width, lipgloss.Right, popup))
+		}
+	}
+	return height
 }
 
 func (m *model) syncCopyViewOffset() {
