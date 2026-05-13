@@ -252,7 +252,7 @@ func (m model) skillPickerItems() []commandItem {
 		}
 		items = append(items, commandItem{
 			Name:        name,
-			Usage:       "/" + name,
+			Usage:       name,
 			Description: description,
 			Kind:        "skill",
 		})
