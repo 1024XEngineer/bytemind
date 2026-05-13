@@ -117,6 +117,21 @@ Symptom: ByteMind behaves as if no config exists (uses defaults).
 
 New users should put common settings in the user config, not in `~/bin` or `%USERPROFILE%\bin`. Run `bytemind -v` to see which config file was loaded.
 
+## Config JSON Reports `invalid character 'ï'`
+
+Symptom: after creating `~/.bytemind/config.json` in Windows PowerShell, ByteMind exits with `invalid character 'ï' looking for beginning of value`.
+
+**Fix:** rewrite the file as UTF-8 without BOM:
+
+```powershell
+$path = "$env:USERPROFILE\.bytemind\config.json"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$text = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
+[System.IO.File]::WriteAllText($path, $text, $utf8NoBom)
+```
+
+Windows PowerShell 5.1 writes UTF-8 with BOM when using `Set-Content -Encoding utf8`; PowerShell 7+ uses UTF-8 without BOM.
+
 ## Workspace Is Too Large or Too Broad
 
 Symptom: when started from your home directory, a drive root, Downloads, Desktop, or a very large folder, ByteMind reports that the current directory is too broad or feels slow.

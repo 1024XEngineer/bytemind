@@ -117,6 +117,21 @@ bytemind -max-iterations 64
 
 新用户建议先把通用配置放在用户目录，不要放到 `~/bin` 或 `%USERPROFILE%\bin`。运行 `bytemind -v` 可查看实际加载的配置文件路径。
 
+## 配置 JSON 报 `invalid character 'ï'`
+
+症状：在 Windows PowerShell 中创建 `~/.bytemind/config.json` 后，ByteMind 启动时报 `invalid character 'ï' looking for beginning of value`。
+
+**修复：** 将文件重写为不带 BOM 的 UTF-8：
+
+```powershell
+$path = "$env:USERPROFILE\.bytemind\config.json"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$text = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
+[System.IO.File]::WriteAllText($path, $text, $utf8NoBom)
+```
+
+Windows PowerShell 5.1 使用 `Set-Content -Encoding utf8` 时会写入带 BOM 的 UTF-8；PowerShell 7+ 默认是不带 BOM 的 UTF-8。
+
 ## 工作区过大或目录不合适
 
 症状：在用户主目录、磁盘根目录、Downloads、Desktop 或很大的文件夹中启动时，ByteMind 提示当前目录过宽，或响应明显变慢。
