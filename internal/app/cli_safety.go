@@ -79,7 +79,7 @@ func renderSafetyStatus(workspace, configFile string, w io.Writer) error {
 		write("  \u2705 Writable roots: %s", strings.Join(cfg.WritableRoots, ", "))
 	}
 	dangerousCommands := []string{"rm -rf", "sudo", "curl | sh", "chmod -R 777", "dd", "mkfs", "shutdown", "reboot"}
-	write("  \u274c Blocked commands: %s", strings.Join(dangerousCommands, ", "))
+	write("  \u26a0\ufe0f High-risk commands (require approval): %s", strings.Join(dangerousCommands, ", "))
 
 	write("")
 	write("Network policy:")
@@ -126,7 +126,11 @@ func renderSafetyStatus(workspace, configFile string, w io.Writer) error {
 	}
 
 	write("")
-	write("Config file: %s", configFile)
+	resolvedConfig := configFile
+	if resolvedConfig == "" {
+		resolvedConfig = "default (user/project config)"
+	}
+	write("Config file: %s", resolvedConfig)
 	write("Max iterations: %d", cfg.MaxIterations)
 	write("Stream: %v", cfg.Stream)
 	return nil

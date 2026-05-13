@@ -386,7 +386,7 @@ func TestSafetyReportNewSections(t *testing.T) {
 	output := stdout.String()
 	checks := []string{
 		"ByteMind Safety Report",
-		"Blocked commands",
+		"High-risk commands",
 		"Network policy",
 		"Config file",
 		"Max iterations",

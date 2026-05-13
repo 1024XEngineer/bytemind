@@ -70,18 +70,76 @@ func traceList(w io.Writer, stderr io.Writer) error {
 		return fmt.Errorf("read audit dir: %w", err)
 	}
 
-	fmt.Fprintf(w, "Recent trace sessions:\n\n")
+	// Collect recent distinct trace/session IDs from the last 3 files
+	seenIDs := make(map[string]string)               // id -> kind
+	seenOrder := make([]string, 0, 10)
+	jsonlEntries := make([]os.DirEntry, 0, len(entries))
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name(), ".jsonl") {
-			dateStr := strings.TrimSuffix(entry.Name(), ".jsonl")
-			// Count events in this file
-			count := countLines(filepath.Join(auditDir, entry.Name()))
-			fmt.Fprintf(w, "  %s  %d event(s)\n", dateStr, count)
+			jsonlEntries = append(jsonlEntries, entry)
+		}
+	}
+	// Show newest files first
+	for i := len(jsonlEntries) - 1; i >= 0 && i >= len(jsonlEntries)-3; i-- {
+		sampleIDs := readSampleIDs(filepath.Join(auditDir, jsonlEntries[i].Name()), 5)
+		for _, id := range sampleIDs {
+			if _, seen := seenIDs[id]; !seen {
+				seenIDs[id] = ""
+				seenOrder = append(seenOrder, id)
+			}
+		}
+	}
+
+	fmt.Fprintf(w, "Recent trace sessions:\n\n")
+	for _, entry := range jsonlEntries {
+		dateStr := strings.TrimSuffix(entry.Name(), ".jsonl")
+		count := countLines(filepath.Join(auditDir, entry.Name()))
+		fmt.Fprintf(w, "  %s  %d event(s)\n", dateStr, count)
+	}
+	if len(seenOrder) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Sample run IDs (use with trace show/export):")
+		for _, id := range seenOrder {
+			fmt.Fprintf(w, "  %s\n", id)
 		}
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Use 'bytemind trace show <run_id>' for details.")
 	return nil
+}
+
+func readSampleIDs(path string, max int) []string {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	ids := make([]string, 0, max)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var raw struct {
+			TraceID   string `json:"trace_id"`
+			SessionID string `json:"session_id"`
+		}
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			continue
+		}
+		id := raw.TraceID
+		if id == "" {
+			id = raw.SessionID
+		}
+		if id != "" {
+			ids = append(ids, id)
+			if len(ids) >= max {
+				break
+			}
+		}
+	}
+	return ids
 }
 
 func traceShow(runID string, w io.Writer, stderr io.Writer) error {

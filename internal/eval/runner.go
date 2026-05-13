@@ -80,21 +80,27 @@ func RunTasks(binPath string, tasks []EvalTask) []TaskResult {
 				// Verify no files were modified (read-only mode)
 				afterFiles := listGitTrackedFiles(workspace)
 				modified := gitDiffFiles(workspace)
+				untracked := gitUntrackedFiles(workspace)
 				if len(modified) > 0 {
 					result.Passed = false
 					result.Failures = append(result.Failures,
-						fmt.Sprintf("negative[read_only]: agent modified %d file(s) but should not have: %v", len(modified), modified))
+						fmt.Sprintf("negative[read_only]: agent modified %d tracked file(s) but should not have: %v", len(modified), modified))
+				}
+				if len(untracked) > 0 {
+					result.Passed = false
+					result.Failures = append(result.Failures,
+						fmt.Sprintf("negative[read_only]: agent created %d untracked file(s) but should not have: %v", len(untracked), untracked))
 				}
 				if !stringSetsEqual(beforeFiles, afterFiles) {
 					result.Passed = false
 					result.Failures = append(result.Failures,
-						"negative[read_only]: agent created or deleted files")
+						"negative[read_only]: agent deleted tracked files")
 				}
 			case "forbidden_paths":
-				modified := gitDiffFiles(workspace)
+				allChanged := allChangedFiles(workspace)
 				var violations []string
 				for _, fp := range neg.ForbiddenPaths {
-					for _, mf := range modified {
+					for _, mf := range allChanged {
 						if matched, _ := filepath.Match(fp, mf); matched {
 							violations = append(violations, mf)
 						}
@@ -106,27 +112,27 @@ func RunTasks(binPath string, tasks []EvalTask) []TaskResult {
 						fmt.Sprintf("negative[forbidden_paths]: agent modified forbidden file(s): %v", violations))
 				}
 			case "max_files_changed":
-				modified := gitDiffFiles(workspace)
-				if neg.MaxFilesChanged > 0 && len(modified) > neg.MaxFilesChanged {
+				allChanged := allChangedFiles(workspace)
+				if neg.MaxFilesChanged > 0 && len(allChanged) > neg.MaxFilesChanged {
 					result.Passed = false
 					result.Failures = append(result.Failures,
 						fmt.Sprintf("negative[max_files_changed]: agent changed %d files (max: %d): %v",
-							len(modified), neg.MaxFilesChanged, modified))
+							len(allChanged), neg.MaxFilesChanged, allChanged))
 				}
 			}
 		}
 
 		// Check task-level constraints
 		if task.Constraints != nil {
-			modified := gitDiffFiles(workspace)
-			if task.Constraints.MaxFilesChanged > 0 && len(modified) > task.Constraints.MaxFilesChanged {
+			allChanged := allChangedFiles(workspace)
+			if task.Constraints.MaxFilesChanged > 0 && len(allChanged) > task.Constraints.MaxFilesChanged {
 				result.Passed = false
 				result.Failures = append(result.Failures,
 					fmt.Sprintf("constraint max_files_changed: agent changed %d files (max: %d): %v",
-						len(modified), task.Constraints.MaxFilesChanged, modified))
+						len(allChanged), task.Constraints.MaxFilesChanged, allChanged))
 			}
 			for _, fp := range task.Constraints.ForbiddenPaths {
-				for _, mf := range modified {
+				for _, mf := range allChanged {
 					if matched, _ := filepath.Match(fp, mf); matched {
 						result.Passed = false
 						result.Failures = append(result.Failures,
@@ -177,6 +183,46 @@ func gitDiffFiles(workspace string) []string {
 		}
 	}
 	return files
+}
+
+func gitUntrackedFiles(workspace string) []string {
+	cmd := exec.Command("git", "-C", workspace, "ls-files", "--others", "--exclude-standard")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return []string{}
+	}
+	lines := strings.Split(trimmed, "\n")
+	files := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+	return files
+}
+
+// allChangedFiles returns tracked modifications + untracked files.
+func allChangedFiles(workspace string) []string {
+	modified := gitDiffFiles(workspace)
+	untracked := gitUntrackedFiles(workspace)
+	if len(modified) == 0 && len(untracked) == 0 {
+		return []string{}
+	}
+	if len(modified) == 0 {
+		return untracked
+	}
+	if len(untracked) == 0 {
+		return modified
+	}
+	all := make([]string, 0, len(modified)+len(untracked))
+	all = append(all, modified...)
+	all = append(all, untracked...)
+	return all
 }
 
 func stringSetsEqual(a, b []string) bool {

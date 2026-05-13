@@ -9,6 +9,6 @@ success:
     exit_code: 0
   - file_contains:
       - path: mathutil.go
-        pattern: "i < n"
+        pattern: "i <= n"
   - files_modified:
       - mathutil.go

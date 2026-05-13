@@ -145,8 +145,8 @@ func TestRunSafetyReportContainsBlockedCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "Blocked commands") {
-		t.Errorf("expected safety report to contain blocked commands, got %s", output[:100])
+	if !strings.Contains(output, "High-risk commands") {
+		t.Errorf("expected safety report to contain high-risk commands, got %s", output[:100])
 	}
 }
 
@@ -181,7 +181,7 @@ func TestSafetyReportFullAccessBranch(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, want := range []string{"full_access", "Sandbox: enabled (best_effort)", "Writable roots",
-		"Blocked commands", "Allowlist: https://example.com:443", "go test", "auto-approved"} {
+		"High-risk commands", "Allowlist: https://example.com:443", "go test", "auto-approved"} {
 		if !strings.Contains(output, want) {
 			t.Errorf("expected %q in output", want)
 		}
