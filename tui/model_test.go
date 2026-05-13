@@ -3519,6 +3519,49 @@ func TestPasteMsgTransactionConsumesEchoedPlainKeyStream(t *testing.T) {
 	}
 }
 
+func TestPasteMsgTransactionConsumesDelayedMatchingEcho(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	longPaste := strings.Join([]string{"echo line 1", "echo line 2", "echo line 3"}, "\n")
+
+	got, _ := m.handlePastePayload(longPaste + "\n")
+	updated := got.(model)
+	afterPaste := updated.input.Value()
+	if !regexp.MustCompile(`^\[Paste #\d+ ~\d+ lines\]$`).MatchString(afterPaste) {
+		t.Fatalf("expected paste payload to compress into marker, got %q", afterPaste)
+	}
+
+	updated.pasteTransaction.StartedAt = time.Now().Add(-2 * pasteTransactionAppendWindow)
+	got, _ = updated.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("echo line 1")})
+	updated = got.(model)
+
+	if updated.input.Value() != afterPaste {
+		t.Fatalf("expected delayed matching echo to be consumed, got %q", updated.input.Value())
+	}
+	if updated.pasteTransaction.Consumed != len([]rune("echo line 1")) {
+		t.Fatalf("expected delayed echo to advance consumed offset, got %d", updated.pasteTransaction.Consumed)
+	}
+}
+
+func TestPasteMsgTransactionReleasesDelayedNonMatchingInput(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	longPaste := strings.Join([]string{"echo line 1", "echo line 2", "echo line 3"}, "\n")
+
+	got, _ := m.handlePastePayload(longPaste + "\n")
+	updated := got.(model)
+	updated.pasteTransaction.StartedAt = time.Now().Add(-2 * pasteTransactionAppendWindow)
+
+	consumed := updated.consumePasteEchoKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("manual")})
+
+	if consumed {
+		t.Fatalf("expected stale non-matching input not to be consumed")
+	}
+	if updated.pasteTransaction.Active {
+		t.Fatalf("expected stale non-matching transaction to clear")
+	}
+}
+
 func TestPasteKeyTransactionConsumesEchoedPlainKeyStream(t *testing.T) {
 	m := newImagePipelineModel(t)
 	m.screen = screenChat
