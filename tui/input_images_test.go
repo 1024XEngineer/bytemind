@@ -147,6 +147,35 @@ func TestApplyInputImagePipelineConvertsPastedPathToPlaceholder(t *testing.T) {
 	}
 }
 
+func TestApplyInputImagePipelineConvertsPastedPathOutsideWorkspace(t *testing.T) {
+	m := newImagePipelineModel(t)
+	externalDir := t.TempDir()
+	if filepath.Clean(externalDir) == filepath.Clean(m.workspace) {
+		t.Fatal("test setup expected external dir outside workspace")
+	}
+	imagePath := filepath.Join(externalDir, "external.png")
+	if err := os.WriteFile(imagePath, []byte("png-outside-workspace"), 0o644); err != nil {
+		t.Fatalf("write image fixture: %v", err)
+	}
+
+	updated, note := m.applyInputImagePipeline("", imagePath, "ctrl+v")
+	if updated != "[Image#1]" {
+		t.Fatalf("expected external image path placeholder, got %q", updated)
+	}
+	if !strings.Contains(note, "Attached 1 image") {
+		t.Fatalf("expected attach note, got %q", note)
+	}
+
+	assetID := findAssetIDByImageID(t, m, 1)
+	blob, err := m.imageStore.GetImageByAssetID(context.Background(), corepkg.SessionID(m.sess.ID), assetID)
+	if err != nil {
+		t.Fatalf("read stored image: %v", err)
+	}
+	if !bytes.Equal(blob.Data, []byte("png-outside-workspace")) {
+		t.Fatalf("unexpected stored bytes: %q", string(blob.Data))
+	}
+}
+
 func TestParseClipboardImageOutputJSONPayload(t *testing.T) {
 	raw := "{\"media_type\":\"image/jpeg\",\"file_name\":\"copied.jpg\",\"data\":\"" + base64.StdEncoding.EncodeToString([]byte("jpeg-bytes")) + "\"}\n"
 	mediaType, data, fileName, err := parseClipboardImageOutput(raw)

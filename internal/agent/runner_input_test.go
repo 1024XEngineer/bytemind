@@ -94,6 +94,85 @@ func TestRunPromptWithInputForwardsStructuredUserMessageAndAssets(t *testing.T) 
 	}
 }
 
+func TestRunPromptWithInputUsesSelectedModelForImageCapabilities(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := session.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := session.New(workspace)
+
+	client := &fakeClient{
+		replies: []llm.Message{
+			llm.NewAssistantTextMessage("done"),
+		},
+	}
+	runner := NewRunner(Options{
+		Workspace: workspace,
+		Config: config.Config{
+			ProviderRuntime: config.ProviderRuntimeConfig{
+				CurrentProvider: "qwen",
+				DefaultProvider: "qwen",
+				DefaultModel:    "qwen3.6-plus",
+				Providers: map[string]config.ProviderConfig{
+					"qwen": {Model: "qwen3.6-plus"},
+				},
+			},
+			MaxIterations: 2,
+			Stream:        false,
+		},
+		Client:   client,
+		Store:    store,
+		Registry: tools.DefaultRegistry(),
+		Stdin:    strings.NewReader(""),
+		Stdout:   io.Discard,
+	})
+
+	runner.config.Provider.Model = "text-only-model"
+	assetID := llm.AssetID(sess.ID + ":1")
+	answer, err := runner.RunPromptWithInput(context.Background(), sess, RunPromptInput{
+		UserMessage: llm.Message{
+			Role: llm.RoleUser,
+			Parts: []llm.Part{
+				{Type: llm.PartImageRef, Image: &llm.ImagePartRef{AssetID: assetID}},
+			},
+		},
+		Assets: map[llm.AssetID]llm.ImageAsset{
+			assetID: {
+				MediaType: "image/png",
+				Data:      []byte("png-binary"),
+			},
+		},
+		DisplayText: "[Image#1]",
+	}, "build", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "done" {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if len(client.requests) == 0 {
+		t.Fatal("expected request to be sent")
+	}
+	if client.requests[0].Model != "qwen3.6-plus" {
+		t.Fatalf("expected selected runtime model, got %q", client.requests[0].Model)
+	}
+
+	var latestUser llm.Message
+	for i := len(client.requests[0].Messages) - 1; i >= 0; i-- {
+		if client.requests[0].Messages[i].Role == llm.RoleUser {
+			latestUser = client.requests[0].Messages[i]
+			break
+		}
+	}
+	for _, part := range latestUser.Parts {
+		if part.Type == llm.PartImageRef && part.Image != nil && part.Image.AssetID == assetID {
+			return
+		}
+	}
+	t.Fatalf("expected request user message to keep image_ref for selected vision model, got %#v", latestUser.Parts)
+}
+
 func TestRunPromptWithInputFallsBackToDisplayTextWhenUserMessageEmpty(t *testing.T) {
 	workspace := t.TempDir()
 	store, err := session.NewStore(t.TempDir())

@@ -69,3 +69,30 @@ func TestBuildChatRequestAppliesMessageCapabilities(t *testing.T) {
 		t.Fatalf("expected thinking to be downgraded to text, got %#v", req.Messages[0].Parts[0])
 	}
 }
+
+func TestBuildChatRequestKeepsImageForProviderPrefixedQwenVisionModel(t *testing.T) {
+	assetID := llm.AssetID("session:1")
+	req := BuildChatRequest(ChatRequestInput{
+		Model: "qwen/qwen3.6-plus",
+		Messages: []llm.Message{{
+			Role: llm.RoleUser,
+			Parts: []llm.Part{
+				{Type: llm.PartImageRef, Image: &llm.ImagePartRef{AssetID: assetID}},
+			},
+		}},
+		Assets: map[llm.AssetID]llm.ImageAsset{
+			assetID: {
+				MediaType: "image/png",
+				Data:      []byte("png"),
+			},
+		},
+	})
+
+	if len(req.Messages) != 1 || len(req.Messages[0].Parts) != 1 {
+		t.Fatalf("unexpected request messages: %#v", req.Messages)
+	}
+	part := req.Messages[0].Parts[0]
+	if part.Type != llm.PartImageRef || part.Image == nil || part.Image.AssetID != assetID {
+		t.Fatalf("expected image_ref to be preserved, got %#v", part)
+	}
+}

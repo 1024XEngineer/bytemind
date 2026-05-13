@@ -65,6 +65,11 @@ var DefaultModelCapabilities = NewCapabilityRegistry(map[string]ModelCapabilitie
 	"gpt-5.4":         {SupportsVision: true, SupportsToolUse: true, SupportsThinking: true},
 	"gpt-5.4-mini":    {SupportsVision: true, SupportsToolUse: true, SupportsThinking: true},
 	"claude-sonnet-4": {SupportsVision: true, SupportsToolUse: true, SupportsThinking: true},
+	"qwen3.6-flash":   {SupportsVision: true, SupportsToolUse: true, SupportsThinking: true},
+	"qwen3.6-plus":    {SupportsVision: true, SupportsToolUse: true, SupportsThinking: true},
+	"qwen3.6-pro":     {SupportsVision: true, SupportsToolUse: true, SupportsThinking: true},
+	"qwen3-vl-flash":  {SupportsVision: true, SupportsToolUse: true, SupportsThinking: true},
+	"qwen3-vl-plus":   {SupportsVision: true, SupportsToolUse: true, SupportsThinking: true},
 })
 
 func ApplyCapabilities(messages []Message, caps ModelCapabilities) []Message {
@@ -118,7 +123,7 @@ func defaultCapabilities() ModelCapabilities {
 
 func inferCapabilitiesFromModel(model string) ModelCapabilities {
 	caps := defaultCapabilities()
-	if strings.Contains(model, "4o") || strings.Contains(model, "vision") || strings.Contains(model, "gpt-5") || strings.Contains(model, "claude") {
+	if strings.Contains(model, "4o") || strings.Contains(model, "vision") || strings.Contains(model, "gpt-5") || strings.Contains(model, "claude") || isQwenVisionModel(model) {
 		caps.SupportsVision = true
 	}
 	if strings.Contains(model, "no-tool") {
@@ -128,4 +133,22 @@ func inferCapabilitiesFromModel(model string) ModelCapabilities {
 		caps.SupportsThinking = false
 	}
 	return caps
+}
+
+func isQwenVisionModel(model string) bool {
+	model = strings.TrimSpace(model)
+	if slash := strings.LastIndex(model, "/"); slash >= 0 && slash < len(model)-1 {
+		model = strings.TrimSpace(model[slash+1:])
+	}
+	switch {
+	case strings.HasPrefix(model, "qwen3.6-flash"),
+		strings.HasPrefix(model, "qwen3.6-plus"),
+		strings.HasPrefix(model, "qwen3.6-pro"),
+		strings.Contains(model, "qwen3-vl"),
+		strings.Contains(model, "qwen2.5-vl"),
+		strings.Contains(model, "qwen-vl"):
+		return true
+	default:
+		return false
+	}
 }

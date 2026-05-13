@@ -80,6 +80,22 @@ func TestComponentFooterInfoRightModelAndHintPaths(t *testing.T) {
 	}
 }
 
+func TestLandingContentShowsStatusNote(t *testing.T) {
+	input := textarea.New()
+	m := model{
+		screen:     screenLanding,
+		width:      100,
+		height:     32,
+		input:      input,
+		statusNote: "this model does not support image input",
+	}
+
+	view := stripANSI(m.renderLandingContent(false))
+	if !strings.Contains(view, "this model does not support image input") {
+		t.Fatalf("expected landing content to show status note, got %q", view)
+	}
+}
+
 func TestComponentFooterHintsShowEscInterruptOnlyWhenCancelable(t *testing.T) {
 	m := model{
 		busy:      true,

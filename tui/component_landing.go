@@ -370,6 +370,17 @@ func renderLandingShortcutHints() string {
 	return strings.Join(parts, landingShortcutDividerStyle.Render("   "))
 }
 
+func (m model) renderLandingStatusNote() string {
+	note := strings.TrimSpace(m.statusNote)
+	if note == "" || note == "Ready." {
+		return ""
+	}
+	width := m.landingInputShellWidth()
+	return landingStatusNoteStyle.Copy().
+		Width(width).
+		Render(compact(note, width))
+}
+
 func (m model) renderLandingContent(markInputZone bool) string {
 	parts := []string{
 		m.renderLandingHero(),
@@ -383,8 +394,11 @@ func (m model) renderLandingContent(markInputZone bool) string {
 		parts,
 		"",
 		m.renderLandingInputBox(markInputZone),
-		renderLandingShortcutHints(),
 	)
+	if status := strings.TrimSpace(m.renderLandingStatusNote()); status != "" {
+		parts = append(parts, status)
+	}
+	parts = append(parts, renderLandingShortcutHints())
 	return strings.Join(parts, "\n")
 }
 

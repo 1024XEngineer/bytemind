@@ -2833,6 +2833,26 @@ func TestSubmitPromptImageUnsupportedKeepsInput(t *testing.T) {
 	}
 }
 
+func TestSubmitPromptQwenVisionImageSupported(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenChat
+	m.cfg.Provider.Model = "qwen3.6-plus"
+	placeholder := mustIngestTestImage(t, m, "image")
+	m.input.SetWidth(40)
+	m.input.SetHeight(3)
+	m.input.SetValue("please read " + placeholder)
+	m.input.CursorEnd()
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	if len(updated.chatItems) != 1 {
+		t.Fatalf("expected qwen vision image prompt to submit, got %d chat items with status %q", len(updated.chatItems), updated.statusNote)
+	}
+	if !strings.Contains(updated.chatItems[0].Body, placeholder) {
+		t.Fatalf("expected submitted body to include image placeholder, got %q", updated.chatItems[0].Body)
+	}
+}
+
 func TestAltEnterInsertsNewlineWithoutSubmitting(t *testing.T) {
 	input := textarea.New()
 	input.Focus()
@@ -3222,6 +3242,33 @@ func TestTerminalPasteEventWithEmptyPayloadPastesClipboardImage(t *testing.T) {
 	updated := got.(model)
 	if updated.input.Value() != "[Image#1]" {
 		t.Fatalf("expected empty paste event to attach clipboard image, got %q", updated.input.Value())
+	}
+}
+
+func TestTerminalPasteEventWithEmptyPayloadEnterSubmitsClipboardImage(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.screen = screenLanding
+	m.cfg.Provider.Model = "gpt-4o"
+	m.clipboard = fakeClipboardImageReader{
+		mediaType: "image/png",
+		data:      []byte("clipboard"),
+		fileName:  "clipboard.png",
+	}
+
+	got, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Paste: true})
+	afterPaste := got.(model)
+	got, cmd := afterPaste.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := got.(model)
+	_ = cmd
+
+	if len(updated.chatItems) != 1 {
+		t.Fatalf("expected enter after image paste to submit, got %d chat items", len(updated.chatItems))
+	}
+	if updated.screen != screenChat {
+		t.Fatalf("expected submitted image prompt to enter chat screen, got %q", updated.screen)
+	}
+	if updated.chatItems[0].Body != "[Image#1]" {
+		t.Fatalf("expected submitted image placeholder body, got %q", updated.chatItems[0].Body)
 	}
 }
 
