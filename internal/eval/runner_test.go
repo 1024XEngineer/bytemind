@@ -84,7 +84,8 @@ func TestSmokeChecksMultiple(t *testing.T) {
 		{Command: "nonexistent_cmd_zzz"},
 	}}}
 	r := RunSmokeChecks(tasks)
-	if len(r) != 1 || r[0].Passed { t.Fatal("expected fail on second check") }
+	// Command checks are skipped in smoke mode; only file_contains runs
+	if len(r) != 1 || !r[0].Passed { t.Fatal("expected pass (command checks skipped in smoke)") }
 }
 
 func TestLoadTasksEmptyDir(t *testing.T) {
@@ -158,4 +159,80 @@ func TestRunTasksCoverage(t *testing.T) {
 	tasks := []EvalTask{{ID: "t", Workspace: ".", Prompt: "p", Success: []Check{{Command: "nonexistent_zzz"}}}}
 	r := RunTasks("/nonexistent_binary", tasks)
 	if len(r) != 1 { t.Fatal("expected 1 result") }
+}
+
+func TestLoadTaskWithNegativeChecks(t *testing.T) {
+	dir := t.TempDir()
+	yaml := []byte(`
+id: neg_test
+name: Negative Eval Test
+workspace: .
+prompt: "Explain the code"
+success:
+  - output_contains:
+      - "function"
+negative:
+  - type: read_only
+    description: Should not modify files
+  - type: forbidden_paths
+    forbidden_paths:
+      - "*.md"
+  - type: max_files_changed
+    max_files_changed: 1
+`)
+	os.WriteFile(filepath.Join(dir, "task.yaml"), yaml, 0o644)
+	tasks := LoadTasks(dir)
+	if len(tasks) != 1 { t.Fatal("expected 1 task") }
+	task := tasks[0]
+	if len(task.Negative) != 3 { t.Fatalf("expected 3 negative checks, got %d", len(task.Negative)) }
+	if task.Negative[0].Type != "read_only" { t.Fatalf("expected read_only, got %s", task.Negative[0].Type) }
+	if len(task.Negative[1].ForbiddenPaths) != 1 || task.Negative[1].ForbiddenPaths[0] != "*.md" {
+		t.Fatalf("expected forbidden_paths [*.md], got %v", task.Negative[1].ForbiddenPaths)
+	}
+	if task.Negative[2].MaxFilesChanged != 1 { t.Fatalf("expected max_files_changed=1, got %d", task.Negative[2].MaxFilesChanged) }
+}
+
+func TestLoadTaskWithConstraints(t *testing.T) {
+	dir := t.TempDir()
+	yaml := []byte(`
+id: const_test
+name: Constraints Test
+workspace: .
+prompt: "Fix the bug"
+success:
+  - command: "go test ./..."
+constraints:
+  max_files_changed: 3
+  forbidden_paths:
+    - "README.md"
+  require_test_run: true
+`)
+	os.WriteFile(filepath.Join(dir, "task.yaml"), yaml, 0o644)
+	tasks := LoadTasks(dir)
+	if len(tasks) != 1 { t.Fatal("expected 1 task") }
+	task := tasks[0]
+	if task.Constraints == nil { t.Fatal("expected constraints to be non-nil") }
+	if task.Constraints.MaxFilesChanged != 3 { t.Fatalf("expected MaxFilesChanged=3, got %d", task.Constraints.MaxFilesChanged) }
+	if len(task.Constraints.ForbiddenPaths) != 1 || task.Constraints.ForbiddenPaths[0] != "README.md" {
+		t.Fatalf("expected forbidden_paths [README.md], got %v", task.Constraints.ForbiddenPaths)
+	}
+	if !task.Constraints.RequireTestRun { t.Fatal("expected RequireTestRun=true") }
+}
+
+func TestGitDiffFilesNonGitDir(t *testing.T) {
+	dir := t.TempDir()
+	files := gitDiffFiles(dir)
+	if files != nil { t.Fatal("expected nil for non-git dir") }
+}
+
+func TestListGitTrackedFilesNonGitDir(t *testing.T) {
+	dir := t.TempDir()
+	files := listGitTrackedFiles(dir)
+	if files != nil { t.Fatal("expected nil for non-git dir") }
+}
+
+func TestStringSetsEqual(t *testing.T) {
+	if !stringSetsEqual([]string{"a", "b"}, []string{"b", "a"}) { t.Fatal("equal sets") }
+	if stringSetsEqual([]string{"a"}, []string{"b"}) { t.Fatal("different sets") }
+	if stringSetsEqual([]string{"a", "b"}, []string{"a"}) { t.Fatal("different lengths") }
 }

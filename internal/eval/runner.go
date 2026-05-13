@@ -197,13 +197,10 @@ func RunSmokeChecks(tasks []EvalTask) []TaskResult {
 		result := TaskResult{ID: task.ID, Name: task.Name, Passed: true}
 		workspace := task.Workspace
 		for _, check := range task.Success {
-			switch {
-			case check.Command != "":
-				if ok, msg := CheckCommand(check.Command, check.ExitCode, workspace); !ok {
-					result.Passed = false
-					result.Failures = append(result.Failures, msg)
-				}
-			case len(check.FileContains) > 0:
+			// Smoke checks only verify static file conditions.
+			// Command checks (go test, etc.) require agent execution and
+			// will fail naturally for bugfix/refactor fixtures.
+			if len(check.FileContains) > 0 {
 				for _, fc := range check.FileContains {
 					if ok, msg := CheckFileContains(workspace, fc.Path, fc.Pattern); !ok {
 						result.Passed = false

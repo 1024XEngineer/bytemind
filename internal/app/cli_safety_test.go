@@ -134,3 +134,27 @@ func TestRunSafetyExplainContainsEmoji(t *testing.T) {
 		t.Errorf("expected checkmark emoji in safety explain output")
 	}
 }
+
+func TestRunSafetyReportContainsBlockedCommands(t *testing.T) {
+	var stdout bytes.Buffer
+	err := RunSafety([]string{"status"}, &stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "Blocked commands") {
+		t.Errorf("expected safety report to contain blocked commands, got %s", output[:100])
+	}
+}
+
+func TestRunSafetyReportContainsWorkspace(t *testing.T) {
+	var stdout bytes.Buffer
+	err := RunSafety([]string{"status", "-workspace", "."}, &stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "Workspace:") {
+		t.Errorf("expected safety report to contain Workspace, got %s", output[:100])
+	}
+}

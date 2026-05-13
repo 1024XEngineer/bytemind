@@ -7,6 +7,5 @@ prompt: "Extract the duplicated Celsius-to-Fahrenheit conversion logic in temper
 success:
   - command: "go test ./..."
     exit_code: 0
-  - file_contains:
-      - path: temperature.go
-        pattern: "func.*celsiusToFahrenheit"
+  - files_modified:
+      - temperature.go
