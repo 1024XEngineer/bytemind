@@ -164,8 +164,12 @@ func gitDiffFiles(workspace string) []string {
 	if err != nil {
 		return nil
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	var files []string
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return []string{}
+	}
+	lines := strings.Split(trimmed, "\n")
+	files := make([]string, 0, len(lines))
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line != "" {

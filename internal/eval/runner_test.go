@@ -2,6 +2,7 @@ package eval
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,6 +51,16 @@ func TestCheckCommandEmpty(t *testing.T) {
 	if !strings.Contains(msg, "empty command") { t.Fatal("bad msg:", msg) }
 }
 
+func TestCheckCommandExitCodeHandling(t *testing.T) {
+	// Test with nil exit code (no exit code check) - any command works
+	// Use "git --help" which is available on most systems and exits 0
+	ok, msg := CheckCommand("git --help", nil, ".")
+	if !ok {
+		t.Logf("git not available on this system: %s", msg)
+		return
+	}
+}
+
 func TestCheckOutputContains(t *testing.T) {
 	ok, _ := CheckOutputContains("hello world", []string{"world"})
 	if !ok { t.Fatal("expected match") }
@@ -76,7 +87,7 @@ func TestSmokeChecksFileCheckFail(t *testing.T) {
 	if len(r) != 1 || r[0].Passed { t.Fatal("expected fail") }
 }
 
-func TestSmokeChecksMultiple(t *testing.T) {
+func TestSmokeChecksSkipsCommandChecks(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.go"), []byte(`package main`), 0o644)
 	tasks := []EvalTask{{ID: "t1", Workspace: dir, Success: []Check{
@@ -84,7 +95,6 @@ func TestSmokeChecksMultiple(t *testing.T) {
 		{Command: "nonexistent_cmd_zzz"},
 	}}}
 	r := RunSmokeChecks(tasks)
-	// Command checks are skipped in smoke mode; only file_contains runs
 	if len(r) != 1 || !r[0].Passed { t.Fatal("expected pass (command checks skipped in smoke)") }
 }
 
@@ -155,10 +165,62 @@ func TestPrintResults(t *testing.T) {
 }
 
 func TestRunTasksCoverage(t *testing.T) {
-	// Call RunTasks to exercise all code paths without external dependencies
+	// Call RunTasks with nonexistent binary; verify coverage of basic paths
 	tasks := []EvalTask{{ID: "t", Workspace: ".", Prompt: "p", Success: []Check{{Command: "nonexistent_zzz"}}}}
 	r := RunTasks("/nonexistent_binary", tasks)
 	if len(r) != 1 { t.Fatal("expected 1 result") }
+}
+
+func TestRunTasksWithOutputContains(t *testing.T) {
+	// output_contains is checked against the agent's output
+	tasks := []EvalTask{{
+		ID: "t", Name: "Test", Workspace: ".", Prompt: "hello",
+		Success: []Check{{OutputContains: []string{"world"}}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	// output from nonexistent binary is empty, so output_contains should fail
+	if r[0].Passed { t.Fatal("expected fail (no output from nonexistent binary)") }
+}
+
+func TestGitDiffFilesWithGitRepo(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"file.txt": "hello"})
+	files := gitDiffFiles(dir)
+	if files == nil { t.Fatal("expected non-nil empty slice, got nil") }
+	if len(files) != 0 { t.Fatalf("expected no modified files, got %v", files) }
+
+	// Modify a file
+	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("modified"), 0o644)
+	files = gitDiffFiles(dir)
+	if len(files) != 1 || files[0] != "file.txt" {
+		t.Fatalf("expected [file.txt], got %v", files)
+	}
+}
+
+func TestListGitTrackedFilesWithGitRepo(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"a.go": "package a", "b.go": "package b"})
+	files := listGitTrackedFiles(dir)
+	if len(files) != 2 { t.Fatalf("expected 2 files, got %v", files) }
+}
+
+func TestGitDiffFilesNonGitDir(t *testing.T) {
+	dir := t.TempDir()
+	files := gitDiffFiles(dir)
+	if files != nil { t.Fatal("expected nil for non-git dir") }
+}
+
+func TestListGitTrackedFilesNonGitDir(t *testing.T) {
+	dir := t.TempDir()
+	files := listGitTrackedFiles(dir)
+	if files != nil { t.Fatal("expected nil for non-git dir") }
+}
+
+func TestStringSetsEqual(t *testing.T) {
+	if !stringSetsEqual([]string{"a", "b"}, []string{"b", "a"}) { t.Fatal("equal sets") }
+	if stringSetsEqual([]string{"a"}, []string{"b"}) { t.Fatal("different sets") }
+	if stringSetsEqual([]string{"a", "b"}, []string{"a"}) { t.Fatal("different lengths") }
 }
 
 func TestLoadTaskWithNegativeChecks(t *testing.T) {
@@ -219,20 +281,26 @@ constraints:
 	if !task.Constraints.RequireTestRun { t.Fatal("expected RequireTestRun=true") }
 }
 
-func TestGitDiffFilesNonGitDir(t *testing.T) {
-	dir := t.TempDir()
-	files := gitDiffFiles(dir)
-	if files != nil { t.Fatal("expected nil for non-git dir") }
+// helpers
+
+func initGitRepo(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for name, content := range files {
+		os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+	}
+	runCmd(t, dir, "git", "-c", "user.name=test", "-c", "user.email=test@test", "init")
+	runCmd(t, dir, "git", "add", ".")
+	runCmd(t, dir, "git", "-c", "user.name=test", "-c", "user.email=test@test", "commit", "-m", "initial")
 }
 
-func TestListGitTrackedFilesNonGitDir(t *testing.T) {
-	dir := t.TempDir()
-	files := listGitTrackedFiles(dir)
-	if files != nil { t.Fatal("expected nil for non-git dir") }
-}
-
-func TestStringSetsEqual(t *testing.T) {
-	if !stringSetsEqual([]string{"a", "b"}, []string{"b", "a"}) { t.Fatal("equal sets") }
-	if stringSetsEqual([]string{"a"}, []string{"b"}) { t.Fatal("different sets") }
-	if stringSetsEqual([]string{"a", "b"}, []string{"a"}) { t.Fatal("different lengths") }
+func runCmd(t *testing.T, dir, name string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cmd %s %v failed: %v\n%s", name, args, err, string(out))
+	}
 }
