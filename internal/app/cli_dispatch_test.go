@@ -50,6 +50,18 @@ func TestDispatchCLIRoutesSubcommands(t *testing.T) {
 			calls = append(calls, call{name: "safety", args: append([]string(nil), args...)})
 			return nil
 		},
+		RunDemo: func(args []string, stdout, stderr io.Writer) error {
+			calls = append(calls, call{name: "demo", args: append([]string(nil), args...)})
+			return nil
+		},
+		RunTrace: func(args []string, stdout, stderr io.Writer) error {
+			calls = append(calls, call{name: "trace", args: append([]string(nil), args...)})
+			return nil
+		},
+		RunInit: func(args []string, stdout, stderr io.Writer) error {
+			calls = append(calls, call{name: "init", args: append([]string(nil), args...)})
+			return nil
+		},
 		RenderUsage: func(w io.Writer) {
 			calls = append(calls, call{name: "help"})
 		},
@@ -74,6 +86,9 @@ func TestDispatchCLIRoutesSubcommands(t *testing.T) {
 		{name: "--version -> render version", args: []string{"--version"}, wantCall: call{name: "version"}},
 		{name: "version -> render version", args: []string{"version"}, wantCall: call{name: "version"}},
 		{name: "--yolo -> tui with away mode", args: []string{"--yolo"}, wantCall: call{name: "tui", args: []string{"-approval-mode", "away", "-away-policy", "auto_deny_continue"}}},
+		{name: "demo -> demo handler", args: []string{"demo", "bugfix"}, wantCall: call{name: "demo", args: []string{"bugfix"}}},
+		{name: "trace -> trace handler", args: []string{"trace", "list"}, wantCall: call{name: "trace", args: []string{"list"}}},
+		{name: "init -> init handler", args: []string{"init"}, wantCall: call{name: "init", args: nil}},
 		{name: "--yolo keeps tui flags and forces away mode", args: []string{"--yolo", "-workspace", "."}, wantCall: call{name: "tui", args: []string{"-workspace", ".", "-approval-mode", "away", "-away-policy", "auto_deny_continue"}}},
 		{name: "unknown -> tui passthrough", args: []string{"custom", "arg"}, wantCall: call{name: "tui", args: []string{"custom", "arg"}}},
 	}
@@ -107,6 +122,9 @@ func TestDispatchCLIPropagatesHandlerError(t *testing.T) {
 		RunMCP:        func(args []string, stdin io.Reader, stdout, stderr io.Writer) error { return nil },
 		RunDoctor:     func(args []string, stdout, stderr io.Writer) error { return nil },
 		RunSafety:     func(args []string, stdout, stderr io.Writer) error { return nil },
+		RunDemo:       func(args []string, stdout, stderr io.Writer) error { return nil },
+		RunTrace:      func(args []string, stdout, stderr io.Writer) error { return nil },
+		RunInit:       func(args []string, stdout, stderr io.Writer) error { return nil },
 		RenderUsage:   func(w io.Writer) {},
 		RenderVersion: func(w io.Writer) {},
 	}

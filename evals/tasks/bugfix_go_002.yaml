@@ -1,0 +1,14 @@
+id: bugfix_go_002
+name: Fix off-by-one error in loop
+description: Fix the off-by-one error in the SumFirstN function
+workspace: evals/fixtures/bugfix_go_002
+prompt: "Fix the failing test in the project and verify all tests pass"
+
+success:
+  - command: "go test ./..."
+    exit_code: 0
+  - file_contains:
+      - path: mathutil.go
+        pattern: "i < n"
+  - files_modified:
+      - mathutil.go

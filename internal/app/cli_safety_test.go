@@ -15,7 +15,7 @@ func TestRunSafetyStatusOutput(t *testing.T) {
 
 	output := stdout.String()
 	expected := []string{
-		"ByteMind Safety Status",
+		"ByteMind Safety Report",
 		"Approval policy",
 		"Approval mode",
 		"Writable roots",
@@ -57,7 +57,7 @@ func TestRunSafetyDefaultShowsStatus(t *testing.T) {
 	}
 
 	output := stdout.String()
-	if !strings.Contains(output, "ByteMind Safety Status") {
+	if !strings.Contains(output, "ByteMind Safety Report") {
 		t.Errorf("expected default safety to show status, got %s", output[:60])
 	}
 }
@@ -70,7 +70,7 @@ func TestRunSafetyStatusWithFlagsAfterSubcommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "ByteMind Safety Status") {
+	if !strings.Contains(output, "ByteMind Safety Report") {
 		t.Errorf("expected safety status output, got %s", output[:60])
 	}
 }

@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	configpkg "github.com/1024XEngineer/bytemind/internal/config"
@@ -47,18 +48,25 @@ func renderSafetyStatus(workspace, configFile string, w io.Writer) error {
 		cfg = configpkg.Default(workspace)
 	}
 
+	absWorkspace, _ := filepath.Abs(workspace)
 	mode, _ := configpkg.NormalizeApprovalMode(cfg.ApprovalMode)
-	write("ByteMind Safety Status")
+	write("ByteMind Safety Report")
+	write("======================")
 	write("")
 
+	write("Workspace:")
+	write("  %s", absWorkspace)
+
+	write("")
 	write("Policy:")
 	if mode == "full_access" {
-		write("  \u274c Approval mode: full_access \u2014 ALL tools approved without prompts")
+		write("  \u274c Approval mode: full_access \u2014 ALL tools approved without prompting")
 	} else {
 		write("  \u2705 Approval mode: %s", mode)
 	}
 	write("  \u2705 Approval policy: %s", cfg.ApprovalPolicy)
 
+	write("")
 	write("Boundary:")
 	if cfg.SandboxEnabled {
 		write("  \u2705 Sandbox: enabled (%s)", cfg.SystemSandboxMode)
@@ -70,16 +78,22 @@ func renderSafetyStatus(workspace, configFile string, w io.Writer) error {
 	} else {
 		write("  \u2705 Writable roots: %s", strings.Join(cfg.WritableRoots, ", "))
 	}
+	dangerousCommands := []string{"rm -rf", "sudo", "curl | sh", "chmod -R 777", "dd", "mkfs", "shutdown", "reboot"}
+	write("  \u274c Blocked commands: %s", strings.Join(dangerousCommands, ", "))
+
+	write("")
+	write("Network policy:")
 	if len(cfg.NetworkAllowlist) == 0 {
-		write("  \u26a0\ufe0f Network access: restricted (agent-initiated only)")
+		write("  \u26a0\ufe0f Default: restricted (agent-initiated access to any host)")
 	} else {
 		targets := make([]string, len(cfg.NetworkAllowlist))
 		for i, r := range cfg.NetworkAllowlist {
-			targets[i] = r.Host
+			targets[i] = fmt.Sprintf("%s://%s:%d", r.Scheme, r.Host, r.Port)
 		}
-		write("  \u26a0\ufe0f Network access: restricted to %s", strings.Join(targets, ", "))
+		write("  \u2705 Allowlist: %s", strings.Join(targets, ", "))
 	}
 
+	write("")
 	write("Shell allowlist:")
 	if len(cfg.ExecAllowlist) == 0 {
 		write("  \u26a0\ufe0f (none \u2014 all shell commands require approval)")
@@ -89,12 +103,13 @@ func renderSafetyStatus(workspace, configFile string, w io.Writer) error {
 		}
 	}
 
+	write("")
 	write("Access summary:")
 	write("  \u2705 Read operations: always allowed")
 	if cfg.ApprovalPolicy == "never" || mode == "full_access" {
 		if cfg.ApprovalPolicy == "never" {
-			write("  \u274c Write operations: blocked (approval_policy=never denies high-risk tools)")
-			write("  \u274c Shell execution: blocked (approval_policy=never denies high-risk tools)")
+			write("  \u274c Write operations: blocked (approval_policy=never)")
+			write("  \u274c Shell execution: blocked (approval_policy=never)")
 		} else {
 			write("  \u274c Write operations: auto-approved (no prompt)")
 			write("  \u274c Shell execution: auto-approved (no prompt)")
@@ -109,6 +124,11 @@ func renderSafetyStatus(workspace, configFile string, w io.Writer) error {
 		write("")
 		write("  \u26a0\ufe0f full_access mode bypasses all approval prompts. Recommended for CI/demo only.")
 	}
+
+	write("")
+	write("Config file: %s", configFile)
+	write("Max iterations: %d", cfg.MaxIterations)
+	write("Stream: %v", cfg.Stream)
 	return nil
 }
 

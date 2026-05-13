@@ -18,6 +18,9 @@ func RunTasks(binPath string, tasks []EvalTask) []TaskResult {
 			workspace = "."
 		}
 
+		// Track files modified by git diff before agent runs (for computing delta)
+		beforeFiles := listGitTrackedFiles(workspace)
+
 		// Run bytemind with the task prompt
 		cmd := exec.Command(binPath, "run",
 			"-prompt", task.Prompt,
@@ -69,9 +72,123 @@ func RunTasks(binPath string, tasks []EvalTask) []TaskResult {
 				}
 			}
 		}
+
+		// Run negative checks (constraints that should NOT be violated)
+		for _, neg := range task.Negative {
+			switch neg.Type {
+			case "read_only":
+				// Verify no files were modified (read-only mode)
+				afterFiles := listGitTrackedFiles(workspace)
+				modified := gitDiffFiles(workspace)
+				if len(modified) > 0 {
+					result.Passed = false
+					result.Failures = append(result.Failures,
+						fmt.Sprintf("negative[read_only]: agent modified %d file(s) but should not have: %v", len(modified), modified))
+				}
+				if !stringSetsEqual(beforeFiles, afterFiles) {
+					result.Passed = false
+					result.Failures = append(result.Failures,
+						"negative[read_only]: agent created or deleted files")
+				}
+			case "forbidden_paths":
+				modified := gitDiffFiles(workspace)
+				var violations []string
+				for _, fp := range neg.ForbiddenPaths {
+					for _, mf := range modified {
+						if matched, _ := filepath.Match(fp, mf); matched {
+							violations = append(violations, mf)
+						}
+					}
+				}
+				if len(violations) > 0 {
+					result.Passed = false
+					result.Failures = append(result.Failures,
+						fmt.Sprintf("negative[forbidden_paths]: agent modified forbidden file(s): %v", violations))
+				}
+			case "max_files_changed":
+				modified := gitDiffFiles(workspace)
+				if neg.MaxFilesChanged > 0 && len(modified) > neg.MaxFilesChanged {
+					result.Passed = false
+					result.Failures = append(result.Failures,
+						fmt.Sprintf("negative[max_files_changed]: agent changed %d files (max: %d): %v",
+							len(modified), neg.MaxFilesChanged, modified))
+				}
+			}
+		}
+
+		// Check task-level constraints
+		if task.Constraints != nil {
+			modified := gitDiffFiles(workspace)
+			if task.Constraints.MaxFilesChanged > 0 && len(modified) > task.Constraints.MaxFilesChanged {
+				result.Passed = false
+				result.Failures = append(result.Failures,
+					fmt.Sprintf("constraint max_files_changed: agent changed %d files (max: %d): %v",
+						len(modified), task.Constraints.MaxFilesChanged, modified))
+			}
+			for _, fp := range task.Constraints.ForbiddenPaths {
+				for _, mf := range modified {
+					if matched, _ := filepath.Match(fp, mf); matched {
+						result.Passed = false
+						result.Failures = append(result.Failures,
+							fmt.Sprintf("constraint forbidden_paths: agent modified %s (matches %s)", mf, fp))
+					}
+				}
+			}
+		}
+
 		results = append(results, result)
 	}
 	return results
+}
+
+func listGitTrackedFiles(workspace string) []string {
+	cmd := exec.Command("git", "-C", workspace, "ls-files")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var files []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+	return files
+}
+
+func gitDiffFiles(workspace string) []string {
+	cmd := exec.Command("git", "-C", workspace, "diff", "--name-only")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var files []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+	return files
+}
+
+func stringSetsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[string]struct{}, len(a))
+	for _, s := range a {
+		set[s] = struct{}{}
+	}
+	for _, s := range b {
+		if _, ok := set[s]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func RunSmokeChecks(tasks []EvalTask) []TaskResult {

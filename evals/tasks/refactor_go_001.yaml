@@ -1,0 +1,12 @@
+id: refactor_go_001
+name: Refactor duplicated logic
+description: Extract duplicated temperature conversion logic into a shared helper
+workspace: evals/fixtures/refactor_go_001
+prompt: "Extract the duplicated Celsius-to-Fahrenheit conversion logic in temperature.go into a shared helper function, keeping all tests passing"
+
+success:
+  - command: "go test ./..."
+    exit_code: 0
+  - file_contains:
+      - path: temperature.go
+        pattern: "func.*celsiusToFahrenheit"

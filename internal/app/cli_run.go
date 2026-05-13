@@ -12,6 +12,9 @@ func RunCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		RunMCP:        RunMCP,
 		RunDoctor:     RunDoctor,
 		RunSafety:     RunSafety,
+		RunDemo:       RunDemo,
+		RunTrace:      RunTrace,
+		RunInit:       RunInit,
 		RenderUsage:   RenderUsage,
 		RenderVersion: RenderVersion,
 	})

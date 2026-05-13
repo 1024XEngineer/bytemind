@@ -1,0 +1,11 @@
+id: testgen_go_001
+name: Generate tests for string utils
+description: Write unit tests for the string utility functions
+workspace: evals/fixtures/testgen_go_001
+prompt: "Write comprehensive unit tests for the string utility functions in stringutils.go and verify they pass"
+
+success:
+  - command: "go test ./..."
+    exit_code: 0
+  - files_modified:
+      - stringutils_test.go

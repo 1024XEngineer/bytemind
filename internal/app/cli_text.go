@@ -17,6 +17,9 @@ func DefaultUsageLines() []string {
 		"bytemind doctor [-workspace path]",
 		"bytemind safety status [-workspace path]",
 		"bytemind safety explain",
+		"bytemind demo [bugfix]          Run a fixed 5-minute demo",
+		"bytemind trace <list|show|export>  Agent trace inspection",
+		"bytemind init                   Interactive first-time setup",
 		"tip: install without Go (macOS/Linux): curl -fsSL https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.sh | bash",
 		"tip: install without Go (Windows): iwr -useb https://raw.githubusercontent.com/1024XEngineer/bytemind/main/scripts/install.ps1 | iex",
 	}

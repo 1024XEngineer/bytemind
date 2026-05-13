@@ -574,6 +574,20 @@ func ensureDefaultConfigDocumentFields(raw map[string]any) {
 	}
 }
 
+// WriteConfig writes a Config struct to a JSON file at the given path.
+func WriteConfig(path string, cfg Config) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
 func MutateMCPConfig(workspace, explicitPath string, mutator func(*MCPConfig) error) (Config, string, error) {
 	path, err := ResolveWritableMCPConfigPathForWorkspace(workspace, explicitPath)
 	if err != nil {
