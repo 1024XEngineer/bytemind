@@ -411,8 +411,8 @@ func TestResolvePastedLineReferenceWithFullFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve pasted line reference: %v", err)
 	}
-		if !strings.Contains(result, stored.Content) {
-			t.Fatalf("expected plain content expansion, got %q", result)
+	if !strings.Contains(result, stored.Content) {
+		t.Fatalf("expected plain content expansion, got %q", result)
 	}
 }
 
@@ -453,8 +453,8 @@ func TestBuildPromptInputDefaultsToLatestPastedReference(t *testing.T) {
 		t.Fatalf("build prompt input: %v", err)
 	}
 	text := input.UserMessage.Text()
-		if !strings.Contains(text, "new2") {
-			t.Fatalf("expected latest pasted content, got %q", text)
+	if !strings.Contains(text, "new2") {
+		t.Fatalf("expected latest pasted content, got %q", text)
 	}
 	if strings.Contains(text, "old2") {
 		t.Fatalf("expected latest pasted content, got %q", text)
@@ -565,8 +565,8 @@ func TestBuildPromptInputAdjustsOutOfRangeLineReference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build prompt input: %v", err)
 	}
-		if !strings.Contains(input.UserMessage.Text(), "l11") {
-			t.Fatalf("expected out-of-range line to clamp to last line, got %q", input.UserMessage.Text())
+	if !strings.Contains(input.UserMessage.Text(), "l11") {
+		t.Fatalf("expected out-of-range line to clamp to last line, got %q", input.UserMessage.Text())
 	}
 }
 
@@ -948,6 +948,75 @@ func TestMergeTailIntoLatestMarkerUpdatesLatestOnly(t *testing.T) {
 	}
 	if !strings.Contains(secondAfter.Content, "extra-4") {
 		t.Fatalf("expected tail to append into latest stored content")
+	}
+}
+
+func TestFinalizePasteSessionMergesMarkerTailAndArmsGuard(t *testing.T) {
+	m := newImagePipelineModel(t)
+	raw := strings.Join([]string{"l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l9", "l10", "l11"}, "\n")
+	marker, stored, err := m.compressPastedText(raw)
+	if err != nil {
+		t.Fatalf("compress paste: %v", err)
+	}
+
+	m.pasteTransaction = pasteTransactionState{Active: true}
+	m.pasteSession = pasteSessionState{
+		active:       true,
+		sourceKind:   "rune",
+		baseInput:    marker,
+		bufferedText: "\nextra",
+		finalizeID:   42,
+	}
+
+	m.finalizePasteSession(42)
+
+	if !strings.Contains(m.input.Value(), "[Paste #"+stored.ID+" ~12 lines]") {
+		t.Fatalf("expected merged marker with updated line count, got %q", m.input.Value())
+	}
+	if m.pasteSubmitGuardUntil.IsZero() {
+		t.Fatal("expected paste submit guard to be armed")
+	}
+}
+
+func TestApplyLongPastedTextPipelineMergesSplitTailAndArmsGuard(t *testing.T) {
+	m := newImagePipelineModel(t)
+	raw := strings.Join([]string{"l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l9", "l10", "l11"}, "\n")
+	marker, stored, err := m.compressPastedText(raw)
+	if err != nil {
+		t.Fatalf("compress paste: %v", err)
+	}
+	m.pasteTransaction = pasteTransactionState{Active: true}
+
+	updated, note := m.applyLongPastedTextPipeline(marker, marker+" split tail", "rune")
+	if note != "" {
+		t.Fatalf("expected no note for merged split tail, got %q", note)
+	}
+	if !strings.Contains(updated, "[Paste #"+stored.ID+" ~11 lines]") {
+		t.Fatalf("expected merged marker to remain visible, got %q", updated)
+	}
+	merged, ok := m.findPastedContent(stored.ID)
+	if !ok || !strings.Contains(merged.Content, "split tail") {
+		t.Fatalf("expected stored paste to include split tail, got ok=%v content=%#v", ok, merged)
+	}
+	if m.pasteSubmitGuardUntil.IsZero() {
+		t.Fatal("expected paste submit guard to be armed")
+	}
+}
+
+func TestShouldConsumeTrailingPasteEnterClearsAwaitAfterGuardExpires(t *testing.T) {
+	m := &model{
+		pasteTransaction: pasteTransactionState{
+			Active:             true,
+			AwaitTrailingEnter: true,
+		},
+		pasteSubmitGuardUntil: time.Now().Add(-time.Millisecond),
+	}
+
+	if m.shouldConsumeTrailingPasteEnter(tea.KeyMsg{Type: tea.KeyEnter}) {
+		t.Fatal("expected expired guard not to consume enter")
+	}
+	if m.pasteTransaction.AwaitTrailingEnter {
+		t.Fatal("expected trailing enter wait flag to be cleared")
 	}
 }
 

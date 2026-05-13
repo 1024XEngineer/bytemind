@@ -23,6 +23,16 @@ const (
 	InputMutationPasteFull  InputMutationClass = "paste_filled"
 )
 
+type FileType int
+
+const (
+	FileTypeImage FileType = iota
+	FileTypeText
+	FileTypePDF
+	FileTypeBinary
+	FileTypeUnknown
+)
+
 type ImagePathSpan struct {
 	Start int
 	End   int
@@ -276,11 +286,27 @@ func splitPathTokens(chunk string) []string {
 }
 
 func hasImageExt(path string) bool {
+	return classifyFileType(path) == FileTypeImage
+}
+
+func classifyFileType(path string) FileType {
 	switch strings.ToLower(strings.TrimPrefix(filepath.Ext(strings.TrimSpace(path)), ".")) {
-	case "png", "jpg", "jpeg", "webp", "gif":
-		return true
+	case "png", "jpg", "jpeg", "webp", "gif", "bmp":
+		return FileTypeImage
+	case "txt", "py", "go", "js", "ts", "java", "c", "cpp", "cs",
+		"rs", "json", "yaml", "yml", "md", "csv", "xml",
+		"html", "css", "scss", "less", "sh", "bash", "bat", "ps1",
+		"toml", "ini", "cfg", "conf", "log", "sql",
+		"rb", "php", "swift", "kt", "kts", "scala",
+		"lua", "r", "m", "mm", "pl", "pm",
+		"hs", "erl", "ex", "exs", "clj", "edn", "dart",
+		"proto", "tf", "hcl", "cmake", "make", "mk",
+		"gradle", "sbt", "dockerfile", "gitignore", "env":
+		return FileTypeText
+	case "pdf":
+		return FileTypePDF
 	default:
-		return false
+		return FileTypeUnknown
 	}
 }
 

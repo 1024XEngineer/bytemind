@@ -519,29 +519,18 @@ func (m *model) syncPasteConfirmPending(value string) {
 	if trimmed != "" && (strings.Contains(value, "[Paste #") || strings.Contains(value, "[Pasted #") || m.hasActivePasteSession()) {
 		return
 	}
-	m.clearPasteConfirmPending()
+		m.pasteSubmitGuardUntil = time.Time{}
 	if trimmed == "" && !m.hasActivePasteSession() {
 		m.clearPasteBurstCapture()
 		m.clearPasteBurstCandidate()
 	}
 }
 
-func (m *model) markPasteConfirmPending(now time.Time) {
-	if m == nil {
-		return
-	}
-	if now.IsZero() {
-		now = time.Now()
-	}
-	m.pasteConfirmPending = true
-	m.armPasteSubmitGuard(now)
-}
 
 func (m *model) clearPasteConfirmPending() {
 	if m == nil {
 		return
 	}
-	m.pasteConfirmPending = false
 	m.pasteSubmitGuardUntil = time.Time{}
 }
 
@@ -549,7 +538,7 @@ func (m *model) releasePasteSubmitSuppression() {
 	if m == nil {
 		return
 	}
-	m.clearPasteConfirmPending()
+		m.pasteSubmitGuardUntil = time.Time{}
 	m.lastPasteAt = time.Time{}
 	m.clearPasteBurstCapture()
 	m.clearPasteBurstCandidate()
@@ -614,7 +603,7 @@ func (m *model) finalizePasteSession(id int) {
 		} else if mergedOK {
 			m.setInputValue(merged)
 			m.lastPasteAt = now
-			m.markPasteConfirmPending(now)
+			m.armPasteSubmitGuard(now)
 			m.syncInputOverlays()
 			return
 		}
@@ -641,9 +630,9 @@ func (m *model) finalizePasteSession(id int) {
 		}
 		m.setInputValue(base + marker)
 		m.lastPasteAt = now
-		m.markPasteConfirmPending(now)
-		m.statusNote = fmt.Sprintf("Long pasted text (%d lines) compressed as %s. Use [Paste #%s], [Paste #%s line10], or [Paste #%s line10~line20].",
-			stored.Lines, marker, stored.ID, stored.ID, stored.ID)
+		m.armPasteSubmitGuard(now)
+		m.statusNote = fmt.Sprintf("Long pasted text (%d lines) compressed as %s.",
+			stored.Lines, marker)
 		m.syncInputOverlays()
 		return
 	}
@@ -819,8 +808,8 @@ func (m *model) tryStartClipboardPasteCapture(before, after, source string) (str
 	m.beginPasteTransaction(normalizedClipboard, "clipboard-capture")
 	m.pasteTransaction.Consumed = consumedRunes
 	updated := buildReplacement(marker)
-	note := fmt.Sprintf("Long pasted text (%d lines) compressed as %s. Use [Paste #%s], [Paste #%s line10], or [Paste #%s line10~line20].",
-		content.Lines, marker, content.ID, content.ID, content.ID)
+	note := fmt.Sprintf("Long pasted text (%d lines) compressed as %s. ",
+		content.Lines, marker)
 	return updated, note, true
 }
 
@@ -1328,7 +1317,7 @@ func (m *model) applyLongPastedTextPipeline(before, after, source string) (strin
 						return after, err.Error()
 					}
 					if ok {
-						m.markPasteConfirmPending(time.Now())
+						m.armPasteSubmitGuard(time.Now())
 						return merged, ""
 					}
 				}
@@ -1341,7 +1330,7 @@ func (m *model) applyLongPastedTextPipeline(before, after, source string) (strin
 					updated := strings.TrimSpace(chain) + marker
 					note := fmt.Sprintf("Detected another pasted block and compressed it as %s (%d lines).",
 						marker, content.Lines)
-					m.markPasteConfirmPending(time.Now())
+					m.armPasteSubmitGuard(time.Now())
 					return updated, note
 				}
 				if m.shouldHoldCompressedMarkerTail(before, after, source) {
@@ -1363,9 +1352,9 @@ func (m *model) applyLongPastedTextPipeline(before, after, source string) (strin
 				return after, err.Error()
 			}
 			updated := after[:prefix] + marker + after[len(after)-suffix:]
-			note := fmt.Sprintf("Long pasted text (%d lines) compressed as %s. Use [Paste #%s], [Paste #%s line10], or [Paste #%s line10~line20].",
-				content.Lines, marker, content.ID, content.ID, content.ID)
-			m.markPasteConfirmPending(time.Now())
+			note := fmt.Sprintf("Long pasted text (%d lines) compressed as %s. ",
+				content.Lines, marker)
+			m.armPasteSubmitGuard(time.Now())
 			return updated, note
 		}
 	}
@@ -1379,9 +1368,9 @@ func (m *model) applyLongPastedTextPipeline(before, after, source string) (strin
 	if err != nil {
 		return after, err.Error()
 	}
-	note := fmt.Sprintf("Long pasted text (%d lines) compressed as %s. Use [Paste #%s], [Paste #%s line10], or [Paste #%s line10~line20].",
-		content.Lines, marker, content.ID, content.ID, content.ID)
-	m.markPasteConfirmPending(time.Now())
+	note := fmt.Sprintf("Long pasted text (%d lines) compressed as %s. ",
+		content.Lines, marker)
+	m.armPasteSubmitGuard(time.Now())
 	return marker, note
 }
 

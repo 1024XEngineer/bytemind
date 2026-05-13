@@ -164,6 +164,40 @@ func TestParseClipboardImageOutputJSONPayload(t *testing.T) {
 	}
 }
 
+func TestClipboardImagePowerShellScriptIncludesTextFilePayload(t *testing.T) {
+	script := clipboardImagePowerShellScript()
+	for _, want := range []string{"file_type='text'", "ReadAllText", ".dockerfile", ".gitignore"} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("expected clipboard script to contain %q", want)
+		}
+	}
+}
+
+func TestParseClipboardImageOutputJSONDefaultsMissingMediaType(t *testing.T) {
+	raw := "{\"file_name\":\"copied.bin\",\"data\":\"" + base64.StdEncoding.EncodeToString([]byte("bytes")) + "\"}\n"
+	mediaType, data, fileName, err := parseClipboardImageOutput(raw)
+	if err != nil {
+		t.Fatalf("parseClipboardImageOutput: %v", err)
+	}
+	if mediaType != "image/png" {
+		t.Fatalf("expected default image/png media type, got %q", mediaType)
+	}
+	if fileName != "copied.bin" {
+		t.Fatalf("expected copied.bin, got %q", fileName)
+	}
+	if !bytes.Equal(data, []byte("bytes")) {
+		t.Fatalf("unexpected decoded bytes %q", string(data))
+	}
+}
+
+func TestParseClipboardImageOutputJSONDecodeError(t *testing.T) {
+	raw := `{"media_type":"image/png","file_name":"bad.png","data":"not-base64"}`
+	_, _, _, err := parseClipboardImageOutput(raw)
+	if err == nil {
+		t.Fatal("expected invalid base64 payload to fail")
+	}
+}
+
 func TestParseClipboardImageOutputLegacyBase64(t *testing.T) {
 	raw := base64.StdEncoding.EncodeToString([]byte("png-bytes"))
 	mediaType, data, fileName, err := parseClipboardImageOutput(raw)
@@ -413,6 +447,24 @@ func TestHandleEmptyClipboardPasteReadsAndAttachesImage(t *testing.T) {
 	}
 	if m.input.Value() != "[Image#1]" {
 		t.Fatalf("expected placeholder inserted into input, got %q", m.input.Value())
+	}
+}
+
+func TestHandleEmptyClipboardPasteAppendsTextPayload(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.input.SetValue("prefix")
+	m.clipboard = fakeClipboardImageReader{
+		mediaType: "text/plain",
+		data:      []byte("clipboard text"),
+		fileName:  "clip.txt",
+	}
+
+	note := m.handleEmptyClipboardPaste()
+	if !strings.Contains(note, "Attached text from clipboard: clip.txt") {
+		t.Fatalf("expected text clipboard note, got %q", note)
+	}
+	if m.input.Value() != "prefix clipboard text" {
+		t.Fatalf("expected text appended to input, got %q", m.input.Value())
 	}
 }
 
@@ -858,5 +910,243 @@ func TestProtectImagePlaceholderDeletionRemovesOnlyTouchedAtomicPlaceholder(t *t
 	}
 	if updated != " and [Image#2]" {
 		t.Fatalf("expected only touched placeholder removed, got %q", updated)
+	}
+}
+
+func TestIngestFileFromPathTextFile(t *testing.T) {
+	m := newImagePipelineModel(t)
+	textPath := filepath.Join(m.workspace, "readme.md")
+	if err := os.WriteFile(textPath, []byte("# Hello\nWorld"), 0o644); err != nil {
+		t.Fatalf("write text fixture: %v", err)
+	}
+
+	placeholder, note, ok := m.ingestFileFromPath(textPath)
+	if !ok {
+		t.Fatalf("ingestFileFromPath should succeed for text: %s", note)
+	}
+	if placeholder != textPath {
+		t.Errorf("text file placeholder should be the path, got %q", placeholder)
+	}
+	if content, exists := m.pastedTextFiles[textPath]; !exists || content != "# Hello\nWorld" {
+		t.Errorf("pastedTextFiles content mismatch: %q", content)
+	}
+}
+
+func TestIngestFileFromPathImageFile(t *testing.T) {
+	m := newImagePipelineModel(t)
+	imgPath := filepath.Join(m.workspace, "photo.jpg")
+	if err := os.WriteFile(imgPath, []byte("jpeg-data"), 0o644); err != nil {
+		t.Fatalf("write image fixture: %v", err)
+	}
+
+	placeholder, _, ok := m.ingestFileFromPath(imgPath)
+	if !ok {
+		t.Fatal("ingestFileFromPath should succeed for image")
+	}
+	if !strings.HasPrefix(placeholder, "[Image#") {
+		t.Errorf("image placeholder should start with [Image#, got %q", placeholder)
+	}
+}
+
+func TestIngestFileFromPathNonexistent(t *testing.T) {
+	m := newImagePipelineModel(t)
+	_, note, ok := m.ingestFileFromPath("/no/such/file.txt")
+	if ok {
+		t.Fatal("ingestFileFromPath should fail for nonexistent file")
+	}
+	if !strings.Contains(note, "failed to read") {
+		t.Errorf("unexpected note: %q", note)
+	}
+}
+
+func TestApplyInputImagePipelineReportsUnreadableFilePath(t *testing.T) {
+	m := newImagePipelineModel(t)
+	binPath := filepath.Join(m.workspace, "payload.bin")
+	if err := os.WriteFile(binPath, []byte{0, 1, 2}, 0o644); err != nil {
+		t.Fatalf("write binary fixture: %v", err)
+	}
+
+	updated, note := m.applyInputImagePipeline("", binPath, "paste")
+	if updated != binPath {
+		t.Fatalf("expected unreadable path to remain in input, got %q", updated)
+	}
+	if !strings.Contains(note, "failed to read") {
+		t.Fatalf("expected read failure note, got %q", note)
+	}
+}
+
+func TestBuildIngestNoteImagesOnly(t *testing.T) {
+	note := buildIngestNote([]string{"[Image#1]", "[Image#2]"}, nil, nil)
+	if !strings.Contains(note, "Attached 2 image") {
+		t.Errorf("expected image attach note, got %q", note)
+	}
+}
+
+func TestBuildIngestNoteTextOnly(t *testing.T) {
+	textFiles := map[string]string{"/tmp/readme.md": "content"}
+	note := buildIngestNote(nil, nil, textFiles)
+	if !strings.Contains(note, "Read 1 text file") {
+		t.Errorf("expected text file note, got %q", note)
+	}
+}
+
+func TestBuildIngestNoteMixed(t *testing.T) {
+	textFiles := map[string]string{"/tmp/data.py": "code"}
+	note := buildIngestNote([]string{"[Image#1]"}, nil, textFiles)
+	if !strings.Contains(note, "Attached 1 image") || !strings.Contains(note, "Read 1 text file") {
+		t.Errorf("expected mixed note, got %q", note)
+	}
+}
+
+func TestBuildIngestNoteIncludesFailureNote(t *testing.T) {
+	note := buildIngestNote(nil, []string{"failed to read a.bin"}, nil)
+	if note != "failed to read a.bin" {
+		t.Fatalf("expected failure note, got %q", note)
+	}
+}
+
+func TestBuildIngestNoteEmpty(t *testing.T) {
+	note := buildIngestNote(nil, nil, nil)
+	if note != "" {
+		t.Errorf("expected empty note, got %q", note)
+	}
+}
+
+func TestAppendPastedTextFilesEmpty(t *testing.T) {
+	m := newImagePipelineModel(t)
+	result := m.appendPastedTextFiles("hello")
+	if result != "hello" {
+		t.Errorf("expected unchanged, got %q", result)
+	}
+}
+
+func TestAppendPastedTextFilesWithContent(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.pastedTextFiles = map[string]string{
+		"/tmp/hello.py": "print(1)\n",
+	}
+	result := m.appendPastedTextFiles("look at this")
+	if !strings.Contains(result, "[文件: /tmp/hello.py]") {
+		t.Errorf("expected file header, got %q", result)
+	}
+	if !strings.Contains(result, "```py") {
+		t.Errorf("expected code fence with ext, got %q", result)
+	}
+	if !strings.Contains(result, "print(1)") {
+		t.Errorf("expected file content, got %q", result)
+	}
+	if m.pastedTextFiles != nil {
+		t.Error("pastedTextFiles should be cleared after append")
+	}
+}
+
+func TestAppendPastedTextFilesDefaultsExtensionAndTrailingNewline(t *testing.T) {
+	m := newImagePipelineModel(t)
+	path := filepath.Join(t.TempDir(), "README")
+	m.pastedTextFiles = map[string]string{
+		path: "plain text",
+	}
+
+	result := m.appendPastedTextFiles("look")
+	if !strings.Contains(result, "```text\nplain text\n```") {
+		t.Fatalf("expected text fence with trailing newline, got %q", result)
+	}
+}
+
+func TestAppendPastedTextFileParts(t *testing.T) {
+	m := newImagePipelineModel(t)
+	m.pastedTextFiles = map[string]string{
+		"/tmp/script.sh": "echo hi\n",
+	}
+	parts := m.appendPastedTextFileParts([]llm.Part{
+		{Type: llm.PartText, Text: &llm.TextPart{Value: "run this"}},
+	})
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(parts))
+	}
+	lastPart := parts[1]
+	if lastPart.Text == nil || !strings.Contains(lastPart.Text.Value, "[文件: /tmp/script.sh]") {
+		t.Errorf("expected file block in last part, got %v", lastPart)
+	}
+	if m.pastedTextFiles != nil {
+		t.Error("pastedTextFiles should be cleared after append")
+	}
+}
+
+func TestApplyInputImagePipelineDetectsImageInAnyMutation(t *testing.T) {
+	m := newImagePipelineModel(t)
+	imgPath := filepath.Join(m.workspace, "detect.png")
+	if err := os.WriteFile(imgPath, []byte("png-data"), 0o644); err != nil {
+		t.Fatalf("write image fixture: %v", err)
+	}
+
+	// Even with "rune" source (not paste_filled), the pipeline should detect the path.
+	updated, note := m.applyInputImagePipeline("", imgPath, "rune")
+	if !strings.HasPrefix(updated, "[Image#") {
+		t.Fatalf("expected image placeholder for rune mutation, got %q (note: %s)", updated, note)
+	}
+}
+
+func TestApplyWholeInputImagePathFallbackHandlesTextFiles(t *testing.T) {
+	m := newImagePipelineModel(t)
+	txtPath := filepath.Join(m.workspace, "inline.txt")
+	if err := os.WriteFile(txtPath, []byte("text content"), 0o644); err != nil {
+		t.Fatalf("write text fixture: %v", err)
+	}
+	m.lastPasteAt = time.Now()
+
+	updated, note := m.applyWholeInputImagePathFallback(txtPath, "rune")
+	if !strings.Contains(note, "Read 1 text file") {
+		t.Errorf("expected text file read note, got %q (updated: %q)", note, updated)
+	}
+	if content, exists := m.pastedTextFiles[txtPath]; !exists || content != "text content" {
+		t.Errorf("pastedTextFiles not populated: %v %q", exists, content)
+	}
+}
+
+func TestApplyWholeInputImagePathFallbackHandlesInlineTextFileWithPrefix(t *testing.T) {
+	m := newImagePipelineModel(t)
+	txtPath := filepath.Join(m.workspace, "prefixed.txt")
+	if err := os.WriteFile(txtPath, []byte("prefixed content"), 0o644); err != nil {
+		t.Fatalf("write text fixture: %v", err)
+	}
+	m.lastPasteAt = time.Now()
+
+	input := "see " + txtPath + " now"
+	updated, note := m.applyWholeInputImagePathFallback(input, "rune")
+	if updated != input {
+		t.Fatalf("expected text file path replacement to preserve visible input, got %q", updated)
+	}
+	if !strings.Contains(note, "Read 1 text file") {
+		t.Fatalf("expected text file note, got %q", note)
+	}
+}
+
+func TestExtractInlineFilePathSpansEmptyAndNoMatch(t *testing.T) {
+	if spans := extractInlineFilePathSpans(""); spans != nil {
+		t.Fatalf("expected nil spans for empty input, got %v", spans)
+	}
+	if spans := extractInlineFilePathSpans("not a path"); spans != nil {
+		t.Fatalf("expected nil spans for text without a path, got %v", spans)
+	}
+}
+
+func TestExtractInlineFilePathSpansMultipleFilesAndMissingPath(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "a.txt")
+	second := filepath.Join(dir, "b.md")
+	missing := filepath.Join(dir, "missing.txt")
+	for _, path := range []string{first, second} {
+		if err := os.WriteFile(path, []byte("content"), 0o644); err != nil {
+			t.Fatalf("write fixture %s: %v", path, err)
+		}
+	}
+
+	spans := extractInlineFilePathSpans(missing + "\n" + second + "\n" + first)
+	if len(spans) != 2 {
+		t.Fatalf("expected two existing file spans, got %d: %#v", len(spans), spans)
+	}
+	if spans[0].Path != filepath.Clean(second) || spans[1].Path != filepath.Clean(first) {
+		t.Fatalf("unexpected spans: %#v", spans)
 	}
 }
