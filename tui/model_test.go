@@ -3742,6 +3742,7 @@ func TestHelpTextOnlyMentionsSupportedEntryPoints(t *testing.T) {
 		"/plan",
 		"/skill use",
 		"/skill show",
+		"/<skill-name>",
 	} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("help text should not mention %q", unwanted)
@@ -3752,6 +3753,7 @@ func TestHelpTextOnlyMentionsSupportedEntryPoints(t *testing.T) {
 		"go run ./cmd/bytemind chat",
 		"go run ./cmd/bytemind run -prompt",
 		"/session",
+		"/skills-select",
 		"TUI does not expose `/resume`",
 		"CLI keeps `/resume <id>`",
 		"/skill clear",
@@ -4496,26 +4498,27 @@ func TestFilteredCommandsExcludeSkillSlashCommands(t *testing.T) {
 
 	items := m.filteredCommands()
 	for _, item := range items {
-		if item.Name == "review" && item.Kind == "skill" {
-			t.Fatalf("skill commands should NOT appear in filtered commands, found %q", item.Name)
+		if item.Kind == "skill" {
+			t.Fatalf("command palette should not expose skill slash items, got %+v in %+v", item, items)
 		}
 	}
 
-	m.syncCommandPalette()
 	skills := m.skillPickerItems()
 	found := false
-	for _, s := range skills {
-		if s.Name == "review" && s.Usage == "/review" && s.Kind == "skill" {
+	for _, item := range skills {
+		if item.Name == "review" && item.Usage == "review" && item.Kind == "skill" {
 			found = true
-			break
+		}
+		if strings.HasPrefix(item.Usage, "/") {
+			t.Fatalf("skill picker should show skill names without slash, got %+v", item)
 		}
 	}
 	if !found {
-		t.Fatal("expected /review skill in skillPickerItems")
+		t.Fatalf("expected review skill in picker items, got %+v", skills)
 	}
 }
 
-func TestFilteredCommandsExcludeProjectSkillSlashCommands(t *testing.T) {
+func TestSkillPickerActivatesProjectSkillWithoutShowingSlash(t *testing.T) {
 	workspace := t.TempDir()
 	skillDir := filepath.Join(workspace, ".bytemind", "skills", "review-plus")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
@@ -4558,21 +4561,40 @@ func TestFilteredCommandsExcludeProjectSkillSlashCommands(t *testing.T) {
 
 	items := m.filteredCommands()
 	for _, item := range items {
-		if item.Name == "review-plus" && item.Kind == "skill" {
-			t.Fatalf("skill commands should NOT appear in filtered commands, found %q", item.Name)
+		if item.Kind == "skill" {
+			t.Fatalf("command palette should not expose project skill slash items, got %+v in %+v", item, items)
 		}
 	}
 
-	skills := m.skillPickerItems()
-	found := false
-	for _, s := range skills {
-		if s.Name == "review-plus" && s.Usage == "/review-plus" && s.Kind == "skill" {
-			found = true
+	pickerItems := m.skillPickerItems()
+	pickerIndex := -1
+	for i, item := range pickerItems {
+		if item.Name == "review-plus" {
+			pickerIndex = i
+			if item.Usage != "review-plus" {
+				t.Fatalf("expected skill picker usage without slash, got %+v", item)
+			}
 			break
 		}
 	}
-	if !found {
-		t.Fatal("expected /review-plus project skill in skillPickerItems")
+	if pickerIndex < 0 {
+		t.Fatalf("expected review-plus in skill picker items, got %+v", pickerItems)
+	}
+
+	m.commandCursor = pickerIndex
+	if err := m.activateSelectedSkill(); err != nil {
+		t.Fatalf("expected skill picker activation to succeed, got %v", err)
+	}
+	if m.sess.ActiveSkill == nil || m.sess.ActiveSkill.Name != "review-plus" {
+		t.Fatalf("expected review-plus active after picker activation, got %#v", m.sess.ActiveSkill)
+	}
+	if len(m.chatItems) < 2 {
+		t.Fatalf("expected picker activation command exchange, got %#v", m.chatItems)
+	}
+	userBody := m.chatItems[len(m.chatItems)-2].Body
+	responseBody := m.chatItems[len(m.chatItems)-1].Body
+	if strings.Contains(userBody, "/review-plus") || strings.Contains(responseBody, "/review-plus") || strings.Contains(responseBody, "Entry:") {
+		t.Fatalf("skill picker activation should not render slash entry, user=%q response=%q", userBody, responseBody)
 	}
 }
 

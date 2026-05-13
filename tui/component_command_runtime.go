@@ -117,7 +117,7 @@ func (m *model) activateSkillCommand(input, name string, args map[string]string)
 	if err != nil {
 		return err
 	}
-	response := fmt.Sprintf("Activated skill `%s` (%s).\nTool policy: %s\nEntry: %s", skill.Name, skill.Scope, skill.ToolPolicy.Policy, skill.Entry.Slash)
+	response := fmt.Sprintf("Activated skill `%s` (%s).\nTool policy: %s", skill.Name, skill.Scope, skill.ToolPolicy.Policy)
 	if len(args) > 0 {
 		argParts := make([]string, 0, len(args))
 		keys := make([]string, 0, len(args))
@@ -145,5 +145,5 @@ func (m *model) activateSelectedSkill() error {
 	}
 	index := clamp(m.commandCursor, 0, len(items)-1)
 	selected := items[index]
-	return m.activateSkillCommand(selected.Usage, selected.Usage, nil)
+	return m.activateSkillCommand("Skill select: "+selected.Name, selected.Name, nil)
 }
