@@ -288,6 +288,96 @@ func TestRunTasksConstraintForbiddenPaths(t *testing.T) {
 	}
 }
 
+func TestRunTasksConstraintMaxFilesChangedViolation(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"a.go": "package a", "b.go": "package b"})
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n// mod"), 0o644)
+	os.WriteFile(filepath.Join(dir, "b.go"), []byte("package b\n// mod"), 0o644)
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "constraint", Workspace: dir, Prompt: "fix",
+		Constraints: &Constraints{MaxFilesChanged: 1},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail: 2 files exceed constraint max 1")
+	}
+	if !strings.Contains(r[0].Failures[0], "constraint max_files_changed") {
+		t.Fatalf("expected constraint max_files_changed, got: %v", r[0].Failures)
+	}
+}
+
+func TestRunTasksFilesModifiedPass(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"main.go": "package main"})
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n// modified"), 0o644)
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "filesmod", Workspace: dir, Prompt: "fix",
+		Success: []Check{{FilesModified: []string{"main.go"}}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if !r[0].Passed {
+		t.Fatalf("expected pass (file was modified), got: %v", r[0].Failures)
+	}
+}
+
+func TestRunTasksFilesModifiedFailFileMissing(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"main.go": "package main"})
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "filesmod", Workspace: dir, Prompt: "fix",
+		Success: []Check{{FilesModified: []string{"nonexistent.go"}}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail (file doesn't exist)")
+	}
+}
+
+func TestRunTasksFilesModifiedFailNotChanged(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"main.go": "package main"})
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "filesmod", Workspace: dir, Prompt: "fix",
+		Success: []Check{{FilesModified: []string{"main.go"}}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail (file was not modified)")
+	}
+}
+
+func TestRunTasksCreateDeleteFiles(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir, map[string]string{"keep.go": "package keep"})
+	// Create a new untracked file
+	os.WriteFile(filepath.Join(dir, "new.go"), []byte("package new"), 0o644)
+	// Delete tracked file from disk (NOT from git index) so git sees it as deleted
+	// This creates a working tree diff: keep.go shows as "deleted" in git diff
+	os.Remove(filepath.Join(dir, "keep.go"))
+
+	tasks := []EvalTask{{
+		ID: "t1", Name: "readonly", Workspace: dir, Prompt: "explain",
+		Negative: []NegCheck{{Type: "read_only"}},
+	}}
+	r := RunTasks("/nonexistent_binary", tasks)
+	if len(r) != 1 { t.Fatal("expected 1 result") }
+	if r[0].Passed {
+		t.Fatal("expected fail: files were modified")
+	}
+	// git diff shows keep.go as deleted (unstaged)
+	if !strings.Contains(r[0].Failures[0], "negative[read_only]") {
+		t.Fatalf("expected read_only failure, got: %v", r[0].Failures)
+	}
+}
+
 func TestGitDiffFilesWithGitRepo(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir, map[string]string{"file.txt": "hello"})
