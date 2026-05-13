@@ -517,6 +517,7 @@ func (m *model) handleEmptyClipboardPaste() string {
 	}
 	m.setInputValue(updated)
 	m.syncInputImageRefs(updated)
+	m.releasePasteSubmitSuppression()
 	if note != "" {
 		return note
 	}

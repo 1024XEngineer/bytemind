@@ -63,6 +63,31 @@ func TestCapabilityRegistryResolveUsesInferenceFallback(t *testing.T) {
 	}
 }
 
+func TestDefaultModelCapabilitiesRecognizeQwenVisionModels(t *testing.T) {
+	for _, model := range []string{
+		"qwen3.6-flash",
+		"qwen3.6-plus",
+		"qwen3.6-pro",
+		"qwen/qwen3.6-plus",
+		"dashscope/qwen3.6-flash",
+		"qwen3-vl-flash",
+		"qwen2.5-vl-72b-instruct",
+	} {
+		if caps := DefaultModelCapabilities.Resolve(model); !caps.SupportsVision {
+			t.Fatalf("expected %s to support vision, got %#v", model, caps)
+		}
+	}
+}
+
+func TestDefaultModelCapabilitiesDoesNotMarkGenericQwenTextModelAsVision(t *testing.T) {
+	if caps := DefaultModelCapabilities.Resolve("qwen3-coder-plus"); caps.SupportsVision {
+		t.Fatalf("expected generic qwen text model not to support vision, got %#v", caps)
+	}
+	if caps := DefaultModelCapabilities.Resolve("qwen/qwen3-coder-plus"); caps.SupportsVision {
+		t.Fatalf("expected provider-prefixed generic qwen text model not to support vision, got %#v", caps)
+	}
+}
+
 func TestApplyCapabilitiesAddsFallbackTextWhenAllPartsDropped(t *testing.T) {
 	out := ApplyCapabilities([]Message{{
 		Role: RoleUser,

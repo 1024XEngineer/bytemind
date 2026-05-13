@@ -136,14 +136,14 @@ func (e *defaultEngine) processTurn(ctx context.Context, p turnProcessParams) (s
 	}
 	filteredTools := runner.registry.DefinitionsForModeWithFilters(p.RunMode, p.AllowedToolNames, p.DeniedToolNames)
 	availableToolNames := toolNames(filteredTools)
+	modelID := runner.modelID()
 	request := contextpkg.BuildChatRequest(contextpkg.ChatRequestInput{
-		Model:       runner.config.Provider.Model,
+		Model:       modelID,
 		Messages:    p.Messages,
 		Tools:       filteredTools,
 		Assets:      p.Assets,
 		Temperature: 0.2,
 	})
-	request.Model = runner.modelID()
 
 	streamedText := false
 	reply, err := e.completeTurn(ctx, request, p.Out, &streamedText)

@@ -213,6 +213,10 @@ var (
 					Foreground(lipgloss.Color("#5E7DA4")).
 					Background(colorLandingPanel)
 
+	landingStatusNoteStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#F8C471")).
+				Background(colorLandingPanel)
+
 	landingTipDotStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#F59E0B"))
 
