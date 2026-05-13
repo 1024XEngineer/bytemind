@@ -68,12 +68,6 @@ func (m *model) consumePasteEchoKey(msg tea.KeyMsg) bool {
 	if m == nil || !m.pasteTransaction.Active || msg.Paste {
 		return false
 	}
-	if msg.Type == tea.KeyRunes && m.shouldExpireStalePasteTransactionBeforeRunes() {
-		// No echoed payload arrived for a while; treat upcoming runes as fresh
-		// user input (for example a second paste operation), not stale echo.
-		m.clearPasteTransaction()
-		return false
-	}
 	if isCtrlVControlKey(msg) {
 		// Some terminals emit Ctrl+V key markers before/within the echoed
 		// key stream. Ignore them so they do not tear down the active
@@ -102,6 +96,12 @@ func (m *model) consumePasteEchoKey(msg tea.KeyMsg) bool {
 			m.releasePasteSubmitSuppression()
 			return true
 		}
+		m.clearPasteTransaction()
+		return false
+	}
+	if msg.Type == tea.KeyRunes && m.shouldExpireStalePasteTransactionBeforeRunes() && !strings.HasPrefix(remaining, fragment) {
+		// No matching echoed payload arrived for a while; treat upcoming
+		// runes as fresh user input, not stale echo.
 		m.clearPasteTransaction()
 		return false
 	}
