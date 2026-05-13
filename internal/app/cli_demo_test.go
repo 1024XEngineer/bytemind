@@ -47,7 +47,6 @@ func TestCopyDir(t *testing.T) {
 	dst := t.TempDir()
 	dst = filepath.Join(dst, "sub")
 
-	// Create source files and subdirectory
 	os.WriteFile(filepath.Join(src, "a.txt"), []byte("hello"), 0o644)
 	os.MkdirAll(filepath.Join(src, "subdir"), 0o755)
 	os.WriteFile(filepath.Join(src, "subdir", "b.txt"), []byte("world"), 0o644)
@@ -57,7 +56,6 @@ func TestCopyDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify files were copied
 	data1, err := os.ReadFile(filepath.Join(dst, "a.txt"))
 	if err != nil { t.Fatal(err) }
 	if string(data1) != "hello" { t.Fatalf("expected 'hello', got %s", string(data1)) }
@@ -65,4 +63,38 @@ func TestCopyDir(t *testing.T) {
 	data2, err := os.ReadFile(filepath.Join(dst, "subdir", "b.txt"))
 	if err != nil { t.Fatal(err) }
 	if string(data2) != "world" { t.Fatalf("expected 'world', got %s", string(data2)) }
+}
+
+func TestDemoFixturesMapPopulated(t *testing.T) {
+	if len(demoFixtures) == 0 {
+		t.Fatal("demoFixtures map should contain at least bugfix")
+	}
+	f, ok := demoFixtures["bugfix"]
+	if !ok {
+		t.Fatal("expected 'bugfix' in demoFixtures")
+	}
+	if f.desc == "" {
+		t.Fatal("bugfix demo should have description")
+	}
+	if f.workspace == "" {
+		t.Fatal("bugfix demo should have workspace")
+	}
+	if f.prompt == "" {
+		t.Fatal("bugfix demo should have prompt")
+	}
+}
+
+func TestRunDemoFromProjectRoot(t *testing.T) {
+	// Verify that RunDemo can be called from the project directory
+	// and that the fixture workspace is valid (without running the agent)
+	projectRoot := findProjectRoot()
+	if projectRoot == "" {
+		t.Skip("not in project root")
+	}
+
+	fixture := demoFixtures["bugfix"]
+	srcWorkspace := filepath.Join(projectRoot, fixture.workspace)
+	if _, err := os.Stat(srcWorkspace); err != nil {
+		t.Fatalf("bugfix workspace %s should exist: %v", srcWorkspace, err)
+	}
 }

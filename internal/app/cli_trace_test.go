@@ -188,6 +188,27 @@ func TestTraceExportNoData(t *testing.T) {
 	}
 }
 
+func TestTraceExportJsonFormat(t *testing.T) {
+	home := t.TempDir()
+	auditDir := filepath.Join(home, "audit")
+	os.MkdirAll(auditDir, 0o755)
+	os.WriteFile(filepath.Join(auditDir, "data.jsonl"),
+		[]byte("{\"event_id\":\"e1\",\"trace_id\":\"tr1\",\"action\":\"test\"}\n"), 0o644)
+
+	defer os.Setenv("BYTEMIND_HOME", os.Getenv("BYTEMIND_HOME"))
+	os.Setenv("BYTEMIND_HOME", home)
+
+	var stdout bytes.Buffer
+	err := traceExport("tr1", "json", &stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "trace_id") {
+		t.Errorf("expected JSON with trace_id, got %s", output[:100])
+	}
+}
+
 func TestRunTraceExportWithFormatFlag(t *testing.T) {
 	// RunTrace export with the --format flag path (line 42-49)
 	home := t.TempDir()
