@@ -486,7 +486,7 @@ func (m *model) flushHiddenPasteProbeToInput() {
 	if strings.TrimSpace(probe.buffered) == "" {
 		return
 	}
-	m.setInputValue(probe.baseInput + probe.buffered)
+	m.setInputValue(probe.baseInput + strings.TrimRight(probe.buffered, "\n\r"))
 	now := time.Now()
 	m.lastInputAt = now
 	m.inputBurstBaseValue = probe.baseInput
@@ -575,7 +575,7 @@ func (m *model) finalizePasteSession(id int) {
 	source := m.pasteSession.sourceKind
 	m.clearPasteSession()
 
-	candidate := strings.ReplaceAll(content, ctrlVMarkerRune, "")
+	candidate := strings.TrimRight(strings.ReplaceAll(content, ctrlVMarkerRune, ""), "\n\r")
 	if candidate == "" {
 		m.setInputValue(base)
 		m.syncInputOverlays()

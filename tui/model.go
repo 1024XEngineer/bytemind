@@ -2076,7 +2076,7 @@ func (m model) insertStartupGuideText(payload string) model {
 	if payload == "" {
 		return m
 	}
-	m.input.SetValue(m.input.Value() + normalizeNewlines(payload))
+	m.input.SetValue(m.input.Value() + strings.TrimRight(normalizeNewlines(payload), "\n\r"))
 	m.input.CursorEnd()
 	m.clearStartupGuidePasteState()
 	return m
