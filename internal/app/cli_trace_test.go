@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/1024XEngineer/bytemind/internal/config"
 )
 
 func TestRunTraceNoArgsShowsUsage(t *testing.T) {
@@ -40,6 +38,61 @@ func TestRunTraceList(t *testing.T) {
 	output := stdout.String()
 	if !strings.Contains(output, "trace sessions") && !strings.Contains(output, "No trace data") {
 		t.Errorf("expected trace session list, got %s", output[:100])
+	}
+}
+
+func TestTraceListWithData(t *testing.T) {
+	home := t.TempDir()
+	auditDir := filepath.Join(home, "audit")
+	os.MkdirAll(auditDir, 0o755)
+	os.WriteFile(filepath.Join(auditDir, "2026-05-13.jsonl"),
+		[]byte("{\"event_id\":\"e1\"}\n{\"event_id\":\"e2\"}\n"), 0o644)
+
+	defer os.Setenv("BYTEMIND_HOME", os.Getenv("BYTEMIND_HOME"))
+	os.Setenv("BYTEMIND_HOME", home)
+
+	var stdout bytes.Buffer
+	err := traceList(&stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "2026-05-13") {
+		t.Errorf("expected date in output, got %s", output[:100])
+	}
+	if !strings.Contains(output, "trace show") {
+		t.Errorf("expected hint, got %s", output[:100])
+	}
+}
+
+func TestLoadEventsForRunWithData(t *testing.T) {
+	home := t.TempDir()
+	auditDir := filepath.Join(home, "audit")
+	os.MkdirAll(auditDir, 0o755)
+	os.WriteFile(filepath.Join(auditDir, "data.jsonl"),
+		[]byte("{\"event_id\":\"e1\",\"trace_id\":\"tr1\"}\n{\"event_id\":\"e2\",\"trace_id\":\"tr2\"}\n"), 0o644)
+
+	defer os.Setenv("BYTEMIND_HOME", os.Getenv("BYTEMIND_HOME"))
+	os.Setenv("BYTEMIND_HOME", home)
+
+	events, err := loadEventsForRun("tr1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event for tr1, got %d", len(events))
+	}
+	if string(events[0].TraceID) != "tr1" {
+		t.Fatalf("expected trace tr1, got %s", events[0].TraceID)
+	}
+
+	// Test "all" wildcard via readAuditFile directly (loadEventsForRun matches exact)
+	allEvents, err := loadEventsForRun("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allEvents) != 2 {
+		t.Fatalf("expected 2 events for 'all', got %d", len(allEvents))
 	}
 }
 
@@ -132,6 +185,28 @@ func TestTraceExportNoData(t *testing.T) {
 	err := traceExport("nonexistent_run", "json", &stdout, nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent run")
+	}
+}
+
+func TestRunTraceExportWithFormatFlag(t *testing.T) {
+	// RunTrace export with the --format flag path (line 42-49)
+	home := t.TempDir()
+	auditDir := filepath.Join(home, "audit")
+	os.MkdirAll(auditDir, 0o755)
+	os.WriteFile(filepath.Join(auditDir, "data.jsonl"),
+		[]byte("{\"event_id\":\"e1\",\"trace_id\":\"tr1\"}\n"), 0o644)
+
+	defer os.Setenv("BYTEMIND_HOME", os.Getenv("BYTEMIND_HOME"))
+	os.Setenv("BYTEMIND_HOME", home)
+
+	var stdout bytes.Buffer
+	err := RunTrace([]string{"export", "tr1", "--format", "json"}, &stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "tr1") {
+		t.Errorf("expected trace data, got %s", output[:100])
 	}
 }
 
@@ -241,7 +316,7 @@ func TestTraceExportMarkdownFormat(t *testing.T) {
 
 	defer os.Setenv("BYTEMIND_HOME", os.Getenv("BYTEMIND_HOME"))
 	os.Setenv("BYTEMIND_HOME", home)
-	config.ResolveHomeDir()
+	// config.ResolveHomeDir() will now use BYTEMIND_HOME
 
 	var stdout bytes.Buffer
 	err := traceExport("tr1", "markdown", &stdout, nil)

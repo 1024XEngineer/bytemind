@@ -2,8 +2,11 @@ package app
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	configpkg "github.com/1024XEngineer/bytemind/internal/config"
 )
 
 func TestRunSafetyStatusOutput(t *testing.T) {
@@ -156,5 +159,49 @@ func TestRunSafetyReportContainsWorkspace(t *testing.T) {
 	output := stdout.String()
 	if !strings.Contains(output, "Workspace:") {
 		t.Errorf("expected safety report to contain Workspace, got %s", output[:100])
+	}
+}
+
+func TestSafetyReportFullAccessBranch(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	cfg := configpkg.Default(dir)
+	cfg.ApprovalMode = "full_access"
+	cfg.SandboxEnabled = true
+	cfg.SystemSandboxMode = "best_effort"
+	cfg.WritableRoots = []string{dir}
+	cfg.ExecAllowlist = []configpkg.ExecAllowRule{{Command: "go", ArgsPattern: []string{"test"}}}
+	cfg.NetworkAllowlist = []configpkg.NetworkAllowRule{{Host: "example.com", Port: 443, Scheme: "https"}}
+	configpkg.WriteConfig(cfgPath, cfg)
+
+	var stdout bytes.Buffer
+	err := RunSafety([]string{"status", "-config", cfgPath}, &stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	for _, want := range []string{"full_access", "Sandbox: enabled (best_effort)", "Writable roots",
+		"Blocked commands", "Allowlist: https://example.com:443", "go test", "auto-approved"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("expected %q in output", want)
+		}
+	}
+}
+
+func TestSafetyReportNeverPolicyBranch(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	cfg := configpkg.Default(dir)
+	cfg.ApprovalPolicy = "never"
+	configpkg.WriteConfig(cfgPath, cfg)
+
+	var stdout bytes.Buffer
+	err := RunSafety([]string{"status", "-config", cfgPath}, &stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "approval_policy=never") {
+		t.Errorf("expected approval_policy=never in output, got %s", output[:200])
 	}
 }
