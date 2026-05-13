@@ -776,6 +776,86 @@ func TestHandleAgentEventDeltaAppendsToStream(t *testing.T) {
 	}
 }
 
+func TestFinalAssistantMessageReplacesFullStreamingDeltaAfterRunFinished(t *testing.T) {
+	content := strings.Join([]string{
+		"你说的情况我理解了--你在 UI 里看到我先输出了一段短文本。",
+		"",
+		"1. 第一段是 generating。",
+		"2. 第二段是 answer。",
+	}, "\n")
+	m := model{
+		async: make(chan tea.Msg, 1),
+		busy:  true,
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "为什么输出两遍", Status: "final"},
+		},
+		streamingIndex: -1,
+	}
+
+	m.handleAgentEvent(Event{Type: EventAssistantDelta, Content: content})
+	got, _ := m.Update(runFinishedMsg{})
+	updated := got.(model)
+	updated.handleAgentEvent(Event{Type: EventRunFinished, Content: content})
+	updated.handleAgentEvent(Event{Type: EventAssistantMessage, Content: content})
+
+	assistantCount := 0
+	for _, item := range updated.chatItems {
+		if item.Kind == "assistant" {
+			assistantCount++
+			if item.Status != "final" {
+				t.Fatalf("expected only final assistant item, got %+v", item)
+			}
+		}
+	}
+	if assistantCount != 1 {
+		t.Fatalf("expected final message to replace streaming delta, got %d assistant items: %+v", assistantCount, updated.chatItems)
+	}
+}
+
+func TestRunFinishedRemovesDuplicateOpenAssistantPreview(t *testing.T) {
+	m := model{
+		async: make(chan tea.Msg, 1),
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "hello", Status: "final"},
+			{Kind: "assistant", Title: assistantLabel, Body: "same answer", Status: "streaming"},
+			{Kind: "assistant", Title: assistantLabel, Body: "same answer\n\nProcessed for 1s", Status: "final"},
+		},
+		streamingIndex: 1,
+	}
+
+	got, _ := m.Update(runFinishedMsg{})
+	updated := got.(model)
+
+	if len(updated.chatItems) != 2 {
+		t.Fatalf("expected duplicate streaming preview to be removed, got %+v", updated.chatItems)
+	}
+	if updated.chatItems[1].Status != "final" || !strings.Contains(updated.chatItems[1].Body, "same answer") {
+		t.Fatalf("expected final answer to remain, got %+v", updated.chatItems[1])
+	}
+	if updated.streamingIndex != -1 {
+		t.Fatalf("expected streaming index to be cleared, got %d", updated.streamingIndex)
+	}
+}
+
+func TestAppendAssistantDeltaIgnoresLateDuplicateAfterFinalAnswer(t *testing.T) {
+	m := model{
+		chatItems: []chatEntry{
+			{Kind: "user", Title: "You", Body: "hello", Status: "final"},
+			{Kind: "assistant", Title: assistantLabel, Body: "same answer\n\nProcessed for 1s", Status: "final"},
+		},
+		streamingIndex: -1,
+	}
+
+	m.appendAssistantDelta("same answer")
+
+	if len(m.chatItems) != 2 {
+		t.Fatalf("expected late duplicate delta to be ignored, got %+v", m.chatItems)
+	}
+	if m.streamingIndex != -1 {
+		t.Fatalf("expected streaming index to stay cleared, got %d", m.streamingIndex)
+	}
+}
+
 func TestHandleAgentEventToolCallStartedAppendsToolCard(t *testing.T) {
 	m := model{
 		chatItems: []chatEntry{
