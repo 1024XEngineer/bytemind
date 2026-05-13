@@ -69,7 +69,7 @@ bytemind --version
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.bytemind" | Out-Null
-@'
+$config = @'
 {
   "provider": {
     "type": "openai-compatible",
@@ -78,8 +78,13 @@ New-Item -ItemType Directory -Force "$env:USERPROFILE\.bytemind" | Out-Null
     "api_key": "YOUR_API_KEY"
   }
 }
-'@ | Set-Content -Encoding utf8 "$env:USERPROFILE\.bytemind\config.json"
+'@
+
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText("$env:USERPROFILE\.bytemind\config.json", $config, $utf8NoBom)
 ```
+
+这会把 `config.json` 写成不带 BOM 的 UTF-8，在 Windows PowerShell 5.1 和 PowerShell 7+ 中都能稳定工作。
 
 </Tab>
 

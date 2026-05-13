@@ -53,7 +53,7 @@ Replace `YOUR_DEEPSEEK_API_KEY` with the key you just copied.
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.bytemind" | Out-Null
-@'
+$config = @'
 {
   "provider": {
     "type": "openai-compatible",
@@ -62,8 +62,13 @@ New-Item -ItemType Directory -Force "$env:USERPROFILE\.bytemind" | Out-Null
     "api_key": "YOUR_DEEPSEEK_API_KEY"
   }
 }
-'@ | Set-Content -Encoding utf8 "$env:USERPROFILE\.bytemind\config.json"
+'@
+
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText("$env:USERPROFILE\.bytemind\config.json", $config, $utf8NoBom)
 ```
+
+This writes `config.json` as UTF-8 without BOM, so it works consistently in both Windows PowerShell 5.1 and PowerShell 7+.
 
 </Tab>
 
