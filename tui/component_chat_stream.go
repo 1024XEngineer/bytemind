@@ -115,6 +115,10 @@ func (m *model) finishAssistantMessage(content string) {
 		}
 	}
 
+	if m.finalizeTailStreamingAssistantBeforePlaceholders(finalContent) {
+		return
+	}
+
 	if idx := m.latestTailOpenAssistantIndex(); idx >= 0 {
 		m.chatItems[idx].Title = assistantLabel
 		m.chatItems[idx].Body = finalContent
@@ -138,6 +142,46 @@ func (m *model) finishAssistantMessage(content string) {
 		Body:   finalContent,
 		Status: "final",
 	})
+}
+
+func (m *model) finalizeTailStreamingAssistantBeforePlaceholders(finalContent string) bool {
+	idx := len(m.chatItems) - 1
+	for idx >= 0 && isAssistantTransientPlaceholder(m.chatItems[idx]) {
+		idx--
+	}
+	if idx < 0 || idx == len(m.chatItems)-1 || !isAssistantStreamingAnswer(m.chatItems[idx]) {
+		return false
+	}
+	m.chatItems = m.chatItems[:idx+1]
+	m.chatItems[idx].Title = assistantLabel
+	m.chatItems[idx].Body = finalContent
+	m.chatItems[idx].Status = "final"
+	m.streamingIndex = -1
+	return true
+}
+
+func isAssistantStreamingAnswer(item chatEntry) bool {
+	if item.Kind != "assistant" {
+		return false
+	}
+	switch strings.TrimSpace(strings.ToLower(item.Status)) {
+	case "streaming", "settling":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAssistantTransientPlaceholder(item chatEntry) bool {
+	if item.Kind != "assistant" {
+		return false
+	}
+	switch strings.TrimSpace(strings.ToLower(item.Status)) {
+	case "thinking", "pending":
+		return true
+	default:
+		return false
+	}
 }
 
 func (m model) latestTailOpenAssistantIndex() int {
