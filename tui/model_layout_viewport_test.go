@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
 )
@@ -359,5 +360,43 @@ func TestConversationViewportBoundsByLayoutStartsAtPanelLeft(t *testing.T) {
 	}
 	if right-left+1 != m.viewport.Width {
 		t.Fatalf("expected viewport width %d from bounds, got %d", m.viewport.Width, right-left+1)
+	}
+}
+
+func TestChatViewHeightStaysWithinWindowWithTopRightClusterAfterScroll(t *testing.T) {
+	input := textarea.New()
+	input.Focus()
+	m := model{
+		screen:     screenChat,
+		width:      120,
+		height:     30,
+		input:      input,
+		viewport:   viewport.New(0, 0),
+		planView:   viewport.New(0, 0),
+		tokenUsage: newTokenUsageComponent(),
+		workspace:  `D:\happycoding\lzy1\bytemind`,
+	}
+	_ = m.tokenUsage.SetUsage(2345, 5000)
+	for i := 0; i < 24; i++ {
+		m.chatItems = append(m.chatItems, chatEntry{
+			Kind:   "assistant",
+			Title:  assistantLabel,
+			Body:   strings.Repeat("message ", 12),
+			Status: "final",
+		})
+	}
+
+	m.resize()
+	if got := lipgloss.Height(m.View()); got > m.height {
+		t.Fatalf("expected initial chat view height <= %d, got %d", m.height, got)
+	}
+
+	got, _ := m.handleMouse(tea.MouseMsg{
+		Button: tea.MouseButtonWheelUp,
+		Action: tea.MouseActionPress,
+	})
+	scrolled := got.(model)
+	if got := lipgloss.Height(scrolled.View()); got > scrolled.height {
+		t.Fatalf("expected scrolled chat view height <= %d, got %d", scrolled.height, got)
 	}
 }
