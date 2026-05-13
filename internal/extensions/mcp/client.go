@@ -143,7 +143,7 @@ func (c *StdioClient) Discover(ctx context.Context, cfg ServerConfig) (ServerSna
 		return ServerSnapshot{}, err
 	}
 
-	callCtx, cancel := withTimeoutIfMissing(ctx, cfg.StartupTimeout)
+	callCtx, cancel := withTimeoutLimit(ctx, cfg.StartupTimeout)
 	defer cancel()
 
 	responses, err := c.runWithProtocolFallback(callCtx, cfg, func(protocolVersion string) []rpcRequest {
@@ -228,7 +228,7 @@ func (c *StdioClient) CallTool(ctx context.Context, cfg ServerConfig, toolName s
 		}
 	}
 
-	callCtx, cancel := withTimeoutIfMissing(ctx, cfg.CallTimeout)
+	callCtx, cancel := withTimeoutLimit(ctx, cfg.CallTimeout)
 	defer cancel()
 
 	responses, err := c.runWithProtocolFallback(callCtx, cfg, func(protocolVersion string) []rpcRequest {
@@ -284,6 +284,7 @@ func (c *StdioClient) runRPC(ctx context.Context, cfg ServerConfig, requests []r
 	}
 
 	cmd := exec.CommandContext(ctx, cfg.Command, cfg.Args...)
+	configureCommandCancellation(cmd)
 	if strings.TrimSpace(cfg.CWD) != "" {
 		cmd.Dir = cfg.CWD
 	}
@@ -322,8 +323,11 @@ func (c *StdioClient) runRPC(ctx context.Context, cfg ServerConfig, requests []r
 			continue
 		}
 		for {
-			response, err := readRPCResponse(reader)
+			response, err := readRPCResponseContext(ctx, reader)
 			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+					return nil, err
+				}
 				if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 					return nil, newClientError(ClientErrorTimeout, "mcp request timed out", err)
 				}
@@ -433,11 +437,11 @@ func validateServerConfig(cfg ServerConfig, requireCommand bool) error {
 	return nil
 }
 
-func withTimeoutIfMissing(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+func withTimeoutLimit(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	if timeout <= 0 {
 		return context.WithCancel(ctx)
 	}
-	if _, has := ctx.Deadline(); has {
+	if deadline, has := ctx.Deadline(); has && time.Until(deadline) <= timeout {
 		return context.WithCancel(ctx)
 	}
 	return context.WithTimeout(ctx, timeout)
@@ -484,9 +488,12 @@ func stopCommand(cmd *exec.Cmd, stdin io.WriteCloser) {
 	case <-time.After(200 * time.Millisecond):
 	}
 	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
+		_ = terminateCommand(cmd)
 	}
-	<-done
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+	}
 }
 
 type rpcRequest struct {
@@ -637,6 +644,28 @@ func readRPCResponse(reader *bufio.Reader) (rpcResponse, error) {
 		return rpcResponse{}, err
 	}
 	return response, nil
+}
+
+type rpcReadResult struct {
+	response rpcResponse
+	err      error
+}
+
+func readRPCResponseContext(ctx context.Context, reader *bufio.Reader) (rpcResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return rpcResponse{}, err
+	}
+	results := make(chan rpcReadResult, 1)
+	go func() {
+		response, err := readRPCResponse(reader)
+		results <- rpcReadResult{response: response, err: err}
+	}()
+	select {
+	case result := <-results:
+		return result.response, result.err
+	case <-ctx.Done():
+		return rpcResponse{}, ctx.Err()
+	}
 }
 
 func writeRPCResponse(writer *bufio.Writer, response rpcResponse) error {

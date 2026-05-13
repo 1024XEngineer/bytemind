@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -123,10 +124,26 @@ func TestStdioClientCallToolRequiresInitializedNotification(t *testing.T) {
 }
 
 func TestMCPHelperProcess(t *testing.T) {
+	if os.Getenv("BYTEMIND_MCP_HOLD_STDOUT_CHILD") == "1" {
+		time.Sleep(2 * time.Second)
+		os.Exit(0)
+	}
 	if os.Getenv("BYTEMIND_MCP_HELPER") != "1" {
 		return
 	}
 	scenario := strings.TrimSpace(os.Getenv("BYTEMIND_MCP_SCENARIO"))
+	if scenario == "hold_stdout_child" {
+		exe, err := os.Executable()
+		if err == nil {
+			child := exec.Command(exe, "-test.run=^TestMCPHelperProcess$")
+			child.Env = append(os.Environ(), "BYTEMIND_MCP_HOLD_STDOUT_CHILD=1")
+			child.Stdout = os.Stdout
+			child.Stderr = os.Stderr
+			_ = child.Start()
+		}
+		time.Sleep(10 * time.Second)
+		os.Exit(0)
+	}
 	if scenario == "eof_with_stderr" {
 		_, _ = os.Stderr.WriteString("helper exited early")
 		os.Exit(0)

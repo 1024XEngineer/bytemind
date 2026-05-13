@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 type runtimeSyncStubManager struct {
 	items           []extensionspkg.ExtensionTool
+	resolveErr      error
 	resolveCount    int
 	invalidateCount int
 	resolveStarted  chan struct{}
@@ -49,7 +51,7 @@ func (m *runtimeSyncStubManager) ResolveAllTools(context.Context) ([]extensionsp
 	}
 	out := make([]extensionspkg.ExtensionTool, len(m.items))
 	copy(out, m.items)
-	return out, nil
+	return out, m.resolveErr
 }
 
 func (m *runtimeSyncStubManager) Invalidate(string) {
@@ -195,5 +197,29 @@ func TestSyncExtensionToolsDoesNotHoldLockDuringResolve(t *testing.T) {
 	close(resolveRelease)
 	if err := <-syncErr; err != nil {
 		t.Fatalf("sync failed: %v", err)
+	}
+}
+
+func TestSyncExtensionToolsTreatsExtensionTimeoutAsNonFatalWhenCallerActive(t *testing.T) {
+	registry := toolspkg.DefaultRegistry()
+	manager := &runtimeSyncStubManager{
+		resolveErr: context.DeadlineExceeded,
+	}
+	runner := &Runner{
+		registry:           registry,
+		extensions:         manager,
+		extensionSyncTTL:   time.Minute,
+		extensionSyncDirty: true,
+		extensionToolKeys:  map[string]map[string]struct{}{},
+	}
+
+	if err := runner.syncExtensionTools(context.Background(), true); err != nil {
+		t.Fatalf("expected extension timeout to be non-fatal while caller context is active, got %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := runner.syncExtensionTools(ctx, true); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected canceled caller context to remain fatal, got %v", err)
 	}
 }
