@@ -23,6 +23,9 @@ var demoFixtures = map[string]struct {
 	},
 }
 
+// demoExecutable is overridable in tests to avoid running a real binary.
+var demoExecutable = os.Executable
+
 func RunDemo(args []string, stdout, stderr io.Writer) error {
 	demoName := builtinDemoName
 	if len(args) > 0 && args[0] != "" && !strings.HasPrefix(args[0], "-") {
@@ -89,7 +92,7 @@ func RunDemo(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "Workspace: %s\n\n", destWorkspace)
 
 	// Run bytemind as a subprocess with the demo prompt
-	binPath, err := os.Executable()
+	binPath, err := demoExecutable()
 	if err != nil {
 		return fmt.Errorf("resolve executable: %w", err)
 	}

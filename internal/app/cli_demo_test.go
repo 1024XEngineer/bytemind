@@ -85,16 +85,44 @@ func TestDemoFixturesMapPopulated(t *testing.T) {
 }
 
 func TestRunDemoFromProjectRoot(t *testing.T) {
-	// Verify that RunDemo can be called from the project directory
-	// and that the fixture workspace is valid (without running the agent)
+	projectRoot := findProjectRoot()
+	if projectRoot == "" {
+		t.Skip("not in project root")
+	}
+	fixture := demoFixtures["bugfix"]
+	srcWorkspace := filepath.Join(projectRoot, fixture.workspace)
+	if _, err := os.Stat(srcWorkspace); err != nil {
+		t.Fatalf("bugfix workspace %s should exist: %v", srcWorkspace, err)
+	}
+}
+
+func TestRunDemoBugfixEndToEnd(t *testing.T) {
 	projectRoot := findProjectRoot()
 	if projectRoot == "" {
 		t.Skip("not in project root")
 	}
 
-	fixture := demoFixtures["bugfix"]
-	srcWorkspace := filepath.Join(projectRoot, fixture.workspace)
-	if _, err := os.Stat(srcWorkspace); err != nil {
-		t.Fatalf("bugfix workspace %s should exist: %v", srcWorkspace, err)
+	// Override executable so the demo doesn't try to run the test binary
+	orig := demoExecutable
+	demoExecutable = func() (string, error) { return "echo", nil }
+	defer func() { demoExecutable = orig }()
+
+	var stdout, stderr bytes.Buffer
+	err := RunDemo([]string{"bugfix"}, &stdout, &stderr)
+
+	if err != nil {
+		if strings.Contains(err.Error(), "cannot find project root") {
+			t.Fatal("should have found project root")
+		}
+		if strings.Contains(err.Error(), "demo fixture not found") {
+			t.Fatal("fixture should exist")
+		}
+		if strings.Contains(err.Error(), "create temp dir") {
+			t.Fatal("temp dir should be creatable")
+		}
+		if strings.Contains(err.Error(), "copy fixture") {
+			t.Fatal("fixture should be copyable")
+		}
+		t.Logf("demo error (expected with echo binary): %v", err)
 	}
 }
