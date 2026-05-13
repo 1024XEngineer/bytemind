@@ -515,6 +515,10 @@ type model struct {
 	stagnationStart  time.Time
 	stagnationActive bool
 	reducedMotion    bool
+
+	// contextWindowCache caches API model context window lookups to avoid
+	// repeat HTTP requests during streaming.
+	contextWindowCache map[string]int
 }
 
 func newModel(opts Options) model {
@@ -595,7 +599,7 @@ func newModel(opts Options) model {
 		mentionIndex:         mention.NewWorkspaceFileIndex(opts.Workspace),
 		agentSource:          opts.AgentSource,
 		tokenUsage:           newTokenUsageComponent(),
-		tokenBudget:          max(1, opts.Config.TokenQuota),
+		tokenBudget:          0,
 		tokenEstimator:       newRealtimeTokenEstimator(opts.Config.Provider.Model),
 		inputImageRefs:       make(map[int]llm.AssetID, 8),
 		inputImageMentions:   make(map[string]llm.AssetID, 8),

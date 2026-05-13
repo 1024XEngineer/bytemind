@@ -26,10 +26,11 @@ const (
 )
 
 const (
-	DefaultTokenQuota                    = 300000
+	DefaultTokenQuota                    = 0
 	DefaultContextBudgetWarningRatio     = 0.85
 	DefaultContextBudgetCriticalRatio    = 0.95
 	DefaultContextBudgetMaxReactiveRetry = 1
+	DefaultContextBudgetFallback         = 128000
 	DefaultMCPSyncTTLSeconds             = 30
 	DefaultMCPStartupTimeoutSeconds      = 20
 	DefaultMCPCallTimeoutSeconds         = 60
@@ -944,8 +945,8 @@ func normalize(cfg *Config) error {
 	if err := normalizeSandboxPolicy(cfg); err != nil {
 		return err
 	}
-	if cfg.TokenQuota < 1 {
-		cfg.TokenQuota = DefaultTokenQuota
+	if cfg.TokenQuota < 0 {
+		cfg.TokenQuota = 0
 	}
 	if cfg.Notifications.Desktop.CooldownSeconds < 0 {
 		return errors.New("notifications.desktop.cooldown_seconds must be >= 0")

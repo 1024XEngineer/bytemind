@@ -117,6 +117,7 @@ func normalizeModelInfo(model ModelInfo) ModelInfo {
 	if strings.TrimSpace(model.Metadata["supports_tools"]) == "" {
 		model.Metadata["supports_tools"] = "true"
 	}
+	fillContextWindow(model.Metadata, string(model.ModelID))
 	return model
 }
 

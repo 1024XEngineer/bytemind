@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -120,7 +121,8 @@ func (m model) loadSessionsCmd() tea.Cmd {
 		if m.store == nil {
 			return sessionsLoadedMsg{}
 		}
-		summaries, _, err := listSessionsForWorkspace(m.store, m.workspace, sessionListFetchLimit())
+		// List sessions across all workspaces so the user can browse and switch.
+		summaries, _, err := m.store.List(sessionListFetchLimit())
 		return sessionsLoadedMsg{Summaries: summaries, Err: err}
 	}
 }
@@ -175,7 +177,7 @@ func (m *model) refreshTokenBudget() {
 	if m == nil {
 		return
 	}
-	budget := max(1, m.cfg.TokenQuota)
+	budget := 0
 	runtimeCfg := m.cfg.ProviderRuntime
 	providerID := config.SelectedProviderID(runtimeCfg)
 	modelID := config.SelectedModelID(runtimeCfg)
@@ -196,7 +198,23 @@ func (m *model) refreshTokenBudget() {
 		registry := provider.NewModelRegistry(runtimeCfg, m.discoveredModels)
 		if contextWindow := registry.ContextWindow(provider.ProviderID(providerID), provider.ModelID(modelID)); contextWindow > 0 {
 			budget = contextWindow
+		} else if _, providerCfg, ok := config.SelectedProviderConfig(runtimeCfg); ok {
+			cacheKey := providerID + ":" + modelID
+			if cached, ok := m.contextWindowCache[cacheKey]; ok {
+				budget = cached
+			} else {
+				if cw := provider.LookupModelContextWindow(context.Background(), providerCfg.Type, providerCfg.BaseURL, providerCfg.ResolveAPIKey(), modelID); cw > 0 {
+					budget = cw
+				}
+				if m.contextWindowCache == nil {
+					m.contextWindowCache = make(map[string]int)
+				}
+				m.contextWindowCache[cacheKey] = budget
+			}
 		}
+	}
+	if budget <= 0 && m.cfg.TokenQuota > 0 {
+		budget = m.cfg.TokenQuota
 	}
 	m.tokenBudget = budget
 }

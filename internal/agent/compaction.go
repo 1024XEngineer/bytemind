@@ -10,6 +10,7 @@ import (
 	"github.com/1024XEngineer/bytemind/internal/config"
 	contextpkg "github.com/1024XEngineer/bytemind/internal/context"
 	"github.com/1024XEngineer/bytemind/internal/llm"
+	"github.com/1024XEngineer/bytemind/internal/provider"
 	"github.com/1024XEngineer/bytemind/internal/session"
 )
 
@@ -54,11 +55,43 @@ func classifyBudget(usageRatio, warning, critical float64) budgetLevel {
 }
 
 func (r *Runner) contextBudgetQuota() int {
-	quota := r.config.TokenQuota
-	if quota < 1 {
-		quota = 5000
+	if cw := r.modelContextWindow(); cw > 0 {
+		return cw
 	}
-	return quota
+	quota := r.config.TokenQuota
+	if quota > 0 {
+		return quota
+	}
+	return config.DefaultContextBudgetFallback
+}
+
+func (r *Runner) modelContextWindow() int {
+	if r == nil {
+		return 0
+	}
+	runtimeCfg := r.config.ProviderRuntime
+	if len(runtimeCfg.Providers) == 0 {
+		runtimeCfg = config.LegacyProviderRuntimeConfig(r.config.Provider)
+	}
+	providerID := config.SelectedProviderID(runtimeCfg)
+	modelID := config.SelectedModelID(runtimeCfg)
+	if modelID == "" {
+		modelID = strings.TrimSpace(r.config.Provider.Model)
+	}
+	if providerID == "" || modelID == "" {
+		return 0
+	}
+	r.modelsCacheMu.RLock()
+	cached := append([]provider.ModelInfo(nil), r.modelsCache...)
+	r.modelsCacheMu.RUnlock()
+	registry := provider.NewModelRegistry(runtimeCfg, cached)
+	if cw := registry.ContextWindow(provider.ProviderID(providerID), provider.ModelID(modelID)); cw > 0 {
+		return cw
+	}
+	if _, providerCfg, ok := config.SelectedProviderConfig(runtimeCfg); ok {
+		return provider.LookupModelContextWindow(context.Background(), providerCfg.Type, providerCfg.BaseURL, providerCfg.ResolveAPIKey(), modelID)
+	}
+	return 0
 }
 
 func (r *Runner) contextBudgetRatios() (float64, float64) {
@@ -90,6 +123,9 @@ func (r *Runner) contextBudgetMaxReactiveRetry() int {
 
 func (r *Runner) maybeAutoCompactSession(ctx context.Context, sess *session.Session, promptTokens, requestTokens int) (bool, error) {
 	quota := r.contextBudgetQuota()
+	if quota <= 0 {
+		return false, nil
+	}
 	warningRatio, criticalRatio := r.contextBudgetRatios()
 
 	promptUsageRatio := float64(promptTokens) / float64(quota)

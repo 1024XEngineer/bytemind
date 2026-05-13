@@ -655,6 +655,11 @@ var (
 				Bold(true).
 				Padding(0, 1)
 
+	workspaceBadgeStyle = lipgloss.NewStyle().
+				Foreground(semanticColors.TextMuted).
+				Background(lipgloss.Color("#252830")).
+				Padding(0, 1)
+
 	mutedStyle  = lipgloss.NewStyle().Foreground(semanticColors.TextMuted)
 	accentStyle = lipgloss.NewStyle().Foreground(semanticColors.Accent)
 	infoStyle   = lipgloss.NewStyle().Foreground(semanticColors.ToolSoft)

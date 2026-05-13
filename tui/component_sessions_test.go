@@ -561,7 +561,7 @@ func TestLoadSessionsCmdBranches(t *testing.T) {
 	})
 }
 
-func TestLoadSessionsCmdScopesToWorkspace(t *testing.T) {
+func TestLoadSessionsCmdCrossWorkspace(t *testing.T) {
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -585,8 +585,8 @@ func TestLoadSessionsCmdScopesToWorkspace(t *testing.T) {
 	if msg.Err != nil {
 		t.Fatalf("expected loadSessionsCmd success, got err=%v", msg.Err)
 	}
-	if len(msg.Summaries) != 1 || msg.Summaries[0].ID != current.ID {
-		t.Fatalf("expected only current workspace session, got %+v", msg.Summaries)
+	if len(msg.Summaries) != 2 {
+		t.Fatalf("expected both workspace sessions, got %+v", msg.Summaries)
 	}
 }
 
@@ -784,7 +784,7 @@ func TestHandleSessionsModalEnterSuccessClosesModal(t *testing.T) {
 	}
 }
 
-func TestResumeSessionScopesPrefixToWorkspace(t *testing.T) {
+func TestResumeSessionWorkspaceAutoSwitch(t *testing.T) {
 	store, err := session.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -796,15 +796,9 @@ func TestResumeSessionScopesPrefixToWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := session.New(workspace)
-	target.ID = "resume-current"
+	target.ID = "resume-target"
 	target.Messages = []llm.Message{llm.NewUserTextMessage("current target")}
 	if err := store.Save(target); err != nil {
-		t.Fatal(err)
-	}
-	other := session.New(t.TempDir())
-	other.ID = "resume-other"
-	other.Messages = []llm.Message{llm.NewUserTextMessage("other target")}
-	if err := store.Save(other); err != nil {
 		t.Fatal(err)
 	}
 
@@ -814,11 +808,14 @@ func TestResumeSessionScopesPrefixToWorkspace(t *testing.T) {
 		sess:      current,
 		input:     textarea.New(),
 	}
-	if err := m.resumeSession("resume"); err != nil {
-		t.Fatalf("expected workspace-scoped prefix to resolve, got %v", err)
+	if err := m.resumeSession("resume-target"); err != nil {
+		t.Fatalf("expected prefix to resolve, got %v", err)
 	}
 	if m.sess == nil || m.sess.ID != target.ID {
-		t.Fatalf("expected current workspace target to resume, got %#v", m.sess)
+		t.Fatalf("expected target to resume, got %#v", m.sess)
+	}
+	if m.workspace != target.Workspace {
+		t.Fatalf("expected workspace to switch to session workspace %q, got %q", target.Workspace, m.workspace)
 	}
 }
 
